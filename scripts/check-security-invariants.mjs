@@ -177,8 +177,10 @@ const ciWorkflow = read('.github/workflows/check.yml')
 for (const required of ['pnpm install --frozen-lockfile', 'cargo metadata --locked', 'node-version-file: .node-version']) {
   if (!ciWorkflow.includes(required)) fail(`.github/workflows/check.yml: precisa incluir "${required}".`)
 }
-for (const match of ciWorkflow.matchAll(/uses:\s*([^\s#]+)/g)) {
-  if (!/@[0-9a-f]{40}$/.test(match[1])) fail(`.github/workflows/check.yml: action "${match[1]}" precisa ser fixada por SHA.`)
+for (const workflow of readdirSync(join(ROOT, '.github', 'workflows')).filter((file) => /\.ya?ml$/.test(file))) {
+  for (const match of read(`.github/workflows/${workflow}`).matchAll(/uses:\s*([^\s#]+)/g)) {
+    if (!/@[0-9a-f]{40}$/.test(match[1])) fail(`.github/workflows/${workflow}: action "${match[1]}" must be pinned by SHA.`)
+  }
 }
 
 // --- Harness dos agentes ------------------------------------------------------
