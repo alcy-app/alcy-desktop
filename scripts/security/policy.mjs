@@ -12,6 +12,8 @@ export const PROTECTED_PATHS = [
   // App: WebView, permissões, updater e build nativo
   'src-tauri/tauri.conf.json',
   'src-tauri/tauri.release.conf.json',
+  // Extra Tauri configs merged with `tauri build --config` (e.g. a downstream build's)
+  'src-tauri/config/',
   'src-tauri/capabilities/',
   'src-tauri/update-source.json',
   'src-tauri/build.rs',

@@ -26,6 +26,7 @@ const decision = (command) => decideBash(command)?.decision ?? null
 describe('política', () => {
   test('arquivos protegidos', () => {
     assert.ok(isProtected('src-tauri/capabilities/default.json'))
+    assert.ok(isProtected('src-tauri/config/downstream.conf.json'))
     assert.ok(isProtected('.husky/pre-commit'))
     assert.ok(isProtected('.codex/hooks.json'))
     assert.ok(isProtected('package.json'))
