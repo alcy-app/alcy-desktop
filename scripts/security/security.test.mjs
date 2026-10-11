@@ -1,7 +1,7 @@
 // Testes do harness de segurança: `node --test scripts/security/`.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, describe, test } from 'node:test'
@@ -364,7 +364,10 @@ describe('hooks do git (repositório temporário)', () => {
   const repo = mkdtempSync(join(tmpdir(), 'alcy-harness-'))
   after(() => rmSync(repo, { recursive: true, force: true }))
 
-  const sh = (cmd, args) => spawnSync(cmd, args, { cwd: repo, encoding: 'utf8' })
+  // Git hooks export GIT_DIR, GIT_INDEX_FILE and friends: when `pnpm check` runs from the
+  // pre-push hook, inheriting them would point these commands at the real repository.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
+  const sh = (cmd, args) => spawnSync(cmd, args, { cwd: repo, encoding: 'utf8', env })
   const write = (path, content) => {
     mkdirSync(dirname(join(repo, path)), { recursive: true })
     writeFileSync(join(repo, path), content)
@@ -376,6 +379,10 @@ describe('hooks do git (repositório temporário)', () => {
   }
 
   sh('git', ['init', '-q'])
+  const gitDir = sh('git', ['rev-parse', '--absolute-git-dir']).stdout.trim()
+  if (gitDir !== join(realpathSync(repo), '.git')) {
+    throw new Error(`temporary repository resolved to ${gitDir}; refusing to commit outside ${repo}`)
+  }
   sh('git', ['config', 'user.email', 'dev@example.com'])
   sh('git', ['config', 'user.name', 'Dev'])
   write('src-tauri/tauri.conf.json', JSON.stringify({ version: '1.0.0', app: { security: { csp: 'x' } } }))
