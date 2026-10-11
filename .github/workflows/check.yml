@@ -14,7 +14,17 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # Debug info is most of the size of the test builds and filled the
+      # runner's disk; panic messages keep their file and line without it.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
+      # Preinstalled SDKs this job never uses (~25 GB).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Tauri Linux dependencies
