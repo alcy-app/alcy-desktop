@@ -15,14 +15,18 @@ use alcy_scripting::{
 };
 use futures_util::stream::FuturesUnordered;
 use futures_util::{FutureExt, StreamExt};
+use regex::Regex;
+use scraper::{Html, Selector};
+use sxd_document::parser as xml_parser;
+use sxd_xpath::{Context as XPathContext, Factory as XPathFactory, Value as XPathValue};
 use thiserror::Error;
 
 use crate::{LoadCancellation, LoadTransport};
 use crate::{
-    LoadIterationAction, LoadLifecyclePlan, LoadMetricError, LoadMetricKind, LoadMetricPlan,
-    LoadMetricRegistry, LoadMetricSnapshot, LoadPlan, LoadPlanError, LoadRequestPlan,
-    LoadRequestTimings, LoadRunLimits, LoadScenarioPlan, LoadScriptPhase, LoadScriptPlan, LoadStep,
-    LoadThresholdResult, LoadTimerKind, LoadTimerPlan, LoadVuState,
+    LoadExtractKind, LoadIterationAction, LoadLifecyclePlan, LoadMetricError, LoadMetricKind,
+    LoadMetricPlan, LoadMetricRegistry, LoadMetricSnapshot, LoadPlan, LoadPlanError,
+    LoadRequestPlan, LoadRequestTimings, LoadRunLimits, LoadScenarioPlan, LoadScriptPhase,
+    LoadScriptPlan, LoadStep, LoadThresholdResult, LoadTimerKind, LoadTimerPlan, LoadVuState,
 };
 
 /// Intervalo mínimo entre snapshots de um cenário. Evita transformar cada
@@ -33,6 +37,7 @@ pub const LOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 /// de agendamento permanece em `alcy-load`; este pulso só acorda o runtime
 /// para refletir um novo alvo de VUs sem criar IPC por request.
 const CLOSED_SCHEDULER_TICK: Duration = Duration::from_millis(10);
+const MAX_EXTRACT_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Snapshot agregado e limitado emitido periodicamente pelo executor. Nunca
 /// contém corpos de resposta nem um evento por request.
@@ -1616,30 +1621,23 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
                 .as_deref()
                 .ok_or_else(|| LoadExecutionError::Extract {
                     node_id: extract.node_id.clone(),
-                    message: "não há resposta anterior".into(),
+                    message: "there is no preceding response".into(),
                 })?;
-        let value: serde_json::Value =
-            serde_json::from_str(response).map_err(|error| LoadExecutionError::Extract {
+        if response.len() > MAX_EXTRACT_RESPONSE_BYTES {
+            return Err(LoadExecutionError::Extract {
                 node_id: extract.node_id.clone(),
-                message: format!("corpo não é JSON válido: {error}"),
-            })?;
-        let extracted =
-            value
-                .pointer(&extract.json_pointer)
-                .ok_or_else(|| LoadExecutionError::Extract {
-                    node_id: extract.node_id.clone(),
-                    message: format!(
-                        "JSON Pointer '{}' não encontrou valor",
-                        extract.json_pointer
-                    ),
-                })?;
-        let value = match extracted {
-            serde_json::Value::String(value) => value.clone(),
-            value => serde_json::to_string(value).map_err(|error| LoadExecutionError::Extract {
+                message: format!(
+                    "response exceeds the {} byte extraction limit",
+                    MAX_EXTRACT_RESPONSE_BYTES
+                ),
+            });
+        }
+        let value = extract_value(&extract.kind, response).map_err(|message| {
+            LoadExecutionError::Extract {
                 node_id: extract.node_id.clone(),
-                message: format!("não foi possível serializar o valor extraído: {error}"),
-            })?,
-        };
+                message,
+            }
+        })?;
         lock_vu_state(&self.state)
             .variables_mut()
             .insert(extract.name.clone(), value);
@@ -1786,6 +1784,72 @@ fn sample_timer_duration(
         // Uma chegada de processo de Poisson é exponencialmente distribuída.
         LoadTimerKind::Poisson { mean } => {
             Duration::from_secs_f64((-random().max(f64::MIN_POSITIVE).ln()) * mean.as_secs_f64())
+        }
+    }
+}
+
+fn extract_value(kind: &LoadExtractKind, response: &str) -> Result<String, String> {
+    match kind {
+        LoadExtractKind::JsonPointer { pointer } => {
+            let value: serde_json::Value = serde_json::from_str(response)
+                .map_err(|error| format!("response is not valid JSON: {error}"))?;
+            let extracted = value
+                .pointer(pointer)
+                .ok_or_else(|| format!("JSON Pointer '{pointer}' did not match a value"))?;
+            match extracted {
+                serde_json::Value::String(value) => Ok(value.clone()),
+                value => serde_json::to_string(value)
+                    .map_err(|error| format!("failed to serialize extracted JSON value: {error}")),
+            }
+        }
+        LoadExtractKind::Regex { pattern, group } => {
+            let regex = Regex::new(pattern)
+                .map_err(|error| format!("invalid regular expression at execution: {error}"))?;
+            regex
+                .captures(response)
+                .and_then(|captures| captures.get(*group))
+                .map(|value| value.as_str().to_string())
+                .ok_or_else(|| format!("regular expression did not match capture group {group}"))
+        }
+        LoadExtractKind::XPath { expression } => {
+            let package = xml_parser::parse(response)
+                .map_err(|error| format!("response is not valid XML: {error}"))?;
+            let xpath = XPathFactory::new()
+                .build(expression)
+                .map_err(|error| format!("invalid XPath at execution: {error}"))?
+                .ok_or_else(|| "XPath does not select a value".to_string())?;
+            match xpath
+                .evaluate(&XPathContext::new(), package.as_document().root())
+                .map_err(|error| format!("XPath evaluation failed: {error}"))?
+            {
+                XPathValue::Nodeset(nodes) => nodes
+                    .document_order_first()
+                    .map(|node| node.string_value())
+                    .ok_or_else(|| "XPath did not match a value".to_string()),
+                value => Ok(value.string()),
+            }
+        }
+        LoadExtractKind::Css {
+            selector,
+            attribute,
+        } => {
+            let selector = Selector::parse(selector)
+                .map_err(|error| format!("invalid CSS selector at execution: {error}"))?;
+            let document = Html::parse_document(response);
+            let element = document
+                .select(&selector)
+                .next()
+                .ok_or_else(|| "CSS selector did not match an element".to_string())?;
+            match attribute {
+                Some(attribute) => element
+                    .value()
+                    .attr(attribute)
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        format!("CSS selector matched but has no '{attribute}' attribute")
+                    }),
+                None => Ok(element.text().collect()),
+            }
         }
     }
 }

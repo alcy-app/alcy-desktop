@@ -99,6 +99,14 @@ describe('LoadNodeFields', () => {
     renderLoadInspector('extract', '{"name":"user","jsonPointer":""}', (config) => extractChanges.push(config))
     fireEvent.change(screen.getByLabelText('JSON Pointer'), { target: { value: '/id' } })
     expect(JSON.parse(extractChanges[0])).toEqual({ name: 'user', jsonPointer: '/id' })
+    fireEvent.change(screen.getByLabelText('Extraction method'), { target: { value: 'regex' } })
+    expect(JSON.parse(extractChanges[1])).toEqual({ name: 'user', kind: 'regex', pattern: '(.+)', group: 1 })
+    fireEvent.change(screen.getByLabelText('Extraction method'), { target: { value: 'xpath' } })
+    expect(JSON.parse(extractChanges[2])).toEqual({ name: 'user', kind: 'xpath', expression: '//value/text()' })
+    fireEvent.change(screen.getByLabelText('Extraction method'), { target: { value: 'css' } })
+    expect(JSON.parse(extractChanges[3])).toEqual({ name: 'user', kind: 'css', selector: 'body' })
+    fireEvent.change(screen.getByLabelText('Attribute'), { target: { value: 'href' } })
+    expect(JSON.parse(extractChanges[4])).toEqual({ name: 'user', kind: 'css', selector: 'body', attribute: 'href' })
 
     const scriptChanges: string[] = []
     renderLoadInspector('script', '{"phase":"preRequest","code":"al.runtime.set(\'id\', \'1\')"}', (config) => scriptChanges.push(config))

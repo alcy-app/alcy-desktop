@@ -47,9 +47,9 @@ pub type LoadFlowPlan = alcy_load::LoadPlan;
 pub type LoadDatasetAssets = BTreeMap<String, Arc<[BTreeMap<String, String>]>>;
 
 pub use alcy_load::{
-    LoadCheckPlan, LoadDatasetPlan, LoadExtractPlan, LoadIterationAction, LoadLifecyclePlan,
-    LoadMetricPlan, LoadRequestPlan, LoadScenarioPlan, LoadScriptPhase, LoadScriptPlan,
-    LoadSelectOperator, LoadSessionPlan, LoadStep, LoadTimerKind, LoadTimerPlan,
+    LoadCheckPlan, LoadDatasetPlan, LoadExtractKind, LoadExtractPlan, LoadIterationAction,
+    LoadLifecyclePlan, LoadMetricPlan, LoadRequestPlan, LoadScenarioPlan, LoadScriptPhase,
+    LoadScriptPlan, LoadSelectOperator, LoadSessionPlan, LoadStep, LoadTimerKind, LoadTimerPlan,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -200,7 +200,18 @@ struct DatasetConfig {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LoadExtractConfig {
     name: String,
-    json_pointer: String,
+    #[serde(default = "json_pointer_extract_kind")]
+    kind: String,
+    json_pointer: Option<String>,
+    pattern: Option<String>,
+    group: Option<usize>,
+    expression: Option<String>,
+    selector: Option<String>,
+    attribute: Option<String>,
+}
+
+fn json_pointer_extract_kind() -> String {
+    "jsonPointer".into()
 }
 
 #[derive(Deserialize)]
@@ -905,10 +916,38 @@ fn parse_extract(id: &str, raw: &str) -> Result<LoadExtractPlan, LoadFlowError> 
             scenario_id: id.to_string(),
             message: format!("Extract tem JSON inválido: {error}"),
         })?;
+    let required = |value: Option<String>, field: &str| {
+        value.ok_or_else(|| LoadFlowError::InvalidScenarioBody {
+            scenario_id: id.to_string(),
+            message: format!("Extract requires '{field}'"),
+        })
+    };
+    let kind = match config.kind.as_str() {
+        "jsonPointer" => LoadExtractKind::JsonPointer {
+            pointer: required(config.json_pointer, "jsonPointer")?,
+        },
+        "regex" => LoadExtractKind::Regex {
+            pattern: required(config.pattern, "pattern")?,
+            group: config.group.unwrap_or(1),
+        },
+        "xpath" => LoadExtractKind::XPath {
+            expression: required(config.expression, "expression")?,
+        },
+        "css" => LoadExtractKind::Css {
+            selector: required(config.selector, "selector")?,
+            attribute: config.attribute,
+        },
+        other => {
+            return Err(LoadFlowError::InvalidScenarioBody {
+                scenario_id: id.to_string(),
+                message: format!("Extract kind '{other}' is not supported"),
+            });
+        }
+    };
     Ok(LoadExtractPlan {
         node_id: id.to_string(),
         name: config.name,
-        json_pointer: config.json_pointer,
+        kind,
     })
 }
 
@@ -1965,7 +2004,7 @@ mod tests {
     }
 
     #[test]
-    fn compiles_extract_with_a_strict_json_pointer_config() {
+    fn compiles_extract_kinds_with_strict_configs() {
         let build = |config| {
             structured_flow(
                 vec![
@@ -1984,14 +2023,26 @@ mod tests {
         assert!(matches!(
             &plan.scenarios[0].body[1],
             LoadStep::Extract(extract)
-                if extract.name == "userId" && extract.json_pointer == "/user/id"
+                if extract.name == "userId"
+                    && matches!(
+                        &extract.kind,
+                        LoadExtractKind::JsonPointer { pointer } if pointer == "/user/id"
+                    )
         ));
+        for config in [
+            json!({"name":"token", "kind":"regex", "pattern":"token=(\\w+)", "group":1}),
+            json!({"name":"title", "kind":"xpath", "expression":"//title/text()"}),
+            json!({"name":"href", "kind":"css", "selector":"a.link", "attribute":"href"}),
+        ] {
+            assert!(plan_load_flow(&build(config)).is_ok());
+        }
         assert!(
             plan_load_flow(&build(
                 json!({"name":"userId", "jsonPointer":"/id", "extra":true})
             ))
             .is_err()
         );
+        assert!(plan_load_flow(&build(json!({"name":"token", "kind":"regex"}))).is_err());
     }
 
     #[test]

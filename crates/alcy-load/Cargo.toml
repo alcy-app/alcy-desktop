@@ -8,9 +8,13 @@ publish = false
 alcy-domain = { path = "../alcy-domain" }
 alcy-scripting = { path = "../alcy-scripting" }
 futures-util = "0.3"
+regex = "1"
+scraper = "0.27"
+sxd-document = "0.3"
+sxd-xpath = "0.4"
 serde_json = "1.0"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
 url = "2"
 
 [dev-dependencies]

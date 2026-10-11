@@ -1015,16 +1015,72 @@ function CheckLoadFields({ config, onChange }: { config: LoadConfig; onChange: (
   )
 }
 
+type ExtractKind = 'jsonPointer' | 'regex' | 'xpath' | 'css'
+
+function extractKind(value: unknown): ExtractKind {
+  switch (value) {
+    case 'regex':
+    case 'xpath':
+    case 'css':
+      return value
+    default:
+      return 'jsonPointer'
+  }
+}
+
 function ExtractLoadFields({ config, onChange }: { config: LoadConfig; onChange: (config: LoadConfig) => void }) {
   const { t } = useLanguage()
+  const kind = extractKind(config.kind)
+  const changeKind = (next: ExtractKind) => {
+    switch (next) {
+      case 'regex':
+        onChange({ name: asString(config.name, 'value'), kind: next, pattern: '(.+)', group: 1 })
+        return
+      case 'xpath':
+        onChange({ name: asString(config.name, 'value'), kind: next, expression: '//value/text()' })
+        return
+      case 'css':
+        onChange({ name: asString(config.name, 'value'), kind: next, selector: 'body' })
+        return
+      case 'jsonPointer':
+        onChange({ name: asString(config.name, 'value'), kind: next, jsonPointer: '' })
+    }
+  }
   return (
     <div className="flow-inspector-condition">
       <Field label={t('flows.loadNode.extract.name')}>
         {(id) => <Input id={id} mono value={asString(config.name, 'value')} onChange={(event) => onChange({ ...config, name: event.target.value })} />}
       </Field>
-      <Field label={t('flows.loadNode.extract.jsonPointer')} hint={t('flows.loadNode.extract.jsonPointerHint')}>
-        {(id) => <Input id={id} mono value={asString(config.jsonPointer, '')} onChange={(event) => onChange({ ...config, jsonPointer: event.target.value })} />}
+      <Field label={t('flows.loadNode.extract.kind')}>
+        {(id) => <Select id={id} value={kind} onChange={(event) => changeKind(extractKind(event.target.value))}>
+          <option value="jsonPointer">{t('flows.loadNode.extract.jsonPointer')}</option>
+          <option value="regex">{t('flows.loadNode.extract.regex')}</option>
+          <option value="xpath">{t('flows.loadNode.extract.xpath')}</option>
+          <option value="css">{t('flows.loadNode.extract.css')}</option>
+        </Select>}
       </Field>
+      {kind === 'jsonPointer' && <Field label={t('flows.loadNode.extract.jsonPointer')} hint={t('flows.loadNode.extract.jsonPointerHint')}>
+        {(id) => <Input id={id} mono value={asString(config.jsonPointer, '')} onChange={(event) => onChange({ ...config, jsonPointer: event.target.value })} />}
+      </Field>}
+      {kind === 'regex' && <>
+        <Field label={t('flows.loadNode.extract.pattern')}>
+          {(id) => <Input id={id} mono value={asString(config.pattern, '(.+)')} onChange={(event) => onChange({ ...config, pattern: event.target.value })} />}
+        </Field>
+        <Field label={t('flows.loadNode.extract.group')} hint={t('flows.loadNode.extract.groupHint')}>
+          {(id) => <Input id={id} type="number" min={0} step={1} value={String(asNonNegativeInteger(config.group, 1))} onChange={(event) => onChange({ ...config, group: asNonNegativeInteger(Number(event.target.value), 0) })} />}
+        </Field>
+      </>}
+      {kind === 'xpath' && <Field label={t('flows.loadNode.extract.expression')}>
+        {(id) => <Input id={id} mono value={asString(config.expression, '//value/text()')} onChange={(event) => onChange({ ...config, expression: event.target.value })} />}
+      </Field>}
+      {kind === 'css' && <>
+        <Field label={t('flows.loadNode.extract.selector')}>
+          {(id) => <Input id={id} mono value={asString(config.selector, 'body')} onChange={(event) => onChange({ ...config, selector: event.target.value })} />}
+        </Field>
+        <Field label={t('flows.loadNode.extract.attribute')} hint={t('flows.loadNode.extract.attributeHint')}>
+          {(id) => <Input id={id} mono value={asString(config.attribute, '')} onChange={(event) => onChange(event.target.value === '' ? withoutKeys(config, ['attribute']) : { ...config, attribute: event.target.value })} />}
+        </Field>
+      </>}
     </div>
   )
 }

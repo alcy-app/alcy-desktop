@@ -1,4 +1,4 @@
-//! Exercita o contrato público de corpos/lifecycle sem desktop ou filesystem.
+//! Exercises the public body/lifecycle contract without desktop or filesystem.
 
 use std::collections::BTreeMap;
 use std::future::pending;
@@ -64,6 +64,12 @@ impl LoadTransport for JsonTrace {
             r#"{"user":{"id":7}}"#
         } else if request.endpoint.url().ends_with("/setup-source") {
             r#"{"items":["red",{"id":7}]}"#
+        } else if request.endpoint.url().ends_with("/regex-source") {
+            "token=alpha-42"
+        } else if request.endpoint.url().ends_with("/xml-source") {
+            "<response><id>seven</id></response>"
+        } else if request.endpoint.url().ends_with("/html-source") {
+            r#"<article><a class="link" href="/docs">Read</a></article>"#
         } else {
             ""
         };
@@ -138,7 +144,9 @@ async fn extract_reads_json_pointer_into_the_current_vu_variables() {
         LoadStep::Extract(LoadExtractPlan {
             node_id: "extract".into(),
             name: "user_id".into(),
-            json_pointer: "/user/id".into(),
+            kind: LoadExtractKind::JsonPointer {
+                pointer: "/user/id".into(),
+            },
         }),
         LoadStep::Request(request("target", "{{user_id}}")),
     ]);
@@ -161,6 +169,62 @@ async fn extract_reads_json_pointer_into_the_current_vu_variables() {
 }
 
 #[tokio::test]
+async fn extract_reads_regex_xpath_and_css_values_into_the_current_vu_variables() {
+    let p = plan(vec![
+        LoadStep::Request(request("regex-source", "")),
+        LoadStep::Extract(LoadExtractPlan {
+            node_id: "regex".into(),
+            name: "token".into(),
+            kind: LoadExtractKind::Regex {
+                pattern: r"token=([a-z]+-\d+)".into(),
+                group: 1,
+            },
+        }),
+        LoadStep::Request(request("regex-target", "{{token}}")),
+        LoadStep::Request(request("xml-source", "")),
+        LoadStep::Extract(LoadExtractPlan {
+            node_id: "xpath".into(),
+            name: "identifier".into(),
+            kind: LoadExtractKind::XPath {
+                expression: "//id/text()".into(),
+            },
+        }),
+        LoadStep::Request(request("xpath-target", "{{identifier}}")),
+        LoadStep::Request(request("html-source", "")),
+        LoadStep::Extract(LoadExtractPlan {
+            node_id: "css".into(),
+            name: "link".into(),
+            kind: LoadExtractKind::Css {
+                selector: "a.link".into(),
+                attribute: Some("href".into()),
+            },
+        }),
+        LoadStep::Request(request("css-target", "{{link}}")),
+    ]);
+    let trace = JsonTrace::default();
+
+    execute_load_plan_report(&p, &trace, &Sink, &NeverCancel)
+        .await
+        .unwrap();
+
+    let trace = trace.0.lock().unwrap();
+    for (target, expected) in [
+        ("regex-target", "alpha-42"),
+        ("xpath-target", "seven"),
+        ("css-target", "/docs"),
+    ] {
+        assert_eq!(
+            trace
+                .iter()
+                .filter(|(url, _, _)| url.ends_with(&format!("/{target}")))
+                .map(|(_, body, _)| body.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected; 6]
+        );
+    }
+}
+
+#[tokio::test]
 async fn foreach_uses_a_bounded_json_array_prepared_by_setup() {
     let mut p = plan(vec![LoadStep::ForEach {
         node_id: "each".into(),
@@ -177,7 +241,9 @@ async fn foreach_uses_a_bounded_json_array_prepared_by_setup() {
             LoadStep::Extract(LoadExtractPlan {
                 node_id: "extract-items".into(),
                 name: "items".into(),
-                json_pointer: "/items".into(),
+                kind: LoadExtractKind::JsonPointer {
+                    pointer: "/items".into(),
+                },
             }),
         ],
     ));
@@ -221,7 +287,9 @@ async fn foreach_rejects_a_dynamic_array_above_its_declared_limit() {
             LoadStep::Extract(LoadExtractPlan {
                 node_id: "extract-items".into(),
                 name: "items".into(),
-                json_pointer: "/items".into(),
+                kind: LoadExtractKind::JsonPointer {
+                    pointer: "/items".into(),
+                },
             }),
         ],
     ));
@@ -427,14 +495,29 @@ async fn select_supports_negative_and_existence_conditions() {
 }
 
 #[test]
-fn extract_requires_a_preceding_request_and_a_valid_json_pointer() {
+fn extract_requires_a_preceding_request_and_a_valid_definition() {
     let invalid = plan(vec![LoadStep::Extract(LoadExtractPlan {
         node_id: "extract".into(),
         name: "value".into(),
-        json_pointer: "missing-slash".into(),
+        kind: LoadExtractKind::JsonPointer {
+            pointer: "missing-slash".into(),
+        },
     })]);
 
     assert!(invalid.validate().is_err());
+
+    let invalid_regex = plan(vec![
+        LoadStep::Request(request("source", "")),
+        LoadStep::Extract(LoadExtractPlan {
+            node_id: "regex".into(),
+            name: "value".into(),
+            kind: LoadExtractKind::Regex {
+                pattern: "(".into(),
+                group: 1,
+            },
+        }),
+    ]);
+    assert!(invalid_regex.validate().is_err());
 }
 
 #[test]

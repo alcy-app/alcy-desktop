@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use alcy_domain::{Endpoint, HeaderEntry, HttpMethod, RedirectPolicy};
+use regex::Regex;
+use scraper::Selector;
+use sxd_xpath::Factory as XPathFactory;
 use thiserror::Error;
 
 use crate::{LoadMetricKind, LoadMetricStatistic, LoadRunLimits, LoadSchedule, LoadThreshold};
@@ -253,16 +256,15 @@ fn validate_body<'a>(
                 });
             }
             LoadStep::Extract(extract)
-                if !has_response
-                    || !is_valid_variable_name(&extract.name)
-                    || !is_valid_json_pointer(&extract.json_pointer) =>
+                if !has_response || !is_valid_variable_name(&extract.name) =>
             {
                 return Err(LoadPlanError::Scenario {
                     id: extract.node_id.clone(),
-                    message: "Extract exige request anterior, nome de variável válido e JSON Pointer válido"
+                    message: "Extract requires a preceding request and a valid variable name"
                         .into(),
                 });
             }
+            LoadStep::Extract(extract) => validate_extract_kind(extract)?,
             LoadStep::Script(script)
                 if script.code.trim().is_empty()
                     || script.code.len() > 256 * 1024
@@ -444,6 +446,61 @@ fn is_valid_json_pointer(pointer: &str) -> bool {
         }
         true
     })
+}
+
+fn validate_extract_kind(extract: &LoadExtractPlan) -> Result<(), LoadPlanError> {
+    let invalid = |message: &str| LoadPlanError::Scenario {
+        id: extract.node_id.clone(),
+        message: message.into(),
+    };
+    match &extract.kind {
+        LoadExtractKind::JsonPointer { pointer } if is_valid_json_pointer(pointer) => Ok(()),
+        LoadExtractKind::JsonPointer { .. } => Err(invalid("Extract has an invalid JSON Pointer")),
+        LoadExtractKind::Regex { pattern, group } => {
+            if pattern.is_empty() || pattern.len() > 4096 {
+                return Err(invalid(
+                    "Extract regex must contain at most 4096 characters",
+                ));
+            }
+            let regex = Regex::new(pattern)
+                .map_err(|_| invalid("Extract has an invalid regular expression"))?;
+            if *group >= regex.captures_len() {
+                return Err(invalid("Extract regex capture group is unavailable"));
+            }
+            Ok(())
+        }
+        LoadExtractKind::XPath { expression } => {
+            if expression.is_empty() || expression.len() > 4096 {
+                return Err(invalid(
+                    "Extract XPath must contain at most 4096 characters",
+                ));
+            }
+            XPathFactory::new()
+                .build(expression)
+                .map_err(|_| invalid("Extract has an invalid XPath expression"))?
+                .ok_or_else(|| invalid("Extract XPath does not select a value"))?;
+            Ok(())
+        }
+        LoadExtractKind::Css {
+            selector,
+            attribute,
+        } => {
+            if selector.is_empty() || selector.len() > 4096 {
+                return Err(invalid(
+                    "Extract CSS selector must contain at most 4096 characters",
+                ));
+            }
+            Selector::parse(selector)
+                .map_err(|_| invalid("Extract has an invalid CSS selector"))?;
+            if attribute
+                .as_ref()
+                .is_some_and(|attribute| attribute.trim().is_empty())
+            {
+                return Err(invalid("Extract CSS attribute cannot be empty"));
+            }
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -687,13 +744,33 @@ pub struct LoadCheckPlan {
     pub expected_status: u16,
 }
 
-/// Extrai um valor da última resposta HTTP como variável do VU atual. O
-/// ponteiro segue RFC 6901; o corpo nunca sai do worker nem é persistido.
+/// Extracts one value from the latest HTTP response into the current VU.
+/// Response bodies never leave the worker or reach persisted run history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadExtractPlan {
     pub node_id: String,
     pub name: String,
-    pub json_pointer: String,
+    pub kind: LoadExtractKind,
+}
+
+/// Declarative extraction algorithms. A missing match is always an execution
+/// error; none of these variants silently writes an empty variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadExtractKind {
+    JsonPointer {
+        pointer: String,
+    },
+    Regex {
+        pattern: String,
+        group: usize,
+    },
+    XPath {
+        expression: String,
+    },
+    Css {
+        selector: String,
+        attribute: Option<String>,
+    },
 }
 
 /// Fase explícita do Script seguro. Ele só pode alterar variáveis do VU.

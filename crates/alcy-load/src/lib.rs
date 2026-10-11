@@ -22,9 +22,10 @@ pub use metrics::{
     MAX_LOAD_METRIC_SERIES,
 };
 pub use plan::{
-    LoadCheckPlan, LoadDatasetPlan, LoadExtractPlan, LoadIterationAction, LoadLifecyclePlan,
-    LoadMetricPlan, LoadPlan, LoadPlanError, LoadRequestPlan, LoadScenarioPlan, LoadScriptPhase,
-    LoadScriptPlan, LoadSelectOperator, LoadSessionPlan, LoadStep, LoadTimerKind, LoadTimerPlan,
+    LoadCheckPlan, LoadDatasetPlan, LoadExtractKind, LoadExtractPlan, LoadIterationAction,
+    LoadLifecyclePlan, LoadMetricPlan, LoadPlan, LoadPlanError, LoadRequestPlan, LoadScenarioPlan,
+    LoadScriptPhase, LoadScriptPlan, LoadSelectOperator, LoadSessionPlan, LoadStep, LoadTimerKind,
+    LoadTimerPlan,
 };
 pub use ports::{LoadCancellation, LoadRequestTimings, LoadTransport, LoadTransportResponse};
 pub use runtime::{
