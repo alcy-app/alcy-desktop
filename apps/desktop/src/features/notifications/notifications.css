@@ -1,0 +1,276 @@
+.notifications-host {
+  position: relative;
+}
+
+.notifications-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.notifications-button:hover,
+.notifications-button[aria-expanded='true'] {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+
+/* Colado na borda direita: cresce para a esquerda e para cima. */
+.notifications-popup {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-height: 360px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  transform-origin: bottom right;
+  animation: ui-menu-in var(--duration-fast) var(--ease-out);
+  outline: none;
+}
+
+.notifications-popup-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.notifications-empty {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* A mensagem fica limitada a duas linhas; quando não cabe, clicar no card (ou na seta) a expande. */
+.notifications-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.notifications-card:is([data-expandable='true'], [data-opens-details='true']) {
+  cursor: pointer;
+}
+
+.notifications-card:is([data-expandable='true'], [data-opens-details='true']):active {
+  transform: scale(0.99);
+}
+
+.notifications-card[data-unread='true'] {
+  border-left-color: var(--accent);
+  background: var(--accent-softer);
+}
+
+.notifications-card[data-kind='alert'] {
+  border-left-color: var(--warning);
+}
+
+/* Hover igual em todos os cards; cursor e clique só nos expansíveis ou com detalhes.
+   Vem depois dos estados de não lida/alerta para prevalecer sobre eles. */
+.notifications-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+
+.notifications-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.notifications-card-kind {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.notifications-card[data-kind='alert'] .notifications-card-kind {
+  color: var(--warning);
+}
+
+.notifications-card-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.notifications-card-unread {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.notifications-card-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.notifications-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.notifications-card-toggle:hover,
+.notifications-card-dismiss:hover {
+  color: var(--text);
+}
+
+.notifications-card-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+/* Dispensado: o card desliza para a direita e some, depois o espaço dele
+   (altura e o gap da lista) se fecha para os vizinhos subirem. */
+/* A coluna fica presa à largura da lista: sem isso, o WebKit dimensiona pelo
+   conteúdo (o texto cortado em duas linhas) e o card passa da borda direita,
+   escondendo os botões do canto. */
+.notifications-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr;
+}
+
+.notifications-item > .notifications-card {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.notifications-item[data-leaving='true'] {
+  pointer-events: none;
+  animation: notifications-item-collapse var(--duration-slow) var(--ease-in-out) var(--duration-base) forwards;
+}
+
+.notifications-item[data-leaving='true'] > .notifications-card {
+  animation: notifications-card-out var(--duration-base) var(--ease-out) forwards;
+}
+
+@keyframes notifications-card-out {
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes notifications-item-collapse {
+  to {
+    grid-template-rows: 0fr;
+    margin-top: -6px;
+  }
+}
+
+.notifications-card[data-expanded='true'] .notifications-card-chevron {
+  transform: rotate(180deg);
+}
+
+.notifications-card-title {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.notifications-card-message {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  /* Respeita as quebras de linha (\n) escritas nas mensagens. */
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.notifications-card[data-expanded='true'] .notifications-card-message {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+.notifications-card-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.notifications-card-link:hover {
+  color: var(--accent-strong);
+}
+
+.notifications-card-details {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notifications-card-details:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

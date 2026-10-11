@@ -1,0 +1,225 @@
+/* Paleta fixa de rótulos (ADR 0060): cada elemento marcado com `data-label-color` ganha
+   `--label-color`, e os estilos abaixo usam só essa variável. */
+[data-label-color='gray'] {
+  --label-color: var(--label-gray);
+}
+
+[data-label-color='red'] {
+  --label-color: var(--label-red);
+}
+
+[data-label-color='orange'] {
+  --label-color: var(--label-orange);
+}
+
+[data-label-color='yellow'] {
+  --label-color: var(--label-yellow);
+}
+
+[data-label-color='green'] {
+  --label-color: var(--label-green);
+}
+
+[data-label-color='teal'] {
+  --label-color: var(--label-teal);
+}
+
+[data-label-color='blue'] {
+  --label-color: var(--label-blue);
+}
+
+[data-label-color='purple'] {
+  --label-color: var(--label-purple);
+}
+
+[data-label-color='pink'] {
+  --label-color: var(--label-pink);
+}
+
+.collection-label-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--label-color);
+}
+
+/* Bolinhas dos rótulos na linha da collection, depois do nome. */
+.collection-label-dots {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 3px;
+}
+
+.collection-label-dots-more {
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.collection-label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-height: 20px;
+  padding: 0 2px 0 var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--label-color, var(--accent)) 45%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--label-color, var(--accent)) 14%, transparent);
+  color: var(--text-heading);
+  font-size: var(--font-size-xs);
+}
+
+.collection-label-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-label-chip-icon {
+  flex-shrink: 0;
+  color: var(--label-color, var(--warning));
+}
+
+.collection-label-chip .ui-icon-button {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+}
+
+/* ---- Modal de rótulos ---- */
+
+.collection-labels-modal {
+  width: min(440px, 92vw);
+}
+
+.collection-labels-hint {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.collection-labels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.collection-labels-empty {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.collection-labels-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: 2px var(--space-1) 2px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.collection-labels-row:hover {
+  background: var(--surface-raised);
+}
+
+.collection-labels-row-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.collection-labels-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.collection-labels-row-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.collection-labels-row-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.collection-labels-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.collection-labels-form-title {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.collection-labels-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.collection-labels-form-row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.collection-labels-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.collection-labels-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--label-color);
+  color: var(--on-accent);
+  cursor: pointer;
+}
+
+.collection-labels-swatch[aria-checked='true'] {
+  border-color: var(--text-heading);
+}
+
+.collection-labels-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Paleta compacta da edição de um rótulo existente, na própria linha. */
+.collection-labels-palette--inline .collection-labels-swatch {
+  width: 16px;
+  height: 16px;
+}

@@ -1,0 +1,237 @@
+.rw-open-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.rw-open-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* Separa a seção de abas da seção de ambiente: a segunda fica fixa à
+   direita, fora da área que rola horizontalmente. */
+.rw-open-tabs-divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+}
+
+.rw-open-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 200px;
+  min-height: var(--control-height-sm);
+  padding: 0 3px 0 10px;
+  border: 0;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: grab;
+  /* O arraste é implementado com pointer events (não o HTML5 Drag and
+     Drop nativo, pouco confiável em algumas WebViews Linux ao iniciar
+     sobre texto) — isto evita que o movimento selecione texto no lugar. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.rw-open-tab::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: -2px;
+  left: 6px;
+  height: 2px;
+  border-radius: var(--radius-full) var(--radius-full) 0 0;
+  background: var(--accent);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+
+.rw-open-tab--active {
+  background: var(--surface);
+}
+
+.rw-open-tab--active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+/* Seleção múltipla: vence o hover para a aba continuar marcada. */
+.rw-open-tab.rw-open-tab--selected,
+.rw-open-tab.rw-open-tab--selected:hover {
+  background: var(--selection-bg);
+}
+
+.rw-open-tab--dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+/* Borda destacando o lado (esquerdo/direito) em que a aba arrastada entraria ao ser solta. */
+.rw-open-tab--drop-before {
+  box-shadow: inset 3px 0 0 var(--accent-strong);
+}
+
+.rw-open-tab--drop-after {
+  box-shadow: inset -3px 0 0 var(--accent-strong);
+}
+
+.rw-open-tab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) 0;
+  cursor: pointer;
+}
+
+.rw-open-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Badge do método (GET/POST/GQL) antes do nome da aba de requisição. */
+.ui-badge.rw-open-tab-method {
+  flex-shrink: 0;
+  padding: 0 4px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-style: normal;
+}
+
+.rw-open-tab--active .rw-open-tab-label {
+  color: var(--text-heading);
+}
+
+.rw-open-tab-pin {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.rw-open-tab--preview .rw-open-tab-label {
+  font-style: italic;
+}
+
+/* Ponto de alteração e botão de fechar ocupam o mesmo espaço: o botão fica
+   invisível até o mouse passar sobre a aba, quando ele se sobrepõe ao ponto. */
+.rw-open-tab-indicator {
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.rw-open-tab-dirty-dot {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.rw-open-tab-dirty-dot--visible {
+  opacity: 1;
+}
+
+.rw-open-tab:hover .rw-open-tab-dirty-dot,
+.rw-open-tab:focus-within .rw-open-tab-dirty-dot {
+  opacity: 0;
+}
+
+.rw-open-tab-close {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.rw-open-tab:hover .rw-open-tab-close,
+.rw-open-tab:focus-within .rw-open-tab-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.rw-open-tab-close:hover {
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.rw-open-tab-new {
+  flex-shrink: 0;
+  border: 1px solid transparent;
+}
+
+.rw-open-tab-new:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-heading);
+}
+
+/* Cartão e itens vêm de shared/ui/menu.css; aqui só posicionamento e largura. */
+.rw-tab-context-menu {
+  position: fixed;
+  z-index: var(--z-overlay);
+  min-width: 190px;
+}
+
+/* ---- Motion ---- */
+
+.rw-open-tab {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.rw-open-tab:hover:not(.rw-open-tab--dragging) {
+  background: var(--surface-raised);
+}
+
+.rw-open-tab-new {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}

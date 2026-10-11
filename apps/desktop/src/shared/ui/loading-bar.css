@@ -1,0 +1,27 @@
+.ui-loading-bar {
+  position: relative;
+  height: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--accent-soft);
+}
+
+.ui-loading-bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  animation: ui-loading-bar-slide 1.2s var(--ease-in-out) infinite;
+}
+
+@keyframes ui-loading-bar-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}

@@ -1,0 +1,54 @@
+.resize-handle {
+  position: relative;
+  z-index: var(--z-raised);
+  flex-shrink: 0;
+  background: var(--border-subtle);
+  transition: background-color var(--duration-fast) var(--ease-out);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.resize-handle--vertical {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.resize-handle--horizontal {
+  height: 1px;
+  cursor: row-resize;
+}
+
+/* A linha fica com apenas 1 px, mas o pseudo-elemento mantém uma área de
+   captura confortável dos dois lados para o redimensionamento. */
+.resize-handle::after {
+  content: '';
+  position: absolute;
+}
+
+.resize-handle--vertical::after {
+  inset: 0 -3px;
+}
+
+.resize-handle--horizontal::after {
+  inset: -3px 0;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--accent);
+}
+
+/*
+ * Enquanto uma alça está sendo arrastada, este overlay cobre a janela inteira
+ * e captura o ponteiro — sem ele, o cursor passa fisicamente sobre botões e
+ * texto durante o arraste, disparando :hover e iniciando seleção de texto,
+ * o que faz a interface parecer uma página HTML em vez de um app nativo.
+ */
+.resize-drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drag-preview);
+  user-select: none;
+  -webkit-user-select: none;
+}

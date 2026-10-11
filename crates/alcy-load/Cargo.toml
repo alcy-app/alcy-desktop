@@ -1,0 +1,20 @@
+[package]
+name = "alcy-load"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+alcy-domain = { path = "../alcy-domain" }
+alcy-scripting = { path = "../alcy-scripting" }
+futures-util = "0.3"
+serde_json = "1.0"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "time"] }
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "time"] }
+
+[lints]
+workspace = true

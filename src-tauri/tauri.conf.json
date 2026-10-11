@@ -1,0 +1,69 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Alcy",
+  "version": "0.6.2",
+  "identifier": "com.alcy.desktop",
+  "build": {
+    "frontendDist": "../apps/desktop/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm --filter desktop run dev",
+    "beforeBuildCommand": "pnpm --filter desktop run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Alcy",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "center": true,
+        "visible": false,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "devtools": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "font-src": "'self' data:",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'"
+      },
+      "devCsp": {
+        "default-src": "'self' http://localhost:5173",
+        "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:5173",
+        "font-src": "'self' data:",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1ODlGMTRFQzU2Q0I2NEEKUldSS3RtekZUdkdKbFJ1bmpwY1RFYUYwc2k3djBTdkhFZ2lmRTd2SGRBTUZ0dExsZ2hwcjBMS2kK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

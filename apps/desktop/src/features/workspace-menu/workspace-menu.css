@@ -1,0 +1,263 @@
+.ws-menu-host {
+  flex-shrink: 0;
+}
+
+.ws-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.ws-menu-trigger:hover,
+.ws-menu-trigger:focus-visible,
+.ws-menu-trigger[aria-expanded='true'] {
+  background: var(--surface-raised);
+}
+
+/* Sem anel de foco na cor de destaque: o fundo acima já indica o foco. */
+.ws-menu-trigger:focus-visible {
+  outline: none;
+}
+
+.ws-menu-trigger-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.ws-menu-trigger[aria-expanded='true'] .ws-menu-trigger-chevron {
+  transform: rotate(180deg);
+}
+
+.ws-menu-trigger-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-heading);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+}
+
+.ws-menu-scope {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+}
+
+.ws-menu-scope[data-scope='remote'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Cartão e itens de menu vêm de shared/ui/menu.css; aqui só o posicionamento
+   e a largura — dropdown ancorado ao gatilho, em vez do antigo modal centralizado. */
+.ws-menu-dropdown {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 4px;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: var(--z-overlay);
+}
+
+.ws-menu-dropdown-title {
+  margin: 4px 4px 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ws-menu-divider {
+  height: 1px;
+  margin: 8px 4px;
+  background: var(--border);
+}
+
+.ws-menu-error {
+  margin: 0 0 8px;
+}
+
+.ws-menu-loading {
+  margin: 0 4px;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+}
+
+.ws-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ws-menu-item {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.ws-menu-item-button {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ws-menu-item-button:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.ws-menu-item-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ws-menu-item-button--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ws-menu-item-button--renaming {
+  gap: 2px;
+  border-color: var(--accent);
+  cursor: default;
+}
+
+.ws-menu-item-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.ws-menu-item-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ws-menu-item-git {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.ws-menu-item-name {
+  font-weight: 500;
+  font-size: var(--font-size-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-menu-item-path {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-menu-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ws-menu-confirm-title {
+  margin: 0 0 4px;
+  font-size: var(--font-size-md);
+  color: var(--text);
+}
+
+.ws-menu-confirm-option {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ws-menu-confirm-option:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.ws-menu-confirm-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ws-menu-confirm-option--danger {
+  border-color: var(--error);
+}
+
+.ws-menu-confirm-option--danger:not(:disabled):hover {
+  background: var(--error-soft);
+}
+
+.ws-menu-confirm-option--danger .ws-menu-confirm-option-label {
+  color: var(--error);
+}
+
+.ws-menu-confirm-option-label {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+}
+
+.ws-menu-confirm-option-hint {
+  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.ws-menu-confirm-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* ---- Motion ---- */
+
+.ws-menu-trigger,
+.ws-menu-item-button,
+.ws-menu-confirm-option {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}

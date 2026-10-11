@@ -1,0 +1,1524 @@
+.rw-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.rw-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  /* A janela nunca rola: cada painel cuida da própria rolagem. */
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  animation: ui-view-in var(--duration-slow) var(--ease-out);
+}
+
+.rw-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-console-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.rw-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.rw-statusbar-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.rw-statusbar-import-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.rw-statusbar-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.rw-statusbar-git-menu {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 6px);
+  width: 148px;
+  transform-origin: bottom right;
+}
+
+.rw-statusbar-git-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.rw-statusbar-console,
+.rw-statusbar-git,
+.rw-statusbar-proxy,
+.rw-statusbar-recorder {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+/* A caixa do texto vai da linha de base ao topo das maiúsculas: o centro do
+   rótulo bate com o do ícone em qualquer fonte. Sem isso, fontes com área
+   acima do texto bem maior que a de baixo (a do sistema no Windows) deixam o
+   rótulo mais baixo que o ícone. */
+.rw-statusbar-label {
+  text-box: trim-both cap alphabetic;
+}
+
+.rw-statusbar-console:hover,
+.rw-statusbar-console[aria-expanded='true'],
+.rw-statusbar-git:hover,
+.rw-statusbar-proxy:hover,
+.rw-statusbar-recorder:hover,
+.rw-statusbar-recorder[aria-pressed='true'] {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+
+.rw-statusbar-recorder[data-recording='true'] {
+  color: var(--error);
+}
+
+.rw-statusbar-proxy {
+  color: var(--text);
+}
+
+.rw-statusbar-git[data-state='changes'],
+.rw-statusbar-git[data-state='remoteAhead'] {
+  color: var(--text);
+}
+
+.rw-statusbar-git[data-state='conflict'],
+.rw-statusbar-git[data-state='error'] {
+  color: var(--error);
+}
+
+.rw-statusbar-git-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--success);
+}
+
+.rw-statusbar-git[data-state='remoteAhead'] .rw-statusbar-git-dot {
+  background: var(--warning);
+}
+
+.rw-statusbar-git[data-state='error'] .rw-statusbar-git-dot {
+  background: var(--error);
+}
+
+.rw-statusbar-proxy-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--success);
+}
+
+.rw-statusbar-proxy[data-error='true'] .rw-statusbar-proxy-dot {
+  background: var(--error);
+}
+
+.rw-statusbar-count {
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.rw-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+/* Visual minimalista, no padrão de barra de ferramentas (texto + chevron,
+   sem caixa visível até hover/foco) — não é um campo de formulário comum. */
+.rw-environment-select {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.rw-environment-select .ui-select-wrapper {
+  width: auto;
+}
+
+.rw-environment-select .ui-select {
+  width: auto;
+  background: transparent;
+  border-color: transparent;
+  min-width: 132px;
+  padding: 5px 28px 5px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+}
+
+.rw-environment-select .ui-select:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.rw-environment-select .ui-select:focus:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.rw-sidebar-wrapper {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.rw-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Breadcrumb + barra de URL em largura total, acima da requisição e da
+   resposta; a borda inferior separa o cabeçalho das duas áreas de trabalho. */
+.rw-request-header {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.rw-request-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 6px 12px 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.rw-request-breadcrumb-nav {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Alinhado à direita, na mesma borda do botão Enviar logo abaixo. */
+.rw-request-breadcrumb-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Compacto para não aumentar a altura da linha do breadcrumb. */
+.rw-share-button.ui-button--sm {
+  min-height: 22px;
+  padding: 2px 8px;
+}
+
+.rw-request-breadcrumb-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.rw-request-breadcrumb-icon--graphql {
+  color: var(--accent-strong);
+}
+
+.rw-request-breadcrumb-icon--rest {
+  color: var(--info);
+}
+
+.rw-request-breadcrumb-list {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.rw-request-breadcrumb-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 180px;
+}
+
+.rw-request-breadcrumb-separator {
+  flex-shrink: 0;
+  margin: 0 4px;
+  color: var(--text-muted);
+}
+
+.rw-request-breadcrumb-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-request-breadcrumb-label[aria-current='page'] {
+  color: var(--text-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.rw-endpoint-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 48px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.rw-endpoint-field {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.rw-endpoint-field:hover {
+  border-color: var(--border-strong);
+}
+
+.rw-endpoint-field:focus-within {
+  border-color: var(--accent-strong);
+}
+
+.rw-endpoint-method {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 var(--space-2);
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+  cursor: default;
+  user-select: none;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.rw-endpoint-method:disabled:hover {
+  background: var(--surface-raised);
+}
+
+.rw-endpoint-field .ui-select-wrapper {
+  flex-shrink: 0;
+  width: auto;
+}
+
+.rw-endpoint-method--select {
+  width: auto;
+  height: 100%;
+  padding: 0 24px 0 var(--space-2);
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+.rw-endpoint-method--select:hover {
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+
+.rw-endpoint-field .rw-endpoint-input {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  min-height: var(--control-height-md);
+  /* Linha de 24 px + 4 px em cada lado: centraliza texto, caret e seleção.
+     A regra também alcança o overlay de variáveis, mantendo as camadas alinhadas. */
+  padding-block: var(--space-1);
+  line-height: calc(var(--control-height-md) - var(--space-2));
+}
+
+/* Envolve só a URL (sem o método) para o aviso de importação cobrir o campo certo. */
+.rw-endpoint-url {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+/* cURL colado: o aviso ocupa o lugar do texto enquanto o comando é convertido.
+   Fica acima do input (z-index 1) e do overlay de destaque (z-index 2) do
+   `TemplateHighlightedField`, cobrindo a URL substituída pela seleção inteira. */
+.rw-endpoint-importing {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  background: var(--surface-raised);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  pointer-events: none;
+  animation: ui-fade-in var(--duration-fast) var(--ease-out);
+}
+
+.rw-endpoint-loading-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.rw-endpoint-method--get {
+  color: var(--success);
+}
+
+.rw-endpoint-method--post {
+  color: var(--warning);
+}
+
+.rw-endpoint-method--put,
+.rw-endpoint-method--patch,
+.rw-endpoint-method--head,
+.rw-endpoint-method--options {
+  color: var(--info);
+}
+
+.rw-endpoint-method--delete {
+  color: var(--error);
+}
+
+.rw-endpoint-method--graphql {
+  color: var(--accent-strong);
+}
+
+.rw-endpoint-action {
+  min-width: 84px;
+  min-height: var(--control-height-md);
+}
+
+/* "Enviar" + seta das outras formas de enviar, colados como um só controle;
+   a largura total bate com a do "Cancelar" para o botão não pular ao enviar. */
+.rw-endpoint-send-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.rw-endpoint-action--split {
+  min-width: 56px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.rw-endpoint-send-options {
+  width: 28px;
+  min-height: var(--control-height-md);
+  padding-inline: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-color: color-mix(in srgb, var(--on-accent) 25%, transparent);
+}
+
+/* Em portal no body, posicionado pelo componente (`top`/`right`). */
+.rw-send-menu {
+  position: fixed;
+  z-index: var(--z-overlay);
+  min-width: 160px;
+}
+
+.rw-request-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+/* Com pouco espaço vertical (ex.: console aberto), as abas não encolhem por
+   cima do conteúdo: o painel rola em vez de sobrepor. */
+.rw-request-pane > * {
+  flex-shrink: 0;
+}
+
+.rw-request-pane > .rw-tabpanel {
+  flex: 1 0 auto;
+  min-height: 160px;
+  /* A borda inferior das abas já separa; evita uma linha dupla. */
+  border-top: 0;
+}
+
+/* Aba Query: o painel ocupa só a altura disponível em vez de crescer até o
+   conteúdo, para o explorador de schema e o editor rolarem cada um por
+   dentro — e não o painel inteiro junto. */
+.rw-request-pane > .rw-tabpanel--query {
+  flex: 1 1 0;
+}
+
+.rw-request-pane > .ui-tabs {
+  /* Mesma altura de `.rw-response-toolbar`: com a resposta à direita, as
+     linhas logo abaixo do cabeçalho ficam alinhadas entre as duas colunas. */
+  min-height: 44px;
+  padding: 0 12px;
+  /* Painel estreito: as abas rolam na horizontal em vez de se sobrepor. */
+  overflow-x: auto;
+  /* `overflow-x: auto` sozinho torna o eixo y `auto` também; sem isto o
+     WebKitGTK chegava a exibir um scrollbar vertical momentâneo. */
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+/* Tamanho zero além de `display: none`: o WebKitGTK nem sempre respeita o
+   `display` no pseudo-elemento e herdava os 10px do scrollbar global, que
+   piscava ao abrir uma requisição ou trocar de aba. */
+.rw-request-pane > .ui-tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.rw-request-pane > .ui-tabs > .ui-tab {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.rw-tabpanel {
+  background: var(--surface);
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.rw-query-layout {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-query-explorer-wrapper {
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.rw-query-layout > .rw-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-query-editor-panel {
+  position: relative;
+}
+
+.rw-line-count {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rw-line-count--response {
+  align-self: flex-end;
+}
+
+.rw-query-format-button {
+  background: transparent;
+}
+
+.rw-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 2px 8px 2px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+/* Igual ao `.rw-request-body-editor` do corpo da requisição: o editor de
+   query (CodeMirror 6) preenche a altura disponível do layout e rola por
+   dentro. */
+.rw-query-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-query-editor .cm-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-query-editor .cm-scroller {
+  overflow: auto;
+}
+
+.rw-variables-editor-panel {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-variables-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-variables-editor .cm-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-variables-editor .cm-scroller {
+  overflow: auto;
+}
+
+.rw-query-explorer-handle {
+  flex-shrink: 0;
+  width: 16px;
+  margin: 0 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--font-size-md);
+}
+
+.rw-query-explorer-handle:hover {
+  color: var(--accent-strong);
+}
+
+/* Mesma ideia da query acima: o editor da aba Body (REST) preenche a
+   altura disponível da aba em vez de ficar limitado a uma altura fixa. */
+.rw-request-body-panel {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Igual ao `.rw-code-view` da resposta (CodeMirror 6), mas preenchendo a
+   altura do painel e rolando por dentro, em vez do `max-height` fixo usado
+   ali — o corpo da requisição vive num painel de altura já limitada pela
+   aba, não numa página que rola inteira. */
+.rw-request-body-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-request-body-editor .cm-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-request-body-editor .cm-scroller {
+  overflow: auto;
+}
+
+.rw-query-warnings {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rw-query-warning {
+  font-size: var(--font-size-sm);
+  color: var(--warning);
+}
+
+.rw-params-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.rw-params-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rw-params-section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.rw-params-section-header .ui-bulk-toolbar {
+  margin-bottom: 0;
+}
+
+.rw-params-section-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.rw-route-param-name {
+  font-family: var(--font-mono);
+}
+
+.rw-headers-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+}
+
+.rw-headers-table th {
+  text-align: left;
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-tight);
+  color: var(--text-muted);
+  font-weight: var(--font-weight-medium);
+  padding: var(--space-1) var(--space-2);
+}
+
+.rw-headers-table td {
+  padding: 3px 8px;
+}
+
+.rw-headers-table--grid {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.rw-headers-table--grid th {
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.rw-headers-table--grid tbody tr:not(:last-child) td {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.rw-headers-table--grid tbody tr:hover {
+  background: var(--surface);
+}
+
+.rw-headers-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.rw-headers-toolbar .ui-bulk-toolbar {
+  margin-bottom: 0;
+}
+
+.rw-generated-headers-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.rw-generated-headers-toggle:hover {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--surface);
+}
+
+.rw-generated-headers-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rw-headers-table--grid tbody tr.rw-header-row--generated {
+  background: color-mix(in srgb, var(--surface-raised) 82%, var(--bg));
+  color: var(--text-muted);
+  cursor: help;
+}
+
+.rw-headers-table--grid tbody tr.rw-header-row--generated:hover {
+  background: color-mix(in srgb, var(--surface-raised) 74%, var(--bg));
+}
+
+.rw-header-row--generated .ui-checkbox {
+  cursor: help;
+}
+
+.rw-generated-header-field {
+  display: block;
+  min-height: 28px;
+  padding: 6px 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-generated-header-actions {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-align: right;
+}
+
+.rw-header-row--duplicate .ui-input {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning) 75%, var(--accent));
+}
+
+.rw-header-row--duplicate .ui-input:focus {
+  box-shadow:
+    inset 3px 0 0 color-mix(in srgb, var(--warning) 75%, var(--accent)),
+    inset 0 0 0 1px var(--accent);
+}
+
+.rw-headers-table--grid .ui-input {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+.rw-headers-table--grid .ui-input:focus {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.rw-headers-table--grid .ui-icon-button {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.rw-headers-table--grid tbody tr:hover .ui-icon-button,
+.rw-headers-table--grid .ui-icon-button:focus-visible {
+  opacity: 1;
+}
+
+.rw-link-button {
+  background: transparent;
+  border: none;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  font-size: var(--font-size-sm);
+  padding: 4px;
+  cursor: pointer;
+}
+
+.rw-link-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rw-authorization-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Formulário em grade: mesmo vocabulário visual das tabelas de Headers/Params
+ * (bordas finas, linhas separadas, campos sem moldura até receber foco). */
+.rw-auth-grid {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.rw-auth-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr);
+  align-items: center;
+  min-height: var(--control-height-md);
+  padding: 3px var(--space-2);
+}
+
+.rw-auth-row:not(:last-child) {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.rw-auth-row:hover {
+  background: var(--surface);
+}
+
+.rw-auth-label {
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+}
+
+.rw-auth-control .ui-input,
+.rw-auth-control .ui-option-select {
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+
+.rw-auth-control .ui-option-select:hover {
+  border-color: transparent;
+  background: var(--bg);
+}
+
+.rw-auth-control .ui-option-select:focus-visible,
+.rw-auth-control .ui-option-select[aria-expanded='true'] {
+  border-color: transparent;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.rw-auth-control .ui-input:focus:not(:disabled) {
+  background: var(--bg);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.rw-auth-hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-tight);
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .rw-auth-row {
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: var(--space-1);
+  }
+}
+
+.rw-request-response-layout {
+  display: flex;
+  flex: 1;
+  gap: 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.rw-request-response-layout--bottom {
+  flex-direction: column;
+}
+
+.rw-request-response-layout--right {
+  flex-direction: row;
+}
+
+.rw-request-response-layout--right > .rw-tabpanel {
+  min-width: 0;
+}
+
+.rw-request-response-layout--right > .rw-request-pane {
+  min-width: 0;
+}
+
+.rw-response-wrapper {
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+/* Sem `height` explícito — como `.rw-sidebar-wrapper`, deixa o `align-items:
+   stretch` padrão da linha (`.rw-request-response-layout--right`) preencher a
+   altura. Um `height: 100%` aqui não resolve de forma confiável em todo
+   motor de renderização (a altura de `.rw-request-response-layout` vem de
+   `flex-grow`, não de um valor explícito), então melhor não depender disso. */
+.rw-response-wrapper--right {
+  min-width: 0;
+}
+
+.rw-response {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.rw-response-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-size-sm);
+}
+
+.rw-response-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rw-response-summary--error {
+  color: var(--error);
+}
+
+.rw-response-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+  font-weight: var(--font-weight-semibold);
+}
+
+.rw-response-status--success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.rw-response-status--redirect,
+.rw-response-status--neutral {
+  color: var(--text);
+}
+
+.rw-response-status--warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.rw-response-status--error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.rw-response-metric {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Globo de conexão no resumo da resposta (`ResponseNetworkBadge`). */
+.rw-network-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.rw-network-badge:hover,
+.rw-network-badge:focus-visible {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+
+.rw-network-badge--warning,
+.rw-network-badge--warning:hover,
+.rw-network-badge--warning:focus-visible {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* Mesma superfície de `.ui-tooltip`; não interativo. */
+.rw-network-card {
+  position: fixed;
+  z-index: var(--z-drag-preview);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 280px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  pointer-events: none;
+  animation: ui-tooltip-in var(--duration-fast) var(--ease-out);
+}
+
+.rw-network-card-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.rw-network-card-warning svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.rw-network-card-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.rw-network-card-list dt {
+  color: var(--text-muted);
+}
+
+.rw-network-card-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-response-body {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* `display: flex` acima tem que ceder para o atributo `hidden` (as três
+   abas — body/headers/errors — ficam montadas ao mesmo tempo, alternando
+   `hidden`, ver `ResponsePanel.tsx`): sem isto, a regra do autor sempre
+   vence o `display: none` do user-agent para `[hidden]`, e as três
+   aparecem empilhadas em vez de só a ativa. */
+.rw-response-body[hidden] {
+  display: none;
+}
+
+/* Estados sem corpo rolável (idle/loading/erro) — centraliza a mensagem em
+   vez de deixá-la colada no topo de um painel que pode ficar bem alto (ex.:
+   layout lateral, onde o painel ocupa a altura inteira da janela). */
+.rw-response-body--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Envio do histórico sem resposta guardada: mensagem e link empilhados,
+   centralizados na aba (Body ou Headers). */
+.rw-response-not-stored {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.rw-status-message {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  margin: 0;
+}
+
+.rw-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rw-response-failure {
+  max-width: 640px;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.rw-failure-detail {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.rw-failure-detail code {
+  font-family: var(--font-mono);
+}
+
+.rw-code-block {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.rw-code-block-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rw-code-block-notice {
+  font-style: italic;
+}
+
+.rw-raw-section-label {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rw-table-scroll {
+  overflow-x: auto;
+}
+
+.rw-code-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rw-response-format-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rw-code-view .cm-editor {
+  height: auto;
+}
+
+.rw-code-view .cm-scroller {
+  overflow: auto;
+  max-height: 60vh;
+}
+
+:is(.rw-code-view, .rw-request-body-editor, .rw-variables-editor) .cm-foldGutter .cm-gutterElement {
+  width: 16px;
+  padding: 0 2px;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+}
+
+:is(.rw-code-view, .rw-request-body-editor, .rw-variables-editor) .cm-foldGutter .cm-gutterElement:hover {
+  color: var(--accent);
+}
+
+:is(.rw-code-view, .rw-request-body-editor, .rw-variables-editor) .cm-foldPlaceholder {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+
+.rw-response-code-context-menu {
+  position: fixed;
+  z-index: var(--z-overlay);
+  min-width: 128px;
+}
+
+/* Dentro de `.rw-response-body` (o painel de resposta, que já ocupa a altura
+   disponível da tela e rola por dentro — ver acima) o `max-height: 60vh`
+   genérico sobrava: o editor crescia até 60vh e rolava por dentro *enquanto*
+   `.rw-response-body` também rolava em volta dele, duas barras de rolagem
+   para o mesmo conteúdo. Aqui o editor preenche a altura restante do painel
+   e só o `cm-scroller` rola — igual ao padrão de `.rw-request-body-editor`. */
+.rw-response-body .rw-code-block-wrapper {
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-response-body .rw-code-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-response-body .rw-code-view .cm-editor {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.rw-response-body .rw-code-view .cm-scroller {
+  max-height: none;
+}
+
+.rw-image-preview {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
+
+.rw-html-preview {
+  width: 100%;
+  height: min(60vh, 640px);
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--preview-bg);
+}
+
+.rw-response .ui-tabs {
+  padding: 0 12px;
+}
+
+.rw-headers-table--readonly td {
+  color: var(--text);
+}
+
+.rw-header-value {
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.rw-graphql-errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rw-graphql-error {
+  border: 1px solid var(--error);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+}
+
+.rw-graphql-error-message {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--font-size-md);
+}
+
+.rw-graphql-error-path {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+}
+
+/* ---- Motion: transições de interação e entrada de conteúdo ---- */
+
+.rw-link-button,
+.rw-query-explorer-handle,
+.rw-query-format-button {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out);
+}
+
+/* Conteúdo do tabpanel entra com fade curto ao trocar de aba. */
+.rw-tabpanel > * {
+  animation: ui-fade-in var(--duration-fast) var(--ease-out);
+}
+
+/* ---- Resposta: spinner e fade entre estados (barra indeterminada é
+   `shared/ui/loading-bar.css`, reaproveitada fora da resposta também) ---- */
+
+.rw-response-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rw-response-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: ui-fade-in var(--duration-base) var(--ease-out);
+}
+
+.rw-console-wrapper {
+  animation: ui-view-in var(--duration-base) var(--ease-out);
+}
+
+.rw-panel {
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+/* Substituto de foco para o editor (que remove o outline): borda do painel. */
+.rw-query-editor-panel:focus-within {
+  border-color: var(--border-strong);
+}
+
+.rw-status-message--row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Aba Scripts: seletor pré/pós no topo, editor preenchendo o resto e, abaixo,
+   a saída da última execução (logs e falha do script). */
+.rw-scripts-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rw-scripts-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rw-script-output {
+  max-height: 30%;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.rw-script-output p {
+  margin: 0;
+}
+
+.rw-script-output-error {
+  color: var(--error);
+}
+
+.rw-load-errors {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3);
+}
+
+.rw-load-errors p,
+.rw-load-errors ul {
+  margin: 0;
+}
+
+.rw-load-errors ul {
+  padding-left: var(--space-4);
+}

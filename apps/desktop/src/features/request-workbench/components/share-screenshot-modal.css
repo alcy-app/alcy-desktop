@@ -1,0 +1,109 @@
+/* Mais largo que `ui-modal--wide`: a prévia precisa de espaço para ser legível. */
+.share-shot-modal {
+  width: 1080px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.share-shot {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.share-shot-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.share-shot-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.share-shot-group-label {
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+}
+
+/* Opções lado a lado, dividindo a largura do modal. */
+.ui-segmented.share-shot-segmented {
+  display: flex;
+}
+
+.share-shot-segmented .ui-segmented-option {
+  flex: 1;
+}
+
+.share-shot-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+}
+
+.share-shot-check:has(input:disabled) {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.share-shot-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.share-shot-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 70vh;
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+/* O canvas tem o tamanho da exportação (2x); a prévia só reduz na tela. */
+.share-shot-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.share-shot-canvas[hidden] {
+  display: none;
+}
+
+.share-shot-empty {
+  margin: auto;
+  padding: var(--space-8) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .share-shot {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

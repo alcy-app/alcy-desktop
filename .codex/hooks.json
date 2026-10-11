@@ -1,0 +1,18 @@
+{
+  "description": "Guarda de segurança compartilhada com o Claude Code",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/guard.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Verificando política de segurança"
+          }
+        ]
+      }
+    ]
+  }
+}

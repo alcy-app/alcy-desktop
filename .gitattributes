@@ -1,0 +1,3 @@
+# Runtime do webclient (ADR 0046): a CSP traz o hash exato dos blocos inline,
+# então o arquivo não pode ter as quebras de linha convertidas no checkout.
+crates/alcy-webclient/runtime/alcy-webclient.html -text

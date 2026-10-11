@@ -1,0 +1,6 @@
+# Compilador fixo para que o mesmo commit gere o mesmo binário. Atualizar de
+# forma deliberada (e rodar `pnpm check`), nunca por flutuação do `stable`.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

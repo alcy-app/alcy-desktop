@@ -1,0 +1,52 @@
+.image-drop-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: var(--backdrop);
+  backdrop-filter: blur(2px);
+  z-index: var(--z-overlay);
+  pointer-events: none;
+  animation: image-drop-fade-in var(--duration-base) var(--ease-out);
+}
+
+.image-drop-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 420px;
+  padding: var(--space-5);
+  text-align: center;
+  background: var(--surface);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.image-drop-overlay-icon {
+  display: flex;
+  color: var(--accent-strong);
+}
+
+.image-drop-overlay-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.image-drop-overlay-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+}
+
+@keyframes image-drop-fade-in {
+  from {
+    opacity: 0;
+  }
+}

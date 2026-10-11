@@ -1,0 +1,293 @@
+.updates {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Cartão de situação: versão instalada, etapa atual e a ação principal. */
+.updates-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.updates-status-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.updates-status-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+}
+
+.updates-status-icon[data-tone='success'] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.updates-status-icon[data-tone='accent'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.updates-status-icon[data-tone='error'] {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.updates-status-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.updates-status-title,
+.updates-status-detail {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.updates-status-title {
+  color: var(--text-heading);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.updates-status-detail {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.updates-status-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--space-2);
+}
+
+.updates-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.updates-progress-track {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+}
+
+.updates-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+.updates-progress-track[data-indeterminate='true'] .updates-progress-fill {
+  width: 30%;
+  animation: updates-progress-indeterminate 1.2s var(--ease-in-out) infinite;
+}
+
+@keyframes updates-progress-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(340%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .updates-progress-fill {
+    transition: none;
+  }
+
+  .updates-progress-track[data-indeterminate='true'] .updates-progress-fill {
+    width: 100%;
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
+.updates-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.updates-alert {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.updates-alert .ui-inline-alert {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Detalhes da release disponível: nome, data e notas publicadas no GitLab. */
+.updates-release {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.updates-release-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.updates-release-heading {
+  min-width: 0;
+}
+
+.updates-release-title,
+.updates-release-date,
+.updates-release-empty {
+  margin: 0;
+}
+
+.updates-release-title {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.updates-release-date,
+.updates-release-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.updates-release-notes {
+  max-height: 180px;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.updates-release-notes:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.updates-source,
+.updates-startup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.updates-source-provider {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.updates-source-url {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.updates-source-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.updates-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+/* Indicador da barra inferior (segue o visual dos demais itens da barra). */
+.updates-statusbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent-softer);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.updates-statusbar:hover {
+  background: var(--accent-soft);
+}
+
+.updates-statusbar[data-phase='ready'],
+.updates-statusbar[data-phase='installing'] {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.updates-statusbar:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (max-width: 720px) {
+  .updates-status-main {
+    flex-wrap: wrap;
+  }
+
+  .updates-status-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

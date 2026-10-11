@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+# Todo diretório em `crates/` é membro: criar um crate não exige alterar este
+# arquivo.
+members = ["src-tauri", "crates/*"]
+
+# O código do Alcy não usa `unsafe` (ver CLAUDE.md/AGENTS.md); o compilador
+# garante isso em todos os crates do workspace.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Release: binário menor e código mais rápido. `panic` continua `unwind` de
+# propósito — o tokio isola um panic na task (um comando falha sozinho); com
+# `abort`, o mesmo panic derrubaria o app inteiro.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Em desenvolvimento, só as dependências são otimizadas (serde_json, boa,
+# parsers YAML/OpenAPI): o código do Alcy continua com build incremental
+# rápido, mas parse de JSON/OpenAPI grande deixa de levar segundos em debug.
+[profile.dev.package."*"]
+opt-level = 2

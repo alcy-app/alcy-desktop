@@ -1,0 +1,1396 @@
+/*
+ * @xyflow/react é temado via as variáveis --xy-* do próprio pacote — só remapeadas
+ * para os tokens do app aqui, nunca com cor/tamanho cru. As variáveis só
+ * afetam chrome da biblioteca (fundo, controles, seleção, handles, edges);
+ * o conteúdo dos node types customizados (`.flow-node`) é estilizado
+ * diretamente abaixo, já que a biblioteca não aplica --xy-node-* a nodes
+ * que não são um dos tipos embutidos (`default`/`input`/`output`/`group`).
+ */
+.flow-canvas-shell {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+.flow-canvas {
+  /* Tempo que o cometa leva para percorrer uma edge (ver `.flow-edge-comet`). */
+  --flow-trail-travel: 600ms;
+
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-color: var(--border-strong);
+  --xy-edge-stroke: var(--text-muted);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: var(--accent-strong);
+  --xy-connectionline-stroke: var(--accent-strong);
+  --xy-handle-background-color: var(--accent);
+  --xy-handle-border-color: var(--surface-raised);
+  --xy-selection-background-color: var(--accent-softer);
+  --xy-selection-border: 1px dashed var(--accent);
+  --xy-controls-button-background-color: var(--surface-raised);
+  --xy-controls-button-background-color-hover: var(--surface-overlay);
+  --xy-controls-button-color: var(--text-muted);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: var(--shadow-sm);
+}
+
+/*
+ * Cartão de node (spec 0087): cabeçalho (ícone da categoria, título,
+ * subtítulo, status do run e ações), corpo, faixa de erro, meta e saídas.
+ * `--node-tone` vem da classe `flow-node--tone-*` e pinta o ícone, a borda
+ * superior, a seleção e o estado ativo — a paleta de blocos reusa as mesmas
+ * classes de tom. Sem `transition` nos hovers (causava um artefato de
+ * repaint no WebKitGTK).
+ */
+.flow-node--tone-start {
+  --node-tone: var(--flow-tone-start);
+}
+
+.flow-node--tone-control {
+  --node-tone: var(--flow-tone-control);
+}
+
+.flow-node--tone-request {
+  --node-tone: var(--flow-tone-request);
+}
+
+.flow-node--tone-data {
+  --node-tone: var(--flow-tone-data);
+}
+
+.flow-node--tone-time {
+  --node-tone: var(--flow-tone-time);
+}
+
+.flow-node--tone-output {
+  --node-tone: var(--flow-tone-output);
+}
+
+.flow-node--tone-note {
+  --node-tone: var(--flow-tone-note);
+}
+
+.flow-node--tone-mock {
+  --node-tone: var(--flow-tone-mock);
+}
+
+.flow-node {
+  /* Centro vertical do ícone do cabeçalho — onde ficam a entrada e a saída única. */
+  --node-header-anchor: 28px;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--node-tone, var(--border-strong));
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.flow-node:hover {
+  border-color: var(--border-strong);
+  border-top-color: var(--node-tone, var(--border-strong));
+}
+
+.flow-node--compact {
+  width: 210px;
+}
+
+/* Ponte invisível entre o node e o pill de ações flutuante (que fica acima,
+   com um vão) — sem isso, mover o mouse do node até os botões passaria por
+   uma faixa sem elemento nenhum, e `:hover` cairia no meio do caminho antes
+   do cursor chegar lá (pseudo-elemento conta como parte do próprio
+   `.flow-node` para fins de :hover, ao contrário de um elemento irmão). */
+.flow-node::before {
+  content: '';
+  position: absolute;
+  top: -34px;
+  right: 6px;
+  width: 50px;
+  height: 34px;
+}
+
+.flow-node-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.flow-node-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--node-tone, var(--border-strong)) 14%, transparent);
+  color: var(--node-tone, var(--text-muted));
+}
+
+.flow-node-heading {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.flow-node-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.flow-node-title {
+  overflow: hidden;
+  color: var(--text-heading);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-subtitle {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-normal);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.flow-node-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 45%;
+}
+
+.flow-node-run-chip {
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.flow-node-run-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-run-chip-detail {
+  flex: none;
+  font-weight: var(--font-weight-normal);
+  opacity: 0.8;
+}
+
+.flow-node-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.flow-node-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--error-soft);
+  background: var(--error-soft);
+  color: var(--error);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+}
+
+.flow-node-error svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.flow-node-error-message {
+  display: -webkit-box;
+  overflow: hidden;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.flow-node-meta {
+  display: flex;
+  align-items: center;
+  padding: 2px var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.flow-node-id-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.flow-node-id {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* Saídas nomeadas: uma linha por saída, com o handle na borda direita da
+   linha (`position: relative` ancora o `Handle` do xyflow nela). */
+.flow-node-outputs {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.flow-node-output {
+  --output-color: var(--text-muted);
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 26px;
+  padding-right: var(--space-4);
+}
+
+.flow-node-output--positive {
+  --output-color: var(--success);
+}
+
+.flow-node-output--negative {
+  --output-color: var(--error);
+}
+
+.flow-node-output--loop {
+  --output-color: var(--warning);
+}
+
+.flow-node-output-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.flow-node-output-label::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--output-color);
+}
+
+/* Handles: maiores que o padrão do xyflow e com anel na cor da superfície,
+   para destacar da borda do cartão. */
+.flow-node .flow-node-handle {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--surface);
+  background: var(--text-muted);
+}
+
+.flow-node .flow-node-handle:hover {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--node-tone, var(--accent)) 30%, transparent);
+}
+
+.flow-node .flow-node-handle--input,
+.flow-node .flow-node-handle--header {
+  top: var(--node-header-anchor);
+}
+
+.flow-node .flow-node-handle--header {
+  background: var(--node-tone, var(--text-muted));
+}
+
+.flow-node .flow-node-output .flow-node-handle {
+  right: -1px;
+  background: var(--output-color);
+}
+
+/* Seleção e estados do run — todos estáticos (a "luz andando" fica só nas
+   edges, ver `.flow-edge--active`). */
+.react-flow__node.selected .flow-node {
+  border-color: var(--node-tone, var(--accent-strong));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--node-tone, var(--accent-strong)) 35%, transparent),
+    var(--shadow-md);
+}
+
+.flow-node--active {
+  border-color: var(--node-tone, var(--accent-strong));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--node-tone, var(--accent-strong)) 28%, transparent),
+    var(--shadow-md);
+}
+
+.flow-node--failed {
+  border-color: var(--error);
+}
+
+.flow-node--skipped {
+  opacity: 0.55;
+}
+
+/* Node por onde o run já passou (rastro). O único movimento extra é uma
+   varredura de luz: um gradiente no próprio fundo do cartão, por baixo do
+   texto (não um pseudo-elemento por cima dele), sincronizada com o cometa da
+   edge de entrada. O valor base é o estado final (gradiente já fora do
+   cartão) e a animação usa `backwards`, então deixa de valer ao terminar.
+   Uma camada por cima do texto ou uma animação que nunca termina fazia o
+   WebKitGTK rasterizar o node numa escala fixa, e o texto ficava borrado
+   no zoom. `prefers-reduced-motion` já neutraliza a animação (index.css). */
+.flow-node--active,
+.flow-node--visited {
+  background-image: linear-gradient(90deg, transparent 0%, var(--accent-soft) 50%, transparent 100%);
+  background-repeat: no-repeat;
+  background-size: 60% 100%;
+  background-position: 250% 0;
+  /* Espera o cometa terminar de percorrer a edge de entrada antes de varrer o node. */
+  animation: flow-node-sweep 900ms ease-in-out var(--flow-trail-travel) 1 backwards;
+}
+
+.flow-node--start.flow-node--visited {
+  animation-delay: 0s;
+}
+
+@keyframes flow-node-sweep {
+  from {
+    background-position: -150% 0;
+  }
+  to {
+    background-position: 250% 0;
+  }
+}
+
+/* Conteúdo do corpo por tipo. */
+.flow-node-placeholder {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+}
+
+.flow-node-caption {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.flow-node-condition {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.flow-node-condition-operand {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-condition-operator {
+  flex: none;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--node-tone) 14%, transparent);
+  color: var(--node-tone);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.flow-node-code-block {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: var(--space-2);
+  border-left: 2px solid var(--node-tone);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.flow-node-inline-code {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sem rolagem (`overflow: hidden`), de propósito: uma área rolável dentro do
+   viewport faz o WebKitGTK compor o canvas inteiro numa camada rasterizada,
+   e todos os nodes ficam borrados no zoom. Ver `DisplayNode`. */
+.flow-node-display-value {
+  max-height: 180px;
+  margin: 0;
+  padding: var(--space-2);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+  user-select: text;
+}
+
+.flow-node-display-placeholder {
+  padding: var(--space-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.flow-node-duration {
+  color: var(--text-heading);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-tight);
+}
+
+.flow-node-assignments {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.flow-node-assignment {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+}
+
+.flow-node-assignment + .flow-node-assignment {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.flow-node-assignment-name,
+.flow-node-assignment-value {
+  margin: 0;
+  padding: 3px var(--space-2);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-assignment-name {
+  background: var(--surface-raised);
+  color: var(--node-tone);
+  font-weight: var(--font-weight-medium);
+}
+
+.flow-node-assignment-value {
+  color: var(--text);
+}
+
+.flow-node-assignment-operator {
+  margin-right: var(--space-1);
+  color: var(--text-muted);
+}
+
+/* Requisições: método com a mesma cor por método do editor de requisições. */
+.flow-node-method {
+  --method-color: var(--info);
+
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--method-color) 14%, transparent);
+  color: var(--method-color);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+.flow-node-method--get {
+  --method-color: var(--success);
+}
+
+.flow-node-method--post {
+  --method-color: var(--warning);
+}
+
+.flow-node-method--delete {
+  --method-color: var(--error);
+}
+
+.flow-node-method--graphql {
+  --method-color: var(--accent-strong);
+}
+
+.flow-node-url {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.flow-node-url:hover:not(:disabled),
+.flow-node-url:focus-visible {
+  border-color: var(--node-tone);
+  color: var(--text);
+}
+
+.flow-node-url:disabled {
+  cursor: default;
+}
+
+.flow-url-variable {
+  color: var(--accent);
+}
+
+.flow-node-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.flow-node-cta:hover:not(:disabled) {
+  border-color: var(--node-tone);
+  background: color-mix(in srgb, var(--node-tone) 8%, transparent);
+  color: var(--text);
+}
+
+/* Requisição de API recém-criada, ainda sem requisição escolhida. */
+.flow-node--unconfigured {
+  border-style: dashed;
+  border-top-style: solid;
+}
+
+/* Referência quebrada: a requisição não existe mais em nenhuma coleção. */
+.flow-node--broken {
+  border-color: var(--error);
+}
+
+.flow-node--broken .flow-node-cta {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.flow-node--broken .flow-node-cta:hover:not(:disabled) {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+/* Anotação: ocupa o tamanho do node (definido pelo `NodeResizer`), sem
+   handles nem cabeçalho — um post-it no tom da categoria. */
+.flow-node--note {
+  width: 100%;
+  height: 100%;
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--node-tone) 45%, transparent);
+  background: color-mix(in srgb, var(--node-tone) 12%, var(--surface));
+}
+
+.flow-node--note:hover {
+  border-color: var(--node-tone);
+}
+
+.flow-note-text {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-md);
+  line-height: var(--leading-normal);
+  /* Sem barra de rolagem (mesmo motivo de `.flow-node-display-value`): texto
+     que não cabe fica cortado até a anotação ser redimensionada. */
+  overflow: hidden;
+  resize: none;
+  outline: none;
+}
+
+.flow-note-text::placeholder {
+  color: var(--text-muted);
+}
+
+/* Fora da edição o texto é um `div` (sem `nodrag`), para a nota arrastar por
+   qualquer ponto; quebra as linhas como o `textarea` da edição. */
+div.flow-note-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.flow-note-text--empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Pill de ações flutuante acima do node,
+   reunindo duplicar + excluir num único contêiner, com um vão entre o pill
+   e o node — não grudado/sobrepondo a borda. Visível só quando o node está
+   selecionado (`.selected`, aplicado pelo próprio xyflow ao clicar) *e* o
+   mouse está em cima dele ao mesmo tempo — as duas condições precisam
+   valer juntas, por isso o seletor encadeia `.selected` no ancestral com
+   `:hover` no `.flow-node`. `:focus-within` cobre navegação por teclado
+   (tab até um botão sem precisar do hover). Sem `transition` (mesmo motivo
+   dos outros hovers desta página: causava um artefato de repaint no
+   WebKitGTK). */
+.flow-node-toolbar {
+  position: absolute;
+  top: -30px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-flow__node.selected .flow-node:hover .flow-node-toolbar,
+.flow-node-toolbar:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.flow-node-toolbar-divider {
+  width: 1px;
+  height: 11px;
+  background: var(--border-strong);
+}
+
+.flow-node-toolbar-button {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  cursor: pointer;
+}
+
+.flow-node-toolbar-button:hover {
+  background: var(--surface);
+}
+
+/* Ícone de duplicar: duas folhas sobrepostas (dois retângulos com borda),
+   cada uma centralizada sozinha com `top/left: 50%` + `translate(-50%,
+   -50%)` e um pequeno deslocamento diagonal — sem ícone SVG (não
+   centralizava de forma confiável neste ambiente). */
+.flow-node-toolbar-button--duplicate::before,
+.flow-node-toolbar-button--duplicate::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border: 1.1px solid var(--text-muted);
+}
+
+.flow-node-toolbar-button--duplicate::before {
+  transform: translate(-50%, -50%) translate(-1.6px, -1.6px);
+}
+
+.flow-node-toolbar-button--duplicate::after {
+  transform: translate(-50%, -50%) translate(1.6px, 1.6px);
+  background: var(--surface-overlay);
+}
+
+.flow-node-toolbar-button--duplicate:hover::before,
+.flow-node-toolbar-button--duplicate:hover::after {
+  border-color: var(--accent-strong);
+}
+
+.flow-node-toolbar-button--duplicate:hover::after {
+  background: var(--surface);
+}
+
+/* Silhueta da lixeira em dois pseudo-elementos (tampa + balde), com a
+   mesma técnica de centralização independente do ícone de duplicar. */
+.flow-node-toolbar-button--delete::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 1.2px;
+  transform: translate(-50%, -50%) translateY(-3.4px);
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.flow-node-toolbar-button--delete::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4.8px;
+  height: 5.6px;
+  transform: translate(-50%, -50%) translateY(0.8px);
+  background: var(--text-muted);
+  clip-path: polygon(0% 0%, 100% 0%, 87% 100%, 13% 100%);
+}
+
+.flow-node-toolbar-button--delete:hover {
+  background: var(--error-soft);
+}
+
+.flow-node-toolbar-button--delete:hover::before,
+.flow-node-toolbar-button--delete:hover::after {
+  background: var(--error);
+}
+
+.flow-canvas-panel {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.flow-canvas-experimental-badge {
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
+.flow-add-menu-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Paleta de blocos (BlockPalette) — popover ancorado perto do gatilho (toolbar ou ponto onde uma conexão foi solta), não um modal centralizado. */
+.flow-block-palette {
+  position: fixed;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  max-height: 360px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.flow-block-palette-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.flow-block-palette-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-size-md);
+  outline: none;
+}
+
+.flow-block-palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+.flow-block-palette-group-label {
+  margin: 0 0 2px;
+  padding: 0 var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-block-palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-block-palette-item:hover,
+.flow-block-palette-item--active {
+  background: var(--accent-softer);
+}
+
+.flow-block-palette-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-block-palette-item-method {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+}
+
+.flow-block-palette-empty {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* Item de bloco da paleta: ícone no tom da categoria (mesmas classes
+   `flow-node--tone-*` do cartão), nome e descrição do tipo. */
+.flow-block-palette-item--block {
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+
+.flow-block-palette-item-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--node-tone) 14%, transparent);
+  color: var(--node-tone);
+}
+
+.flow-block-palette-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.flow-block-palette-item--block .flow-block-palette-item-name {
+  font-weight: var(--font-weight-medium);
+}
+
+.flow-block-palette-item-description {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Cabeçalho da etapa 2 do RequestPicker (coleção selecionada + voltar). */
+.flow-request-picker-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.flow-request-picker-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.flow-request-picker-back:hover {
+  color: var(--text);
+}
+
+.flow-request-picker-header-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+/* Painel inspetor de node (NodeInspectorPanel) — ancorado na borda direita do canvas. */
+.flow-inspector-panel {
+  position: absolute;
+  /* Abaixo do Panel "Run"/"Cancel" do xyflow (top-right) — evita sobrepor o botão. */
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-raised);
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  overflow-y: auto;
+}
+
+.flow-inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.flow-inspector-header h3 {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.flow-inspector-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3);
+}
+
+.flow-inspector-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+}
+
+.flow-inspector-condition {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.flow-inspector-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-body);
+  font-size: var(--font-size-sm);
+}
+
+.flow-inspector-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.flow-inspector-field-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-inspector-request-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.flow-inspector-request-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.flow-inspector-request-url {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  overflow-wrap: break-word;
+}
+
+.flow-inspector-section-title {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.flow-inspector-variables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.flow-inspector-variables-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.flow-inspector-variables-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.flow-inspector-variables-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.flow-inspector-variables-group-label {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-inspector-variable-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 5px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-inspector-variable-row:hover {
+  background: var(--accent-softer);
+}
+
+.flow-inspector-variable-reference {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.flow-inspector-variable-description {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.flow-inspector-variables-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* "X" no meio de uma edge, no hover (FlowEdge.tsx) — portalado pelo
+   EdgeLabelRenderer do xyflow, por isso fica fora do <g> da própria edge; a
+   visibilidade vem de `data.hovered` (calculado em FlowCanvas a partir de
+   onEdgeMouseEnter/Leave do próprio xyflow), não de :hover em CSS. */
+/* O "X" é desenhado com dois pseudo-elementos em vez de um ícone SVG — cada
+   barra é centralizada via `top/left: 50%` + `translate(-50%, -50%)`, uma
+   técnica imune a metrics de fonte/baseline ou peculiaridades de viewBox de
+   SVG dentro de flexbox (foi a causa do "X" saindo descentralizado antes). */
+.flow-edge-delete {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-overlay);
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.flow-edge-delete::before,
+.flow-edge-delete::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 1.5px;
+  background: var(--text-muted);
+  border-radius: var(--radius-full);
+}
+
+.flow-edge-delete::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.flow-edge-delete::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.flow-edge-delete:hover {
+  background: var(--error);
+  border-color: var(--error);
+}
+
+.flow-edge-delete:hover::before,
+.flow-edge-delete:hover::after {
+  background: var(--on-accent);
+}
+
+/* Rótulo do ramo ("Verdadeiro"/"Falso"/"Sucesso"/"Falha"/"Loop"/"Fim") numa
+   edge que sai de uma saída nomeada — sempre visível (diferente de
+   `.flow-edge-delete`, que só aparece no hover), um pouco acima do ponto
+   médio da edge para não empilhar em cima do "X" de excluir quando os dois
+   aparecem juntos. O ponto usa a mesma cor da saída no cartão. */
+.flow-edge-branch-label {
+  --branch-color: var(--text-muted);
+
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.flow-edge-branch-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--branch-color);
+}
+
+.flow-edge-branch-label--true,
+.flow-edge-branch-label--success {
+  --branch-color: var(--success);
+}
+
+.flow-edge-branch-label--failure {
+  --branch-color: var(--error);
+}
+
+.flow-edge-branch-label--loop {
+  --branch-color: var(--warning);
+}
+
+/* Traço na cor do ramo de onde a edge sai (a seta segue a mesma cor, ver
+   `edgeMarker`). Vem antes do rastro para que `--traversed`/`--active`, de
+   mesma especificidade, sobrescrevam; a seleção do xyflow tem especificidade
+   maior e continua vencendo. */
+.react-flow__edge-path.flow-edge--branch-true,
+.react-flow__edge-path.flow-edge--branch-success {
+  stroke: var(--success);
+}
+
+.react-flow__edge-path.flow-edge--branch-failure {
+  stroke: var(--error);
+}
+
+.react-flow__edge-path.flow-edge--branch-loop {
+  stroke: var(--warning);
+}
+
+/* Traço "andando" numa edge cujo node de destino está rodando agora
+   (FlowCanvas calcula `data.active` a partir de `runStatus`) — indica a
+   etapa atual do flow durante um Run. Só a(s) edge(s) ativa(s) anima(m) por
+   vez, nunca o grafo inteiro, para manter o custo de repaint baixo. */
+@keyframes flow-edge-flow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+/* Rastro do run: halo largo e translúcido por baixo (um `<path>` estático —
+   nada de `filter` SVG, que re-rasteriza a cada pan/zoom) e traço aceso nas
+   edges já percorridas. A ordem `glow -> traversed -> active` importa: a edge
+   em trânsito sobrescreve a percorrida. */
+.flow-edge-glow {
+  fill: none;
+  stroke: var(--accent-strong);
+  stroke-width: 9px;
+  stroke-linecap: round;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.flow-edge-comet {
+  fill: none;
+  stroke: var(--accent-strong);
+  stroke-width: 3.5px;
+  stroke-linecap: round;
+  stroke-dasharray: 14 200;
+  /* Estado final (dash já depois do fim da edge) como base, com `backwards`
+     — mesmo motivo da varredura dos nodes: nenhuma animação fica ativa
+     depois do run. */
+  stroke-dashoffset: -100;
+  pointer-events: none;
+  animation: flow-edge-comet var(--flow-trail-travel) ease-in-out 1 backwards;
+}
+
+/* Um único dash curto (`pathLength` normalizado em 100) que sai antes do início
+   da edge e termina depois do fim — o "rastro" indo de um node ao próximo. */
+@keyframes flow-edge-comet {
+  from {
+    stroke-dashoffset: 14;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+.react-flow__edge-path.flow-edge--traversed {
+  stroke: var(--accent-strong);
+  stroke-width: 2.5px;
+}
+
+.react-flow__edge-path.flow-edge--active {
+  stroke: var(--accent-strong);
+  stroke-width: 2.5px;
+  stroke-dasharray: 6 6;
+  animation: flow-edge-flow 0.6s linear infinite;
+}
+
+.flow-canvas-run-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.flow-canvas-load-progress {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.flow-canvas-load-progress strong { color: var(--text); }
+
+.load-run-confirmation-summary {
+  display: flex;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.load-run-confirmation-summary div { display: grid; gap: var(--space-1); }
+.load-run-confirmation-summary dt { color: var(--text-muted); font-size: var(--font-size-xs); }
+.load-run-confirmation-summary dd { margin: 0; font-weight: var(--font-weight-semibold); }
+.load-run-confirmation-list { max-height: 8rem; overflow: auto; margin: 0; padding-left: var(--space-4); font-family: var(--font-mono); font-size: var(--font-size-sm); }
+
+.flow-inspector-assignments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.flow-inspector-assignment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.flow-inspector-assignment-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}

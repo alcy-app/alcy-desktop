@@ -1,0 +1,13 @@
+[package]
+name = "alcy-scripting"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+boa_engine = "0.22"
+serde_json = "1.0"
+thiserror = "2"
+
+[lints]
+workspace = true

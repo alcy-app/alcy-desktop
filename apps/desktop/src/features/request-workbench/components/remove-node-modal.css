@@ -1,0 +1,14 @@
+.remove-collection-modal {
+  gap: var(--space-3);
+}
+
+.remove-collection-modal .ui-modal-description {
+  max-width: 52ch;
+  line-height: 1.5;
+}
+
+.remove-collection-modal .ui-modal-actions {
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}

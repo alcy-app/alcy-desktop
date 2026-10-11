@@ -1,0 +1,365 @@
+.var-highlight-wrapper {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+/* O `<input>` real fica embaixo, com o texto transparente (só o caret e a
+   seleção aparecem); o overlay por cima desenha o texto com os destaques. As
+   duas camadas recebem a mesma classe de campo (`fieldClassName`), então
+   padding, fonte e borda coincidem. O seletor com `>` supera em
+   especificidade os estilos de fundo/borda da classe de campo. */
+.var-highlight-wrapper > .var-highlight-input {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.var-highlight-wrapper > .var-highlight-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  /* Centraliza a linha verticalmente, como o `<input>` faz com o próprio texto. */
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  white-space: pre;
+}
+
+.var-highlight-text {
+  flex: none;
+}
+
+/* Campo mascarado: caracteres reais (mantêm a largura igual à do input),
+   transparentes e cobertos por pontos. */
+.var-masked-text {
+  color: transparent;
+  background: radial-gradient(circle, var(--text) 0 0.17em, transparent 0.19em) left center / 1ch 1em repeat-x;
+}
+
+.var-token {
+  position: relative;
+  border-radius: var(--radius-sm);
+  padding: 0 1px;
+  margin: 0 -1px;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.var-token--known {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.var-token--unknown {
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+/* Variável conhecida num campo mascarado (senha): cor própria, e o tooltip não mostra o valor. */
+.var-token--masked {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.route-param-token {
+  border-radius: var(--radius-sm);
+  padding: 0 1px;
+  margin: 0 -1px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  pointer-events: auto;
+  cursor: default;
+}
+
+/* Nos editores CodeMirror, a cor da variável vence o destaque de sintaxe
+   (ex.: `{{token}}` dentro de uma string JSON). */
+.cm-content .var-token span {
+  color: inherit;
+}
+
+.gql-token--keyword {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.gql-token--string {
+  color: var(--success);
+}
+
+.gql-token--number {
+  color: var(--warning);
+}
+
+.gql-token--variable {
+  color: var(--accent);
+}
+
+.gql-token--punctuation {
+  color: var(--text-muted);
+}
+
+.gql-token--comment {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Pré-visualização de `{{variável}}` ao passar o mouse — o mesmo cartão
+   (`variable-preview.ts`) nos dois mecanismos que o exibem: `.var-tooltip`
+   (campos de linha única, `TemplateHighlightedField` — portal em
+   document.body, position: fixed a partir do token) e o `hoverTooltip` dos
+   editores CodeMirror, que já posiciona o conteúdo via `.cm-tooltip`.
+   Interativo: com ambiente ativo, o valor é editável no próprio cartão. */
+.var-tooltip {
+  position: fixed;
+  z-index: var(--z-drag-preview);
+}
+
+/* Mesmo cartão de `.ui-tooltip`/`.ui-menu` (shared/ui): uma só superfície,
+   sem divisórias; o estado é um rótulo discreto com um ponto colorido. */
+.var-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 200px;
+  max-width: 320px;
+  padding: var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.var-preview-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.var-preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-heading);
+}
+
+.var-preview-badge {
+  --var-preview-status: var(--accent);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.var-preview-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--var-preview-status);
+}
+
+.var-preview--sensitive .var-preview-badge,
+.var-preview--hidden .var-preview-badge {
+  --var-preview-status: var(--warning);
+}
+
+.var-preview--undefined .var-preview-badge {
+  --var-preview-status: var(--error);
+}
+
+/* Origem de uma variável de coleção/pasta (ADR 0031). */
+.var-preview-source {
+  margin-top: calc(-1 * var(--space-1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Documentação importada do parâmetro de path (ADR 0035). */
+.var-preview-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+}
+
+.var-preview-doc-meta {
+  color: var(--text-muted);
+}
+
+.var-preview-doc-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* Valor em bloco monoespaçado: quebra em qualquer ponto (tokens, URLs) e
+   limita a altura — o cartão não rola (pointer-events: none). */
+.var-preview-value {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.var-preview-input {
+  display: block;
+  width: 100%;
+  min-height: var(--control-height-sm);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg);
+  color: var(--text);
+  caret-color: var(--caret);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.var-preview-input::placeholder {
+  color: var(--text-muted);
+}
+
+.var-preview-input:hover {
+  border-color: var(--border);
+}
+
+.var-preview-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.var-preview-action {
+  display: block;
+  margin-top: var(--space-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.var-preview-action:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.var-preview-action:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+.var-preview-hint,
+.var-preview-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.var-preview-empty {
+  font-style: italic;
+}
+
+.var-suggestions {
+  position: fixed;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1);
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+}
+
+.var-suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 5px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.var-suggestion-item:hover,
+.var-suggestion-item--active {
+  background: var(--accent-softer);
+}
+
+.var-suggestion-sensitive {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  flex: none;
+}
+
+.var-suggestion-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.var-suggestion-name,
+.var-suggestion-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.var-suggestion-description {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.var-suggestions-empty {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}

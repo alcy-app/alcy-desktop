@@ -1,0 +1,47 @@
+.ui-change-marker {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin: 0 2px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: default;
+}
+
+.ui-change-marker[data-kind='added'] {
+  color: var(--success);
+}
+
+.ui-change-marker[data-kind='modified'] {
+  color: var(--warning);
+}
+
+.ui-change-marker[data-kind='deleted'] {
+  color: var(--error);
+}
+
+.ui-change-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px;
+  border-radius: var(--radius-full);
+  cursor: default;
+}
+
+.ui-change-dot[data-kind='added'] {
+  background: var(--success);
+}
+
+.ui-change-dot[data-kind='modified'] {
+  background: var(--warning);
+}
+
+.ui-change-dot[data-kind='deleted'] {
+  background: var(--error);
+}

@@ -1,0 +1,93 @@
+.markdown-view {
+  color: var(--text);
+  font-size: var(--font-size-md);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.markdown-view > :first-child {
+  margin-top: 0;
+}
+
+.markdown-view > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-view :is(h2, h3, h4, h5, h6) {
+  margin: var(--space-6) 0 var(--space-2);
+  color: var(--text-heading);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.markdown-view h2 {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-xl);
+}
+
+.markdown-view h3 {
+  font-size: var(--font-size-lg);
+}
+
+.markdown-view :is(h4, h5, h6) {
+  font-size: var(--font-size-md);
+}
+
+.markdown-view :is(p, ul, ol, pre, blockquote) {
+  margin: 0 0 var(--space-3);
+}
+
+.markdown-view :is(ul, ol) {
+  padding-left: var(--space-6);
+}
+
+.markdown-view li + li {
+  margin-top: var(--space-1);
+}
+
+/* Sublistas e parágrafos dentro de itens não abrem espaço extra. */
+.markdown-view li > :is(ul, ol, p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-view a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.markdown-view code {
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.markdown-view pre {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  overflow-x: auto;
+}
+
+.markdown-view pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.markdown-view blockquote {
+  padding: 0 var(--space-3);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.markdown-view hr {
+  margin: var(--space-6) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}

@@ -1,0 +1,104 @@
+/* Base comum às duas formas de SegmentedControl. */
+.ui-segmented-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.ui-segmented-option:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
+}
+
+.ui-segmented-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* ── stacked: lista vertical de opções, para formulários e configurações ── */
+
+.ui-segmented--stacked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ui-segmented--stacked .ui-segmented-option {
+  justify-content: space-between;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-normal);
+}
+
+.ui-segmented--stacked .ui-segmented-option:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+}
+
+.ui-segmented--stacked .ui-segmented-option--active,
+.ui-segmented--stacked .ui-segmented-option--active:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+  color: var(--text-heading);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ── inline: trilho horizontal compacto, para barras de ferramentas ── */
+
+.ui-segmented--inline {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--segmented-track-bg);
+  border-radius: var(--radius-md);
+}
+
+.ui-segmented--inline .ui-segmented-option {
+  justify-content: center;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.ui-segmented--sm .ui-segmented-option {
+  height: 24px;
+  padding: 0 10px;
+}
+
+.ui-segmented--inline .ui-segmented-option:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/* Sem mudança de font-weight na seleção: alteraria a largura do texto e
+   faria as opções vizinhas "pularem". */
+.ui-segmented--inline .ui-segmented-option--active,
+.ui-segmented--inline .ui-segmented-option--active:hover:not(:disabled) {
+  background: var(--segmented-thumb-bg);
+  box-shadow: var(--segmented-thumb-shadow);
+  color: var(--text-heading);
+}
+
+.ui-segmented--inline .ui-segmented-option:focus-visible {
+  outline-offset: 0;
+}

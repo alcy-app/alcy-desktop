@@ -1,0 +1,108 @@
+.ui-checkbox {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  vertical-align: middle;
+}
+
+.ui-checkbox-input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-raised);
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ui-checkbox-control {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--on-accent);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.ui-checkbox-input:hover:not(:disabled) + .ui-checkbox-control {
+  border-color: var(--accent-strong);
+  background: var(--surface-raised);
+}
+
+.ui-checkbox-input:focus-visible {
+  outline: none;
+}
+
+.ui-checkbox-input:focus-visible + .ui-checkbox-control {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.ui-checkbox-input:checked + .ui-checkbox-control,
+.ui-checkbox-input:indeterminate + .ui-checkbox-control {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ui-checkbox-icon {
+  display: block;
+  width: 12px;
+  height: 12px;
+  overflow: hidden;
+}
+
+.ui-checkbox-check,
+.ui-checkbox-indeterminate {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.ui-checkbox-check {
+  transform: scale(0.75);
+  transform-origin: center;
+}
+
+.ui-checkbox-input:checked + .ui-checkbox-control .ui-checkbox-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.ui-checkbox-input:indeterminate + .ui-checkbox-control .ui-checkbox-indeterminate {
+  opacity: 1;
+}
+
+.ui-checkbox-input:disabled {
+  cursor: default;
+}
+
+.ui-checkbox-input:disabled + .ui-checkbox-control {
+  opacity: 0.5;
+  background: var(--surface-raised);
+}
+
+.ui-checkbox-input:disabled:checked + .ui-checkbox-control,
+.ui-checkbox-input:disabled:indeterminate + .ui-checkbox-control {
+  background: var(--accent);
+  border-color: var(--accent);
+}

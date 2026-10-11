@@ -1,0 +1,474 @@
+/* `position: relative` torna a sidebar o bloco de contenção dos elementos
+   absolutos dos painéis (ex.: rótulos `.rw-visually-hidden` da tabela de
+   variáveis). Sem isso eles se posicionam pela viewport, escapam do scroll da
+   sidebar e criam uma área rolável fantasma abaixo da janela. */
+.env-sidebar {
+  --workbench-sidebar-header-height: 44px;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  /* A linha no fundo continua a borda inferior do cabeçalho sob a calha da
+     scrollbar (track transparente), área que o cabeçalho sticky não alcança.
+     O fundo não rola com o conteúdo, então a linha fica fixa na altura dele. */
+  background:
+    linear-gradient(var(--border), var(--border)) no-repeat 0
+      calc(var(--workbench-sidebar-header-height) - 1px) / 100% 1px,
+    var(--surface);
+  padding: 0 12px 12px;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.workbench-navigation {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+}
+
+.workbench-rail {
+  display: flex;
+  flex: 0 0 48px;
+  flex-direction: column;
+  align-items: center;
+  width: 48px;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.workbench-rail-items,
+.workbench-rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.workbench-rail-footer {
+  margin-top: auto;
+}
+
+.workbench-rail-tooltip {
+  display: flex;
+}
+
+.workbench-rail-button,
+.workbench-rail .settings-menu-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.workbench-rail-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 2px solid var(--bg);
+  border-radius: var(--radius-full);
+  background: var(--accent-strong);
+  color: var(--on-accent);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+.workbench-rail-button:hover,
+.workbench-rail .settings-menu-button:hover {
+  background: var(--surface-overlay);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.workbench-rail-button[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.workbench-rail-button[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  width: 3px;
+  height: 20px;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: var(--accent);
+  animation: workbench-rail-indicator-in var(--duration-base) var(--ease-out);
+}
+
+@keyframes workbench-rail-indicator-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.4);
+  }
+}
+
+.workbench-sidebar-header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: var(--workbench-sidebar-header-height);
+  margin: 0 -12px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.component-kind-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin-left: -8px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.component-kind-trigger:hover,
+.component-kind-trigger:focus-visible,
+.component-kind-trigger[aria-expanded='true'] {
+  background: var(--surface-raised);
+}
+
+/* Sem anel de foco na cor de destaque: o fundo acima já indica o foco. */
+.component-kind-trigger:focus-visible {
+  outline: none;
+}
+
+.component-kind-label {
+  color: var(--text-heading);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.component-kind-chevron {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.component-kind-trigger[aria-expanded='true'] .component-kind-chevron {
+  transform: rotate(180deg);
+}
+
+.component-kind-menu {
+  position: absolute;
+  top: 100%;
+  left: -8px;
+  z-index: var(--z-overlay);
+  margin-top: 4px;
+  min-width: 180px;
+}
+
+.workbench-sidebar-title {
+  color: var(--text-heading);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.env-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.env-list-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.env-menu-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.env-list-row:hover .env-menu-wrapper,
+.env-menu-wrapper:focus-within,
+.env-menu-wrapper.ui-menu-host--open {
+  opacity: 1;
+}
+
+/* Cartão e itens do menu vêm de shared/ui/menu.css; aqui só o posicionamento. */
+.env-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: var(--z-overlay);
+  margin-top: 2px;
+}
+
+.env-menu.ui-menu--top {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 2px;
+  transform-origin: bottom;
+}
+
+.env-list-row--dragging,
+.env-variable-row--dragging {
+  opacity: 0.4;
+}
+
+/* Linha de inserção: indica onde o item arrastado será solto. */
+.env-list-row--drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.env-list-row--drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Em tabelas, sombra em <tr> não é confiável: a linha vai nas células. */
+.env-variable-row--drop-before > td {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.env-variable-row--drop-after > td {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.env-grip-host {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.env-sidebar .env-grip {
+  width: 16px;
+  color: var(--text-muted);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+/* A alça aparece só onde é útil: ao passar o mouse na linha, com foco ou durante o arraste. */
+.env-list-row:hover .env-grip:not(:disabled),
+.env-variable-row:hover .env-grip:not(:disabled),
+.env-sidebar .env-grip:focus-visible,
+.env-list-row--dragging .env-grip,
+.env-variable-row--dragging .env-grip {
+  opacity: 1;
+}
+
+.env-sidebar .env-grip:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+/* Com um único item não há o que reordenar: a alça some, mas mantém o espaço para alinhar. */
+.env-sidebar .env-grip:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
+.env-variables-table .env-grip-cell {
+  width: 1px;
+  padding-right: 0;
+}
+
+.env-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  min-height: var(--control-height-sm);
+  padding: 3px 6px;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.env-list-item--renaming {
+  cursor: default;
+}
+
+.env-list-entry {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding-right: 2px;
+  border-radius: var(--radius-md);
+}
+
+.env-list-entry:not(.env-list-entry--active):hover {
+  background: var(--surface-raised);
+}
+
+.env-list-entry--active {
+  background: var(--accent-softer);
+}
+
+.env-list-item[aria-current='true'] {
+  color: var(--text-heading);
+}
+
+.env-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--text-muted);
+}
+
+.env-dot--active {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.env-list-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-list-item-status {
+  font-size: var(--font-size-xs);
+  color: var(--accent-strong);
+}
+
+.env-add-button {
+  align-self: flex-start;
+}
+
+.env-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.env-detail-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-heading);
+}
+
+.env-variables-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.env-variables-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 7px 4px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.env-variables-table td {
+  padding: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.env-variable-value-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.env-variable-value-cell .ui-inline-edit-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* `display: contents` mantém o papel/id de aria-controls sem entrar na árvore
+   de layout — os filhos continuam participando do flex column de .env-sidebar
+   como se estivessem soltos, preservando o espaçamento original. */
+.env-tabpanel {
+  display: contents;
+}
+
+
+/* ---- Motion ---- */
+
+.env-sidebar {
+  animation: ui-panel-in var(--duration-base) var(--ease-out);
+}
+
+.env-list-item,
+.env-expand-button {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    opacity var(--duration-fast) var(--ease-out);
+}
+
+/* O componente ativo é remontado na troca de módulo; a animação fica nos
+   filhos porque `.env-tabpanel` usa `display: contents`. */
+.env-tabpanel > * {
+  animation: ui-panel-in var(--duration-base) var(--ease-out);
+}
+
+.workbench-sidebar-title {
+  animation: ui-fade-in var(--duration-fast) var(--ease-out);
+}
+
+.env-unreadable {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.env-unreadable svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}

@@ -1,0 +1,101 @@
+.ui-input,
+.ui-textarea,
+.ui-select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-md);
+  min-height: var(--control-height-md);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.ui-input::placeholder,
+.ui-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.ui-input:hover:not(:disabled),
+.ui-textarea:hover:not(:disabled),
+.ui-select:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+/*
+ * `:not(:disabled)` no :hover acima tem especificidade maior que uma
+ * pseudo-classe simples (0,3,0 vs 0,2,0) — sem repeti-lo aqui, passar o
+ * mouse sobre o campo e clicar (o caso comum) deixa o :hover vencer a
+ * cascata e a borda de foco nunca aparece.
+ */
+.ui-input:focus:not(:disabled),
+.ui-textarea:focus:not(:disabled),
+.ui-select:focus:not(:disabled) {
+  border-color: var(--accent-strong);
+}
+
+.ui-input:focus-visible,
+.ui-textarea:focus-visible,
+.ui-select:focus-visible {
+  outline: none;
+}
+
+.ui-input:disabled,
+.ui-textarea:disabled,
+.ui-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ui-input--mono,
+.ui-textarea--mono {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+}
+
+.ui-textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: var(--leading-normal);
+}
+
+.ui-select-wrapper {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.ui-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: calc(var(--space-3) + 16px);
+  cursor: pointer;
+}
+
+.ui-select:disabled {
+  cursor: default;
+}
+
+/*
+ * O popup nativo herda fundo e cor do próprio <select>. Como variantes usam
+ * fundo transparente e trocam o fundo no :hover (ex.: seletor de método), a
+ * lista alternava entre claro e escuro ao mover o mouse. Cores explícitas nas
+ * opções desacoplam o popup do estado do campo.
+ */
+.ui-select option {
+  background-color: var(--surface-overlay);
+  color: var(--text);
+}
+
+.ui-select-chevron {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}

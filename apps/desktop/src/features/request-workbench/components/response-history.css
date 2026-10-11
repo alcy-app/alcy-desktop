@@ -1,0 +1,260 @@
+.rw-response-toolbar-start {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Botão "Histórico" e o menu ancorado a ele. */
+.rw-history-host {
+  flex-shrink: 0;
+}
+
+.rw-history-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+/* Sem destaque de foco/aberto no clique: só o hover. O anel de foco por
+   teclado continua vindo do `:focus-visible` global. */
+.rw-history-trigger:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.rw-history-trigger-label {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rw-history-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: var(--z-overlay);
+  margin-top: 4px;
+  width: 320px;
+}
+
+/* Referência de posição para o card lateral e o menu de ações: ficam fora
+   da lista rolável para não serem cortados por ela. */
+.rw-history-menu--up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.rw-history-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* No máximo 5 envios visíveis (linhas de 32px); passou disso, rola. Mesma
+   altura de `ROW_HEIGHT_PX` em `ResponseHistoryMenu.tsx`. */
+.rw-history-list {
+  flex: none;
+  max-height: calc(5 * 32px);
+}
+
+.rw-history-message {
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.rw-history-row {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-radius: var(--radius-sm);
+}
+
+.rw-history-row:hover,
+.rw-history-row:focus-within {
+  background: var(--surface-raised);
+}
+
+.rw-history-row--active {
+  background: var(--surface-raised);
+}
+
+.rw-history-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rw-history-row-main:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.rw-history-row--active .rw-history-row-main {
+  font-weight: var(--font-weight-semibold);
+}
+
+.rw-history-row-time {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* As reticências aparecem ao passar o
+   mouse (ou com foco) na linha, e ficam visíveis enquanto o menu está aberto. */
+.rw-history-row-more {
+  opacity: 0;
+  margin-right: 2px;
+}
+
+.rw-history-row:hover .rw-history-row-more,
+.rw-history-row:focus-within .rw-history-row-more,
+.rw-history-row-more[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.rw-history-status {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-semibold);
+}
+
+.rw-history-status--success {
+  color: var(--success);
+}
+
+.rw-history-status--redirect,
+.rw-history-status--neutral {
+  color: var(--text);
+}
+
+.rw-history-status--warning {
+  color: var(--warning);
+}
+
+.rw-history-status--error {
+  color: var(--error);
+}
+
+.rw-history-card,
+.rw-history-actions {
+  position: absolute;
+  z-index: var(--z-overlay);
+}
+
+.rw-history-side--right {
+  left: calc(100% + 12px);
+}
+
+.rw-history-side--left {
+  right: calc(100% + 12px);
+}
+
+.rw-history-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 260px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+}
+
+.rw-history-card-url {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.rw-history-actions {
+  min-width: 200px;
+}
+
+/* Faixa acima do conteúdo quando a resposta exibida é de um envio anterior. */
+.rw-history-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.rw-compare {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+}
+
+.rw-compare-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+}
+
+.rw-compare-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.rw-compare-side {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-compare-side--base {
+  color: var(--error);
+}
+
+.rw-compare-side--target {
+  color: var(--success);
+}
+
+.rw-compare-body {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}

@@ -1,0 +1,23 @@
+[package]
+name = "alcy-graphql"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+alcy-app = { path = "../alcy-app" }
+alcy-domain = { path = "../alcy-domain" }
+alcy-http-auth = { path = "../alcy-http-auth" }
+alcy-http-proxy = { path = "../alcy-http-proxy" }
+cookie = "0.18"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

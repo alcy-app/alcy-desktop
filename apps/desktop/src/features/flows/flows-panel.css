@@ -1,0 +1,165 @@
+.flows-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flows-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.flows-search-icon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.flows-search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 5px 26px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.flows-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.flows-search-input:focus {
+  outline: none;
+  border-color: var(--accent-strong);
+}
+
+.flows-search-close {
+  position: absolute;
+  right: 2px;
+}
+
+/* Sem overflow/flex próprios: o scroll é do `.env-sidebar` como um todo (um
+   só scrollbar, na borda da sidebar), não desta lista isoladamente — dois
+   containers com overflow-y independentes causavam um scrollbar "piscando"
+   ao perder o foco. */
+.flows-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* A linha inteira é a superfície (fundo no hover/foco), com o "⋯" dentro dela, como nas coleções. */
+.flows-list-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--control-height-sm);
+  padding: 0 3px 0 5px;
+  border-radius: var(--radius-md);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+/* O item focado (alvo do atalho de renomear) usa o mesmo fundo do hover. */
+.flows-list-row:hover,
+.flows-list-row:focus-within {
+  background: var(--surface-raised);
+}
+
+.flows-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  min-height: var(--control-height-sm);
+  padding: 3px 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.flows-list-item:focus {
+  outline: none;
+}
+
+.flows-list-item-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.flows-list-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mesma convenção de cor por alteração local usada nas coleções (ver collections-panel.css). */
+.flows-list-item-name[data-change-kind='added'] {
+  color: var(--success);
+}
+
+.flows-list-item-name[data-change-kind='modified'] {
+  color: var(--warning);
+}
+
+.flows-list-item-name[data-change-kind='deleted'] {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+/* ---- Motion ---- */
+
+/* Arrastar para reordenar: a linha de inserção mostra onde o flow será solto. */
+.flows-list-row--dragging {
+  opacity: 0.4;
+}
+
+.flows-list-row--drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.flows-list-row--drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Menu "⋯" por linha, como nas coleções: aparece com o mouse sobre a linha. */
+.flows-menu-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.flows-list-row:hover .flows-menu-wrapper,
+.flows-menu-wrapper:focus-within,
+.flows-menu-wrapper.ui-menu-host--open {
+  opacity: 1;
+}
+
+/* Cartão e itens do menu vêm de shared/ui/menu.css; aqui só o posicionamento. */
+.flows-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: var(--z-overlay);
+  margin-top: 2px;
+}
+
+.flows-menu.ui-menu--top {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 2px;
+  transform-origin: bottom;
+}

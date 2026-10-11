@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+
+# Correções de advisories em dependências transitivas de desenvolvimento
+# (GHSA-2v37-7h3g-55p8, GHSA-3wwx-pv8p-q78v). Remover quando vite/postcss e
+# jsdom exigirem versões corrigidas.
+overrides:
+  nanoid@<3.3.18: ^3.3.18
+  undici@>=8.1.0 <8.10.2: ^8.10.2

@@ -1,0 +1,149 @@
+.schema-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schema-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.schema-toolbar .ui-input {
+  flex: 1;
+}
+
+.schema-explorer {
+  display: flex;
+  gap: 16px;
+  min-height: 260px;
+}
+
+.schema-type-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 220px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 420px;
+  border-right: 1px solid var(--border);
+}
+
+.schema-type-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: var(--font-size-md);
+}
+
+.schema-type-item--active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.schema-type-kind {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-right: 4px;
+}
+
+.schema-type-badge {
+  margin-left: var(--space-1);
+}
+
+.schema-type-detail {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  max-height: 420px;
+}
+
+.schema-type-title {
+  margin: 0 0 6px;
+  font-size: var(--font-size-base);
+  color: var(--text-heading);
+}
+
+.schema-type-description {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  margin: 0 0 10px;
+}
+
+.schema-field-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schema-field-signature {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  color: var(--text);
+}
+
+.schema-field-name {
+  color: var(--accent-strong);
+}
+
+.schema-field-description {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.schema-type-link {
+  background: transparent;
+  border: none;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+}
+
+.schema-type-relations {
+  margin: 0 0 10px;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.schema-deprecated-badge {
+  margin-left: var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* ---- Interação e motion (feedback que faltava na lista de tipos) ---- */
+
+.schema-type-item {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.schema-type-item:hover:not(.schema-type-item--active) {
+  background: var(--surface-overlay);
+}
+
+.schema-type-link {
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.schema-type-link:hover {
+  color: var(--accent);
+}

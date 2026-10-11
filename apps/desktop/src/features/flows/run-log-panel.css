@@ -1,0 +1,285 @@
+/* Log do Run: painel inferior do canvas de flows, lista à esquerda e detalhe à
+   direita. Sem animações — só reflete os eventos que chegam. */
+.flow-run-log {
+  display: flex;
+  flex-direction: column;
+  height: 260px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.flow-run-log-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.flow-run-log-header h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-heading);
+}
+
+.flow-run-log-time {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.flow-run-log-spacer {
+  flex: 1;
+}
+
+.flow-run-log-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.flow-run-log-list {
+  width: 45%;
+  min-width: 260px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.flow-run-log-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-run-log-row:hover {
+  background: var(--accent-softer);
+}
+
+.flow-run-log-row--selected {
+  background: var(--accent-soft);
+}
+
+.flow-run-log-row--success {
+  border-left-color: var(--success);
+}
+
+.flow-run-log-row--error {
+  border-left-color: var(--error);
+}
+
+.flow-run-log-row--running {
+  border-left-color: var(--accent-strong);
+}
+
+.flow-run-log-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.flow-run-log-icon--success {
+  color: var(--success);
+}
+
+.flow-run-log-icon--error {
+  color: var(--error);
+}
+
+.flow-run-log-icon--running {
+  color: var(--accent-strong);
+}
+
+.flow-run-log-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-semibold);
+}
+
+.flow-run-log-meta {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.flow-run-log-detail {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+}
+
+.flow-run-log-empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  text-align: center;
+}
+
+.flow-run-log-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  font-size: var(--font-size-md);
+}
+
+.flow-run-log-title {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-base);
+  color: var(--text-heading);
+}
+
+.flow-run-log-kind {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.flow-run-log-fields dt {
+  color: var(--text-muted);
+}
+
+.flow-run-log-fields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.flow-run-log-mono {
+  font-family: var(--font-mono);
+}
+
+/* Output do node: ocupa a linha inteira abaixo dos campos. */
+.flow-run-log-output {
+  display: contents;
+}
+
+.flow-run-log-muted {
+  color: var(--text-muted);
+}
+
+.flow-run-log-body-text {
+  max-height: 180px;
+  margin: 0 0 var(--space-1);
+  padding: var(--space-2);
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Árvore do output (status / headers / body), campo a campo. */
+.flow-output-tree,
+.flow-output-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-output-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding-top: 2px;
+  padding-right: var(--space-2);
+  padding-bottom: 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.flow-output-row:hover {
+  background: var(--accent-softer);
+}
+
+.flow-output-row--selected {
+  background: var(--accent-soft);
+}
+
+.flow-output-chevron {
+  display: inline-flex;
+  width: 11px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.flow-output-key {
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
+.flow-output-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.flow-output-value--string {
+  color: var(--success);
+}
+
+.flow-output-value--number {
+  color: var(--accent-strong);
+}
+
+.flow-output-value--boolean {
+  color: var(--warning);
+}
+
+.flow-output-reference {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.flow-output-reference code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* Mensagem de um node `log` (ou valor de `display`/resumo de variáveis):
+   pode ter várias linhas. */
+.flow-run-log-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

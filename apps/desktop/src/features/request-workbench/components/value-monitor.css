@@ -1,0 +1,298 @@
+/* Monitor de valores no painel de resposta: botão na toolbar, pílula de
+   navegação sobre o editor e cartão do hover. Só cor e sublinhado — sem
+   animações de transformação. */
+
+.rw-code-view-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rw-response-body .rw-code-view-frame {
+  flex: 1;
+}
+
+/* ---- Botão na toolbar ---- */
+
+.rw-monitor-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.rw-monitor-toggle:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.rw-monitor-toggle[aria-pressed='true'] {
+  color: var(--accent-strong);
+}
+
+.rw-monitor-toggle[aria-pressed='true']:hover {
+  color: var(--accent-strong);
+}
+
+.rw-monitor-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rw-monitor-toggle-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--error-soft);
+  color: var(--error);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Pílula de navegação ---- */
+
+.rw-monitor-pill {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  z-index: var(--z-raised);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 24px);
+  min-height: 28px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-md);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.rw-monitor-pill:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.rw-monitor-pill-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-monitor-pill-text--passed {
+  color: var(--success);
+}
+
+.rw-monitor-field-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.rw-monitor-field-trigger:hover,
+.rw-monitor-field-trigger[aria-expanded='true'] {
+  background: var(--surface-raised);
+}
+
+.rw-monitor-field-trigger:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.rw-monitor-field-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-monitor-field-label--mono {
+  font-family: var(--font-mono);
+}
+
+/* O menu se posiciona pela pílula (não pelo gatilho): alinhado à borda
+   direita dela, que fica no canto direito do editor, ele cresce para a
+   esquerda, para dentro do editor, sem vazar da tela qualquer que seja a
+   largura da pílula. */
+.rw-monitor-pill .ui-menu-host {
+  position: static;
+}
+
+.rw-monitor-field-menu {
+  position: absolute;
+  right: -1px;
+  bottom: 100%;
+  z-index: var(--z-overlay);
+  width: max-content;
+  min-width: 220px;
+  max-width: min(280px, calc(100vw - 32px));
+  max-height: 280px;
+  margin-bottom: 8px;
+  overflow-y: auto;
+  transform-origin: bottom right;
+}
+
+.rw-monitor-menu-heading {
+  display: block;
+  padding: 4px 8px 4px 30px;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rw-monitor-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+}
+
+.rw-monitor-option[aria-checked='true'] {
+  color: var(--text-heading);
+}
+
+.rw-monitor-option-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  justify-content: center;
+  width: 14px;
+  color: var(--accent);
+}
+
+.rw-monitor-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-monitor-option-label--mono {
+  font-family: var(--font-mono);
+}
+
+.rw-monitor-option-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-monitor-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-subtle);
+}
+
+.rw-monitor-truncated {
+  display: inline-flex;
+  padding: 0 4px;
+  color: var(--warning);
+}
+
+/* ---- Cartão do hover ---- */
+
+.rw-monitor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 180px;
+  max-width: 320px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-normal);
+}
+
+.rw-monitor-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rw-monitor-card-header:not(:first-child) {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.rw-monitor-card-status {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+}
+
+.rw-monitor-card-status--passed {
+  background: var(--success);
+}
+
+.rw-monitor-card-status--failed {
+  background: var(--error);
+}
+
+.rw-monitor-card-name {
+  overflow: hidden;
+  color: var(--text-heading);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-monitor-card-field {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.rw-monitor-card-verdict {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.rw-monitor-card-rules {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text);
+}
+
+.rw-monitor-toggle-host {
+  display: inline-flex;
+}

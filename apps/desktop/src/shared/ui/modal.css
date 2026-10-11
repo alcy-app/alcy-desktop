@@ -1,0 +1,118 @@
+.ui-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--backdrop);
+  backdrop-filter: blur(2px);
+  z-index: var(--z-overlay);
+  animation: ui-modal-fade-in var(--duration-base) var(--ease-out);
+}
+
+.ui-modal {
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Textos longos sem espaços (ex.: nomes) quebram em vez de gerar rolagem horizontal. */
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-lg);
+  animation: ui-modal-pop-in var(--duration-base) var(--ease-out);
+}
+
+/* O painel recebe foco ao abrir (para Enter/Esc/Tab) sem ser um alvo visível. */
+.ui-modal:focus {
+  outline: none;
+}
+
+/* Modais de formulário empilham o conteúdo com espaçamento uniforme. */
+.ui-modal--form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Modais com mais conteúdo horizontal (ex.: abas) que não cabem nos 320px
+   padrão. */
+.ui-modal--md {
+  width: 440px;
+}
+
+.ui-modal--wide {
+  width: 680px;
+}
+
+/* Modais que devem ficar mais próximos do topo da janela em vez de
+   centralizados verticalmente (ex.: modal de importar, com abas cujo
+   conteúdo muda de altura). */
+.ui-modal--top {
+  align-self: flex-start;
+  margin-top: 8vh;
+}
+
+.ui-modal-backdrop--closing {
+  animation: ui-modal-fade-out var(--duration-fast) var(--ease-out) forwards;
+}
+
+.ui-modal-backdrop--closing .ui-modal {
+  animation: ui-modal-pop-out var(--duration-fast) var(--ease-out) forwards;
+}
+
+.ui-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ui-modal-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.ui-modal-description {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+}
+
+.ui-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+@keyframes ui-modal-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes ui-modal-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ui-modal-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+}
+
+@keyframes ui-modal-pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}

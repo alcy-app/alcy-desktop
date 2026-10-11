@@ -1,0 +1,150 @@
+/*
+ * Classes utilitárias de botão — base única + variantes, com estados
+ * consistentes (hover, active, pressed, disabled). Hierarquia: `primary`
+ * sólido só para a ação principal da área; `ghost` é o secundário neutro
+ * (superfície + borda); `danger`/`success` sólidos para confirmações.
+ */
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+  min-height: var(--control-height-md);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out);
+}
+
+.ui-button > svg {
+  flex-shrink: 0;
+}
+
+.ui-button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
+}
+
+.ui-button--loading {
+  cursor: progress;
+}
+
+.ui-button--sm {
+  min-height: var(--control-height-sm);
+  padding: 4px 10px;
+  font-size: var(--font-size-sm);
+}
+
+.ui-button--md {
+  padding: 6px 14px;
+  font-size: var(--font-size-base);
+}
+
+.ui-button--primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ui-button--primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.ui-button--ghost {
+  background: var(--control-bg);
+  border-color: var(--control-border);
+  color: var(--text);
+}
+
+.ui-button--ghost:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+  border-color: var(--control-border-hover);
+  color: var(--text-heading);
+}
+
+.ui-button--ghost:active:not(:disabled) {
+  background: var(--control-active-bg);
+}
+
+/* Botão alternável (`aria-pressed`): ligado = destaque suave, nunca sólido. */
+.ui-button--ghost[aria-pressed='true'],
+.ui-button--ghost[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--accent-softer);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--control-border));
+  color: var(--accent-strong);
+}
+
+.ui-button--danger {
+  background: var(--error);
+  color: var(--on-accent);
+}
+
+.ui-button--success {
+  background: var(--success);
+  color: var(--on-accent);
+}
+
+.ui-button--danger:hover:not(:disabled),
+.ui-button--success:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.ui-button--primary:active:not(:disabled),
+.ui-button--danger:active:not(:disabled),
+.ui-button--success:active:not(:disabled) {
+  filter: brightness(0.86);
+}
+
+.ui-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-button-size-sm);
+  height: var(--icon-button-size-sm);
+  flex-shrink: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.ui-icon-button:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+  color: var(--text);
+}
+
+.ui-icon-button:active:not(:disabled) {
+  background: var(--control-active-bg);
+}
+
+.ui-icon-button[aria-pressed='true'] {
+  background: var(--accent-softer);
+  color: var(--accent-strong);
+}
+
+.ui-icon-button:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
+}
+
+.ui-icon-button--md {
+  width: var(--icon-button-size-md);
+  height: var(--icon-button-size-md);
+}
+
+.ui-icon-button--danger:hover:not(:disabled) {
+  color: var(--error);
+  background: var(--error-soft);
+}

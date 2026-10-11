@@ -1,0 +1,56 @@
+[package]
+name = "alcy-desktop"
+version = "0.6.2"
+description = "Alcy desktop shell (Tauri adapter and composition root)"
+edition = "2024"
+publish = false
+rust-version = "1.85"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "alcy_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+alcy-app = { path = "../crates/alcy-app" }
+alcy-collection-import = { path = "../crates/alcy-collection-import" }
+alcy-domain = { path = "../crates/alcy-domain" }
+alcy-gitlab = { path = "../crates/alcy-gitlab" }
+alcy-graphql = { path = "../crates/alcy-graphql" }
+alcy-http-proxy = { path = "../crates/alcy-http-proxy" }
+alcy-openapi = { path = "../crates/alcy-openapi" }
+alcy-platform = { path = "../crates/alcy-platform" }
+alcy-rest = { path = "../crates/alcy-rest" }
+alcy-scripting = { path = "../crates/alcy-scripting" }
+alcy-storage = { path = "../crates/alcy-storage" }
+alcy-webclient = { path = "../crates/alcy-webclient" }
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "system-proxy"] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+tokio = { version = "1", features = ["macros", "sync", "fs"] }
+url = "2"
+percent-encoding = "2"
+tauri-plugin-window-state = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = "2.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

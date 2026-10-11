@@ -1,0 +1,90 @@
+.ui-option-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height-md);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.ui-option-select:hover {
+  border-color: var(--border-strong);
+}
+
+.ui-option-select:focus-visible,
+.ui-option-select[aria-expanded='true'] {
+  outline: none;
+  border-color: var(--accent-strong);
+}
+
+.ui-option-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-option-select-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.ui-option-select-chevron--open {
+  transform: rotate(180deg);
+}
+
+.ui-option-select-list {
+  position: fixed;
+  z-index: var(--z-toast);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: ui-option-select-in var(--duration-fast) var(--ease-out);
+}
+
+.ui-option-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-height-sm);
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ui-option-select-option--active {
+  background: var(--surface-raised);
+}
+
+.ui-option-select-option--selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+@keyframes ui-option-select-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}

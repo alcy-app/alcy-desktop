@@ -1,0 +1,487 @@
+.collections-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.collections-toolbar-menu-wrapper {
+  position: relative;
+  margin-left: auto;
+}
+
+.collections-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.collections-search-icon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.collections-search-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 5px 26px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.collections-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.collections-search-input:focus {
+  outline: none;
+  border-color: var(--accent-strong);
+}
+
+.collections-search-close {
+  position: absolute;
+  right: 2px;
+}
+
+/* Barra da seleção múltipla: contagem à esquerda, ações só de ícone (com tooltip) à direita — mesmo
+   vocabulário visual da barra de ferramentas acima, com o fundo de destaque da seleção. */
+.collections-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 2px 2px 2px var(--space-2);
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--radius-md);
+  background: var(--accent-softer);
+}
+
+.collections-selection-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-heading);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.collections-selection-divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--border);
+}
+
+/* Sem overflow/flex próprios: o scroll é do `.env-sidebar` como um todo (um
+   só scrollbar, na borda da sidebar), não desta lista isoladamente — dois
+   containers com overflow-y independentes causavam um scrollbar "piscando"
+   ao perder o foco. */
+.collections-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.collections-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.collections-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  min-height: 25px;
+  padding: 0 4px;
+  cursor: pointer;
+  /* O arraste é implementado com pointer events (não o HTML5 Drag and
+     Drop nativo, pouco confiável em algumas WebViews Linux ao iniciar
+     sobre texto) — isto evita que o movimento selecione texto no lugar. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.collections-row--collection .collections-node-name {
+  color: var(--text-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.collections-folder-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* A linha recebe foco ao ser clicada (alvo do atalho de renomear): em vez do
+   anel de foco, o mesmo fundo do hover marca o item selecionado — exceto na
+   requisição aberta, que mantém o próprio destaque. */
+.collections-row:focus {
+  outline: none;
+}
+
+.collections-row:focus:not(.collections-row--open),
+.collections-row:hover {
+  background: var(--surface-raised);
+}
+
+.collections-row--open {
+  background: var(--accent-softer);
+}
+
+/* Seleção múltipla (spec 0104): vence o hover/foco para a linha continuar marcada. */
+.collections-row.collections-row--selected,
+.collections-row.collections-row--selected:hover,
+.collections-row.collections-row--selected:focus {
+  background: var(--selection-bg);
+}
+
+/* Linhas selecionadas em sequência formam um bloco só: arredonda apenas o topo do primeiro e a base do último. */
+.collections-row--selected.collections-row--joined-above {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.collections-row--selected.collections-row--joined-below {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.collections-row-checkbox {
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
+.collections-row--drop-into {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent-strong);
+  border-radius: var(--radius-md);
+}
+
+/* Borda destacando o lado em que o item entraria ao reordenar entre irmãos (`.collections-row--drop-into`
+   é usado em vez disso quando o drop move o item para dentro do alvo). */
+.collections-row--drop-before {
+  box-shadow: inset 0 2px 0 0 var(--accent-strong);
+}
+
+.collections-row--drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--accent-strong);
+}
+
+.collections-row--dragging {
+  opacity: 0.5;
+}
+
+.collections-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.collections-toggle-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.collections-method-badge {
+  min-width: 34px;
+  justify-content: center;
+  margin: 0 4px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+}
+
+.collections-import-progress {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.collections-import-statusbar {
+  cursor: pointer;
+}
+
+.collections-import-statusbar-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.collections-import-progress-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: calc(var(--z-toast) - 1);
+  width: min(340px, calc(100vw - 20px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
+}
+
+.collections-import-progress-header,
+.collections-import-progress-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 9px var(--space-3);
+}
+
+.collections-import-progress-header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.collections-import-progress-header strong {
+  color: var(--text-heading);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.collections-import-progress-header span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.collections-import-progress-list {
+  max-height: 196px;
+  overflow-y: auto;
+  border-block: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.collections-import-progress-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 6px var(--space-3);
+  color: var(--text-muted);
+}
+
+.collections-import-progress-row + .collections-import-progress-row {
+  border-top: 1px solid var(--border);
+}
+
+.collections-import-progress-row > span {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collections-import-progress-row small {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.collections-import-progress-row[data-status='success'] > svg {
+  color: var(--success);
+}
+
+.collections-import-progress-row[data-status='error'] > svg {
+  color: var(--error);
+}
+
+.collections-import-progress-actions {
+  justify-content: flex-end;
+  min-height: 42px;
+}
+
+.collections-node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.collections-row--open .collections-node-name {
+  color: var(--text-heading);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Nome colorido pelo tipo de alteração local (própria ou de um descendente)
+   — vence sobre a cor de "aberto" acima, para a alteração continuar visível
+   na seleção. */
+.collections-node-name[data-change-kind='added'] {
+  color: var(--success);
+}
+
+.collections-node-name[data-change-kind='modified'] {
+  color: var(--warning);
+}
+
+.collections-node-name[data-change-kind='deleted'] {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.collections-name-input {
+  flex: 1;
+  min-width: 0;
+  cursor: text;
+}
+
+.collections-menu-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.collections-sort-button,
+.collections-sort-button:disabled {
+  opacity: 0;
+}
+
+.collections-row:hover .collections-sort-button,
+.collections-sort-button:focus-visible {
+  opacity: 1;
+}
+
+.collections-row:hover .collections-menu-wrapper,
+.collections-menu-wrapper:focus-within,
+.collections-menu-wrapper.ui-menu-host--open {
+  opacity: 1;
+}
+
+/* Cartão e itens do menu vêm de shared/ui/menu.css; aqui só o posicionamento. */
+.collections-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: var(--z-overlay);
+  margin-top: 2px;
+}
+
+.collections-menu.ui-menu--top {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 2px;
+  transform-origin: bottom;
+}
+
+/* O menu "⋯" por linha alinha pela direita (`right: 0`) porque a linha
+   ocupa quase a largura inteira da sidebar. O wrapper do "..." da barra
+   de ferramentas é só a largura do próprio botão, mas já fica encostado
+   na borda direita (`margin-left: auto`), então o menu abre para a
+   esquerda a partir dali sem sair da sidebar. */
+.collections-toolbar-menu-wrapper .collections-menu {
+  left: auto;
+  right: 0;
+}
+
+.collections-chevron {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.collections-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+/* ---- Motion ---- */
+
+.collections-menu-wrapper {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.collections-row {
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+/* ---- Favoritas e filtros (ADR 0060) ---- */
+
+.collections-favorite-button {
+  opacity: 0;
+}
+
+.collections-row:hover .collections-favorite-button,
+.collections-favorite-button:focus-visible,
+.collections-row--favorite .collections-favorite-button {
+  opacity: 1;
+}
+
+.collections-row--favorite .collections-favorite-button {
+  color: var(--warning);
+}
+
+.collections-filter-menu-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.collections-filter-button[data-state='active'] {
+  background: var(--accent-softer);
+  color: var(--accent);
+}
+
+/* O botão de filtro fica perto da busca, à esquerda; o menu abre para a direita. */
+.collections-filter-menu {
+  right: auto;
+  left: 0;
+  min-width: 200px;
+  max-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.collections-search + .collections-filter-menu-wrapper .collections-filter-menu {
+  right: 0;
+  left: auto;
+}
+
+.collections-filter-star {
+  flex-shrink: 0;
+  color: var(--warning);
+}
+
+.collections-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: 6px;
+}
+
+.collections-filter-clear {
+  padding: 0 var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.collections-filter-clear:hover {
+  color: var(--text-heading);
+  text-decoration: underline;
+}

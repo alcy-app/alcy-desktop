@@ -1,0 +1,12 @@
+[package]
+name = "alcy-domain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+regex = "1"
+thiserror = "2"
+
+[lints]
+workspace = true

@@ -1,0 +1,103 @@
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.history-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.history-filter-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: var(--z-overlay);
+  margin-top: 2px;
+}
+
+.history-origin-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* O scroll pertence à `.env-sidebar`, como em Coleções. Isso mantém uma
+     única barra de rolagem encostada na borda direita do painel. */
+  overflow: visible;
+  flex: none;
+}
+
+.history-group {
+  margin-bottom: 8px;
+}
+
+.history-date-heading {
+  margin: 0;
+  padding: 6px 4px 2px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.history-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-entry-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  min-height: var(--control-height-sm);
+  padding: 3px 5px;
+  cursor: pointer;
+  text-align: left;
+  user-select: none;
+}
+
+.history-entry-button:hover {
+  background: var(--surface-raised);
+}
+
+.history-status-badge {
+  flex-shrink: 0;
+  min-width: 28px;
+  justify-content: center;
+}
+
+.history-entry-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.history-entry-time {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* ---- Motion ---- */
+
+.history-entry-button {
+  transition: background-color var(--duration-fast) var(--ease-out);
+}

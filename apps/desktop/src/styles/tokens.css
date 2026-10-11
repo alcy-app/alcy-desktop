@@ -1,0 +1,190 @@
+/*
+ * Design tokens do app. Tudo é semântico: cada tema (`data-theme` no <html>,
+ * definido por shared/appearance/) sobrescreve somente o bloco de cores e
+ * sombras, sem tocar nos arquivos de feature. O tema claro é o padrão (`:root`).
+ * As cores "soft" derivam da base via color-mix (WebKitGTK ≥ 2.40 e
+ * Chromium ≥ 111), então herdam qualquer mudança de paleta. Ao alterar uma
+ * paleta, atualize também `THEME_PREVIEW` em shared/appearance/theme.ts.
+ */
+:root {
+  /* Cor — base (tema claro, padrão) */
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-raised: #f8f9fb;
+  --surface-overlay: #ffffff;
+  --border: #dfe2e8;
+  --border-subtle: #eceef2;
+  --border-strong: #c6cad3;
+  --text: #2b2f3a;
+  --text-muted: #6b7080;
+  --text-heading: #14171f;
+  --accent: #5b4bd6;
+  --accent-strong: #4a3bc0;
+  --on-accent: #fff;
+  --caret: #14171f;
+  --backdrop: rgba(20, 23, 31, 0.4);
+  --preview-bg: #fff;
+  --success: #15803d;
+  --warning: #b45309;
+  --error: #dc2626;
+  --info: #2563eb;
+  --shadow-sm: 0 2px 8px rgba(20, 23, 31, 0.08);
+  --shadow-md: 0 8px 24px rgba(20, 23, 31, 0.12);
+  --shadow-lg: 0 16px 44px rgba(20, 23, 31, 0.18);
+
+  /* Cor — derivadas */
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-softer: color-mix(in srgb, var(--accent) 10%, transparent);
+  --selection-bg: color-mix(in srgb, var(--accent) 24%, var(--surface-raised));
+  --error-soft: color-mix(in srgb, var(--error) 13%, transparent);
+  --success-soft: color-mix(in srgb, var(--success) 13%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 13%, transparent);
+
+  /* Cor — categorias de bloco do canvas de flows (spec 0087) */
+  --flow-tone-start: var(--success);
+  --flow-tone-control: var(--accent);
+  --flow-tone-request: var(--info);
+  --flow-tone-data: #c026d3;
+  --flow-tone-time: var(--warning);
+  --flow-tone-output: #0d9488;
+  --flow-tone-note: #ca8a04;
+  --flow-tone-mock: #4f46e5;
+
+  /* Cor — paleta fixa de rótulos de collection (ADR 0060) */
+  --label-gray: #6b7280;
+  --label-red: #dc2626;
+  --label-orange: #ea580c;
+  --label-yellow: #ca8a04;
+  --label-green: #16a34a;
+  --label-teal: #0d9488;
+  --label-blue: #2563eb;
+  --label-purple: #7c3aed;
+  --label-pink: #db2777;
+
+  /* Tipografia */
+  --font-sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  /*
+   * `--text-scale` é o multiplicador de texto ajustável em Configurações (ver
+   * shared/appearance/); o padrão é 1, aplicado pelo provider assim que
+   * monta. Cada tamanho abaixo é `calc()` sobre esse fator para que o
+   * slider escale toda a tipografia do app sem precisar tocar em CSS de
+   * feature.
+   */
+  --text-scale: 1;
+  /* Só para rótulos ínfimos (ex.: número num badge de contagem) — não use para texto normal. */
+  --font-size-2xs: calc(9px * var(--text-scale));
+  --font-size-xs: calc(11px * var(--text-scale));
+  --font-size-sm: calc(12px * var(--text-scale));
+  --font-size-md: calc(13px * var(--text-scale));
+  --font-size-base: calc(13px * var(--text-scale));
+  --font-size-lg: calc(15px * var(--text-scale));
+  --font-size-xl: calc(19px * var(--text-scale));
+  --font-size-2xl: calc(24px * var(--text-scale));
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --leading-tight: 1.2;
+  --leading-normal: 1.4;
+
+  /* Forma e elevação */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+
+  /* Controles */
+  --control-height-sm: 28px;
+  --control-height-md: 32px;
+  --control-height-lg: 40px;
+  /*
+   * `--icon-scale` é o multiplicador de ícones ajustável em Configurações;
+   * os ícones de shared/ui/icons.tsx e a caixa dos botões só de ícone
+   * acompanham esse fator, independente da escala de texto.
+   */
+  --icon-scale: 1;
+  --icon-button-size-sm: calc(var(--control-height-sm) * var(--icon-scale));
+  --icon-button-size-md: calc(var(--control-height-md) * var(--icon-scale));
+  /*
+   * Superfícies de controle (botões, seletores segmentados). Derivadas do
+   * texto/superfície via color-mix para funcionar em qualquer tema sem
+   * redefinição: o hover escurece no claro e clareia no escuro.
+   */
+  --control-bg: var(--surface);
+  --control-border: var(--border);
+  --control-border-hover: var(--border-strong);
+  --control-hover-bg: color-mix(in srgb, var(--text) 6%, transparent);
+  --control-active-bg: color-mix(in srgb, var(--text) 10%, transparent);
+  --segmented-track-bg: color-mix(in srgb, var(--text) 5%, var(--surface));
+  --segmented-thumb-bg: var(--surface-overlay);
+  --segmented-thumb-shadow: 0 1px 2px rgba(20, 23, 31, 0.08), 0 0 0 1px var(--border);
+  --disabled-opacity: 0.45;
+  --focus-ring: 2px solid var(--accent-strong);
+  --focus-ring-offset: 2px;
+
+  /* Espaçamento (base 4px) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Z-index */
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-overlay: 100;
+  --z-toast: 200;
+  --z-drag-preview: 1000;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 240ms;
+  --ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme='dark'] {
+  /* Cor — base (tema escuro) */
+  --bg: #111216;
+  --surface: #181a20;
+  --surface-raised: #1d2027;
+  --surface-overlay: #22252d;
+  --border: #2a2d35;
+  --border-subtle: #22252c;
+  --border-strong: #3a3e48;
+  --text: #d9dbe2;
+  --text-muted: #9296a2;
+  --text-heading: #f3f4f7;
+  --accent: #7667e8;
+  --accent-strong: #9388f3;
+  --on-accent: #fff;
+  --preview-bg: #fff;
+  --success: #34d399;
+  --warning: #f5a524;
+  --error: #f87171;
+  --info: #60a5fa;
+  --caret: #fff;
+  --backdrop: rgba(5, 6, 9, 0.68);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.46);
+  --selection-bg: color-mix(in srgb, var(--accent) 38%, var(--surface-raised));
+  --segmented-track-bg: color-mix(in srgb, var(--text) 4%, var(--bg));
+  --segmented-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--border-strong);
+  --flow-tone-data: #e879f9;
+  --flow-tone-output: #2dd4bf;
+  --flow-tone-note: #facc15;
+  --flow-tone-mock: #818cf8;
+  --label-gray: #9ca3af;
+  --label-red: #f87171;
+  --label-orange: #fb923c;
+  --label-yellow: #facc15;
+  --label-green: #4ade80;
+  --label-teal: #2dd4bf;
+  --label-blue: #60a5fa;
+  --label-purple: #a78bfa;
+  --label-pink: #f472b6;
+}

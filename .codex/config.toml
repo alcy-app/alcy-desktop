@@ -1,0 +1,35 @@
+# Perfil local-first do Alcy. O Codex só carrega esta configuração depois que
+# o repositório é marcado como confiável.
+approval_policy = "on-request"
+default_permissions = "alcy-workspace"
+
+[features]
+hooks = true
+
+[permissions.alcy-workspace]
+description = "Workspace do Alcy sem rede e sem acesso a credenciais"
+extends = ":workspace"
+
+[permissions.alcy-workspace.filesystem]
+glob_scan_max_depth = 8
+"~/.ssh" = "deny"
+"~/.tauri" = "deny"
+"~/.gnupg" = "deny"
+"~/.aws" = "deny"
+"~/.config/gcloud" = "deny"
+
+[permissions.alcy-workspace.filesystem.":workspace_roots"]
+".env" = "deny"
+"**/.env" = "deny"
+"**/.env.*" = "deny"
+# Exceção pública e versionada; a regra mais específica reabre só este arquivo.
+"apps/desktop/.env.example" = "write"
+"**/*.key" = "deny"
+"**/*.pem" = "deny"
+"**/*.p12" = "deny"
+"**/*.pfx" = "deny"
+"**/*.jks" = "deny"
+"**/*.keystore" = "deny"
+
+[permissions.alcy-workspace.network]
+enabled = false

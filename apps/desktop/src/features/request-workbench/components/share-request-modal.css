@@ -1,0 +1,45 @@
+.share-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.share-modal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.share-modal-language-label {
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+}
+
+/* O select ocupa o espaço livre e empurra o botão de copiar para a direita. */
+.share-modal-language {
+  flex: 1;
+  min-width: 0;
+}
+
+.share-modal-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  padding: var(--space-2) var(--space-3);
+}
+
+.share-modal-preview .cm-editor {
+  height: auto;
+}
+
+.share-modal-preview .cm-scroller {
+  overflow: auto;
+  min-height: 160px;
+  max-height: 55vh;
+}
+
+.share-modal-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}

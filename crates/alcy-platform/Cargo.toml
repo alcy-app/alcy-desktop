@@ -1,0 +1,18 @@
+[package]
+name = "alcy-platform"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+alcy-app = { path = "../alcy-app" }
+keyring = "4"
+thiserror = "2"
+tokio = { version = "1", features = ["net", "io-util", "time"] }
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

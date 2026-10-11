@@ -1,0 +1,23 @@
+status=0
+
+# Segredos, arquivos sensíveis e invariantes de segurança (ver scripts/security/).
+node scripts/security/check-staged.mjs || status=1
+node scripts/check-security-invariants.mjs || status=1
+
+files=$(git diff --cached --name-only --diff-filter=ACM)
+
+ts_files=$(printf '%s\n' "$files" | grep -E '^apps/desktop/.*\.(ts|tsx)$' || true)
+if [ -n "$ts_files" ]; then
+  rel_files=$(printf '%s\n' "$ts_files" | sed 's#^apps/desktop/##')
+  (cd apps/desktop && printf '%s\n' "$rel_files" | xargs pnpm exec eslint) || status=1
+fi
+
+rs_files=$(printf '%s\n' "$files" | grep -E '\.rs$' || true)
+if [ -n "$rs_files" ]; then
+  # cargo fmt (não rustfmt por arquivo) para resolver a edition de cada
+  # crate via seu Cargo.toml — rustfmt sozinho assume edition 2015 e
+  # rejeita `async fn` nos crates que já usam edition 2024.
+  cargo fmt --all -- --check || status=1
+fi
+
+exit $status

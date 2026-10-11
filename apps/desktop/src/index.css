@@ -1,0 +1,184 @@
+@import './styles/fonts.css';
+@import './styles/tokens.css';
+
+:root {
+
+  font: var(--font-size-base) / 1.5 var(--font-sans);
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/*
+ * App desktop: por padrão nada é selecionável (arrastar o mouse sobre a UI
+ * não deve selecionar rótulos, abas, árvores etc.). A seleção é reabilitada
+ * apenas onde o usuário edita ou copia conteúdo (regra logo abaixo).
+ */
+body {
+  margin: 0;
+  min-height: 100vh;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable='true'],
+[contenteditable='plaintext-only'],
+.cm-editor,
+pre,
+code,
+.rw-headers-table--readonly td,
+.rw-graphql-error-message,
+.rw-graphql-error-path,
+.console-entry-raw {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 100vh;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+}
+
+h1 {
+  color: var(--text-heading);
+}
+
+/*
+ * WebKitGTK (webview do Tauri no Linux), diferente do Chromium, não
+ * desabilita seleção de texto em <button> por padrão. Sem isso, um clique
+ * com qualquer movimento mínimo do cursor vira seleção de texto em vez de
+ * disparar o clique — intermitente e reproduzível em qualquer botão do app.
+ * Pelo mesmo motivo, também não reseta a aparência nativa do botão (chrome
+ * arredondado na cor de destaque do tema GTK) — sem `appearance: none`, esse
+ * chrome nativo pode aparecer por baixo/ao redor do estilo do próprio app.
+ * O mesmo chrome nativo também desenha um anel de foco na cor de destaque
+ * do GTK (ex.: rosa em temas claros) em qualquer clique, não só navegação
+ * por teclado — removido aqui; o `:focus-visible` abaixo mantém o anel de
+ * foco para navegação por teclado.
+ */
+button,
+[role='tab'] {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  box-shadow: none;
+}
+
+button:focus,
+button:active,
+[role='tab']:focus,
+[role='tab']:active {
+  outline: none;
+  box-shadow: none;
+}
+
+:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/*
+ * Scrollbars: somente ::-webkit-scrollbar — `scrollbar-width`/`scrollbar-color`
+ * desativam esses pseudo-elementos no Chromium (WebView2) e só existem em
+ * WebKitGTK recente; este é o único caminho que cobre os dois alvos.
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Keyframes utilitários para entrada de conteúdo remontado. */
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes ui-fade-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+
+/* Entrada de superfícies completas (telas, páginas e painéis maiores). */
+@keyframes ui-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.998);
+  }
+}
+
+/* Troca de conteúdo contextual, como módulos da sidebar. */
+@keyframes ui-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}
+
+/*
+ * Troca curta entre conteúdos que compartilham a mesma barra de abas. Só
+ * opacidade, sem `transform`: o deslocamento entra no overflow rolável do
+ * contêiner (ex.: `.rw-request-pane`, `overflow-y: auto`) e fazia a barra de
+ * rolagem piscar a cada troca de aba mesmo sem conteúdo para rolar.
+ */
+@keyframes ui-tab-panel-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

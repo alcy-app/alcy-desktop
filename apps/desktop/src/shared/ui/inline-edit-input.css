@@ -1,0 +1,20 @@
+.ui-inline-edit-input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text-heading);
+  font: inherit;
+  font-size: var(--font-size-md);
+  padding: 1px 0;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.ui-inline-edit-input:focus {
+  border-bottom-color: var(--accent-strong);
+}
+
+.ui-inline-edit-input:focus-visible {
+  outline: none;
+}

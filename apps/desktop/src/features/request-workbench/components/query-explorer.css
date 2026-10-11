@@ -1,0 +1,254 @@
+.query-explorer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Com o schema carregado, título e busca ficam fixos e só a árvore rola. */
+.query-explorer--loaded {
+  overflow: hidden;
+}
+
+.query-explorer-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Busca compacta no lugar do título (mesmo vocabulário da busca de collections). */
+.query-explorer-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.query-explorer-search-icon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.query-explorer-search-input {
+  width: 100%;
+  height: var(--control-height-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 26px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.query-explorer-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.query-explorer-search-input:focus {
+  outline: none;
+  border-color: var(--accent-strong);
+}
+
+/* Mesma aparência do fechar da busca nos editores (`.rw-editor-search-bar`),
+   um pouco menor para o hover caber dentro da borda do campo. */
+.query-explorer-search .query-explorer-search-close {
+  position: absolute;
+  right: 3px;
+  width: 22px;
+  height: 22px;
+}
+
+.query-explorer-search .query-explorer-search-close:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.query-explorer-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.query-explorer-match {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-radius: var(--radius-sm);
+}
+
+.query-explorer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+  /* Mesma altura com e sem a busca aberta: a árvore não pula ao alternar. */
+  min-height: var(--control-height-sm);
+}
+
+.query-explorer-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.query-explorer-tree,
+.query-explorer-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.query-explorer-children {
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+  margin-left: 5px;
+}
+
+.query-explorer-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.query-explorer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  min-width: 0;
+}
+
+.query-explorer-expand,
+.query-explorer-expand-spacer {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.query-explorer-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.query-explorer-expand:hover {
+  color: var(--accent-strong);
+}
+
+.query-explorer-chevron {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.query-explorer-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+.query-explorer-field-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* É um `<button>` esticado na linha: sem isto o nome fica centralizado. */
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.query-explorer-field-name:disabled {
+  cursor: default;
+}
+
+.query-explorer-field-name:not(:disabled):hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.query-explorer-field-type {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.query-explorer-arg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 4px 14px;
+}
+
+.query-explorer-arg-name {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.query-explorer-arg-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 3px 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.query-explorer-arg-badge {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent-strong);
+}
+
+.query-explorer-arg-type {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+/* ---- Motion ---- */
+
+.query-explorer {
+  animation: ui-fade-slide-in var(--duration-base) var(--ease-out);
+}
+
+.query-explorer-expand,
+.query-explorer-field-name {
+  transition: color var(--duration-fast) var(--ease-out);
+}

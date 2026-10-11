@@ -1,0 +1,23 @@
+[package]
+name = "alcy-http-proxy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+alcy-domain = { path = "../alcy-domain" }
+boa_engine = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "system-proxy", "gzip", "deflate", "brotli"] }
+serde_json = "1.0"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+# Já no grafo via `reqwest` (feature `system-proxy`); lido direto em `system.rs`.
+windows-registry = "0.6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

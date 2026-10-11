@@ -1,0 +1,30 @@
+# Node / pnpm
+node_modules/
+apps/desktop/dist/
+apps/desktop/dist-ssr/
+*.local
+.pnpm-store/
+
+.cargo/
+
+# Rust
+target/
+src-tauri/target/
+
+# Tauri
+src-tauri/gen/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.log
+
+# Agents
+CLAUDE.md
+
+# Variáveis locais (VITE_* são embutidas no bundle)
+.env
+.env.*
+!.env.example

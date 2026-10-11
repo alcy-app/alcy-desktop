@@ -1,0 +1,39 @@
+# Defesa adicional para comandos que saem do sandbox. O hook PreToolUse aplica
+# a política completa; estas regras preservam as decisões mais importantes no
+# mecanismo nativo de execução do Codex.
+
+prefix_rule(
+    pattern = ["git", ["commit", "push", "tag", "rebase", "merge", "cherry-pick", "am", "revert", "filter-branch", "update-ref"]],
+    decision = "prompt",
+    justification = "Operações que publicam ou reescrevem histórico exigem consentimento explícito.",
+)
+
+prefix_rule(
+    pattern = ["git", "push", ["--force", "--force-with-lease", "-f"]],
+    decision = "forbidden",
+    justification = "Push forçado é proibido pela política do repositório.",
+)
+
+prefix_rule(
+    pattern = ["git", "commit", ["--no-verify", "-n"]],
+    decision = "forbidden",
+    justification = "Os hooks do git não podem ser ignorados.",
+)
+
+prefix_rule(
+    pattern = ["pnpm", ["add", "update", "up", "upgrade", "remove", "rm", "uninstall", "dlx", "link", "patch"]],
+    decision = "prompt",
+    justification = "Mudanças de dependências exigem consentimento explícito.",
+)
+
+prefix_rule(
+    pattern = ["cargo", ["add", "update", "install", "remove", "rm"]],
+    decision = "prompt",
+    justification = "Mudanças de dependências ou ferramentas Rust exigem consentimento explícito.",
+)
+
+prefix_rule(
+    pattern = [["sudo", "npx"]],
+    decision = "prompt",
+    justification = "Elevação de privilégio ou execução de pacote do registro exige consentimento explícito.",
+)

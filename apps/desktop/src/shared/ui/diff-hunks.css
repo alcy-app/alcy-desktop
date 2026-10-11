@@ -1,0 +1,29 @@
+.ui-diff-hunk-header {
+  padding: 2px var(--space-2);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+}
+
+.ui-diff-line {
+  display: grid;
+  grid-template-columns: 4ch 4ch 1ch minmax(max-content, 1fr);
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  white-space: pre;
+}
+.ui-diff-number { color: var(--text-muted); text-align: right; user-select: none; }
+
+.ui-diff-line--added {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.ui-diff-line--removed {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+}
+
+.ui-diff-marker {
+  flex: none;
+  width: 1ch;
+  color: var(--text-muted);
+  user-select: none;
+}

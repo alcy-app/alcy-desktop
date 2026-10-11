@@ -1,0 +1,19 @@
+[package]
+name = "alcy-webclient"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Todas já estão no Cargo.lock (ver ADR 0046): `ring` e `base64` cifram o
+# payload como o `alcy-storage` (ADR 0030), `regex` é o mesmo do domínio.
+[dependencies]
+alcy-domain = { path = "../alcy-domain" }
+base64 = "0.22"
+regex = "1"
+ring = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+
+[lints]
+workspace = true

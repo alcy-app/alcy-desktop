@@ -1,0 +1,3 @@
+# Mudanças em arquivos de segurança exigem o trailer "Security-Review: <nome>"
+# escrito por uma pessoa (ver scripts/security/policy.mjs).
+node scripts/security/check-commit-msg.mjs "$1"

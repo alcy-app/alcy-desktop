@@ -1,0 +1,46 @@
+.ui-tooltip-host {
+  display: inline-flex;
+}
+
+/* Botões desabilitados não recebem eventos de mouse em todos os webviews:
+   deixa o hover cair no host, que é quem dispara o tooltip. */
+.ui-tooltip-host > :disabled {
+  pointer-events: none;
+}
+
+.ui-tooltip-host:has(> :disabled) {
+  cursor: not-allowed;
+}
+
+/* Renderizado num portal em `document.body`; `top`/`left` vêm do
+   `useTooltip`, já presos às bordas da janela. */
+.ui-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 5px 8px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: var(--z-drag-preview);
+  animation: ui-tooltip-in var(--duration-fast) var(--ease-out);
+}
+
+.ui-tooltip--multiline {
+  max-width: min(480px, calc(100vw - 16px));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@keyframes ui-tooltip-in {
+  from {
+    opacity: 0;
+  }
+}

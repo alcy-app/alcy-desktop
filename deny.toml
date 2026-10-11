@@ -1,0 +1,72 @@
+# Política de cadeia de suprimentos das dependências Rust (cargo-deny).
+# Rodar com `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# Avisos informativos (sem vulnerabilidade explorável) em dependências
+# transitivas que o Alcy não controla diretamente. Revisar a cada atualização
+# de Tauri/Boa e remover as entradas que deixarem de aparecer.
+ignore = [
+  # proc-macro-error: sem manutenção; macro de compilação via glib-macros (GTK3 do Tauri no Linux).
+  { id = "RUSTSEC-2024-0370", reason = "macro de build transitiva do GTK3 usado pelo Tauri no Linux" },
+  # unic-*: sem manutenção; tabelas Unicode estáticas usadas pelo tauri-utils via urlpattern.
+  { id = "RUSTSEC-2025-0075", reason = "tabelas Unicode estáticas, transitivas" },
+  { id = "RUSTSEC-2025-0080", reason = "tabelas Unicode estáticas, transitivas" },
+  { id = "RUSTSEC-2025-0081", reason = "tabelas Unicode estáticas, transitivas" },
+  { id = "RUSTSEC-2025-0098", reason = "tabelas Unicode estáticas, transitivas" },
+  { id = "RUSTSEC-2025-0100", reason = "tabelas Unicode estáticas, transitivas" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+
+[licenses.private]
+# Crates do próprio workspace não declaram licença.
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+# O Alcy não envia telemetria. Qualquer SDK de rastreamento, analytics ou
+# coleta remota de erros exige revisão explícita e atualização desta lista.
+deny = [
+  { crate = "sentry", reason = "telemetria/coleta remota de erros" },
+  { crate = "sentry-core", reason = "telemetria/coleta remota de erros" },
+  { crate = "tauri-plugin-sentry", reason = "telemetria/coleta remota de erros" },
+  { crate = "tauri-plugin-aptabase", reason = "analytics" },
+  { crate = "tauri-plugin-shell", reason = "execução de processos a partir da WebView" },
+  { crate = "opentelemetry", reason = "exportação de telemetria" },
+  { crate = "opentelemetry-otlp", reason = "exportação de telemetria" },
+  { crate = "posthog-rs", reason = "analytics" },
+  { crate = "segment", reason = "analytics" },
+  { crate = "datadog-apm", reason = "telemetria" },
+  { crate = "bugsnag", reason = "coleta remota de erros" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
