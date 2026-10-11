@@ -163,6 +163,7 @@ type ExtensionSetup =
 /// of its own, invoked like the app's, and setup that runs after the app's.
 pub struct Extension {
     /// Commands handled by `invoke`; they take precedence over the app's.
+    /// They stay out of the app's IPC log: `invoke` logs what it needs.
     pub commands: &'static [&'static str],
     pub invoke: ExtensionInvoke,
     pub setup: ExtensionSetup,
@@ -184,10 +185,7 @@ fn with_extension_commands(
     move |invoke| {
         let command = invoke.message.command();
         match extension_for(&extension_commands, command) {
-            Some(index) => {
-                logging::log_invoke(command);
-                extension_invokes[index](invoke)
-            }
+            Some(index) => extension_invokes[index](invoke),
             None => app_commands(invoke),
         }
     }
