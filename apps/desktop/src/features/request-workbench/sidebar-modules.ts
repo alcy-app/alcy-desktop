@@ -1,8 +1,17 @@
-/** Módulos que podem aparecer na barra de atividades, inclusive os que uma
- * feature flag pode deixar indisponíveis nesta compilação. */
-export const SIDEBAR_MODULE_IDS = ['components', 'environments', 'monitors', 'history', 'git'] as const
+import { EXTENSION_SIDEBAR_MODULES } from '../../extensions/registry'
+import type { ExtensionId } from '../../extensions/types'
 
-export type SidebarModuleId = (typeof SIDEBAR_MODULE_IDS)[number]
+const BUILT_IN_SIDEBAR_MODULE_IDS = ['components', 'environments', 'monitors', 'history', 'git'] as const
+
+export type SidebarModuleId = (typeof BUILT_IN_SIDEBAR_MODULE_IDS)[number] | ExtensionId
+
+/** Módulos que podem aparecer na barra de atividades, inclusive os que uma
+ * feature flag pode deixar indisponíveis nesta compilação, seguidos dos
+ * módulos das extensões. */
+export const SIDEBAR_MODULE_IDS: readonly SidebarModuleId[] = [
+  ...BUILT_IN_SIDEBAR_MODULE_IDS,
+  ...EXTENSION_SIDEBAR_MODULES.map((module) => module.id),
+]
 
 export const SIDEBAR_HIDDEN_MODULES_STORAGE_KEY = 'alcy:sidebar:hidden-modules'
 

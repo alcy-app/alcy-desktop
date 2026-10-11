@@ -9,6 +9,7 @@ import { ValueMonitorsPanel, type ValueMonitorsPanelProps } from '../../value-mo
 import { SettingsMenu, type SettingsCategory } from '../../settings-menu/SettingsMenu'
 import type { BulkRow } from '../../../shared/bulk-edit'
 import { useLanguage } from '../../../shared/i18n/use-language'
+import { EXTENSION_SIDEBAR_MODULES } from '../../../extensions/registry'
 import { CheckIcon, ClockIcon, ComponentsIcon, GitIcon, MonitorIcon, VariablesIcon } from '../../../shared/ui/icons'
 import { MockServersPanel } from '../../mock-servers/MockServersPanel'
 import '../../mock-servers/mock-servers.css'
@@ -304,7 +305,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
   onActiveTabChange,
   versionControl,
 }: WorkbenchSidebarProps) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const [internalActiveTab, setInternalActiveTab] = useState<SidebarTab>('components')
   const [hiddenModules, setHiddenModules] = useState(loadHiddenSidebarModules)
   const [moduleOrder, setModuleOrder] = useState(loadSidebarModuleOrder)
@@ -332,8 +333,9 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
         ...(FEATURE_FLAGS.valueMonitors ? [{ id: 'monitors' as const, label: t('monitors.title'), icon: <MonitorIcon size={17} /> }] : []),
         { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={17} /> },
         ...(FEATURE_FLAGS.gitlab ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={18} /> }] : []),
+        ...EXTENSION_SIDEBAR_MODULES.map((module) => ({ id: module.id, label: module.label[language], icon: module.icon })),
       ] satisfies SidebarModuleNavigationItem[],
-    [t],
+    [t, language],
   )
   const allNavigation = useMemo(
     () => [...availableNavigation].sort((a, b) => moduleOrder.indexOf(a.id) - moduleOrder.indexOf(b.id)),
@@ -549,6 +551,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
             {visibleActiveTab === 'environments' && <EnvironmentsPanel {...environments} />}
             {visibleActiveTab === 'monitors' && FEATURE_FLAGS.valueMonitors && <ValueMonitorsPanel {...valueMonitors} />}
             {visibleActiveTab === 'git' && FEATURE_FLAGS.gitlab && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}
+            {EXTENSION_SIDEBAR_MODULES.map((module) => visibleActiveTab === module.id && <module.Panel key={module.id} />)}
           </div>
         </aside>
       )}

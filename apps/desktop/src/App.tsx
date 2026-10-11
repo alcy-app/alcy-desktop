@@ -4,6 +4,7 @@ import { listRecentWorkspaces } from './bindings/list-recent-workspaces'
 import { onWindowCloseRequested } from './bindings/on-window-close-requested'
 import { openWorkspace } from './bindings/open-workspace'
 import { removeWorkspace } from './bindings/remove-workspace'
+import { ExtensionWrappers } from './extensions/ExtensionWrappers'
 import { RequestWorkbench } from './features/request-workbench/RequestWorkbench'
 import { StartScreen } from './features/start-screen/StartScreen'
 import { UpdateProvider } from './features/updates/UpdateProvider'
@@ -110,19 +111,21 @@ function App() {
       <UiScaleProvider>
         <LanguageProvider>
           <ToastProvider>
-            <SecurityPreferencesProvider>
-              <ShortcutsProvider>
-                <ProxyProvider>
-                  <GitlabProvider>
-                    <UpdateProvider>
-                      <SchemaAutocompleteProvider>
-                        <AppScreens />
-                      </SchemaAutocompleteProvider>
-                    </UpdateProvider>
-                  </GitlabProvider>
-                </ProxyProvider>
-              </ShortcutsProvider>
-            </SecurityPreferencesProvider>
+            <ExtensionWrappers>
+              <SecurityPreferencesProvider>
+                <ShortcutsProvider>
+                  <ProxyProvider>
+                    <GitlabProvider>
+                      <UpdateProvider>
+                        <SchemaAutocompleteProvider>
+                          <AppScreens />
+                        </SchemaAutocompleteProvider>
+                      </UpdateProvider>
+                    </GitlabProvider>
+                  </ProxyProvider>
+                </ShortcutsProvider>
+              </SecurityPreferencesProvider>
+            </ExtensionWrappers>
           </ToastProvider>
         </LanguageProvider>
       </UiScaleProvider>

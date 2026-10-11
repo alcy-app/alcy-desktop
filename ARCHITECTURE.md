@@ -255,6 +255,15 @@ The MVP does not implement plugins. Preparing for extensibility is limited to we
 
 An SDK will only be extracted once multiple real cases validate the internal contracts.
 
+## Extensions
+
+A downstream build adds features without editing shared files:
+
+- Rust: pass `alcy_desktop_lib::Extension` values to `run_with` in `src-tauri/src/main.rs`. Each one declares app commands of its own (handled before the app's) and a setup that runs after the app's.
+- Frontend: add a folder with an `index.ts` under `apps/desktop/src/extensions/` that default-exports an `AppExtension` (`extensions/types.ts`). It can wrap the app, add sidebar modules and add workbench tabs, and translates its own text.
+
+This repository ships the loader and no extension.
+
 ## Related decisions
 
 Technology-specific decisions or boundary changes are recorded alongside the code that implements them.

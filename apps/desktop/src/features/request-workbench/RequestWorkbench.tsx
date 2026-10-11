@@ -51,6 +51,9 @@ import { QueryPanel } from './components/QueryPanel'
 import { RequestBreadcrumb } from './components/RequestBreadcrumb'
 import { ShareMenu } from './components/ShareMenu'
 import { ImageImportDropOverlay } from './components/ImageImportDropOverlay'
+import { usePseudoTab } from './use-pseudo-tab'
+import { useExtensionWorkbenchTabs } from '../../extensions/registry'
+import type { PseudoTab } from '../../extensions/types'
 import { isPngPath, readImageRequest } from './image-import'
 import { readCurlRequest } from './curl-paste-import'
 import { Tabs } from '../../shared/ui/Tabs'
@@ -335,7 +338,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   /** Ação de collections pedida por atalho; objeto novo a cada disparo para repetir o mesmo comando. */
   const [collectionsCommand, setCollectionsCommand] = useState<CollectionsCommand | null>(null)
   const clearCollectionsCommand = useCallback(() => setCollectionsCommand(null), [])
-  const [versionReview, setVersionReview] = useState<VersionReviewTarget | null>(null)
+  const versionReviewTab = usePseudoTab<VersionReviewTarget>()
+  const conflictTab = usePseudoTab<ConflictResolutionTarget>()
+  const { open: openVersionReview, deactivate: deactivateVersionReview } = versionReviewTab
+  const { open: openConflict, deactivate: deactivateConflict } = conflictTab
+  const extensionTabs = useExtensionWorkbenchTabs()
   // Última requisição avulsa salva por uma aba — entregue ao canvas do flow
   // se ele estiver montado (ver `FlowCanvas.externalInlineRequest`).
   const [savedInlineRequest, setSavedInlineRequest] = useState<
@@ -351,10 +358,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     { flowId: string; requestIds: string[]; clientPoint: { x: number; y: number }; revision: number } | null
   >(null)
   const [activeLoadRun, setActiveLoadRun] = useState<LoadRunDetailDto | null>(null)
-  const [versionReviewActive, setVersionReviewActive] = useState(false)
   const [pullReviewOpen, setPullReviewOpen] = useState(false)
-  const [conflictResolution, setConflictResolution] = useState<ConflictResolutionTarget | null>(null)
-  const [conflictResolutionActive, setConflictResolutionActive] = useState(false)
   /** Retângulo do "+" que abriu o popover de tipos de requisição; `null` com o popover fechado.
    * `fromSidebar` acrescenta "Criar Collection" ao popover — só o "+" da sidebar a oferece. */
   const [newRequestPopover, setNewRequestPopover] = useState<{ anchor: DOMRect; fromSidebar: boolean } | null>(null)
@@ -551,11 +555,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   /** Abre os detalhes de uma notificação por cima da revisão de versão ou da resolução de conflito. */
   const handleOpenNotification = useCallback(
     (notification: AppNotification) => {
-      setVersionReviewActive(false)
-      setConflictResolutionActive(false)
+      deactivateVersionReview()
+      deactivateConflict()
       openNotification(notification)
     },
-    [openNotification],
+    [deactivateConflict, deactivateVersionReview, openNotification],
   )
   const openReleaseNotes = useMemo(() => {
     const notes = CURRENT_RELEASE_NOTES
@@ -1022,18 +1026,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         setSettingsOpen(true)
       },
       onReview: (target: VersionReviewTarget) => {
-        setConflictResolutionActive(false)
-        setVersionReview(target)
-        setVersionReviewActive(true)
+        deactivateConflict()
+        openVersionReview(target)
       },
       onPull: () => setPullReviewOpen(true),
       onResolveConflict: (fileName: string, changes: StructuredFileChangesDto) => {
-        setVersionReviewActive(false)
-        setConflictResolution({ fileName, changes })
-        setConflictResolutionActive(true)
+        deactivateVersionReview()
+        openConflict({ fileName, changes })
       },
     }),
-    [workspace.rootPath, versionControl],
+    [workspace.rootPath, versionControl, deactivateConflict, openVersionReview, deactivateVersionReview, openConflict],
   )
   const openGeneralSettings = useCallback(() => {
     setSettingsCategory('general')
@@ -1320,8 +1322,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     },
     [closeRunLogPreview, openFlowNodeRequest],
   )
+  const reviewedItem = versionReviewTab.target?.item
   const openReviewedItem = useCallback(() => {
-    const item = versionReview?.item
+    const item = reviewedItem
     if (!item) return
     const id = item.id.slice(item.id.indexOf(':') + 1)
     if (item.itemKind === 'request') {
@@ -1332,8 +1335,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     } else {
       return
     }
-    setVersionReviewActive(false)
-  }, [collections.collections, flows.flows, handleOpenRequest, openFlow, versionReview])
+    deactivateVersionReview()
+  }, [collections.collections, flows.flows, handleOpenRequest, openFlow, reviewedItem, deactivateVersionReview])
 
   /** Remover um flow também fecha a aba correspondente, se estiver aberta —
    * sem isso a aba continuava aberta apontando para um flow inexistente e
@@ -1434,21 +1437,73 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     return [workbench.activeTab.name || t('workbench.openTabs.untitled')]
   }, [collections.collections, flows.flows, workbench.activeTab, t])
 
+  // Bar order: version review, conflict, then the extensions' tabs. When
+  // several are active, the last one wins (an extension's tab shows over a
+  // version tab).
+  const pseudoTabs: PseudoTab[] = [
+    ...(versionReviewTab.target
+      ? [{
+          id: 'version-review',
+          label: versionReviewTab.target.item?.label ?? versionReviewTab.target.fileLabel,
+          dirty: false,
+          preview: true,
+          active: versionReviewTab.active,
+          activate: versionReviewTab.activate,
+          deactivate: versionReviewTab.deactivate,
+          close: versionReviewTab.close,
+          content: (
+            <VersionReview
+              rootPath={workspace.rootPath}
+              target={versionReviewTab.target}
+              onOpenItem={['request', 'flow'].includes(versionReviewTab.target.item?.itemKind ?? '') ? openReviewedItem : undefined}
+            />
+          ),
+        }]
+      : []),
+    ...(conflictTab.target
+      ? [{
+          id: 'conflict-resolution',
+          label: t('vc.resolve.title'),
+          dirty: false,
+          preview: true,
+          active: conflictTab.active,
+          activate: conflictTab.activate,
+          deactivate: conflictTab.deactivate,
+          close: conflictTab.close,
+          content: <ConflictResolver rootPath={workspace.rootPath} vc={versionControl} target={conflictTab.target} onResolved={conflictTab.close} />,
+        }]
+      : []),
+    ...extensionTabs,
+  ]
+  const activePseudoTab = pseudoTabs.findLast((tab) => tab.active)
+  const pseudoTabById = (id: string) => pseudoTabs.find((tab) => tab.id === id)
+
+  // Extension tabs step back when the open request/flow tab changes or a
+  // version tab comes to the front; they stay open in the bar.
+  const extensionTabsRef = useRef(extensionTabs)
+  useEffect(() => {
+    extensionTabsRef.current = extensionTabs
+  })
+  const activeOpenTabId = openTabs.activeOpenTab?.id ?? null
+  const versionTabActive = versionReviewTab.active || conflictTab.active
+  useEffect(() => {
+    for (const tab of extensionTabsRef.current) tab.deactivate()
+  }, [activeOpenTabId])
+  useEffect(() => {
+    if (versionTabActive) for (const tab of extensionTabsRef.current) tab.deactivate()
+  }, [versionTabActive])
+
   const barTabs: OpenTabDescriptor[] = [
     ...openTabs.descriptors,
-    ...(versionReview ? [{ id: 'version-review', kind: 'runLog' as const, label: versionReview.item?.label ?? versionReview.fileLabel, dirty: false, preview: true, fixed: false, fixable: false }] : []),
-    ...(conflictResolution ? [{ id: 'conflict-resolution', kind: 'runLog' as const, label: t('vc.resolve.title'), dirty: false, preview: true, fixed: false, fixable: false }] : []),
+    ...pseudoTabs.map((tab) => ({ id: tab.id, kind: 'runLog' as const, label: tab.label, dirty: tab.dirty, preview: tab.preview ?? false, fixed: false, fixable: false })),
   ]
-  const barActiveTabId =
-    conflictResolutionActive && conflictResolution ? 'conflict-resolution'
-    : versionReviewActive && versionReview ? 'version-review'
-    : openTabs.activeOpenTab?.id ?? null
+  const barActiveTabId = activePseudoTab?.id ?? openTabs.activeOpenTab?.id ?? null
 
   const selectBarTab = (id: string) => {
-    if (id === 'conflict-resolution') { setConflictResolutionActive(true); return }
-    setConflictResolutionActive(false)
-    if (id === 'version-review') setVersionReviewActive(true)
-    else { setVersionReviewActive(false); openTabs.selectOpenTab(id) }
+    const selected = pseudoTabById(id)
+    for (const tab of pseudoTabs) if (tab !== selected) tab.deactivate()
+    if (selected) selected.activate()
+    else openTabs.selectOpenTab(id)
   }
 
   // Troca para a aba vizinha de forma circular (step 1 = direita, -1 = esquerda).
@@ -1465,7 +1520,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'sendRequest':
         return requestTabActive && workbench.execution.status !== 'loading'
       case 'saveRequest':
-        return openTabs.activeOpenTab?.kind === 'request'
+        return openTabs.activeOpenTab?.kind === 'request' && !activePseudoTab?.capturesInput
       case 'nextTab':
       case 'previousTab':
         return barTabs.length >= 2
@@ -1647,28 +1702,28 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               tabs={barTabs}
               activeTabId={barActiveTabId}
               onSelect={selectBarTab}
-              onPin={(id) => { if (id !== 'version-review' && id !== 'conflict-resolution') openTabs.pinOpenTab(id) }}
+              onPin={(id) => { if (!pseudoTabById(id)) openTabs.pinOpenTab(id) }}
               onClose={(id) => {
                 // A barra de abas já confirmou o descarte de alterações não salvas.
-                if (id === 'conflict-resolution') { setConflictResolution(null); setConflictResolutionActive(false); return }
-                if (id === 'version-review') { setVersionReview(null); setVersionReviewActive(false); return }
-                openTabs.closeOpenTab(id)
+                const pseudoTab = pseudoTabById(id)
+                if (pseudoTab) pseudoTab.close()
+                else openTabs.closeOpenTab(id)
               }}
-              onCloseAll={() => { setVersionReview(null); setVersionReviewActive(false); setConflictResolution(null); setConflictResolutionActive(false); openTabs.closeAllOpenTabs() }}
+              onCloseAll={() => {
+                for (const tab of pseudoTabs) tab.close()
+                openTabs.closeAllOpenTabs()
+              }}
               onCloseOthers={(id) => {
-                if (id === 'version-review' || id === 'conflict-resolution') { openTabs.closeAllOpenTabs(); return }
-                setVersionReview(null); setVersionReviewActive(false)
-                setConflictResolution(null); setConflictResolutionActive(false)
-                openTabs.closeOtherOpenTabs(id)
+                for (const tab of pseudoTabs) if (tab.id !== id) tab.close()
+                if (pseudoTabById(id)) openTabs.closeAllOpenTabs()
+                else openTabs.closeOtherOpenTabs(id)
               }}
               onCloseUnfixed={() => {
-                setVersionReview(null); setVersionReviewActive(false)
-                setConflictResolution(null); setConflictResolutionActive(false)
+                for (const tab of pseudoTabs) tab.close()
                 openTabs.closeUnfixedOpenTabs()
               }}
               onCloseMany={(ids) => {
-                if (ids.includes('version-review')) { setVersionReview(null); setVersionReviewActive(false) }
-                if (ids.includes('conflict-resolution')) { setConflictResolution(null); setConflictResolutionActive(false) }
+                for (const tab of pseudoTabs) if (ids.includes(tab.id)) tab.close()
                 openTabs.closeOpenTabs(ids)
               }}
               onToggleFix={openTabs.toggleFixOpenTab}
@@ -1684,10 +1739,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             {/* Sem indicador de carregamento: o chunk chega em milissegundos e um
                 spinner aqui borraria o canvas no WebKitGTK. */}
             <Suspense fallback={null}>
-            {conflictResolutionActive && conflictResolution ? (
-              <ConflictResolver rootPath={workspace.rootPath} vc={versionControl} target={conflictResolution} onResolved={() => { setConflictResolution(null); setConflictResolutionActive(false) }} />
-            ) : versionReviewActive && versionReview ? (
-              <VersionReview rootPath={workspace.rootPath} target={versionReview} onOpenItem={['request', 'flow'].includes(versionReview.item?.itemKind ?? '') ? openReviewedItem : undefined} />
+            {activePseudoTab ? (
+              activePseudoTab.content
             ) : !tabsRestored ? (
               <div className="rw-rest-screen" aria-busy="true" />
             ) : openTabs.descriptors.length === 0 ? (
@@ -2179,7 +2232,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         )}
         </Suspense>
 
-        <ImageImportDropOverlay onImportFromPath={importFromPath} />
+        {!activePseudoTab?.capturesInput && <ImageImportDropOverlay onImportFromPath={importFromPath} />}
 
         <Suspense fallback={null}>
         {screenshotModalOpen && (

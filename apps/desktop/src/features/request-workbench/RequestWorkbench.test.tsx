@@ -1,8 +1,9 @@
-import type { ReactElement } from 'react'
-import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { useState, type ReactElement } from 'react'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, render as renderUi, fireEvent, screen, waitFor, within } from '../../test-utils'
 import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { RequestWorkbench } from './RequestWorkbench'
+import type { ExtensionSidebarModule, PseudoTab } from '../../extensions/types'
 
 // Novidades fixas: o conteúdo real depende da seção da versão no CHANGELOG.md.
 vi.mock('../updates/release-notes', async (importOriginal) => ({
@@ -203,6 +204,17 @@ let persistedTabSession: unknown = null
 
 const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, gitlab: true, notifications: true, webclientExport: true, loadTesting: false }))
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: featureFlags }))
+
+// Starts empty, like the public build; the extension tests fill it in.
+const extensionState = vi.hoisted(() => ({
+  sidebarModules: [] as ExtensionSidebarModule[],
+  readTabs: null as null | (() => PseudoTab[]),
+}))
+vi.mock('../../extensions/registry', () => ({
+  APP_EXTENSIONS: [],
+  EXTENSION_SIDEBAR_MODULES: extensionState.sidebarModules,
+  useExtensionWorkbenchTabs: () => (extensionState.readTabs ? extensionState.readTabs() : []),
+}))
 
 // Conta as renderizações da sidebar. O invólucro é `memo` com a mesma
 // comparação rasa do componente real, então só conta quando as props mudam
@@ -1054,7 +1066,8 @@ describe('RequestWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
     await findStatusText(/500/)
 
-    expect(document.querySelector('.rw-code-block')).toHaveTextContent('Internal Server Error')
+    // The body is rendered by the code viewer after the status line, so wait for it too.
+    await waitFor(() => expect(document.querySelector('.rw-code-block')).toHaveTextContent('Internal Server Error'))
   })
 
   it('mostra os headers da resposta na aba Headers', async () => {
@@ -5463,6 +5476,59 @@ describe('RequestWorkbench — feature flag do GitLab', () => {
     expect(screen.queryByRole('tab', { name: 'Controle de versão' })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Controle de versão:/ })).toBeNull()
     expect(getWorkspaceLink).not.toHaveBeenCalled()
+  })
+})
+
+describe('RequestWorkbench — extensões', () => {
+  afterEach(() => {
+    extensionState.sidebarModules.length = 0
+    extensionState.readTabs = null
+  })
+
+  it('mostra o módulo da extensão na barra lateral e o painel dele', async () => {
+    extensionState.sidebarModules.push({
+      id: 'ext:fake',
+      label: { 'pt-BR': 'Módulo falso', en: 'Fake module' },
+      icon: <span />,
+      Panel: () => <p>Painel falso</p>,
+    })
+    render()
+    await screen.findByLabelText('Ambiente')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Módulo falso' }))
+
+    expect(screen.getByText('Painel falso')).toBeInTheDocument()
+  })
+
+  it('mostra a aba da extensão, recua quando outra aba abre e fecha pela barra', async () => {
+    function useFakeTabs(): PseudoTab[] {
+      const [open, setOpen] = useState(true)
+      const [active, setActive] = useState(false)
+      if (!open) return []
+      return [{
+        id: 'ext:fake-tab',
+        label: 'Aba falsa',
+        dirty: false,
+        active,
+        activate: () => setActive(true),
+        deactivate: () => setActive(false),
+        close: () => setOpen(false),
+        content: <p>Conteúdo falso</p>,
+      }]
+    }
+    extensionState.readTabs = useFakeTabs
+    render()
+    await screen.findByLabelText('Ambiente')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Aba falsa' }))
+    expect(screen.getByText('Conteúdo falso')).toBeInTheDocument()
+
+    createRequestFromTabsBar('REST')
+    await waitFor(() => expect(screen.queryByText('Conteúdo falso')).not.toBeInTheDocument())
+    expect(screen.getByRole('tab', { name: 'Aba falsa', selected: false })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar aba Aba falsa' }))
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Aba falsa' })).not.toBeInTheDocument())
   })
 })
 

@@ -155,8 +155,60 @@ fn log_invocations<R: tauri::Runtime>(
     }
 }
 
+type ExtensionInvoke = Box<dyn Fn(tauri::ipc::Invoke) -> bool + Send + Sync>;
+type ExtensionSetup =
+    Box<dyn FnOnce(&mut tauri::App) -> Result<(), Box<dyn std::error::Error>> + Send>;
+
+/// Additions a downstream build plugs into the app (see `run_with`): commands
+/// of its own, invoked like the app's, and setup that runs after the app's.
+pub struct Extension {
+    /// Commands handled by `invoke`; they take precedence over the app's.
+    pub commands: &'static [&'static str],
+    pub invoke: ExtensionInvoke,
+    pub setup: ExtensionSetup,
+}
+
+/// Index of the extension that handles `command`, if any.
+fn extension_for(extension_commands: &[&[&str]], command: &str) -> Option<usize> {
+    extension_commands
+        .iter()
+        .position(|commands| commands.contains(&command))
+}
+
+/// Sends the extensions' commands to them and everything else to the app.
+fn with_extension_commands(
+    extension_commands: Vec<&'static [&'static str]>,
+    extension_invokes: Vec<ExtensionInvoke>,
+    app_commands: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        let command = invoke.message.command();
+        match extension_for(&extension_commands, command) {
+            Some(index) => {
+                logging::log_invoke(command);
+                extension_invokes[index](invoke)
+            }
+            None => app_commands(invoke),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    run_with(Vec::new());
+}
+
+/// Runs the app with the given extensions.
+pub fn run_with(extensions: Vec<Extension>) {
+    let mut extension_commands = Vec::new();
+    let mut extension_invokes = Vec::new();
+    let mut extension_setups = Vec::new();
+    for extension in extensions {
+        extension_commands.push(extension.commands);
+        extension_invokes.push(extension.invoke);
+        extension_setups.push(extension.setup);
+    }
+
     tauri::Builder::default()
         .manage(ExecutionRegistry::default())
         .manage(WorkspaceOperationCoordinator::default())
@@ -184,7 +236,7 @@ pub fn run() {
                 window_state::show_main_window(webview.app_handle());
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             // Antes de qualquer gravação no diretório de dados: decide as
             // preferências iniciais de quem atualiza o app.
             let previous_install = app
@@ -289,123 +341,146 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             enable_linux_text_undo_redo(app)?;
 
+            for setup in extension_setups {
+                setup(app)?;
+            }
+
             Ok(())
         })
-        .invoke_handler(log_invocations(tauri::generate_handler![
-            execute_graphql_request,
-            execute_rest_request,
-            check_body_files,
-            cancel_graphql_request,
-            list_environments,
-            save_environments,
-            list_flows,
-            save_flows,
-            list_mock_servers,
-            get_mock_server,
-            save_mock_server,
-            delete_mock_server,
-            start_mock_server,
-            stop_mock_server,
-            list_mock_calls,
-            clear_mock_calls,
-            analyze_load_test_import,
-            commit_load_test_import,
-            preview_load_flow,
-            execute_load_flow,
-            copy_load_dataset_asset,
-            get_load_run_history,
-            get_load_run_samples,
-            list_value_monitors,
-            save_value_monitors,
-            load_tab_session,
-            save_tab_session,
-            evaluate_value_monitors,
-            execute_flow,
-            get_flow_node_output,
-            cancel_flow,
-            cancel_load_flow,
-            execute_collection_run,
-            cancel_collection_run,
-            get_collection_run_output,
-            preview_iteration_data,
-            export_collection_run_report,
-            load_schema,
-            get_request_docs,
-            create_workspace,
-            open_workspace,
-            remove_workspace,
-            rename_workspace,
-            list_recent_workspaces,
-            get_proxy_settings,
-            save_proxy_settings,
-            test_proxy_settings,
-            list_custom_ca_certificates,
-            add_custom_ca_certificate,
-            remove_custom_ca_certificate,
-            get_tls_settings,
-            save_tls_settings,
-            get_general_settings,
-            save_general_settings,
-            get_security_settings,
-            save_security_settings,
-            list_gitlab_accounts,
-            begin_gitlab_login,
-            cancel_gitlab_operation,
-            logout_gitlab,
-            test_gitlab_connection,
-            list_gitlab_projects,
-            list_gitlab_branches,
-            get_workspace_link,
-            link_workspace,
-            unlink_workspace,
-            get_version_status,
-            get_local_version_status,
-            get_file_diff,
-            get_structured_file_changes,
-            commit_and_push,
-            preview_conflict_resolution,
-            preview_pull_changes,
-            pull_changes,
-            resolve_conflict,
-            list_collections,
-            save_collections,
-            export_collections,
-            export_har,
-            export_png,
-            preview_webclient_export,
-            export_webclient,
-            import_collections,
-            prepare_import_from_path,
-            prepare_import_from_text,
-            prepare_import_from_url,
-            commit_prepared_import,
-            discard_prepared_import,
-            expand_import_paths,
-            import_collections_from_text,
-            serialize_collections,
-            import_collections_from_url,
-            list_history,
-            open_external_url,
-            get_history_entry,
-            list_request_sends,
-            compare_request_sends,
-            set_send_baseline,
-            get_flow_run_history,
-            get_collection_run_history,
-            read_response_body_chunk,
-            release_response_body,
-            save_response_body,
-            get_update_settings,
-            set_update_check_on_startup,
-            check_for_update,
-            download_update,
-            cancel_update_operation,
-            install_update_and_restart,
-            write_frontend_logs,
-            list_session_cookies,
-            delete_session_cookie,
-            clear_session_cookies
-        ]))
+        .invoke_handler(with_extension_commands(
+            extension_commands,
+            extension_invokes,
+            log_invocations(tauri::generate_handler![
+                execute_graphql_request,
+                execute_rest_request,
+                check_body_files,
+                cancel_graphql_request,
+                list_environments,
+                save_environments,
+                list_flows,
+                save_flows,
+                list_mock_servers,
+                get_mock_server,
+                save_mock_server,
+                delete_mock_server,
+                start_mock_server,
+                stop_mock_server,
+                list_mock_calls,
+                clear_mock_calls,
+                analyze_load_test_import,
+                commit_load_test_import,
+                preview_load_flow,
+                execute_load_flow,
+                copy_load_dataset_asset,
+                get_load_run_history,
+                get_load_run_samples,
+                list_value_monitors,
+                save_value_monitors,
+                load_tab_session,
+                save_tab_session,
+                evaluate_value_monitors,
+                execute_flow,
+                get_flow_node_output,
+                cancel_flow,
+                cancel_load_flow,
+                execute_collection_run,
+                cancel_collection_run,
+                get_collection_run_output,
+                preview_iteration_data,
+                export_collection_run_report,
+                load_schema,
+                get_request_docs,
+                create_workspace,
+                open_workspace,
+                remove_workspace,
+                rename_workspace,
+                list_recent_workspaces,
+                get_proxy_settings,
+                save_proxy_settings,
+                test_proxy_settings,
+                list_custom_ca_certificates,
+                add_custom_ca_certificate,
+                remove_custom_ca_certificate,
+                get_tls_settings,
+                save_tls_settings,
+                get_general_settings,
+                save_general_settings,
+                get_security_settings,
+                save_security_settings,
+                list_gitlab_accounts,
+                begin_gitlab_login,
+                cancel_gitlab_operation,
+                logout_gitlab,
+                test_gitlab_connection,
+                list_gitlab_projects,
+                list_gitlab_branches,
+                get_workspace_link,
+                link_workspace,
+                unlink_workspace,
+                get_version_status,
+                get_local_version_status,
+                get_file_diff,
+                get_structured_file_changes,
+                commit_and_push,
+                preview_conflict_resolution,
+                preview_pull_changes,
+                pull_changes,
+                resolve_conflict,
+                list_collections,
+                save_collections,
+                export_collections,
+                export_har,
+                export_png,
+                preview_webclient_export,
+                export_webclient,
+                import_collections,
+                prepare_import_from_path,
+                prepare_import_from_text,
+                prepare_import_from_url,
+                commit_prepared_import,
+                discard_prepared_import,
+                expand_import_paths,
+                import_collections_from_text,
+                serialize_collections,
+                import_collections_from_url,
+                list_history,
+                open_external_url,
+                get_history_entry,
+                list_request_sends,
+                compare_request_sends,
+                set_send_baseline,
+                get_flow_run_history,
+                get_collection_run_history,
+                read_response_body_chunk,
+                release_response_body,
+                save_response_body,
+                get_update_settings,
+                set_update_check_on_startup,
+                check_for_update,
+                download_update,
+                cancel_update_operation,
+                install_update_and_restart,
+                write_frontend_logs,
+                list_session_cookies,
+                delete_session_cookie,
+                clear_session_cookies
+            ]),
+        ))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extension_for;
+
+    #[test]
+    fn an_extension_command_goes_to_the_extension_that_declares_it() {
+        let commands: Vec<&[&str]> = vec![&["get_status"], &["save_note", "list_notes"]];
+
+        assert_eq!(extension_for(&commands, "get_status"), Some(0));
+        assert_eq!(extension_for(&commands, "list_notes"), Some(1));
+        assert_eq!(extension_for(&commands, "execute_rest_request"), None);
+        assert_eq!(extension_for(&[], "get_status"), None);
+    }
 }
