@@ -2,6 +2,10 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
+// An extension can set up its own test doubles (e.g. for its bindings) in
+// `src/extensions/<name>/test-setup.ts`.
+import.meta.glob('./extensions/*/test-setup.ts', { eager: true })
+
 afterEach(cleanup)
 afterEach(() => window.localStorage.clear())
 // Os testes partem de um app já aberto nesta versão: a aba "Novidades da

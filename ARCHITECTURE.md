@@ -261,6 +261,7 @@ A downstream build adds features without editing shared files:
 
 - Rust: pass `alcy_desktop_lib::Extension` values to `run_with` in `src-tauri/src/main.rs`. Each one declares app commands of its own (handled before the app's) and a setup that runs after the app's.
 - Frontend: add a folder with an `index.ts` under `apps/desktop/src/extensions/` that default-exports an `AppExtension` (`extensions/types.ts`). It can wrap the app, add sidebar modules and add workbench tabs, and translates its own text.
+  Its Tauri calls go in its own `bindings/` folder, and its test doubles in its own `test-setup.ts`, loaded by `src/test-setup.ts`.
 
 This repository ships the loader and no extension.
 

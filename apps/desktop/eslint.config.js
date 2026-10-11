@@ -21,7 +21,8 @@ export default defineConfig([
   },
   {
     files: ['**/*.{ts,tsx}'],
-    ignores: ['src/bindings/**'],
+    // Extensions keep their own bindings layer in `src/extensions/<name>/bindings/`.
+    ignores: ['src/bindings/**', 'src/extensions/*/bindings/**'],
     rules: {
       'no-restricted-imports': [
         'error',
