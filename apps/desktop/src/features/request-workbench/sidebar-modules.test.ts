@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// These tests cover the app's own modules, whatever extensions a build adds.
+vi.mock('../../extensions/registry', () => ({ EXTENSION_SIDEBAR_MODULES: [] }))
+
 import {
   SIDEBAR_HIDDEN_MODULES_STORAGE_KEY,
   SIDEBAR_MODULE_ORDER_STORAGE_KEY,
