@@ -41,6 +41,10 @@
     transform var(--duration-base) var(--ease-out);
 }
 
+.ui-tab-label {
+  text-box: trim-both cap alphabetic;
+}
+
 .ui-tab:hover:not(:disabled) {
   background: var(--surface-raised);
   color: var(--text);

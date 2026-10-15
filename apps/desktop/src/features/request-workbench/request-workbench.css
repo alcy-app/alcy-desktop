@@ -327,7 +327,7 @@
 
 .rw-request-breadcrumb-label[aria-current='page'] {
   color: var(--text-heading);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .rw-endpoint-bar {
@@ -476,7 +476,8 @@
 
 .rw-endpoint-action {
   min-width: 96px;
-  min-height: var(--button-height-sm);
+  /* The URL field adds a 1px border around its control on each side. */
+  min-height: calc(var(--control-height-md) + 2px);
 }
 
 .rw-endpoint-action-content {
@@ -509,7 +510,7 @@
 
 .rw-endpoint-send-options {
   width: 32px;
-  min-height: var(--button-height-sm);
+  min-height: calc(var(--control-height-md) + 2px);
   padding-inline: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;

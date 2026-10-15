@@ -112,7 +112,7 @@
 
 .collections-row--collection .collections-node-name {
   color: var(--text-heading);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 /* The row's 2px gap is tight for the folder → name pair; together with the

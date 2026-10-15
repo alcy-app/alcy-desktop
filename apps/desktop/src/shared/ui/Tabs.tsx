@@ -86,7 +86,9 @@ export function Tabs<T extends string>({
             onClick={() => onChange(tab.id)}
             onKeyDown={(event) => handleKeyDown(event, index)}
           >
-            {tab.label}
+            {typeof tab.label === 'string' || typeof tab.label === 'number'
+              ? <span className="ui-tab-label">{tab.label}</span>
+              : tab.label}
             {tab.badge != null && tab.badge > 0 && (
               <span className="ui-tab-badge" aria-hidden="true">
                 <span className="ui-tab-badge-label">{tab.badge}</span>

@@ -1,11 +1,10 @@
 /* Fonts bundled locally (local-first app, no network). OFL licenses in src/assets/fonts/. */
 
-/* Inter's vertical metrics are declared explicitly. They repeat the file's own
-   values (ascender 1984, descender -494, line gap 0 at 2048 units per em, the
-   same in hhea and OS/2), which center the cap height in the line box. On
-   Windows, WebView2 drew text about 2px above the center of buttons, badges
-   and tabs, as if it derived other metrics from the file; the overrides keep
-   every engine on these. */
+/* Repeat the bundled fonts' hhea/OS/2 metrics for engines that support metric
+   overrides. Engines without support use the same values from the files.
+   Inter uses 1984/-494/0 at 2048 units per em; JetBrains Mono uses
+   1020/-300/0 at 1000 units per em. Control labels also trim their line boxes
+   to cap height so alignment does not depend on platform text leading. */
 @font-face {
   font-family: 'Inter';
   font-style: normal;
@@ -45,6 +44,9 @@
   font-weight: 400;
   font-display: swap;
   src: url('../assets/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -53,4 +55,7 @@
   font-weight: 500;
   font-display: swap;
   src: url('../assets/fonts/JetBrainsMono-Medium.woff2') format('woff2');
+  ascent-override: 102%;
+  descent-override: 30%;
+  line-gap-override: 0%;
 }

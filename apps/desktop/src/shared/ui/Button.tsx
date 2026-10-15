@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { Children, forwardRef } from 'react'
 import type { ButtonHTMLAttributes } from 'react'
 import { Spinner } from './icons'
 import './buttons.css'
@@ -12,7 +12,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   isLoading?: boolean
 }
 
-/** Botão de texto com variante/tamanho consistentes; use `IconButton` para botões só de ícone. */
+/** Text button with shared variants and sizes; use IconButton for icon-only actions. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { variant = 'primary', size = 'sm', isLoading = false, disabled, className, children, type = 'button', ...rest },
   ref,
@@ -37,7 +37,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...rest}
     >
       {isLoading && <Spinner size={size === 'md' ? 16 : 14} />}
-      {children}
+      {Children.map(children, (child) => (
+        typeof child === 'string' || typeof child === 'number'
+          ? <span className="ui-button-label">{child}</span>
+          : child
+      ))}
     </button>
   )
 })

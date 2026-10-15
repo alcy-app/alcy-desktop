@@ -23,6 +23,11 @@
   flex-shrink: 0;
 }
 
+/* Center visible capitals rather than engine-dependent line-box leading. */
+.ui-button-label {
+  text-box: trim-both cap alphabetic;
+}
+
 .ui-button:disabled {
   opacity: var(--disabled-opacity);
   cursor: default;
