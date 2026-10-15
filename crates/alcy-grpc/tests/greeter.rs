@@ -602,3 +602,126 @@ async fn calls_through_an_http_proxy_tunnel() {
         "{requests:?}"
     );
 }
+
+#[tokio::test]
+async fn run_keeps_the_stream_open_for_more_messages_until_closed() {
+    let address = serve(false).await;
+    let method = find_method(&pool(), "test.Greeter", "BidiHello").unwrap();
+    let mut call = start_call(
+        channel(address, &ConnectionSettings::default()).await,
+        &method,
+        &[],
+        None,
+    )
+    .unwrap();
+    call.send_json(&request_json("ana", 0)).await.unwrap();
+    let (actions, receiver) = tokio::sync::mpsc::channel(4);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let recorded = seen.clone();
+    let running = tokio::spawn(async move {
+        call.run(
+            move |event| recorded.lock().unwrap().push(event.clone()),
+            Some(receiver),
+        )
+        .await
+    });
+
+    let (reply, sent) = tokio::sync::oneshot::channel();
+    actions
+        .send(alcy_grpc::ClientAction::Send(request_json("bia", 0), reply))
+        .await
+        .unwrap();
+    sent.await.unwrap().unwrap();
+    let (reply, rejected) = tokio::sync::oneshot::channel();
+    actions
+        .send(alcy_grpc::ClientAction::Send(
+            "{\"nope\": 1}".to_string(),
+            reply,
+        ))
+        .await
+        .unwrap();
+    assert!(rejected.await.unwrap().is_err());
+    actions.send(alcy_grpc::ClientAction::Close).await.unwrap();
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(received(&outcome.events), vec!["hi ana", "hi bia"]);
+    assert!(outcome.status().unwrap().is_ok());
+    assert_eq!(seen.lock().unwrap().len(), outcome.events.len());
+}
+
+#[tokio::test]
+async fn run_without_actions_ends_the_request_stream_at_once() {
+    let address = serve(false).await;
+    let method = find_method(&pool(), "test.Greeter", "LotsOfGreetings").unwrap();
+    let mut call = start_call(
+        channel(address, &ConnectionSettings::default()).await,
+        &method,
+        &[],
+        None,
+    )
+    .unwrap();
+    call.send_json(&request_json("ana", 0)).await.unwrap();
+    let count = Arc::new(Mutex::new(0));
+    let counter = count.clone();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        call.run(move |_| *counter.lock().unwrap() += 1, None),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(received(&outcome.events), vec!["hello ana"]);
+    assert_eq!(*count.lock().unwrap(), outcome.events.len());
+}
+
+#[tokio::test]
+async fn run_closes_when_the_action_owner_drops_and_enforces_the_deadline() {
+    for (drop_actions, expected) in [(true, 0), (false, 4)] {
+        let address = serve(false).await;
+        let method = find_method(&pool(), "test.Greeter", "LotsOfGreetings").unwrap();
+        let mut call = start_call(
+            channel(address, &ConnectionSettings::default()).await,
+            &method,
+            &[],
+            Some(Duration::from_millis(100)),
+        )
+        .unwrap();
+        call.send_json(&request_json("ana", 0)).await.unwrap();
+        let (actions, receiver) = tokio::sync::mpsc::channel(4);
+        let owner = if drop_actions {
+            drop(actions);
+            None
+        } else {
+            Some(actions)
+        };
+        let outcome =
+            tokio::time::timeout(Duration::from_secs(5), call.run(|_| {}, Some(receiver)))
+                .await
+                .unwrap();
+        assert_eq!(outcome.status().unwrap().code, expected);
+        drop(owner);
+    }
+}
+
+#[tokio::test]
+async fn run_stops_a_stream_that_exceeds_the_event_budget() {
+    let address = serve(false).await;
+    let method = find_method(&pool(), "test.Greeter", "LotsOfReplies").unwrap();
+    let mut call = start_call(
+        channel(address, &ConnectionSettings::default()).await,
+        &method,
+        &[],
+        None,
+    )
+    .unwrap();
+    call.send_json(&request_json("ana", 10_100)).await.unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(10), call.run(|_| {}, None))
+        .await
+        .unwrap();
+    assert_eq!(outcome.status().unwrap().code, 8);
+    assert!(outcome.events.len() <= 10_001);
+}

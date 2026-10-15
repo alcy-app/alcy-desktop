@@ -1882,6 +1882,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           service={workbench.grpc.service}
                           method={workbench.grpc.method}
                           message={workbench.grpc.message}
+                          stream={workbench.grpcStream}
+                          onSendMessage={() => void workbench.controlGrpcStream(false)}
+                          onCloseSend={() => void workbench.controlGrpcStream(true)}
                           onMessageChange={(message) => workbench.updateGrpc({ message })}
                           schema={workbench.grpcSchema}
                           environmentVariables={effectiveVariables}
@@ -2040,6 +2043,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                   >
                     <ResponsePanel
                       execution={workbench.execution}
+                      grpcStream={workbench.grpcStream}
                       onClear={workbench.clearResponse}
                       layout={effectiveResponseLayout}
                       onToggleLayout={onToggleResponseLayout}

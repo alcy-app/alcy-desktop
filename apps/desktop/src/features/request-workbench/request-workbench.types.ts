@@ -9,6 +9,7 @@ import type {
   HttpMethodInput,
   RawBodyLanguage,
 } from '../../bindings/execute-rest-request'
+import type { GrpcStreamState } from './grpc-stream'
 import type { ExecuteGrpcRequestOutput } from '../../bindings/execute-grpc-request'
 import type { GrpcCommandError, GrpcSchemaSummary } from '../../bindings/load-grpc-schema'
 import type { LoadSchemaError, LoadSchemaOutput } from '../../bindings/load-schema'
@@ -16,10 +17,7 @@ import type { GrpcCallState, RequestContent } from './collection-tree'
 
 export type { HttpMethodInput, RawBodyLanguage }
 
-/** Protocolo de uma aba aberta no workbench — tipo próprio (em vez de
- * reaproveitar `RequestProtocol` de `collection-tree.ts`) porque descreve
- * conceitos distintos: uma aba aberta vs. o que uma requisição salva numa
- * coleção carrega. Hoje os dois têm os mesmos valores. */
+/** Protocol of an open tab, separate from the persisted collection request type even when their values coincide. */
 export type WorkbenchProtocol = 'graphql' | 'rest' | 'grpc'
 
 export type RequestTabId =
@@ -47,9 +45,7 @@ export interface HeaderEntry {
   enabled: boolean
 }
 
-/** Uma linha da grid de "Params" — sempre derivada da query string de
- * `WorkbenchTab.endpointUrl` e serializada de volta nela, nunca persistida
- * separadamente (ver `use-workbench-state.ts`). */
+/** A Params row derived from endpointUrl and serialized back into it, never persisted separately. */
 export interface ParamEntry {
   id: string
   name: string
@@ -57,8 +53,7 @@ export interface ParamEntry {
   enabled: boolean
 }
 
-/** Valor de um placeholder `:nome` derivado do caminho da URL. O nome é
- * editável pela grid e sincronizado de volta no token da URL. */
+/** Value of a named route placeholder. Editing the name also updates its URL token. */
 export interface RouteParamEntry {
   id: string
   name: string
@@ -79,15 +74,13 @@ export interface FormDataEntry {
   name: string
   enabled: boolean
   kind: 'text' | 'file'
-  /** Valor quando `kind === 'text'`. */
+  /** Value when kind is text. */
   value: string
-  /** Caminho absoluto quando `kind === 'file'`. */
+  /** Absolute path when kind is file. */
   filePath: string
 }
 
-/** Corpo REST em edição. Guarda os dados de todos os tipos ao mesmo tempo
- * para que alternar entre eles não descarte o que já foi digitado — só o
- * tipo ativo é enviado e salvo (ver `toRestBodyInput`). */
+/** REST body edits retain every format so switching does not discard input. Only the active format is sent and saved. */
 export interface BodyState {
   type: BodyType
   raw: string
@@ -125,8 +118,7 @@ export function grpcResultOf(result: ExecutionSuccess | null | undefined): Execu
   return result && 'messageCount' in result ? result : null
 }
 
-/** `ExecuteRestRequestOutput` não tem `graphqlErrors` (REST não tem erros
- * GraphQL) — `null` quando `result` é `undefined`/vem de uma execução REST. */
+/** GraphQL errors, or null for a missing result or a REST/gRPC execution. */
 export function graphqlErrorsOf(result: ExecutionSuccess | null | undefined): GraphqlErrorOutput[] | null {
   if (!result || !('graphqlErrors' in result)) return null
   return result.graphqlErrors
@@ -134,9 +126,9 @@ export function graphqlErrorsOf(result: ExecutionSuccess | null | undefined): Gr
 
 export type ExecutionState =
   | { status: 'idle' }
-  /** `startedAt`: `Date.now()` do envio — alimenta o contador ao vivo do painel de resposta. */
+  /** Date.now() at send time, used by the live response timer. */
   | { status: 'loading'; startedAt: number }
-  /** `responseNotStored`: envio reaberto do histórico que guardou só status, tempo e tamanho. */
+  /** A history entry that retained only status, duration and size. */
   | { status: 'success'; result: ExecutionSuccess; responseNotStored?: boolean }
   | { status: 'error'; error: ExecutionFailure }
 
@@ -152,10 +144,8 @@ export type SchemaLoadState =
   | { status: 'success'; schema: LoadSchemaOutput }
   | { status: 'error'; error: LoadSchemaError }
 
-/** Uma aba aberta no workbench: buffer de edição e estado de execução/schema
- * independentes de qualquer outra aba aberta ao mesmo tempo. `requestId` é
- * `null` enquanto a aba é um rascunho ainda não salvo. */
-/** Node de requisição avulsa de um flow (spec 0086) editado numa aba. */
+/** Open tabs keep independent editing, execution and schema state; unsaved drafts have a null requestId. */
+/** Inline flow request node edited in a tab (spec 0086). */
 export interface FlowNodeRef {
   flowId: string
   nodeId: string
@@ -164,16 +154,12 @@ export interface FlowNodeRef {
 export interface WorkbenchTab {
   id: string
   requestId: string | null
-  /** Presente quando a aba edita a requisição de um node avulso de flow —
-   * "Salvar" grava no node, não numa coleção. */
+  /** Inline flow request destination: Save writes to the node rather than a collection. */
   flowNodeRef?: FlowNodeRef
   name: string
-  /** `false` para uma requisição aberta em modo de pré-visualização: o
-   * título fica em itálico e outra requisição pode substituí-la. Editar ou
-   * dar duplo clique fixa a aba permanentemente durante a sessão. */
+  /** False for a replaceable italic preview tab; editing or double-clicking pins it for the session. */
   pinned: boolean
-  /** Aba fixada pelo usuário: aparece antes das demais na barra e sobrevive a
-   * "excluir abas não fixadas". Gravada na sessão de abas. */
+  /** User-fixed tabs come first and survive closing unfixed tabs. Persisted in the tab session. */
   fixed?: boolean
   endpointUrl: string
   activeSection: RequestTabId
@@ -181,31 +167,27 @@ export interface WorkbenchTab {
   method: HttpMethodInput
   query: string
   variables: string
-  /** Corpo de uma requisição REST — paralelo a `query`/`variables`, que só se aplicam a abas GraphQL. */
+  /** REST body, parallel to the GraphQL-only query and variables fields. */
   body: BodyState
-  /** Scripts JavaScript da requisição (spec 0054); vazio = sem script. */
+  /** Request JavaScript (spec 0054); empty means no script. */
   preRequestScript: string
   postResponseScript: string
   headers: HeaderEntry[]
   params: ParamEntry[]
   routeParams: RouteParamEntry[]
   authorization: AuthorizationState
-  /** Conteúdo da requisição no último carregamento/salvamento da aba —
-   * comparado ao conteúdo atual (campo a campo) para recalcular `dirty`. */
+  /** Content at the last load/save, compared field by field to compute dirty state. */
   savedContent: RequestContent
-  /** `true` quando há alterações não salvas desde o último carregamento/
-   * salvamento. Recalculado uma vez por edição (em `updateTab`, só para a
-   * aba afetada) em vez de comparar `JSON.stringify` de todas as abas a
-   * cada render. */
+  /** Unsaved edits, recalculated per affected tab in updateTab rather than serializing every tab during render. */
   dirty: boolean
   execution: ExecutionState
   executionId: string | null
-  /** Id do envio que produziu a resposta exibida (o mesmo id da entrada no
-   * histórico) — é o envio "atual" no histórico de envios. */
+  /** ID of the send that produced the displayed response, also its history entry ID. */
   lastSendId: string | null
   schema: SchemaLoadState
   schemaExecutionId: string | null
   /** gRPC call of the tab (spec 0129); default for the other protocols. */
   grpc: GrpcCallState
   grpcSchema: GrpcSchemaLoadState
+  grpcStream?: GrpcStreamState
 }

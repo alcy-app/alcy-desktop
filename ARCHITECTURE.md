@@ -202,6 +202,17 @@ against the system roots plus the configured custom CAs, and HTTP proxies
 are reached through a `CONNECT` tunnel. Like the other protocol crates, it
 is dispatched to only from the composition root.
 
+Interactive calls report bounded message previews through a Tauri channel;
+client and bidirectional streams accept additional messages and an explicit
+half-close through an execution-scoped action queue. The protocol crate
+consumes actions while draining response events, so transport backpressure
+cannot prevent deadline handling. Closing a tab cancels its active gRPC call.
+Only unary calls inherit the general request timeout; streams use an explicit
+deadline when configured. The live UI retains up to 500 events and 1 MiB of
+JSON text, with virtual rows; the native call stops with `RESOURCE_EXHAUSTED`
+if its retained transcript exceeds 50 MiB or 10,000 events. Final response
+bodies still use the existing windowed body cache across IPC.
+
 ### Scripting
 
 `alcy-scripting` runs pre-request and post-response scripts in `boa_engine`

@@ -15,14 +15,15 @@ use alcy_domain::{
     Request, RequestDocument, Response, ResponseHeader, ResponseMetadata,
 };
 use alcy_grpc::{
-    CallOutcome, Channel, ConnectionSettings, DescriptorPool, GrpcError, GrpcEvent, GrpcStatus,
-    GrpcTarget, MetadataEntry, SchemaSummary, compile_proto_files, connect, describe, find_method,
-    reflect, resolve_against, start_call,
+    CallOutcome, Channel, ClientAction, ConnectionSettings, DescriptorPool, GrpcError, GrpcEvent,
+    GrpcStatus, GrpcTarget, MetadataEntry, MethodKind, SchemaSummary, compile_proto_files, connect,
+    describe, find_method, reflect, resolve_against, start_call,
 };
 use alcy_storage::{CustomCaCertificateStore, GeneralSettingsStore};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tokio::sync::oneshot;
+use tauri::ipc::Channel as IpcChannel;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::commands::collections::{GrpcCallDto, GrpcSchemaSourceDto};
 use crate::commands::environments::{EnvironmentVariableDto, redact_sensitive_variables};
@@ -50,6 +51,135 @@ impl GrpcSchemaCache {
     fn insert(&self, key: String, pool: DescriptorPool) {
         if let Ok(mut schemas) = self.0.lock() {
             schemas.insert(key, pool);
+        }
+    }
+}
+
+/// Largest message JSON sent in a live event; the full message stays in the
+/// final output (invariant 8: large data does not cross IPC repeatedly).
+const MAX_EVENT_JSON_BYTES: usize = 256 * 1024;
+
+/// Calls whose request stream is still open, by execution id: client and
+/// bidirectional streaming calls take more messages until the person ends
+/// the stream.
+#[derive(Default)]
+pub struct GrpcCalls(Mutex<HashMap<String, mpsc::Sender<ClientAction>>>);
+
+impl GrpcCalls {
+    fn insert(&self, id: &str, sender: mpsc::Sender<ClientAction>) {
+        if let Ok(mut calls) = self.0.lock() {
+            calls.insert(id.to_string(), sender);
+        }
+    }
+
+    fn remove(&self, id: &str) {
+        if let Ok(mut calls) = self.0.lock() {
+            calls.remove(id);
+        }
+    }
+
+    fn get(&self, id: &str) -> Option<mpsc::Sender<ClientAction>> {
+        self.0.lock().ok()?.get(id).cloned()
+    }
+}
+
+/// A call's progress, as it happens (spec 0129).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum GrpcCallEventDto {
+    /// The call reached the method; client-streaming kinds accept more
+    /// messages until the stream is ended.
+    #[serde(rename_all = "camelCase")]
+    Started { kind: MethodKind },
+    #[serde(rename_all = "camelCase")]
+    Sent {
+        index: usize,
+        json: String,
+        truncated: bool,
+        size_bytes: usize,
+        elapsed_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Headers {
+        metadata: Vec<MetadataEntry>,
+        elapsed_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Received {
+        index: usize,
+        json: String,
+        truncated: bool,
+        size_bytes: usize,
+        elapsed_ms: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Finished {
+        status: GrpcStatus,
+        trailers: Vec<MetadataEntry>,
+        elapsed_ms: u64,
+    },
+}
+
+fn capped(json: &str) -> (String, bool) {
+    if json.len() <= MAX_EVENT_JSON_BYTES {
+        return (json.to_string(), false);
+    }
+    let mut end = MAX_EVENT_JSON_BYTES;
+    while !json.is_char_boundary(end) {
+        end -= 1;
+    }
+    (json[..end].to_string(), true)
+}
+
+impl From<&GrpcEvent> for GrpcCallEventDto {
+    fn from(event: &GrpcEvent) -> Self {
+        match event {
+            GrpcEvent::Sent {
+                index,
+                json,
+                size_bytes,
+                elapsed_ms,
+            } => {
+                let (json, truncated) = capped(json);
+                Self::Sent {
+                    index: *index,
+                    json,
+                    truncated,
+                    size_bytes: *size_bytes,
+                    elapsed_ms: *elapsed_ms,
+                }
+            }
+            GrpcEvent::Headers {
+                metadata,
+                elapsed_ms,
+            } => Self::Headers {
+                metadata: metadata.clone(),
+                elapsed_ms: *elapsed_ms,
+            },
+            GrpcEvent::Received {
+                index,
+                json,
+                size_bytes,
+                elapsed_ms,
+            } => {
+                let (json, truncated) = capped(json);
+                Self::Received {
+                    index: *index,
+                    json,
+                    truncated,
+                    size_bytes: *size_bytes,
+                    elapsed_ms: *elapsed_ms,
+                }
+            }
+            GrpcEvent::Finished {
+                status,
+                trailers,
+                elapsed_ms,
+            } => Self::Finished {
+                status: status.clone(),
+                trailers: trailers.clone(),
+                elapsed_ms: *elapsed_ms,
+            },
         }
     }
 }
@@ -456,7 +586,9 @@ pub async fn load_grpc_schema(
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_grpc_request(
     input: ExecuteGrpcRequestInput,
+    on_event: IpcChannel<GrpcCallEventDto>,
     registry: State<'_, ExecutionRegistry>,
+    calls: State<'_, GrpcCalls>,
     cache: State<'_, GrpcSchemaCache>,
     ca_store: State<'_, CustomCaCertificateStore>,
     proxy: State<'_, ProxyApplyState>,
@@ -484,12 +616,13 @@ pub async fn execute_grpc_request(
     let resolved = resolve_connection(input.connection, call.clone(), &input.message).await?;
     let request = resolved.request;
     let history_request = history_request(&request, resolved.redacted.as_ref()).cloned();
-    let deadline = call.deadline_ms.map(Duration::from_millis).or_else(|| {
-        general_settings
-            .load()
-            .ok()
-            .and_then(|settings| settings.request_timeout.duration())
-    });
+    let default_timeout = general_settings
+        .load()
+        .ok()
+        .and_then(|settings| settings.request_timeout.duration());
+    let send_event = |event: GrpcCallEventDto| {
+        let _ = on_event.send(event);
+    };
 
     let outcome = cancellable(&registry, &execution_id, async {
         let target = GrpcTarget::parse(request.endpoint.url())?;
@@ -508,11 +641,33 @@ pub async fn execute_grpc_request(
         )
         .await?;
         let method = find_method(&pool, &call.service, &call.method)?;
+        let kind = MethodKind::of(&method);
+        // The configured timeout fits a request and its reply; a stream may
+        // rightly stay open longer, so it only ends at an explicit deadline.
+        let deadline = call
+            .deadline_ms
+            .map(Duration::from_millis)
+            .or(default_timeout.filter(|_| kind == MethodKind::Unary));
         let mut handle = start_call(channel, &method, &metadata, deadline)?;
         handle.send_json(&request.document.body).await?;
-        Ok(handle.collect().await)
+        let interactive = matches!(
+            kind,
+            MethodKind::ClientStreaming | MethodKind::BidiStreaming
+        );
+        let actions = interactive.then(|| {
+            let (sender, receiver) = mpsc::channel(8);
+            calls.insert(&execution_id, sender);
+            receiver
+        });
+        send_event(GrpcCallEventDto::Started { kind });
+        let outcome = handle
+            .run(|event| send_event(GrpcCallEventDto::from(event)), actions)
+            .await;
+        calls.remove(&execution_id);
+        Ok(outcome)
     })
     .await;
+    calls.remove(&execution_id);
 
     let history_outcome = match &outcome {
         Ok(outcome) => Some(HistoryOutcome::Success(response_of(outcome))),
@@ -555,6 +710,61 @@ pub async fn execute_grpc_request(
         headers: summary.headers,
         trailers: summary.trailers,
     })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendGrpcMessageInput {
+    pub execution_id: String,
+    /// The next request message, as JSON.
+    pub message: String,
+    pub environment_variables: Vec<EnvironmentVariableDto>,
+    pub variable_scopes: Vec<VariableScopeDto>,
+}
+
+fn resolve_stream_message(input: &SendGrpcMessageInput) -> Result<String, GrpcCommandError> {
+    let scopes = scopes_from_dto(input.variable_scopes.clone())?;
+    let variables = with_scoped_variables(&input.environment_variables, &scopes)
+        .iter()
+        .map(|variable| {
+            EnvironmentVariable::new(&variable.name, &variable.value, variable.sensitive)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(resolve_variables(&input.message, &variables)?)
+}
+
+/// Sends one more message on a client-streaming call in progress.
+#[tauri::command]
+pub async fn send_grpc_message(
+    input: SendGrpcMessageInput,
+    calls: State<'_, GrpcCalls>,
+) -> Result<(), GrpcCommandError> {
+    let sender = calls
+        .get(&input.execution_id)
+        .ok_or_else(|| invalid("a chamada não aceita mais mensagens"))?;
+    let message = resolve_stream_message(&input)?;
+    let (reply, result) = oneshot::channel();
+    sender
+        .send(ClientAction::Send(message, reply))
+        .await
+        .map_err(|_| invalid("a chamada não aceita mais mensagens"))?;
+    result
+        .await
+        .map_err(|_| invalid("a chamada não aceita mais mensagens"))?
+        .map_err(GrpcCommandError::from)
+}
+
+/// Ends the request stream of a call in progress; the server then finishes
+/// the call.
+#[tauri::command]
+pub async fn close_grpc_send(
+    execution_id: String,
+    calls: State<'_, GrpcCalls>,
+) -> Result<(), GrpcCommandError> {
+    if let Some(sender) = calls.get(&execution_id) {
+        let _ = sender.send(ClientAction::Close).await;
+    }
+    Ok(())
 }
 
 struct Summary {
@@ -787,6 +997,36 @@ mod tests {
                     .unwrap();
             assert!(matches!(error, GrpcCommandError::InvalidRequest { .. }));
         }
+    }
+
+    #[test]
+    fn resolves_variables_in_additional_messages_and_preserves_missing_variable_errors() {
+        let mut input = SendGrpcMessageInput {
+            execution_id: "stream".to_string(),
+            message: r#"{"name":"{{name}}"}"#.to_string(),
+            environment_variables: vec![EnvironmentVariableDto {
+                name: "name".to_string(),
+                value: "Ana".to_string(),
+                sensitive: false,
+            }],
+            variable_scopes: vec![],
+        };
+        assert_eq!(resolve_stream_message(&input).unwrap(), r#"{"name":"Ana"}"#);
+        input.environment_variables.clear();
+        assert!(matches!(
+            resolve_stream_message(&input),
+            Err(GrpcCommandError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn caps_large_messages_in_live_events_on_a_char_boundary() {
+        assert_eq!(capped("{}"), ("{}".to_string(), false));
+        let large = format!("\"{}\"", "é".repeat(MAX_EVENT_JSON_BYTES));
+        let (json, truncated) = capped(&large);
+        assert!(truncated);
+        assert!(json.len() <= MAX_EVENT_JSON_BYTES);
+        assert!(large.starts_with(&json));
     }
 
     #[test]

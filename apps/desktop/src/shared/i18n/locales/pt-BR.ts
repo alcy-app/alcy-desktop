@@ -1,9 +1,4 @@
-/**
- * Dicionário canônico (pt-BR). `TranslationKey` é derivado deste objeto,
- * então `locales/en.ts` é obrigado pelo compilador a implementar
- * exatamente o mesmo conjunto de chaves - nenhuma chave nova aqui pode
- * ficar sem tradução em inglês sem quebrar `pnpm check`.
- */
+/** Canonical pt-BR dictionary. TranslationKey is derived from it, so the compiler requires en.ts to implement exactly the same keys. */
 const ptBR = {
   // common
   'common.cancel': 'Cancelar',
@@ -50,7 +45,7 @@ const ptBR = {
   'toasts.responseCopied': 'Resposta copiada.',
   'toasts.nodeReferenceCopied': 'Referência do node copiada.',
 
-  // settings menu (ícone de engrenagem no cabeçalho)
+  // settings menu (gear icon in the header)
   'settings.triggerAria': 'Configurações',
   'settings.modalTitle': 'Configurações',
   'settings.categories': 'Categorias de configuração',
@@ -234,7 +229,7 @@ const ptBR = {
   'workbench.navigationAria': 'Navegação principal',
   'workbench.breadcrumb.ariaLabel': 'Caminho da requisição',
 
-  // open request tabs (abas de requisições abertas, acima da endpoint bar)
+  // open request tabs (open-request tab strip, above the endpoint bar)
   'workbench.openTabs.ariaLabel': 'Requisições abertas',
   'workbench.openTabs.untitled': 'Sem título',
   'workbench.openTabs.closeAria': 'Fechar aba {name}',
@@ -349,7 +344,7 @@ const ptBR = {
   // variables editor
   'variables.editorLabel': 'Variables (JSON)',
 
-  // editor de corpo REST
+  // REST request body editor
   'requestBody.editorLabel': 'Corpo da requisição',
   'requestBody.typeAria': 'Tipo de corpo',
   'requestBody.typeNone': 'none',
@@ -393,7 +388,7 @@ const ptBR = {
   'scripts.postResponseEditorLabel': 'Script de pós-resposta',
   'scripts.error': 'Erro no script: {message}',
 
-  // edição em massa (headers, params, variáveis)
+  // bulk edit (headers, params, variables)
   'bulk.bulkEdit': 'Edição em massa',
   'bulk.placeholder': 'chave:valor',
   'bulk.hint': 'Uma por linha, no formato chave:valor.',
@@ -574,8 +569,20 @@ const ptBR = {
   'grpc.loadForFields': 'Carregue os serviços para ver os campos da mensagem.',
   'grpc.generateExample': 'Gerar exemplo',
   'grpc.generateExampleHint': 'Substitui a mensagem por um exemplo com todos os campos do tipo de entrada.',
-  'grpc.singleMessageNote': 'Por enquanto, chamadas com stream do cliente enviam só esta mensagem e encerram o envio.',
+  'grpc.streamMessageNote': "Enviar inicia a chamada com esta mensagem. Edite para enviar outras e depois encerre o envio.",
+  'grpc.sendMessage': "Enviar mensagem",
+  'grpc.closeSend': "Encerrar envio",
+  'grpc.timeline': "Linha do tempo da chamada",
+  'grpc.eventsDropped': "Mostrando eventos recentes; {count} evento(s) anterior(es) removido(s) desta prévia.",
+  'grpc.connecting': "Conectando…",
+  'grpc.messageTruncated': "Prévia da mensagem reduzida. A resposta final contém as mensagens recebidas completas.",
+  'grpc.event.started': "Iniciada",
+  'grpc.event.sent': "Enviada",
+  'grpc.event.received': "Recebida",
+  'grpc.event.headers': "Metadata inicial",
+  'grpc.event.finished': "Finalizada",
   'grpc.schemaSource': 'Origem dos serviços',
+  'grpc.trailers': 'Metadata final',
   'grpc.sourceReflection': 'Reflection do servidor',
   'grpc.sourceProtoFiles': 'Arquivos .proto',
   'grpc.reflectionHint': 'Os serviços e tipos são pedidos ao próprio servidor. Se ele não expõe reflection, escolha os arquivos .proto.',
@@ -757,7 +764,7 @@ const ptBR = {
   'environments.searchEmptyState': 'Nenhuma variável encontrada.',
   'environments.reorderDisabledWhileSearching': 'Limpe a busca para reordenar',
 
-  // flows sidebar panel (lista de flows) + canvas do flow
+  // flows sidebar panel (flow list) + flow canvas
   'flows.subTabLabel': 'Flows',
   'flows.searchAria': 'Buscar flows',
   'flows.searchPlaceholder': 'Buscar flows...',
@@ -1174,7 +1181,7 @@ const ptBR = {
   'flows.canvas.inspectorInlineRequestNameLabel': 'Nome',
   'flows.canvas.editInlineRequestLabel': 'Editar requisição',
   'flows.canvas.inlineRequestHint': 'Esta requisição fica só no flow, sem coleção. Ela abre numa aba do workbench, e "Salvar" grava de volta neste bloco.',
-  // blocos de mock server (spec 0121)
+  // Mock server blocks (spec 0121)
   'flows.canvas.paletteMockCategory': 'Mock server',
   'flows.canvas.nodeTitle.mockStart': 'Ligar mock',
   'flows.canvas.newMockStartLabel': 'Ligar mock server',
@@ -1239,7 +1246,7 @@ const ptBR = {
   'flows.canvas.variableReferenceMockBodyLabel': 'Corpo da chamada recebida',
   'flows.canvas.variableReferenceMockMethodLabel': 'Método da chamada recebida',
 
-  // collections sidebar panel (árvore de Collections e pastas)
+  // collections sidebar panel (collections and folders tree)
   'collections.treeLabel': 'Collections e pastas',
   'collections.moreOptionsMenuAria': 'Mais opções',
   'collections.createCollectionMenuItem': 'Criar Collection',
@@ -1479,7 +1486,7 @@ const ptBR = {
   'collections.importFailuresMany': 'Falha ao importar {count} arquivos.',
   'collections.importFailureFiles': 'Arquivos afetados',
 
-  // histórico de requisições
+  // request history
   'history.emptyState': 'Nenhuma requisição executada ainda.',
   'history.restoreAria': 'Restaurar requisição de {name}',
   'history.failureNetwork': 'Rede',
@@ -1522,7 +1529,7 @@ const ptBR = {
   'variablePreview.pathParameter': 'Parâmetro de path',
   'variablePreview.valueLabel': 'Valor da variável {name}',
 
-  // start screen (criar/abrir workspace)
+  // start screen (create/open workspace)
   'startScreen.kicker': 'GraphQL Client',
   'startScreen.tagline': 'Trabalhe com APIs sem contas, nuvem ou distrações.',
   'startScreen.createButton': 'Criar workspace local',
@@ -1537,7 +1544,7 @@ const ptBR = {
   'startScreen.errorInvalid': 'Não foi possível criar o workspace: {message}',
   'startScreen.errorStorage': 'Falha ao acessar o workspace: {message}',
 
-  // workspace menu (trocar/criar/importar/remover workspace no cabeçalho)
+  // workspace menu (switch/create/import/remove workspaces from the header)
   'workspaceMenu.triggerAria': 'Workspace {name}, {scope}. Gerenciar workspaces.',
   'workspaceMenu.scope.local': 'privado, somente local',
   'workspaceMenu.scope.remote': 'compartilhado via Git remoto',
@@ -1558,13 +1565,13 @@ const ptBR = {
   'workspaceMenu.confirmDeleteFilesHint': 'Apaga a pasta e todo o conteúdo do disco. Esta ação não pode ser desfeita.',
   'workspaceMenu.removing': 'Removendo…',
 
-  // titlebar (barra fundida com a janela, substitui a decoração nativa do SO)
+  // titlebar (single bar merged with the window, replaces the OS decoration)
   'titleBar.minimizeAria': 'Minimizar',
   'titleBar.maximizeAria': 'Maximizar',
   'titleBar.restoreAria': 'Restaurar',
   'titleBar.closeAria': 'Fechar',
 
-  // console de devtools (log em memória das requisições enviadas na sessão)
+  // devtools console (in-memory log of requests sent this session)
   'devConsole.openAria': 'Abrir console de requisições',
   'devConsole.closeAria': 'Fechar console de requisições',
   'devConsole.title': 'Console',
@@ -1859,7 +1866,7 @@ const ptBR = {
   'notifications.dismiss': 'Dispensar',
   'notifications.dismissAria': 'Dispensar notificação: {title}',
   'releaseNotes.title': 'Novidades da versão {version}',
-  // atualizações do app (aba "Atualizações" das configurações)
+  // app updates ("Updates" settings tab)
   'settings.category.updates': 'Atualizações',
   'settings.featureDisabled': 'Funcionalidade desabilitada',
   'updates.appName': 'Alcy',
@@ -1934,7 +1941,7 @@ const ptBR = {
   'updates.error.updater': 'Falha na atualização: {message}',
   'updates.error.backup': 'Não foi possível fazer o backup dos workspaces, então a atualização não foi instalada: {message}',
   'updates.error.cancelled': 'Operação cancelada.',
-  // runner de coleções (spec 0073)
+  // Collection runner (spec 0073)
   'runner.tabLabel': 'Runner · {name}',
   'runner.openButton': 'Executar',
   'runner.openButtonAria': 'Executar a coleção {name}',
@@ -2054,8 +2061,7 @@ const ptBR = {
   'runner.summary.errors': 'Erros',
   'runner.summary.averageTime': 'Tempo médio',
   'runner.settings.execution.title': 'Execução',
-
-  // monitores de valores
+  // value monitors
   'monitors.title': 'Monitores',
   'monitors.empty': 'Nenhum monitor ainda. Crie um para validar campos das respostas.',
   'monitors.addButton': 'Novo monitor',

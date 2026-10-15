@@ -54,7 +54,10 @@ use commands::gitlab::{
     begin_gitlab_login, cancel_gitlab_operation, list_gitlab_accounts, list_gitlab_branches,
     list_gitlab_projects, logout_gitlab, test_gitlab_connection,
 };
-use commands::grpc::{GrpcSchemaCache, execute_grpc_request, load_grpc_schema};
+use commands::grpc::{
+    GrpcCalls, GrpcSchemaCache, close_grpc_send, execute_grpc_request, load_grpc_schema,
+    send_grpc_message,
+};
 use commands::history::{
     get_collection_run_history, get_flow_run_history, get_history_entry, list_history,
 };
@@ -101,15 +104,12 @@ use commands::workspaces::{
 };
 use tauri::Manager;
 
-/// WebKitGTK (Linux) não tem key binding nativo para desfazer/refazer em
-/// campos de texto — diferente do WebView2 (Windows), que já trata Ctrl+Z/
-/// Ctrl+Y nativamente em qualquer `<input>`/`<textarea>` focado. O item de
-/// menu `Undo`/`Redo` do Tauri também não ajuda aqui: o backend GTK da
-/// `muda` (crate por trás do menu nativo do Tauri) só implementa
-/// Copiar/Recortar/Colar/Selecionar tudo, não Desfazer/Refazer. A correção
-/// é interceptar as teclas no próprio widget do webview e encaminhar para o
-/// comando de edição do WebKit, que resolve corretamente contra o campo de
-/// texto focado na página.
+/// WebKitGTK has no native undo/redo key bindings in text fields, unlike
+/// WebView2, which handles Ctrl+Z/Ctrl+Y in focused inputs and textareas.
+/// Tauri Undo/Redo menu items do not help: the GTK backend of muda only
+/// implements Copy/Cut/Paste/Select All. Intercept the keys on the webview
+/// widget and forward them to the WebKit editing command, which targets
+/// the focused text field on the page.
 #[cfg(target_os = "linux")]
 fn enable_linux_text_undo_redo(app: &tauri::App) -> tauri::Result<()> {
     use gtk::gdk::ModifierType;
@@ -145,8 +145,8 @@ fn enable_linux_text_undo_redo(app: &tauri::App) -> tauri::Result<()> {
     })
 }
 
-/// Envolve o handler gerado para registrar no log o nome de cada command
-/// chamado (ver `logging::log_invoke`).
+/// Wrap the generated handler to log each invoked command name
+/// through logging::log_invoke.
 fn log_invocations<R: tauri::Runtime>(
     handler: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
 ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
@@ -211,6 +211,7 @@ pub fn run_with(extensions: Vec<Extension>) {
     tauri::Builder::default()
         .manage(ExecutionRegistry::default())
         .manage(GrpcSchemaCache::default())
+        .manage(GrpcCalls::default())
         .manage(WorkspaceOperationCoordinator::default())
         .manage(FlowExecutionRegistry::default())
         .manage(FlowRunOutputs::default())
@@ -237,14 +238,14 @@ pub fn run_with(extensions: Vec<Extension>) {
             }
         })
         .setup(move |app| {
-            // Antes de qualquer gravação no diretório de dados: decide as
-            // preferências iniciais de quem atualiza o app.
+            // Decide initial preferences for upgrading users before writing
+            // anything into the application data directory.
             let previous_install = app
                 .path()
                 .app_data_dir()
                 .is_ok_and(|dir| is_previous_install(&dir));
-            // Logs locais em todos os builds: arquivo rotativo em
-            // ~/Documentos/Alcy/logs.
+            // Enable local rotating file logs in every build under
+            // the user Documents/Alcy/logs directory.
             let alcy_dirs = logging::alcy_dirs(app)?;
             app.handle().plugin(logging::plugin(&alcy_dirs.logs))?;
             logging::spawn_expired_logs_cleanup(alcy_dirs.logs.clone());
@@ -298,8 +299,8 @@ pub fn run_with(extensions: Vec<Extension>) {
                 &app.state::<ReqwestRestExecutor>(),
             );
             app.manage(tls_settings);
-            // Chave que cifra valores sensíveis em disco: no chaveiro do
-            // sistema, com arquivo reserva fora dos workspaces.
+            // Encrypt sensitive values using the system keyring, with a fallback
+            // file outside workspaces.
             let local_secrets = LocalSecrets::new(
                 Box::new(KeyringCredentialStore::new("alcy")),
                 app_data_dir.join("local-secret.key"),
@@ -324,8 +325,8 @@ pub fn run_with(extensions: Vec<Extension>) {
             );
             app.manage(general_settings);
 
-            // Aplica o proxy salvo sem atrasar a abertura da janela (o modo PAC
-            // baixa o script); até terminar, as requisições saem diretas.
+            // Apply the saved proxy without delaying the window (PAC downloads
+            // its script). Requests use a direct connection until it finishes.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 apply_saved_settings(
@@ -356,6 +357,8 @@ pub fn run_with(extensions: Vec<Extension>) {
                 execute_rest_request,
                 execute_grpc_request,
                 load_grpc_schema,
+                send_grpc_message,
+                close_grpc_send,
                 check_body_files,
                 cancel_graphql_request,
                 list_environments,

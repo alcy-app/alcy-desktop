@@ -1,3 +1,5 @@
+import { GrpcTimeline } from './GrpcTimeline'
+import type { GrpcStreamState } from '../grpc-stream'
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { ResponseBodyOutput } from '../../../bindings/execute-graphql-request'
 import type { RequestSendDto, RequestSendsSource } from '../../../bindings/list-request-sends'
@@ -27,7 +29,7 @@ import { ResponseComparisonView } from './ResponseComparisonView'
 import { ResponseHistoryMenu, type ResponseView } from './ResponseHistoryMenu'
 import { ResponseNetworkBadge } from './ResponseNetworkBadge'
 
-/** Junta todo o corpo (inclusive o restante de um corpo `windowed`, buscado sob demanda) para copiar como texto único. */
+/** Collect the body, fetching windowed chunks on demand, for copying as one string. */
 async function collectBodyText(body: ResponseBodyOutput): Promise<string> {
   if (body.kind === 'inline') return body.body
 
@@ -46,21 +48,22 @@ export type ResponsePanelLayout = 'bottom' | 'right'
 
 interface ResponsePanelProps {
   execution: ExecutionState
+  grpcStream?: GrpcStreamState
   onClear: () => void
   layout: ResponsePanelLayout
   onToggleLayout: () => void
   layoutToggleDisabled?: boolean
-  /** Captura de um valor JSON do corpo para o script de pós-resposta da requisição. */
+  /** Capture a JSON body value for the request post-response script. */
   onCaptureValue?: (path: JsonPathSegment[]) => void
-  /** Reenvia a requisição ignorando o limite de tamanho de resposta (só aparece quando o envio atual passou do limite). */
+  /** Resend without the response size limit, offered after exceeding it. */
   onResendWithoutLimit?: () => void
-  /** Requisição (ou aba) cujos envios aparecem no botão "Histórico"; sem ela, o botão não existe. */
+  /** Request or tab whose sends populate the optional History menu. */
   sendsSource?: RequestSendsSource
-  /** Envio que produziu a resposta exibida — a "Atual" do histórico. */
+  /** Send that produced the displayed response, shown as Current in history. */
   currentSendId?: string | null
-  /** Monitor de valores (vale para todas as requisições); sem ele, o botão "Monitor" não existe. */
+  /** Optional value monitor control shared across requests. */
   monitor?: ResponseMonitorControl
-  /** Abre a configuração "Salvar respostas", oferecida quando o histórico não guardou a resposta exibida. */
+  /** Open Save responses settings when history did not retain the displayed body. */
   onOpenHistorySettings?: () => void
 }
 
@@ -85,6 +88,7 @@ const NO_SOURCE: RequestSendsSource = { rootPath: '', requestId: null, tabId: nu
 
 export const ResponsePanel = memo(function ResponsePanel({
   execution,
+  grpcStream,
   onClear,
   layout,
   onToggleLayout,
@@ -100,18 +104,18 @@ export const ResponsePanel = memo(function ResponsePanel({
   const { showToast } = useToast()
   const [responseTab, setResponseTab] = useState<ResponseTabId>('body')
 
-  // Histórico de envios: a lista só é carregada depois que o menu é aberto.
+  // Load send history only after its menu opens.
   const [historyActivated, setHistoryActivated] = useState(false)
   const sends = useRequestSends(sendsSource ?? NO_SOURCE, currentSendId, historyActivated && sendsSource !== undefined)
-  // A visão escolhida vale para a aba e o envio em que foi escolhida: um novo
-  // envio (ou outra aba) volta para a resposta atual.
+  // A selected view belongs to its tab and send; changing either restores
+  // the current response view.
   const viewKey = `${sendsSource?.tabId ?? ''}\n${currentSendId ?? ''}`
   const [viewState, setViewState] = useState<{ key: string; view: ResponseView }>({ key: viewKey, view: CURRENT_VIEW })
   const view = viewState.key === viewKey && execution.status !== 'loading' ? viewState.view : CURRENT_VIEW
   const setView = useCallback((next: ResponseView) => setViewState({ key: viewKey, view: next }), [viewKey])
 
   const past = usePastSend(sendsSource?.rootPath ?? '', view.kind === 'past' ? view.sendId : null)
-  // `null` enquanto o envio anterior escolhido carrega (ou falha ao carregar).
+  // Null while a selected past send loads or fails to load.
   const displayed: ExecutionState | null = view.kind === 'past' ? (past?.status === 'ready' ? past.execution : null) : execution
 
   const sendList = sends.state.status === 'ready' ? sends.state.sends : []
@@ -139,14 +143,14 @@ export const ResponsePanel = memo(function ResponsePanel({
   const formatTime = useCallback((send: RequestSendDto) => timeFormatter.format(new Date(send.executedAtMs)), [timeFormatter])
 
   const success = displayed?.status === 'success' ? displayed : null
-  // Envio do histórico sem resposta guardada: as abas continuam, com o aviso no lugar do conteúdo.
+  // Keep tabs visible for history entries without a stored response body.
   const notStored = success?.responseNotStored === true
-  // Sem o corpo, não dá para saber se houve erros GraphQL.
+  // Without the body, GraphQL errors are unknown.
   const graphqlErrors = success && !notStored ? graphqlErrorsOf(success.result) : null
   const hasGraphqlErrors = !!graphqlErrors && graphqlErrors.length > 0
   const http = success ? httpResultOf(success.result) : null
   const grpc = grpcResultOf(success?.result)
-  // `testResults` pode faltar em execuções restauradas de formatos antigos.
+  // Older restored executions may omit testResults.
   const testResults = http ? (http.testResults ?? []) : []
   const hasTests = testResults.length > 0
   const failedTests = testResults.filter((test) => !test.passed).length
@@ -155,7 +159,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   )
   const visibleTab = tabs.some((tab) => tab.id === responseTab) ? responseTab : 'body'
 
-  // Monitor de valores: só ligado de fato quando há algum monitor habilitado com campos.
+  // Enable value monitoring only when a monitor has enabled fields.
   const hasMonitors = monitor?.monitors.some((item) => item.enabled && item.fields.length > 0) ?? false
   const monitorOn = !!monitor?.enabled && hasMonitors
   const [monitorFailed, setMonitorFailed] = useState<number | null>(null)
@@ -173,7 +177,7 @@ export const ResponsePanel = memo(function ResponsePanel({
       await navigator.clipboard.writeText(text)
       showToast(t('toasts.responseCopied'))
     } catch {
-      // Clipboard indisponível (permissão negada, contexto não seguro) — sem toast de sucesso.
+      // Clipboard unavailable: do not show a success toast.
     }
   }, [success, notStored, showToast, t])
 
@@ -235,7 +239,7 @@ export const ResponsePanel = memo(function ResponsePanel({
           )}
           {view.kind !== 'compare' && displayed?.status === 'success' && http && (
             <span className="rw-response-summary">
-              {/* Sends do histórico não guardam a conexão (versão HTTP vazia). */}
+              {/* History sends do not retain connection details, including the HTTP version. */}
               {http.connection.httpVersion !== '' && <ResponseNetworkBadge connection={http.connection} />}
               <span className={`rw-response-status rw-response-status--${statusTone(http.statusCode)}`}>
                 HTTP {http.statusCode}
@@ -298,7 +302,13 @@ export const ResponsePanel = memo(function ResponsePanel({
         </div>
       )}
 
-      {/* A `key` remonta o conteúdo a cada mudança de visão/estado, disparando o fade de entrada. */}
+      {view.kind === 'current' && grpcStream && execution.status !== 'loading' && (
+        <details className="rw-grpc-timeline-details">
+          <summary>{t('grpc.timeline')}</summary>
+          <GrpcTimeline key={viewKey} stream={grpcStream} />
+        </details>
+      )}
+      {/* Remount content on view/state changes to trigger its entrance animation. */}
       <div key={`${view.kind}-${displayed?.status ?? 'pending'}`} className="rw-response-content">
         {view.kind === 'compare' ? (
           <div className="rw-response-body">
@@ -314,6 +324,8 @@ export const ResponsePanel = memo(function ResponsePanel({
               <p className="rw-status-message">{t('responseHistory.loading')}</p>
             )}
           </div>
+        ) : view.kind === 'current' && grpcStream && displayed?.status === 'loading' ? (
+          <GrpcTimeline key={viewKey} stream={grpcStream} />
         ) : success ? (
         <>
           <Tabs
@@ -340,11 +352,7 @@ export const ResponsePanel = memo(function ResponsePanel({
             ariaLabel={t('response.tabsLabel')}
             idPrefix="response-"
           />
-          {/* As três permanecem montadas (alternando `hidden`) em vez de só
-              renderizar a aba ativa: `ResponseBody` reformata/tokeniza corpos
-              grandes e mantém estado de chunks carregados (`WindowedBody`) —
-              desmontar e remontar a cada troca de aba refazia esse trabalho e
-              travava o editor ao voltar para "Body". */}
+          {/* Keep response tabs mounted with hidden so expensive formatting, tokenization and loaded windowed chunks survive tab switches. */}
           <div
             className="rw-response-body ui-tabpanel-motion"
             role="tabpanel"
@@ -362,8 +370,8 @@ export const ResponsePanel = memo(function ResponsePanel({
               />
             ) : (
               <ResponseBody
-                // Formato escolhido e texto carregado são do corpo exibido: outra
-                // aba ou outro envio começa do zero, sem herdar o estado anterior.
+                // Formatting and loaded text belong to the displayed response; another
+                // tab or send starts fresh.
                 key={`${viewKey}\n${view.kind}\n${success.result.body.kind === 'windowed' ? success.result.body.handle : ''}`}
                 body={success.result.body}
                 bodyEncoding={http ? http.bodyEncoding : 'text'}
@@ -437,7 +445,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   )
 })
 
-/** Aviso de um envio do histórico que guardou só status, tempo e tamanho. */
+/** Notice for a history send that retained only status, duration and size. */
 function ResponseNotStored({ onChangeSetting }: { onChangeSetting?: () => void }) {
   const { t } = useLanguage()
   return (

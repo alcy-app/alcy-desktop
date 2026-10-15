@@ -127,6 +127,14 @@ impl CallOutcome {
     }
 }
 
+/// What the person does on a call whose request stream is open.
+pub enum ClientAction {
+    /// Sends one more message (JSON); the result says whether it was sent.
+    Send(String, tokio::sync::oneshot::Sender<Result<(), GrpcError>>),
+    /// Ends the request stream.
+    Close,
+}
+
 /// A call in progress. Dropping it cancels the call.
 pub struct CallHandle {
     input: MessageDescriptor,
@@ -141,32 +149,15 @@ pub struct CallHandle {
 impl CallHandle {
     /// Sends one request message, given as JSON.
     pub async fn send_json(&mut self, json: &str) -> Result<(), GrpcError> {
-        let message = message_from_json(&self.input, json)?;
-        let size_bytes = message.encoded_len();
-        let sender = self
-            .messages
-            .as_ref()
-            .ok_or_else(|| GrpcError::InvalidMessage {
-                message_type: self.input.full_name().to_string(),
-                detail: "o envio de mensagens já foi encerrado".to_string(),
-            })?;
-        let pretty = message_to_json(&message);
-        sender
-            .send(message)
-            .await
-            .map_err(|_| GrpcError::InvalidMessage {
-                message_type: self.input.full_name().to_string(),
-                detail: "a chamada já terminou".to_string(),
-            })?;
-        let _ = self
-            .events_out
-            .send(GrpcEvent::Sent {
-                index: self.sent,
-                json: pretty,
-                size_bytes,
-                elapsed_ms: elapsed_ms(self.started),
-            })
-            .await;
+        let event = send_message(
+            &self.input,
+            self.messages.as_ref(),
+            self.started,
+            self.sent,
+            json,
+        )
+        .await?;
+        let _ = self.events_out.send(event).await;
         self.sent += 1;
         Ok(())
     }
@@ -181,6 +172,107 @@ impl CallHandle {
         self.events.recv().await
     }
 
+    /// Runs the call to its end, handing every event to `on_event`. With
+    /// `actions`, the request stream stays open and takes messages until a
+    /// [`ClientAction::Close`] (client and bidirectional streaming); without,
+    /// it is closed right away.
+    pub async fn run(
+        mut self,
+        on_event: impl Fn(&GrpcEvent),
+        mut actions: Option<mpsc::Receiver<ClientAction>>,
+    ) -> CallOutcome {
+        if actions.is_none() {
+            self.close_send();
+        }
+        let mut events = Vec::new();
+        let mut retained_bytes = 0usize;
+        type PendingSend = std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = (
+                            Result<GrpcEvent, GrpcError>,
+                            tokio::sync::oneshot::Sender<Result<(), GrpcError>>,
+                        ),
+                    > + Send,
+            >,
+        >;
+        let mut pending_send: Option<PendingSend> = None;
+        loop {
+            let event = tokio::select! {
+                event = self.events.recv() => {
+                    let Some(event) = event else { break };
+                    Some(event)
+                }
+                result = async {
+                    match pending_send.as_mut() {
+                        Some(send) => send.await,
+                        None => std::future::pending().await,
+                    }
+                }, if pending_send.is_some() => {
+                    pending_send = None;
+                    let (result, reply) = result;
+                    match result {
+                        Ok(event) => {
+                            self.sent += 1;
+                            let _ = reply.send(Ok(()));
+                            Some(event)
+                        }
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
+                            None
+                        }
+                    }
+                }
+                action = async {
+                    match actions.as_mut() {
+                        Some(receiver) => receiver.recv().await,
+                        None => std::future::pending().await,
+                    }
+                }, if pending_send.is_none() => {
+                    match action {
+                        Some(ClientAction::Send(json, reply)) => {
+                            let input = self.input.clone();
+                            let sender = self.messages.clone();
+                            let started = self.started;
+                            let index = self.sent;
+                            pending_send = Some(Box::pin(async move {
+                                (send_message(&input, sender.as_ref(), started, index, &json).await, reply)
+                            }));
+                        }
+                        Some(ClientAction::Close) | None => {
+                            self.close_send();
+                            actions = None;
+                        }
+                    }
+                    None
+                },
+            };
+            let Some(event) = event else { continue };
+            retained_bytes = retained_bytes.saturating_add(event_size(&event));
+            // A desktop stream must not retain an unbounded transcript. Report
+            // the limit explicitly and abort the transport when the handle drops.
+            let event = if retained_bytes > MAX_CALL_BYTES || events.len() >= MAX_CALL_EVENTS {
+                GrpcEvent::Finished {
+                    status: GrpcStatus::new(
+                        Code::ResourceExhausted,
+                        "call event limit reached".to_string(),
+                    ),
+                    trailers: Vec::new(),
+                    elapsed_ms: elapsed_ms(self.started),
+                }
+            } else {
+                event
+            };
+            let finished = matches!(event, GrpcEvent::Finished { .. });
+            on_event(&event);
+            events.push(event);
+            if finished {
+                break;
+            }
+        }
+        CallOutcome { events }
+    }
+
     /// Closes the request stream and gathers every event until the end.
     pub async fn collect(mut self) -> CallOutcome {
         self.close_send();
@@ -193,6 +285,57 @@ impl CallHandle {
         }
         CallOutcome { events }
     }
+}
+
+const MAX_CALL_BYTES: usize = 50 * 1024 * 1024;
+const MAX_CALL_EVENTS: usize = 10_000;
+
+fn event_size(event: &GrpcEvent) -> usize {
+    match event {
+        GrpcEvent::Sent { json, .. } | GrpcEvent::Received { json, .. } => json.len(),
+        GrpcEvent::Headers { metadata, .. } => metadata
+            .iter()
+            .map(|item| item.name.len() + item.value.len())
+            .sum(),
+        GrpcEvent::Finished {
+            status, trailers, ..
+        } => {
+            status.message.len()
+                + trailers
+                    .iter()
+                    .map(|item| item.name.len() + item.value.len())
+                    .sum::<usize>()
+        }
+    }
+}
+
+async fn send_message(
+    input: &MessageDescriptor,
+    sender: Option<&mpsc::Sender<DynamicMessage>>,
+    started: Instant,
+    index: usize,
+    json: &str,
+) -> Result<GrpcEvent, GrpcError> {
+    let message = message_from_json(input, json)?;
+    let size_bytes = message.encoded_len();
+    let sender = sender.ok_or_else(|| GrpcError::InvalidMessage {
+        message_type: input.full_name().to_string(),
+        detail: "o envio de mensagens já foi encerrado".to_string(),
+    })?;
+    let pretty = message_to_json(&message);
+    sender
+        .send(message)
+        .await
+        .map_err(|_| GrpcError::InvalidMessage {
+            message_type: input.full_name().to_string(),
+            detail: "a chamada já terminou".to_string(),
+        })?;
+    Ok(GrpcEvent::Sent {
+        index,
+        json: pretty,
+        size_bytes,
+        elapsed_ms: elapsed_ms(started),
+    })
 }
 
 impl Drop for CallHandle {
@@ -423,6 +566,62 @@ pub(crate) fn code_name(code: Code) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn reads_terminal_events_while_a_message_send_is_backpressured() {
+        let proto = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/protos/greeter.proto");
+        let pool = crate::compile_proto_files(&[proto], &[]).unwrap();
+        let input = pool.get_message_by_name("test.HelloRequest").unwrap();
+        let (messages, receiver) = mpsc::channel(1);
+        messages
+            .send(DynamicMessage::new(input.clone()))
+            .await
+            .unwrap();
+        let (events_out, events) = mpsc::channel(1);
+        let task = tokio::spawn(async move {
+            std::future::pending::<()>().await;
+            drop(receiver);
+        });
+        let call = CallHandle {
+            input,
+            messages: Some(messages),
+            events_out: events_out.clone(),
+            events,
+            started: Instant::now(),
+            sent: 0,
+            task,
+        };
+        let (actions, receiver) = mpsc::channel(1);
+        let (reply, _result) = tokio::sync::oneshot::channel();
+        actions
+            .send(ClientAction::Send("{}".to_string(), reply))
+            .await
+            .unwrap();
+        let running = tokio::spawn(call.run(|_| {}, Some(receiver)));
+        // Reserving the full action queue waits until run has accepted Send.
+        let accepted = tokio::time::timeout(Duration::from_secs(1), actions.reserve())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(accepted);
+        events_out
+            .send(GrpcEvent::Finished {
+                status: GrpcStatus::new(Code::DeadlineExceeded, "deadline".to_string()),
+                trailers: Vec::new(),
+                elapsed_ms: 10,
+            })
+            .await
+            .unwrap();
+        let outcome = tokio::time::timeout(Duration::from_secs(1), running)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            outcome.status().unwrap().code,
+            Code::DeadlineExceeded as i32
+        );
+    }
 
     fn entry(name: &str, value: &str) -> MetadataEntry {
         MetadataEntry {

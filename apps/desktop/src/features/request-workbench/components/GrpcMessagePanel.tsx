@@ -3,11 +3,16 @@ import type { EnvironmentVariableDto } from '../../../bindings/list-environments
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
 import { findGrpcMethod, grpcMessageSchema } from '../grpc-schema'
+import type { GrpcStreamState } from '../grpc-stream'
+import { describeError } from '../response-summary'
 import type { GrpcSchemaLoadState } from '../request-workbench.types'
 import { RequestBodyPanel } from './RequestBodyPanel'
 import './grpc.css'
 
 interface GrpcMessagePanelProps {
+  stream?: GrpcStreamState
+  onSendMessage: () => void
+  onCloseSend: () => void
   service: string
   method: string
   message: string
@@ -19,7 +24,7 @@ interface GrpcMessagePanelProps {
 /** The request message of a gRPC call, as JSON (spec 0129): completion from
  * the method's input type once the services are loaded, and a template with
  * every field to start from. */
-export function GrpcMessagePanel({ service, method, message, onMessageChange, schema, environmentVariables }: GrpcMessagePanelProps) {
+export function GrpcMessagePanel({ stream, onSendMessage, onCloseSend, service, method, message, onMessageChange, schema, environmentVariables }: GrpcMessagePanelProps) {
   const { t } = useLanguage()
   const summary = schema.status === 'success' ? findGrpcMethod(schema.schema, service, method) : null
   const bodySchema = useMemo(() => (summary ? grpcMessageSchema(summary) : null), [summary])
@@ -43,9 +48,16 @@ export function GrpcMessagePanel({ service, method, message, onMessageChange, sc
       </div>
       {streamsFromClient && (
         <p className="rw-grpc-message-note" role="note">
-          {t('grpc.singleMessageNote')}
+          {t('grpc.streamMessageNote')}
         </p>
       )}
+      {stream?.accepting && (
+        <div className="rw-grpc-message-toolbar">
+          <Button size="sm" disabled={stream.busy} onClick={onSendMessage}>{t('grpc.sendMessage')}</Button>
+          <Button size="sm" variant="ghost" disabled={stream.busy} onClick={onCloseSend}>{t('grpc.closeSend')}</Button>
+        </div>
+      )}
+      {stream?.error && <p role="alert" className="rw-grpc-stream-error">{describeError(t, stream.error)}</p>}
       <RequestBodyPanel
         value={message}
         onChange={onMessageChange}

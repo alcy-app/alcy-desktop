@@ -13,7 +13,9 @@ mod connect;
 mod error;
 mod schema;
 
-pub use call::{CallHandle, CallOutcome, GrpcEvent, GrpcStatus, MetadataEntry, start_call};
+pub use call::{
+    CallHandle, CallOutcome, ClientAction, GrpcEvent, GrpcStatus, MetadataEntry, start_call,
+};
 pub use codec::DynamicCodec;
 pub use connect::{ConnectionSettings, GrpcTarget, connect};
 pub use error::GrpcError;

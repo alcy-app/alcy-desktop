@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cancelGraphqlRequest } from '../../bindings/cancel-graphql-request'
 import { executeGraphqlRequest } from '../../bindings/execute-graphql-request'
-import { executeGrpcRequest } from '../../bindings/execute-grpc-request'
+import { closeGrpcSend, executeGrpcRequest, sendGrpcMessage } from '../../bindings/execute-grpc-request'
+import { appendGrpcEvent, emptyGrpcStream } from './grpc-stream'
 import { executeRestRequest } from '../../bindings/execute-rest-request'
 import type { HttpMethodInput, RawBodyLanguage } from '../../bindings/execute-rest-request'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
@@ -54,14 +55,17 @@ import type {
 import type { RestoredTab } from './tab-session'
 import { internSchema } from './schema-registry'
 
-/** Libera o corpo de resposta cacheado no backend (spec 0020) quando um
- * resultado `windowed` deixa de ser referenciado por nenhuma aba —
- * fire-and-forget, best-effort: o cap do cache já garante o limite de
- * memória mesmo se esta chamada falhar ou nunca acontecer. */
+/** Release a windowed body once no tab references it (spec 0020). Best effort: the backend cache also enforces a memory limit. */
 function releaseIfWindowed(execution: ExecutionState) {
   if (execution.status === 'success' && execution.result.body.kind === 'windowed') {
     void releaseResponseBody(execution.result.body.handle)
   }
+}
+
+/** Closing a tab also stops an interactive gRPC call that could otherwise stay open indefinitely. */
+function disposeTab(tab: WorkbenchTab) {
+  if (tab.protocol === 'grpc' && tab.executionId) void cancelGraphqlRequest(tab.executionId)
+  releaseIfWindowed(tab.execution)
 }
 
 let headerIdSequence = 0
@@ -73,15 +77,12 @@ const nextParamId = () => `param-${++paramIdSequence}`
 let routeParamIdSequence = 0
 const nextRouteParamId = () => `route-param-${++routeParamIdSequence}`
 
-/** Deriva a grid de "Params" a partir da query string de `url` — sempre um
- * recálculo completo (nunca mescla com uma lista anterior), usado quando a
- * URL muda por edição direta (digitação, abertura de aba/rascunho). */
+/** Rebuild Params from the URL query whenever the endpoint is edited or a tab is opened. */
 function paramsFromUrl(url: string): ParamEntry[] {
   return parseQueryParams(url).map(({ name, value }) => ({ id: nextParamId(), name, value, enabled: true }))
 }
 
-/** Deriva os parâmetros de rota da URL, preservando valores já preenchidos
- * quando o mesmo nome continua presente após uma edição do endpoint. */
+/** Derive route parameters from the URL, preserving values for names that remain after editing. */
 function routeParamsFromUrl(
   url: string,
   current: ReadonlyArray<{ id?: string; name: string; value: string }> = [],
@@ -142,8 +143,8 @@ function tabFromContent(requestId: string | null, name: string, content: Request
     requestId,
     name,
     protocol: content.protocol,
-    // 'query' (default de createTab) só existe em GraphQL: abas reabertas
-    // (requisição salva, restauração de aba/histórico) usam a seção do protocolo.
+    // The default query section exists only in GraphQL; reopened tabs use
+    // the section for their protocol, including history and session restoration.
     activeSection: firstSectionOf(content.protocol),
     endpointUrl: content.endpointUrl,
     query: content.query,
@@ -162,7 +163,7 @@ function tabFromContent(requestId: string | null, name: string, content: Request
   })
 }
 
-/** Conteúdo salvável da aba — o que "Salvar" grava e o que a sessão de abas guarda como rascunho. */
+/** Savable tab content, also stored as the draft in the tab session. */
 export function contentOf(tab: WorkbenchTab): RequestContent {
   return {
     protocol: tab.protocol,
@@ -193,9 +194,7 @@ function sameRouteParams(a: RouteParamEntry[], b: { name: string; value: string 
   return a.every((param, index) => param.name === b[index]?.name && param.value === b[index]?.value)
 }
 
-/** Compara o conteúdo editável com o snapshot que originou a aba. Além de
- * calcular `dirty`, fixa abas de pré-visualização assim que o usuário altera
- * a requisição. */
+/** Compare edits with the saved snapshot to compute dirty state and pin edited preview tabs. */
 function contentDiffersFromSaved(tab: WorkbenchTab): boolean {
   const saved = tab.savedContent
   return (
@@ -217,22 +216,17 @@ function computeDirty(tab: WorkbenchTab): boolean {
   return (tab.requestId === null && !tab.flowNodeRef) || contentDiffersFromSaved(tab)
 }
 
-/** `true` quando a aba tem alterações desde o último carregamento/salvamento — mostra o indicador na `OpenTabsBar`. */
+/** Whether the tab changed since loading or saving, for the OpenTabsBar indicator. */
 export function isTabDirty(tab: WorkbenchTab): boolean {
   return tab.dirty
 }
 
 type TabPatch = Partial<WorkbenchTab> | ((tab: WorkbenchTab) => Partial<WorkbenchTab>)
 
-/** Nunca inserida em `state.tabs` — só evita checagens de nulidade em toda
- * parte quando não há nenhuma aba aberta (tela de descanso). Nesse estado a
- * interface não renderiza nada que leia estes campos. */
+/** An idle-screen fallback, never inserted into state.tabs. No visible editor reads these fields. */
 const EMPTY_TAB: WorkbenchTab = createTab()
 
-/**
- * `environmentVariables` é só o ambiente ativo; `collections` fornece as variáveis de coleção/pasta da aba ativa
- * (ADR 0031), enviadas em camadas para o backend e mescladas em `effectiveVariables` para exibição.
- */
+/** Environment variables are overlaid by collection/folder scopes (ADR 0031), sent in layers to Rust and merged for display. */
 export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[], rootPath: string, collections: TreeNode[]) {
   const [state, setState] = useState<{ tabs: WorkbenchTab[]; activeTabId: string | null }>({
     tabs: [],
@@ -243,9 +237,9 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     stateRef.current = state
   }, [state])
 
-  /** Ids de aba para as quais o carregamento automático do schema (abaixo)
-   * já foi disparado — evita repetir a chamada a cada re-render enquanto o
-   * `loadSchema` daquela aba ainda está em andamento ou já terminou. */
+  /** Cancel active interactive calls when the workbench unmounts. */
+  useEffect(() => () => stateRef.current.tabs.forEach(disposeTab), [])
+
   const autoSchemaLoadedTabsRef = useRef<Set<string>>(new Set())
 
   const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? state.tabs[0] ?? EMPTY_TAB
@@ -273,16 +267,16 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [state.activeTabId, updateTab],
   )
 
-  /** `ignoreResponseSizeLimit`: "reenviar sem limite" — só este envio ignora o limite de tamanho de resposta. */
+  /** ignoreResponseSizeLimit applies only to this resend. */
   const send = useCallback(async (options?: { ignoreResponseSizeLimit?: boolean }) => {
     const ignoreResponseSizeLimit = options?.ignoreResponseSizeLimit === true
     const tabId = state.activeTabId
     const tab = activeTab
     releaseIfWindowed(tab.execution)
     const id = crypto.randomUUID()
-    // Executar demonstra que a aba já está em uso deliberado. Fixá-la antes
-    // do await impede que outra requisição aberta na sidebar substitua o
-    // request enquanto a execução ainda está em andamento (ou depois dela).
+    // Sending pins the tab before awaiting so another sidebar request cannot
+    // replace its content while the execution is running or after it finishes.
+    // The response remains associated with the tab that initiated the request.
     updateTab(tabId, { pinned: true, executionId: id, execution: { status: 'loading', startedAt: Date.now() } })
 
     const headers = tab.headers.map((header) => ({ name: header.name, value: header.value, enabled: header.enabled }))
@@ -341,7 +335,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     const tab = activeTab
     releaseIfWindowed(tab.execution)
     const id = crypto.randomUUID()
-    updateTab(tabId, { pinned: true, executionId: id, execution: { status: 'loading', startedAt: Date.now() } })
+    updateTab(tabId, { pinned: true, executionId: id, lastSendId: id, execution: { status: 'loading', startedAt: Date.now() }, grpcStream: emptyGrpcStream })
 
     const result = await executeGrpcRequest({
       executionId: id,
@@ -358,15 +352,36 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
       tabId,
       environmentVariables: environmentVariables.map(({ name, value, sensitive }) => ({ name, value, sensitive })),
       variableScopes: variableScopesFor(collections, tab.requestId),
+    }, (event) => {
+      updateTab(tabId, (current) => current.executionId === id
+        ? { grpcStream: appendGrpcEvent(current.grpcStream ?? emptyGrpcStream, event) }
+        : {})
     })
 
-    updateTab(tabId, {
+    updateTab(tabId, (current) => current.executionId !== id ? {} : {
+      grpcStream: { ...(current.grpcStream ?? emptyGrpcStream), accepting: false, busy: false },
       executionId: null,
       lastSendId: id,
       execution: result.ok ? { status: 'success', result: result.value } : { status: 'error', error: result.error },
     })
     return result
   }, [state.activeTabId, activeTab, environmentVariables, collections, rootPath, updateTab])
+
+  const controlGrpcStream = useCallback(async (close: boolean) => {
+    const tabId = state.activeTabId
+    const id = activeTab.executionId
+    if (!id || !activeTab.grpcStream?.accepting || activeTab.grpcStream.busy) return
+    updateTab(tabId, (tab) => ({ grpcStream: { ...(tab.grpcStream ?? emptyGrpcStream), busy: true, error: null } }))
+    const result = close ? await closeGrpcSend(id) : await sendGrpcMessage(id, activeTab.grpc.message, environmentVariables, variableScopesFor(collections, activeTab.requestId))
+    updateTab(tabId, (tab) => tab.executionId !== id ? {} : {
+      grpcStream: {
+        ...(tab.grpcStream ?? emptyGrpcStream),
+        busy: false,
+        accepting: result.ok && close ? false : (tab.grpcStream?.accepting ?? false),
+        error: result.ok ? null : result.error,
+      },
+    })
+  }, [state.activeTabId, activeTab.executionId, activeTab.grpcStream, activeTab.grpc.message, activeTab.requestId, environmentVariables, collections, updateTab])
 
   const cancel = useCallback(() => {
     if (activeTab.executionId) {
@@ -375,9 +390,10 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   }, [activeTab.executionId])
 
   const clearResponse = useCallback(() => {
+    if (activeTab.executionId) void cancelGraphqlRequest(activeTab.executionId)
     releaseIfWindowed(activeTab.execution)
-    updateTab(state.activeTabId, { executionId: null, lastSendId: null, execution: { status: 'idle' } })
-  }, [state.activeTabId, activeTab.execution, updateTab])
+    updateTab(state.activeTabId, { executionId: null, lastSendId: null, execution: { status: 'idle' }, grpcStream: undefined })
+  }, [state.activeTabId, activeTab.execution, activeTab.executionId, updateTab])
 
   const loadSchema = useCallback(
     async (forceRefresh: boolean) => {
@@ -400,7 +416,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
 
       updateTab(tabId, {
         schemaExecutionId: null,
-        // Abas no mesmo endpoint passam a compartilhar uma única instância do schema.
+        // Tabs at the same endpoint share one schema instance.
         schema: result.ok ? { status: 'success', schema: internSchema(result.value) } : { status: 'error', error: result.error },
       })
     },
@@ -447,15 +463,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateActiveTab],
   )
 
-  /** Para uma requisição GraphQL já salva, o schema (campos disponíveis no
-   * `QueryExplorer`) é buscado sozinho assim que a aba é aberta — sem exigir
-   * o clique em "Carregar schema" — porque `load_schema` já resolve do
-   * cache em disco (`SchemaStore`) quando o endpoint não mudou, então isso
-   * não bate na rede de novo. Só dispara uma vez por aba (`autoSchemaLoadedTabsRef`):
-   * uma aba recriada ao fechar e reabrir a requisição tem outro id e volta a
-   * carregar; girar entre seções ou editar a query na mesma aba, não. Rascunhos
-   * novos (`requestId === null`) continuam exigindo a ação explícita — é onde
-   * o endpoint ainda pode ser um valor arbitrário que o usuário está digitando. */
+  /** Load the schema once for each saved GraphQL tab, using the disk cache when possible. Draft endpoints still require explicit loading. Reopening creates a new tab ID and can load again. */
   useEffect(() => {
     const tab = activeTab
     if (
@@ -630,8 +638,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [],
   )
 
-  /** Abre uma execução do histórico como pré-visualização editável. Outra
-   * requisição ou evento substitui essa aba enquanto ela não for fixada. */
+  /** Open a history entry as an editable preview that another request can replace until pinned. */
   const openHistoryEntry = useCallback(
     (historyId: string, name: string, content: RequestContent, execution: ExecutionState) => {
       const tabId = `history:${historyId}`
@@ -660,8 +667,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [],
   )
 
-  /** Recria as abas da sessão gravada (ADR 0039), substituindo as atuais. Cada aba mantém o id
-   * (o histórico de envios é por aba) e é comparada a `savedContent` para o indicador de não salvo. */
+  /** Restore the saved tab session (ADR 0039), retaining IDs for send history and comparing savedContent for dirty state. */
   const restoreTabs = useCallback((restored: RestoredTab[], activeTabId: string | null) => {
     setState(() => {
       const tabs = restored.map((entry) => {
@@ -679,7 +685,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [])
 
-  /** Abre uma aba em branco — sempre um rascunho avulso (`requestId: null`). */
+  /** Open a blank standalone draft with no requestId. */
   const newDraftTab = useCallback((protocol: RequestProtocol, name = '') => {
     setState((current) => {
       const tab = tabFromContent(null, name, emptyRequestContent(protocol))
@@ -687,8 +693,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [])
 
-  /** Abre (ou só ativa) a aba que edita a requisição de um node avulso de
-   * flow — sem `requestId`, mas não é rascunho: começa sem alterações. */
+  /** Open or activate an inline flow request tab. It has no requestId but starts without pending edits. */
   const openFlowNodeRequest = useCallback((ref: FlowNodeRef, name: string, content: RequestContent) => {
     setState((current) => {
       const existing = current.tabs.find(
@@ -700,7 +705,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [])
 
-  /** Abre um conteúdo pronto como rascunho avulso (`requestId: null`), ainda não salvo. */
+  /** Open prepared content as an unsaved standalone draft. */
   const openDraft = useCallback((name: string, content: RequestContent) => {
     setState((current) => {
       const tab = tabFromContent(null, name, content)
@@ -719,7 +724,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateTab],
   )
 
-  /** Fixa ou desafixa a aba. Fixar também a tira do modo de pré-visualização. */
+  /** Toggle a fixed tab; fixing also ends preview mode. */
   const toggleFixTab = useCallback(
     (tabId: string) => {
       updateTab(tabId, (tab) => (tab.fixed ? { fixed: false } : { fixed: true, pinned: true }))
@@ -727,7 +732,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateTab],
   )
 
-  /** Fixa a aba da requisição salva (a tira do modo de pré-visualização), se ela estiver aberta. */
+  /** Pin an open saved request tab, ending preview mode. */
   const pinRequest = useCallback(
     (requestId: string) => {
       const tab = stateRef.current.tabs.find((candidate) => candidate.requestId === requestId)
@@ -751,7 +756,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [])
 
-  /** Move `draggedId` para antes/depois de `targetId` (arrastar e soltar na `OpenTabsBar`). */
+  /** Move draggedId before or after targetId in OpenTabsBar. */
   const reorderTabs = useCallback((draggedId: string, targetId: string, edge: DropEdge) => {
     if (draggedId === targetId) return
 
@@ -769,7 +774,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [])
 
-  /** Move o grupo `ids` (na ordem em que já estão) para antes/depois de `targetId`. */
+  /** Move the ordered group of IDs before or after targetId. */
   const reorderTabsGroup = useCallback((ids: readonly string[], targetId: string, edge: DropEdge) => {
     if (ids.includes(targetId)) return
 
@@ -787,7 +792,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   const closeTab = useCallback(
     (tabId: string) => {
       const closing = stateRef.current.tabs.find((tab) => tab.id === tabId)
-      if (closing) releaseIfWindowed(closing.execution)
+      if (closing) disposeTab(closing)
       autoSchemaLoadedTabsRef.current.delete(tabId)
 
       setState((current) => {
@@ -806,18 +811,18 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   )
 
   const closeAllTabs = useCallback(() => {
-    stateRef.current.tabs.forEach((tab) => releaseIfWindowed(tab.execution))
+    stateRef.current.tabs.forEach(disposeTab)
     autoSchemaLoadedTabsRef.current.clear()
     setState({ tabs: [], activeTabId: null })
   }, [])
 
-  /** Fecha todas as abas exceto `tabId` (menu de contexto "excluir abas não selecionadas"). */
+  /** Close every tab except tabId. */
   const closeOtherTabs = useCallback(
     (tabId: string) => {
       stateRef.current.tabs
         .filter((tab) => tab.id !== tabId)
         .forEach((tab) => {
-          releaseIfWindowed(tab.execution)
+          disposeTab(tab)
           autoSchemaLoadedTabsRef.current.delete(tab.id)
         })
 
@@ -830,14 +835,13 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [],
   )
 
-  /** Fecha as abas cujo id `shouldClose` aceita (excluir não fixadas, excluir selecionadas). Se a
-   * ativa sai, a vez passa à primeira aba que sobrou. */
+  /** Close matching tabs and activate the first remaining tab if the active tab closes. */
   const closeTabsWhere = useCallback(
     (shouldClose: (tabId: string) => boolean) => {
       stateRef.current.tabs
         .filter((tab) => shouldClose(tab.id))
         .forEach((tab) => {
-          releaseIfWindowed(tab.execution)
+          disposeTab(tab)
           autoSchemaLoadedTabsRef.current.delete(tab.id)
         })
 
@@ -858,7 +862,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateTab],
   )
 
-  /** Marca a aba `tabId` como salva no conteúdo atual (após atualizar uma requisição já existente). */
+  /** Mark current tab content as saved after updating an existing request. */
   const markContentSaved = useCallback(
     (tabId: string) => {
       updateTab(tabId, (tab) => ({ savedContent: contentOf(tab) }))
@@ -873,9 +877,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateTab],
   )
 
-  /** Desvincula a aba da requisição salva (ex.: removida da coleção) —
-   * volta a ser um rascunho não salvo, para que `isTabDirty` sinalize o
-   * indicador e "Salvar" não escreva num item que não existe mais. */
+  /** Detach a removed saved request into a dirty draft so Save cannot write to a missing item. */
   const detachRequest = useCallback(
     (tabId: string) => {
       updateTab(tabId, { requestId: null, flowNodeRef: undefined, pinned: true })
@@ -883,16 +885,13 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateTab],
   )
 
-  /** Conteúdo salvável da aba `tabId` (não precisa ser a aba ativa — usada pelo "Salvar" do menu de contexto da aba). */
+  /** Savable content for any tab, including context-menu saves on inactive tabs. */
   const contentOfTab = useCallback(
     (tabId: string): RequestContent => contentOf(state.tabs.find((tab) => tab.id === tabId) ?? activeTab),
     [state.tabs, activeTab],
   )
 
-  /** Troca o conteúdo da aba `tabId` (ex.: cURL colado na barra de endpoint),
-   * mantendo identidade, nome e vínculo com a requisição salva — o `dirty`
-   * segue comparando com o que estava salvo. A seção ativa só muda se o
-   * protocolo mudar, porque as seções de REST e GraphQL são outras. */
+  /** Replace tab content while preserving identity and the saved snapshot for dirty checks. Change the section only when the protocol changes. */
   const replaceTabContent = useCallback(
     (tabId: string, content: RequestContent) =>
       updateTab(tabId, (tab) => {
@@ -937,8 +936,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateActiveTab],
   )
 
-  /** Troca de tipo/linguagem também ajusta o `Content-Type` na grade de
-   * headers (ver `syncContentTypeHeader`) — nunca a cada tecla digitada. */
+  /** Adjust Content-Type when the body type or language changes, rather than on every keystroke. */
   const setBodyType = useCallback(
     (type: BodyType) => {
       updateActiveTab((tab) => ({
@@ -1004,7 +1002,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     tabs: state.tabs,
     activeTabId: state.activeTabId,
     activeTab,
-    /** Ambiente ativo sobreposto pelas variáveis da coleção/pastas da aba ativa. */
+    /** Active environment overlaid by the active request collection/folder variables. */
     effectiveVariables,
     openRequest,
     openHistoryEntry,
@@ -1075,6 +1073,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     execution: activeTab.execution,
     send,
     sendGrpc,
+    grpcStream: activeTab.grpcStream,
+    controlGrpcStream,
     cancel,
     clearResponse,
     schema: activeTab.schema,
