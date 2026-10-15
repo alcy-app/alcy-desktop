@@ -149,9 +149,12 @@ function FormatSelector({ value, onChange }: { value: ResponseBodyMode; onChange
               key={format}
               type="button"
               className="rw-format-switch-option"
-              onClick={() => {
+              onClick={(event) => {
                 onChange(format)
-                close(true)
+                // Focus returns to the trigger only for keyboard activation
+                // (`detail === 0`): moved by script after a mouse click, it
+                // would show the keyboard focus ring.
+                close(event.detail === 0)
               }}
             >
               {t(FORMAT_LABEL_KEY[format])}

@@ -56,14 +56,26 @@ describe('ResponseBody', () => {
     expect(trigger).toHaveFocus()
   })
 
-  it('collapses after choosing a format and returns focus to the trigger', () => {
+  it('collapses after choosing a format from the keyboard and returns focus to the trigger', () => {
     render(<ResponseBody body={{ kind: 'inline', body: '{"name":"ana"}' }} bodyEncoding="text" headers={[]} />)
 
+    // `fireEvent.click` has `detail: 0`, like a click triggered by Enter/Space.
     chooseFormat('xml')
 
     const trigger = formatSwitch().getByRole('button', { expanded: false })
     expect(trigger).toHaveTextContent('XML')
     expect(trigger).toHaveFocus()
+  })
+
+  it('does not move focus to the trigger after a mouse choice, so no focus ring shows', () => {
+    render(<ResponseBody body={{ kind: 'inline', body: '{"name":"ana"}' }} bodyEncoding="text" headers={[]} />)
+
+    fireEvent.click(formatSwitch().getByRole('button', { expanded: false }), { detail: 1 })
+    fireEvent.click(formatSwitch().getByRole('button', { name: 'XML' }), { detail: 1 })
+
+    const trigger = formatSwitch().getByRole('button', { expanded: false })
+    expect(trigger).toHaveTextContent('XML')
+    expect(trigger).not.toHaveFocus()
   })
 
   it('não reprocessa a formatação quando o corpo não muda entre renders', () => {

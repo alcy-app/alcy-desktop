@@ -1328,11 +1328,12 @@
     color var(--duration-fast) var(--ease-out);
 }
 
+/* Background only, no thumb shadow: its 1px ring read as a border, and the
+   global `button:active { box-shadow: none }` made it blink on every click. */
 .rw-format-switch-current {
   gap: var(--space-1);
   padding: 0 6px 0 10px;
   background: var(--segmented-thumb-bg);
-  box-shadow: var(--segmented-thumb-shadow);
   color: var(--text-heading);
 }
 
