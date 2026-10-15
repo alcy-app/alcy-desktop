@@ -2966,6 +2966,33 @@ describe('RequestWorkbench', () => {
         expect(dialog.querySelector('.import-modal-code-textarea')).toBeInTheDocument()
       })
 
+      it('shows in the review how many items were skipped or imported partially', async () => {
+        importCollectionsFromText.mockResolvedValue({
+          ok: true,
+          value: {
+            collections: [{ id: 'imported-1', name: 'api.example.com', folders: [], requests: [] }],
+            environments: [],
+            warnings: [
+              { requestPath: 'POST /upload', phase: 'body', line: null, api: 'file', reason: 'skippedFile' },
+              { requestPath: 'entries[3]', phase: 'request', line: null, api: 'PROPFIND', reason: 'unsupportedMethod' },
+            ],
+          },
+        })
+
+        render()
+        await screen.findByLabelText('Ambiente')
+        await createRequestFromEmptyState()
+        openCollectionsTab()
+
+        openImportModal()
+        const dialog = importModal()
+        fireEvent.click(within(dialog).getByRole('tab', { name: 'Código' }))
+        fireEvent.change(within(dialog).getByLabelText('Conteúdo'), { target: { value: '{"log": {"entries": []}}' } })
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Revisar' }))
+
+        expect(await within(importModal()).findByText('2 item(ns) ignorado(s) ou importado(s) parcialmente.')).toBeInTheDocument()
+      })
+
       it('importa uma Collection colando o conteúdo na aba Código', async () => {
         importCollectionsFromText.mockResolvedValue({
           ok: true,

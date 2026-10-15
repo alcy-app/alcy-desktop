@@ -4,10 +4,10 @@ import type { CollectionDto, CollectionsError } from './list-collections'
 
 export interface ImportWarningDto {
   requestPath: string
-  phase: 'preRequest' | 'postResponse' | string
+  phase: 'preRequest' | 'postResponse' | 'request' | 'body' | string
   line: number | null
   api: string
-  reason: 'unsupported' | 'partialSemantics' | 'skippedProtocol' | string
+  reason: 'unsupported' | 'partialSemantics' | 'skippedProtocol' | 'unsupportedMethod' | 'invalidEntry' | 'skippedFile' | string
 }
 
 export interface ImportedCollectionDataDto {

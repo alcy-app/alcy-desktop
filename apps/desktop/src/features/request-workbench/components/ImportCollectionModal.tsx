@@ -236,6 +236,7 @@ export function ImportCollectionModal({
                 </header>
                 <div className="import-modal-card-body">
                   <p className="import-modal-card-summary">{t('collections.importReviewCounts', { collections: item.summary.collectionCount, folders: item.summary.folderCount, requests: item.summary.requestCount })}</p>
+                  {item.summary.warningCount > 0 && <p className="import-modal-card-summary">{t('collections.importReviewWarnings', { count: item.summary.warningCount })}</p>}
                   {item.summary.supportsDocumentation && (
                     <div className="import-modal-options" role="radiogroup" aria-label={t('collections.importContentLabel')}>
                       <label className={item.includeDocumentation ? 'import-modal-option import-modal-option--selected' : 'import-modal-option'}>

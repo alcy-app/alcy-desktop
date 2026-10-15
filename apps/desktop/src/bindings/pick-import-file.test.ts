@@ -27,6 +27,15 @@ describe('pickImportFiles', () => {
     )
   })
 
+  it('accepts HAR files in the native dialog filter', async () => {
+    openDialog.mockResolvedValue(null)
+
+    await pickImportFiles()
+
+    const [{ filters }] = openDialog.mock.calls[0] as [{ filters: Array<{ extensions: string[] }> }]
+    expect(filters[0].extensions).toContain('har')
+  })
+
   it('normaliza cancelamento e o retorno singular do diálogo', async () => {
     openDialog.mockResolvedValueOnce(null).mockResolvedValueOnce('/import/collection.json')
 

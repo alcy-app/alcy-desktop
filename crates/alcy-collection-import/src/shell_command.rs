@@ -215,6 +215,7 @@ pub fn parse_shell_commands(raw: &str) -> Result<ImportedCollectionData, Collect
         collections: vec![collection],
         environments: Vec::new(),
         source_kind: None,
+        format: None,
         docs: None,
         script_count: 0,
         warnings: Vec::new(),
@@ -774,7 +775,7 @@ impl ParsedCall {
 // Corpo
 // ---------------------------------------------------------------------------
 
-type MappedBody = (ProtocolId, String, String, BodyPayload);
+pub(crate) type MappedBody = (ProtocolId, String, String, BodyPayload);
 
 fn data_body(
     parts: &[DataPart],
@@ -941,7 +942,7 @@ fn graphql_payload(
     Ok(Some((query.clone(), variables)))
 }
 
-fn urlencoded_body(fields: Vec<UrlEncodedField>) -> MappedBody {
+pub(crate) fn urlencoded_body(fields: Vec<UrlEncodedField>) -> MappedBody {
     let text = fields
         .iter()
         .map(|field| format!("{}={}", field.name, field.value))
@@ -955,8 +956,8 @@ fn urlencoded_body(fields: Vec<UrlEncodedField>) -> MappedBody {
     )
 }
 
-/// `a=1&b=x+y` decodificado em campos; `None` se o texto não tiver essa forma.
-fn form_fields(text: &str) -> Option<Vec<UrlEncodedField>> {
+/// `a=1&b=x+y` decoded into fields; `None` when the text does not have that shape.
+pub(crate) fn form_fields(text: &str) -> Option<Vec<UrlEncodedField>> {
     if text.is_empty() || text.contains(char::is_whitespace) {
         return None;
     }
@@ -976,7 +977,7 @@ fn form_fields(text: &str) -> Option<Vec<UrlEncodedField>> {
         .collect()
 }
 
-fn is_content_type(header: &HeaderEntry) -> bool {
+pub(crate) fn is_content_type(header: &HeaderEntry) -> bool {
     header.name().eq_ignore_ascii_case("content-type")
 }
 
@@ -993,7 +994,7 @@ fn with_scheme(url: &str) -> String {
     }
 }
 
-fn host_of(url: &str) -> &str {
+pub(crate) fn host_of(url: &str) -> &str {
     let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let authority = after_scheme
         .split(['/', '?', '#'])
@@ -1004,8 +1005,8 @@ fn host_of(url: &str) -> &str {
         .map_or(authority, |(_, host)| host)
 }
 
-/// `GET /users` — método e caminho, sem query nem host.
-fn request_name(method: &str, url: &str) -> String {
+/// `GET /users` — method and path, without query or host.
+pub(crate) fn request_name(method: &str, url: &str) -> String {
     let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = after_scheme
         .find('/')

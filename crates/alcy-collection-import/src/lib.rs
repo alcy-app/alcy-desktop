@@ -11,6 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 mod docs;
+mod har;
 mod load_test;
 mod png_text;
 mod script_translation;
@@ -90,12 +91,23 @@ pub struct ImportedCollectionData {
     pub environments: Vec<Environment>,
     /// Formato detectado, independente de haver documentação descritiva.
     pub source_kind: Option<ApiDocsSourceKind>,
+    /// Detected format that has no documentation source kind, so the import
+    /// review can still name it.
+    pub format: Option<ImportFormat>,
     /// Descrições da coleção importada (ADR 0035), quando houver alguma.
     /// Requisições documentadas saem com `docs_ref` de `source_id` vazio,
     /// preenchido por quem grava a fonte no workspace.
     pub docs: Option<ApiDocsSource>,
     pub script_count: usize,
     pub warnings: Vec<ImportWarning>,
+}
+
+/// Formats recognized by this crate that never carry imported
+/// documentation (and so have no `ApiDocsSourceKind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportFormat {
+    /// HTTP Archive 1.2 (spec 0127).
+    Har,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +136,9 @@ struct ScriptContext {
 pub fn parse_collection(raw: &str) -> Result<ImportedCollectionData, CollectionImportError> {
     let root: Value = yaml_serde::from_str(raw)
         .map_err(|error| CollectionImportError::Invalid(error.to_string()))?;
+    if har::is_har(&root) {
+        return har::map_har(&root);
+    }
     if root.get("opencollection").is_some() {
         return map_open_collection(&root);
     }
@@ -292,6 +307,7 @@ fn map_open_collection(value: &Value) -> Result<ImportedCollectionData, Collecti
         collections: vec![collection],
         environments,
         source_kind: Some(ApiDocsSourceKind::Bruno),
+        format: None,
         docs: source_docs,
         script_count: state.script_count,
         warnings: state.warnings,
@@ -683,6 +699,7 @@ fn map_data_dump(value: &Value) -> Result<ImportedCollectionData, CollectionImpo
         collections,
         environments,
         source_kind: Some(ApiDocsSourceKind::Postman),
+        format: None,
         script_count: script_state.script_count,
         warnings: script_state.warnings,
     })
@@ -705,6 +722,7 @@ fn map_nested_collection(value: &Value) -> Result<ImportedCollectionData, Collec
         collections: vec![collection],
         environments: variables.into_iter().collect(),
         source_kind: Some(ApiDocsSourceKind::Postman),
+        format: None,
         script_count: script_state.script_count,
         warnings: script_state.warnings,
     })
@@ -1212,6 +1230,7 @@ fn map_tree_export(value: &Value) -> Result<ImportedCollectionData, CollectionIm
         collections: vec![collection],
         environments,
         source_kind: Some(ApiDocsSourceKind::Insomnia),
+        format: None,
         script_count: 0,
         warnings: Vec::new(),
     })
@@ -1352,6 +1371,7 @@ fn map_flat_export(value: &Value) -> Result<ImportedCollectionData, CollectionIm
         collections,
         environments,
         source_kind: Some(ApiDocsSourceKind::Insomnia),
+        format: None,
         script_count: 0,
         warnings: Vec::new(),
     })
@@ -1450,6 +1470,7 @@ fn map_variable_export(
         collections: Vec::new(),
         environments: vec![environment],
         source_kind: Some(ApiDocsSourceKind::Postman),
+        format: None,
         docs: None,
         script_count: 0,
         warnings: Vec::new(),
@@ -2841,6 +2862,7 @@ pub fn parse_bruno_directory(
         collections: vec![collection],
         environments,
         source_kind: Some(ApiDocsSourceKind::Bruno),
+        format: None,
         docs: None,
         script_count: state.script_count,
         warnings: state.warnings,

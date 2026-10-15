@@ -4,7 +4,7 @@ import type { CollectionsError } from './list-collections'
 
 export interface PreparedImportDto {
   id: string
-  format: 'openapi' | 'postman' | 'insomnia' | 'bruno' | 'alcy' | string
+  format: 'openapi' | 'postman' | 'insomnia' | 'bruno' | 'har' | 'alcy' | string
   title: string
   collectionCount: number
   folderCount: number

@@ -8,7 +8,7 @@ export async function pickImportFiles(): Promise<string[]> {
   const selected = await open({
     directory: false,
     multiple: true,
-    filters: [{ name: 'Alcy / OpenAPI / Postman / Bruno / Insomnia / cURL / wget', extensions: ['json', 'yaml', 'yml', 'bru', 'sh', 'txt'] }],
+    filters: [{ name: 'Alcy / OpenAPI / Postman / Bruno / Insomnia / HAR / cURL / wget', extensions: ['json', 'yaml', 'yml', 'bru', 'har', 'sh', 'txt'] }],
   })
   if (selected === null) return []
   return typeof selected === 'string' ? [selected] : selected

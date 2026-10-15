@@ -670,6 +670,9 @@ fn count_folder(folder: &Folder) -> (usize, usize) {
 }
 
 fn prepared_format(imported: &alcy_collection_import::ImportedCollectionData) -> &'static str {
+    if let Some(alcy_collection_import::ImportFormat::Har) = imported.format {
+        return "har";
+    }
     match imported.source_kind {
         Some(ApiDocsSourceKind::OpenApi) => "openapi",
         Some(ApiDocsSourceKind::Postman) => "postman",
@@ -1063,7 +1066,7 @@ pub struct ExpandImportPathsInput {
 /// Extensões consideradas ao percorrer uma pasta escolhida para importar —
 /// as mesmas do diálogo de arquivos. Imagens ficam de fora: cada PNG viraria
 /// um rascunho aberto, e pastas costumam ter imagens sem dados do Alcy.
-const IMPORTABLE_EXTENSIONS: [&str; 5] = ["json", "yaml", "yml", "sh", "txt"];
+const IMPORTABLE_EXTENSIONS: [&str; 6] = ["json", "yaml", "yml", "har", "sh", "txt"];
 
 /// Troca cada pasta comum em `paths` pelos arquivos importáveis dentro dela
 /// (recursivamente), para a modal importá-los um a um e agrupar as falhas.
@@ -1316,6 +1319,7 @@ fn import_structured_document(
             collections: import.collections,
             environments: Vec::new(),
             source_kind: Some(ApiDocsSourceKind::OpenApi),
+            format: None,
             docs: (!import.docs.operations.is_empty()).then_some(import.docs),
             script_count: 0,
             warnings: Vec::new(),
@@ -1328,6 +1332,7 @@ fn import_structured_document(
                         collections: alcy_storage::import_collections_from_str(raw)?,
                         environments: Vec::new(),
                         source_kind: None,
+                        format: None,
                         docs: None,
                         script_count: 0,
                         warnings: Vec::new(),
@@ -1858,6 +1863,34 @@ collection:
     }
 
     #[test]
+    fn preparing_a_har_file_labels_it_as_har() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("session.har");
+        fs::write(
+            &path,
+            r#"{"log": {"version": "1.2", "creator": {"name": "Browser"}, "entries": [
+                {"request": {"method": "GET", "url": "https://api.example.com/users", "headers": []}},
+                {"request": {"method": "POST", "url": "https://auth.example.com/token", "headers": []}}
+            ]}}"#,
+        )
+        .unwrap();
+        let prepared = PreparedImports::default();
+        let imported = read_import_from_path(path).unwrap();
+
+        let summary =
+            store_prepared_import(&prepared, imported, root.to_string_lossy().into_owned())
+                .unwrap();
+
+        assert_eq!(summary.format, "har");
+        assert_eq!(summary.collection_count, 1);
+        assert_eq!(summary.folder_count, 2);
+        assert_eq!(summary.request_count, 2);
+        assert!(!summary.supports_documentation);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn committing_without_documentation_clears_references_and_writes_no_docs() {
         let root = temp_root();
         let target = DocsTarget {
@@ -2363,6 +2396,7 @@ collection:
         fs::write(root.join(".hidden.json"), "").unwrap();
         fs::write(root.join("nested/curl.SH"), "").unwrap();
         fs::write(root.join("nested/deeper/env.yml"), "").unwrap();
+        fs::write(root.join("nested/session.har"), "").unwrap();
         fs::write(root.join(".git/config.json"), "").unwrap();
         fs::write(root.join("node_modules/pkg/package.json"), "").unwrap();
 
@@ -2373,6 +2407,7 @@ collection:
             "b.yaml",
             "nested/curl.SH",
             "nested/deeper/env.yml",
+            "nested/session.har",
         ]
         .iter()
         .map(|relative| root.join(relative).to_string_lossy().into_owned())
