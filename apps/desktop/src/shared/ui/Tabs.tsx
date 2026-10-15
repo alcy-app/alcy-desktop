@@ -6,7 +6,7 @@ interface TabDefinition<T extends string> {
   id: T
   label: ReactNode
   disabled?: boolean
-  /** Contagem exibida como badge ao lado do rótulo (omitida quando ausente ou zero). */
+  /** Count beside the label, omitted when absent or zero. */
   badge?: number
 }
 
@@ -16,12 +16,12 @@ interface TabsProps<T extends string> {
   onChange: (id: T) => void
   ariaLabel: string
   idPrefix?: string
-  /** `compact`: densidade menor, maiúsculas com letter-spacing (barras laterais). */
+  /** Compact spacing and typography for sidebar tabs. */
   variant?: 'default' | 'compact'
   className?: string
 }
 
-/** Lista de abas (`role="tablist"`) com navegação por seta/Home/End; o painel fica a cargo de quem consome. */
+/** Tab list with Arrow/Home/End navigation; consumers render the panels. */
 export function Tabs<T extends string>({
   tabs,
   activeTab,
@@ -89,7 +89,7 @@ export function Tabs<T extends string>({
             {tab.label}
             {tab.badge != null && tab.badge > 0 && (
               <span className="ui-tab-badge" aria-hidden="true">
-                {tab.badge}
+                <span className="ui-tab-badge-label">{tab.badge}</span>
               </span>
             )}
           </button>

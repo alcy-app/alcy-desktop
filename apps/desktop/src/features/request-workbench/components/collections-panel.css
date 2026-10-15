@@ -30,7 +30,7 @@
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 5px 26px;
+  padding: 3px 26px;
   color: var(--text);
   font: inherit;
   font-size: var(--font-size-sm);
@@ -50,8 +50,7 @@
   right: 2px;
 }
 
-/* Barra da seleção múltipla: contagem à esquerda, ações só de ícone (com tooltip) à direita — mesmo
-   vocabulário visual da barra de ferramentas acima, com o fundo de destaque da seleção. */
+/* Multiple selection toolbar: count on the left, icon actions with tooltips on the right, and a selection highlight. */
 .collections-selection-bar {
   display: flex;
   align-items: center;
@@ -103,12 +102,10 @@
   align-items: center;
   gap: 2px;
   border-radius: var(--radius-sm);
-  min-height: 25px;
+  min-height: 24px;
   padding: 0 4px;
   cursor: pointer;
-  /* O arraste é implementado com pointer events (não o HTML5 Drag and
-     Drop nativo, pouco confiável em algumas WebViews Linux ao iniciar
-     sobre texto) — isto evita que o movimento selecione texto no lugar. */
+  /* Use pointer events because native HTML5 drag and drop is unreliable over text in some Linux WebViews. Prevent text selection while dragging. */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -126,9 +123,7 @@
   color: var(--text-muted);
 }
 
-/* A linha recebe foco ao ser clicada (alvo do atalho de renomear): em vez do
-   anel de foco, o mesmo fundo do hover marca o item selecionado — exceto na
-   requisição aberta, que mantém o próprio destaque. */
+/* Clicking focuses the row for renaming. The hover background indicates focus, except for the open request, which keeps its highlight. */
 .collections-row:focus {
   outline: none;
 }
@@ -142,14 +137,14 @@
   background: var(--accent-softer);
 }
 
-/* Seleção múltipla (spec 0104): vence o hover/foco para a linha continuar marcada. */
+/* Multiple selection (spec 0104) wins over hover/focus so rows remain highlighted. */
 .collections-row.collections-row--selected,
 .collections-row.collections-row--selected:hover,
 .collections-row.collections-row--selected:focus {
   background: var(--selection-bg);
 }
 
-/* Linhas selecionadas em sequência formam um bloco só: arredonda apenas o topo do primeiro e a base do último. */
+/* Consecutive selected rows form one block: round only the first top and last bottom corners. */
 .collections-row--selected.collections-row--joined-above {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
@@ -171,8 +166,7 @@
   border-radius: var(--radius-md);
 }
 
-/* Borda destacando o lado em que o item entraria ao reordenar entre irmãos (`.collections-row--drop-into`
-   é usado em vez disso quando o drop move o item para dentro do alvo). */
+/* Highlight the insertion side when reordering siblings; .collections-row--drop-into indicates moving into the target. */
 .collections-row--drop-before {
   box-shadow: inset 0 2px 0 0 var(--accent-strong);
 }
@@ -328,9 +322,7 @@
   font-weight: var(--font-weight-medium);
 }
 
-/* Nome colorido pelo tipo de alteração local (própria ou de um descendente)
-   — vence sobre a cor de "aberto" acima, para a alteração continuar visível
-   na seleção. */
+/* Local change colors (own or descendant changes) override the open-item color to remain visible on selection. */
 .collections-node-name[data-change-kind='added'] {
   color: var(--success);
 }
@@ -372,7 +364,7 @@
   opacity: 1;
 }
 
-/* Cartão e itens do menu vêm de shared/ui/menu.css; aqui só o posicionamento. */
+/* Menu surfaces and items come from shared/ui/menu.css; only positioning belongs here. */
 .collections-menu {
   position: absolute;
   right: 0;
@@ -389,11 +381,7 @@
   transform-origin: bottom;
 }
 
-/* O menu "⋯" por linha alinha pela direita (`right: 0`) porque a linha
-   ocupa quase a largura inteira da sidebar. O wrapper do "..." da barra
-   de ferramentas é só a largura do próprio botão, mas já fica encostado
-   na borda direita (`margin-left: auto`), então o menu abre para a
-   esquerda a partir dali sem sair da sidebar. */
+/* Row menus align right because rows fill the sidebar. The toolbar menu host is already pinned right, so its menu opens left within the sidebar. */
 .collections-toolbar-menu-wrapper .collections-menu {
   left: auto;
   right: 0;
@@ -420,7 +408,7 @@
     color var(--duration-fast) var(--ease-out);
 }
 
-/* ---- Favoritas e filtros (ADR 0060) ---- */
+/* Favorites and filters (ADR 0060). */
 
 .collections-favorite-button {
   opacity: 0;
@@ -446,7 +434,7 @@
   color: var(--accent);
 }
 
-/* O botão de filtro fica perto da busca, à esquerda; o menu abre para a direita. */
+/* The filter sits beside search on the left; its menu opens right. */
 .collections-filter-menu {
   right: auto;
   left: 0;

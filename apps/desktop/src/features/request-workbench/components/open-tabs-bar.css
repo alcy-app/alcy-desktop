@@ -1,9 +1,10 @@
 .rw-open-tabs-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 0 8px 0 10px;
+  gap: 4px;
+  min-height: var(--workbench-bar-height);
+  flex-shrink: 0;
+  padding: 0 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
@@ -15,14 +16,21 @@
   flex: 1;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
-/* Separa a seção de abas da seção de ambiente: a segunda fica fixa à
-   direita, fora da área que rola horizontalmente. */
+.rw-open-tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Separate scrolling tabs from the environment control pinned to the right. */
 .rw-open-tabs-divider {
   flex-shrink: 0;
   width: 1px;
-  height: 20px;
+  height: 16px;
   background: var(--border);
 }
 
@@ -32,18 +40,16 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  max-width: 200px;
+  max-width: 180px;
   min-height: var(--control-height-sm);
-  padding: 0 3px 0 10px;
+  padding: 0 3px 0 8px;
   border: 0;
   border-right: 1px solid var(--border-subtle);
   border-bottom: 2px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   cursor: grab;
-  /* O arraste é implementado com pointer events (não o HTML5 Drag and
-     Drop nativo, pouco confiável em algumas WebViews Linux ao iniciar
-     sobre texto) — isto evita que o movimento selecione texto no lugar. */
+  /* Use pointer events because native HTML5 drag and drop is unreliable over text in some Linux WebViews. Prevent text selection while dragging. */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -73,7 +79,7 @@
   transform: scaleX(1);
 }
 
-/* Seleção múltipla: vence o hover para a aba continuar marcada. */
+/* Multiple selection wins over hover so selected tabs remain highlighted. */
 .rw-open-tab.rw-open-tab--selected,
 .rw-open-tab.rw-open-tab--selected:hover {
   background: var(--selection-bg);
@@ -84,7 +90,7 @@
   cursor: grabbing;
 }
 
-/* Borda destacando o lado (esquerdo/direito) em que a aba arrastada entraria ao ser solta. */
+/* Highlight the insertion side of a dragged tab. */
 .rw-open-tab--drop-before {
   box-shadow: inset 3px 0 0 var(--accent-strong);
 }
@@ -102,7 +108,7 @@
   border: none;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
-  padding: var(--space-1) 0;
+  padding: 2px 0;
   cursor: pointer;
 }
 
@@ -113,7 +119,7 @@
   white-space: nowrap;
 }
 
-/* Badge do método (GET/POST/GQL) antes do nome da aba de requisição. */
+/* Method badge (GET/POST/GQL) before the request tab name. */
 .ui-badge.rw-open-tab-method {
   flex-shrink: 0;
   padding: 0 4px;
@@ -137,8 +143,7 @@
   font-style: italic;
 }
 
-/* Ponto de alteração e botão de fechar ocupam o mesmo espaço: o botão fica
-   invisível até o mouse passar sobre a aba, quando ele se sobrepõe ao ponto. */
+/* The dirty dot and close button share a slot. Hover or keyboard focus reveals the close button over the dot. */
 .rw-open-tab-indicator {
   position: relative;
   flex-shrink: 0;
@@ -208,7 +213,7 @@
   color: var(--text-heading);
 }
 
-/* Cartão e itens vêm de shared/ui/menu.css; aqui só posicionamento e largura. */
+/* Menu surfaces and items come from shared/ui/menu.css; only positioning and width belong here. */
 .rw-tab-context-menu {
   position: fixed;
   z-index: var(--z-overlay);

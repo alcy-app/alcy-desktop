@@ -30,7 +30,7 @@ import { hasOpenModal } from '../../shared/ui/open-modals'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { useTooltip } from '../../shared/ui/use-tooltip'
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RecordIcon, RunnerIcon, TerminalIcon } from '../../shared/ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RunnerIcon } from '../../shared/ui/icons'
 import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -160,11 +160,10 @@ interface PendingLoadTestImport {
   preview: LoadTestImportAnalysisDto
 }
 
-/** Monitor de valores ligado no painel de resposta — preferência da interface, vale para todas as requisições. */
+/** Response value monitor preference, shared across all requests. */
 const VALUE_MONITOR_STORAGE_KEY = 'alcy:panel:value-monitor'
 
-/** Mock avulso de um bloco "Ligar mock" (spec 0121); `null` quando o bloco
- * não existe mais ou deixou de ser avulso. */
+/** Inline Start mock block (spec 0121); null if removed or no longer inline. */
 function inlineMockServerOf(flows: FlowState[], flowId: string, nodeId: string): MockServerDto | null {
   const node = flows.find((flow) => flow.id === flowId)?.nodes.find((candidate) => candidate.id === nodeId)
   return node?.kind === 'mockStart' && node.source.type === 'inline' ? node.source.server : null
@@ -203,9 +202,9 @@ function useCompactResponseLayout(): boolean {
   return compact
 }
 
-/** Largura abaixo da qual a barra de endpoint e as abas do request passam a se sobrepor. */
+/** Width below which endpoint controls and request tabs would overlap. */
 const REQUEST_PANE_MIN_WIDTH = 360
-/** Tempo mínimo do aviso "Importando cURL…" na barra de endpoint. */
+/** Minimum cURL import notice duration. */
 const COMMAND_IMPORT_MIN_MS = 350
 const RESPONSE_RIGHT_MIN_WIDTH = 280
 const RESPONSE_RIGHT_MAX_WIDTH = 900
@@ -224,15 +223,12 @@ function useElementWidth(element: HTMLElement | null): number | null {
   return width
 }
 
-/** Referência estável quando não há ambiente ativo: um `[]` novo a cada render
- * invalidaria o `memo` dos painéis que recebem as variáveis. */
+/** Stable empty environment variables preserve panel memoization. */
 const NO_ENVIRONMENT_VARIABLES: VariableRow[] = []
 
 const NON_TEXT_INPUT_TYPES = new Set(['button', 'submit', 'reset', 'file', 'checkbox', 'radio', 'color', 'range'])
 
-/** Diz se um atalho sem Ctrl/Alt (Enter, F-keys) vale com foco em `target`: foco
- * fora de qualquer controle, numa aba ou num campo de linha única da área principal.
- * Editores multilinha, botões, listas e modais mantêm o comportamento próprio. */
+/** Allow unmodified shortcuts outside controls, in tabs or in single-line main-area fields. Editors, buttons, lists and modals retain their own behavior. */
 function isPlainShortcutTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement) || target === document.body) return true
   if (!target.closest('.rw-main')) return false
@@ -243,10 +239,7 @@ function isPlainShortcutTarget(target: EventTarget | null): boolean {
   return !target.matches('button, a, select, textarea, [role="option"], [role="menuitem"]')
 }
 
-// Telas e modais pesados que muitas sessões nunca abrem (flows com o
-// xyflow, runner, compartilhamento, controle de versão) ficam em
-// chunks próprios, carregados na primeira vez em que aparecem: menos código
-// para interpretar e manter em memória na abertura do app.
+// Lazy-load heavy screens and modals to reduce startup parsing and memory use.
 const FlowCanvas = lazy(() => import('../flows/FlowCanvas').then((module) => ({ default: module.FlowCanvas })))
 const FlowRunSnapshot = lazy(() =>
   import('../flows/FlowRunSnapshot').then((module) => ({ default: module.FlowRunSnapshot })),
@@ -280,23 +273,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const { t } = useLanguage()
   const { showToast } = useToast()
   const { bindings: shortcutBindings } = useShortcuts()
-  // `useVersionControl` só existe depois dos hooks de coleções/ambientes/flows
-  // abaixo, mas o autosave deles precisa notificá-lo assim que grava em disco
-  // (para "Alterações" atualizar sozinho). A ref quebra esse ciclo sem dar ao
-  // callback uma identidade nova a cada render, o que reagendaria o debounce
-  // de salvar sem necessidade.
+  // Autosave must notify useVersionControl, declared below. A ref breaks the cycle without changing callback identity or restarting the save debounce.
   const notifyLocalChangeRef = useRef<() => void>(() => {})
   const notifyLocalChange = useCallback(() => notifyLocalChangeRef.current(), [])
   const environments = useEnvironmentsState(workspace.rootPath, notifyLocalChange)
-  // Só as variáveis com nome: uma linha em branco na aba Ambientes ainda está em edição e não pode
-  // derrubar o envio, o runner, os flows nem a carga do schema.
+  // Exclude unnamed environment rows still being edited from execution and schema loading.
   const activeEnvironmentRows = environments.activeEnvironment?.variables ?? NO_ENVIRONMENT_VARIABLES
   const activeEnvironmentVariables = useMemo(() => definedVariables(activeEnvironmentRows), [activeEnvironmentRows])
   const collections = useCollectionsState(workspace.rootPath, environments.importEnvironments, notifyLocalChange)
   const collectionFavorites = useCollectionFavorites(workspace.rootPath)
-  // Edição pela pré-visualização de `{{variável}}` nos campos: grava na
-  // coleção/pasta que define a variável (ADR 0031) ou no ambiente ativo
-  // (criando a variável se preciso), como `al.environment.set`.
+  // Variable preview edits target the defining collection/folder (ADR 0031), or the active environment, creating the variable if needed.
   const { activeEnvironmentId, applyScriptChanges } = environments
   const { applyScopedChanges } = collections
   const variableEditing = useMemo<VariableEditing>(
@@ -310,7 +296,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [activeEnvironmentId, applyScriptChanges, applyScopedChanges],
   )
   const workbench = useWorkbenchState(activeEnvironmentVariables, workspace.rootPath, collections.collections)
-  // Ambiente sobreposto pelas variáveis da coleção/pastas da aba ativa: destaque, sugestões, compartilhar e HAR.
+  // Collection/folder variables override environment values for highlighting, suggestions, sharing and HAR.
   const effectiveVariables = workbench.effectiveVariables
   const scriptCount = [workbench.preRequestScript, workbench.postResponseScript].filter((script) => script.trim() !== '').length
   const history = useHistoryState(workspace.rootPath)
@@ -327,15 +313,14 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const consoleLog = useConsoleState()
   const recorder = useRecorderState()
   const { redactHarSensitiveData } = useSecurityPreferences()
-  // Visualização e exportação do gravador usam a mesma lista, para que o
-  // `.har` salvo nunca mostre mais do que a tela.
+  // Recorder display and export share a list so saved HAR files match visible entries.
   const recorderEntries = useMemo(
     () => (redactHarSensitiveData ? recorder.entries.map(redactRecordedEntry) : recorder.entries),
     [recorder.entries, redactHarSensitiveData],
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('components')
-  /** Ação de collections pedida por atalho; objeto novo a cada disparo para repetir o mesmo comando. */
+  /** New collection command object per dispatch allows repeating the same shortcut. */
   const [collectionsCommand, setCollectionsCommand] = useState<CollectionsCommand | null>(null)
   const clearCollectionsCommand = useCallback(() => setCollectionsCommand(null), [])
   const versionReviewTab = usePseudoTab<VersionReviewTarget>()
@@ -343,24 +328,21 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const { open: openVersionReview, deactivate: deactivateVersionReview } = versionReviewTab
   const { open: openConflict, deactivate: deactivateConflict } = conflictTab
   const extensionTabs = useExtensionWorkbenchTabs()
-  // Última requisição avulsa salva por uma aba — entregue ao canvas do flow
-  // se ele estiver montado (ver `FlowCanvas.externalInlineRequest`).
+  // Last inline request saved by a tab, delivered to the mounted flow canvas (FlowCanvas.externalInlineRequest).
   const [savedInlineRequest, setSavedInlineRequest] = useState<
     { flowId: string; nodeId: string; request: RequestSummary; revision: number } | null
   >(null)
-  // Último mock avulso salvo por uma aba — mesmo mecanismo de `savedInlineRequest`.
+  // Last inline mock saved by a tab, following savedInlineRequest.
   const [savedInlineMockServer, setSavedInlineMockServer] = useState<
     { flowId: string; nodeId: string; server: MockServerDto; revision: number } | null
   >(null)
-  // Requisições de um item da árvore largado sobre o canvas de um flow
-  // (spec 0095) — entregues ao canvas, que conhece o viewport.
+  // Requests dropped onto a flow canvas (spec 0095); the canvas owns viewport placement.
   const [droppedRequestChain, setDroppedRequestChain] = useState<
     { flowId: string; requestIds: string[]; clientPoint: { x: number; y: number }; revision: number } | null
   >(null)
   const [activeLoadRun, setActiveLoadRun] = useState<LoadRunDetailDto | null>(null)
   const [pullReviewOpen, setPullReviewOpen] = useState(false)
-  /** Retângulo do "+" que abriu o popover de tipos de requisição; `null` com o popover fechado.
-   * `fromSidebar` acrescenta "Criar Collection" ao popover — só o "+" da sidebar a oferece. */
+  /** Bounds of the plus button opening the request popover, or null when closed. fromSidebar also offers Create Collection. */
   const [newRequestPopover, setNewRequestPopover] = useState<{ anchor: DOMRect; fromSidebar: boolean } | null>(null)
   const openNewRequestPopover = useCallback(
     (anchor: DOMRect) => setNewRequestPopover({ anchor, fromSidebar: false }),
@@ -381,10 +363,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const { reload: reloadEnvironments } = environments
   const { reload: reloadFlows } = flows
   const { reload: reloadValueMonitors } = valueMonitors
-  // Muda quando um pull reescreve `alcy-api-docs.json`: força reler a documentação.
+  // Change after pulls rewrite alcy-api-docs.json to reload documentation.
   const [docsRevision, setDocsRevision] = useState(0)
-  // Uma atualização do repositório reescreve arquivos em disco: os dados em
-  // memória precisam ser relidos, senão o próximo autosave os sobrescreveria.
+  // Reload in-memory data after repository updates so autosave does not overwrite updated files.
   const handleWorkspaceFilesChanged = useCallback(
     (names: string[]) => {
       if (names.includes('alcy-collections.json')) reloadCollections()
@@ -399,8 +380,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   useEffect(() => {
     notifyLocalChangeRef.current = versionControl.notifyLocalChange
   }, [versionControl.notifyLocalChange])
-  // Independente da aba da sidebar aberta, para que "Componentes" já mostre
-  // as marcas de alteração sem depender de a aba de Git ter sido aberta antes.
+  // Track change markers without requiring the Git sidebar to be opened first.
   const changeMarkers = useChangedItemMarkers(workspace.rootPath, versionControl.files)
   const proxy = useProxy()
   const { phase: updatePhase } = useUpdates()
@@ -420,7 +400,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [screenshotModalOpen, setScreenshotModalOpen] = useState(false)
   const [pendingLoadTestImport, setPendingLoadTestImport] = useState<PendingLoadTestImport | null>(null)
-  /** Coleção/pasta em exportação como webclient (spec 0113). */
+  /** Collection/folder being exported as a webclient (spec 0113). */
   const [webclientExportId, setWebclientExportId] = useState<string | null>(null)
   const { webclientSelection } = collections
   const webclientExportSelection = useMemo(
@@ -432,7 +412,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const compactResponseLayout = useCompactResponseLayout()
   const effectiveResponseLayout: ResponsePanelLayout = compactResponseLayout ? 'bottom' : responseLayout
   const sidebarPanel = useResizablePanel({
-    initialSize: SIDEBAR_MAX_SIZE,
+    initialSize: 320,
     minSize: 220,
     maxSize: SIDEBAR_MAX_SIZE,
     axis: 'horizontal',
@@ -458,7 +438,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const responsePanelRight = useResizablePanel({
     initialSize: 420,
     minSize: RESPONSE_RIGHT_MIN_WIDTH,
-    // A resposta à direita nunca avança sobre a largura mínima do request (+1 px da alça).
+    // Keep the right response panel outside minimum request width, including its 1px resize handle.
     maxSize:
       requestResponseLayoutWidth === null
         ? RESPONSE_RIGHT_MAX_WIDTH
@@ -491,7 +471,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       try {
         window.localStorage.setItem(VALUE_MONITOR_STORAGE_KEY, current ? 'off' : 'on')
       } catch {
-        // localStorage indisponível — a escolha só não persiste entre sessões
+        // Storage unavailable; this choice will not persist across sessions.
       }
       return !current
     })
@@ -507,7 +487,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       try {
         window.localStorage.setItem(RESPONSE_LAYOUT_STORAGE_KEY, next)
       } catch {
-        // localStorage indisponível — a escolha só não persiste entre sessões
+        // Storage unavailable; this choice will not persist across sessions.
       }
       return next
     })
@@ -526,8 +506,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collections.collections])
 
-  // Até a restauração das abas da sessão rodar, não dá para saber se a tela vazia é real —
-  // mostrá-la antes faria ela piscar ao reabrir um workspace que tinha abas abertas.
+  // Wait for session restoration before showing the empty screen to avoid flashing on reopen.
   const { restored: tabsRestored } = useTabSession({
     rootPath: workspace.rootPath,
     tabs: workbench.tabs,
@@ -541,8 +520,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const { openRequest, openHistoryEntry, openDraft } = workbench
   const { restore, refresh: refreshHistory, loadFlowRun, loadCollectionRun, loadLoadRun, entries: historyEntries } = history
   const { openRunLog, closeRunLogPreview, openRunner, openNotification, openMockServer, updateMockServerTab } = openTabs
-  // Uma aba de run log pertence ao mundo dos flows para o filtro "Componente atual";
-  // a de detalhes de notificação não é componente nenhum.
+  // Run logs belong to flows for the current-component filter; notifications are not a component.
   const activeOpenTabKind: ActiveComponentKind =
     !openTabs.activeOpenTab || openTabs.activeOpenTab.kind === 'notification' || openTabs.activeOpenTab.kind === 'mockServer'
       ? null
@@ -552,7 +530,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           ? 'runner'
           : 'flow'
 
-  /** Abre os detalhes de uma notificação por cima da revisão de versão ou da resolução de conflito. */
+  /** Open notification details above version review or conflict resolution. */
   const handleOpenNotification = useCallback(
     (notification: AppNotification) => {
       deactivateVersionReview()
@@ -565,8 +543,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     const notes = CURRENT_RELEASE_NOTES
     return notes ? () => handleOpenNotification(notes) : undefined
   }, [handleOpenNotification])
-  // Na primeira abertura de uma versão, as novidades dela abrem sozinhas;
-  // depois de restaurar as abas, para ficar à frente das recuperadas.
+  // Open release notes on first launch after restoring tabs so notes appear in front.
   useEffect(() => {
     if (tabsRestored && openReleaseNotes && markReleaseNotesSeen(APP_VERSION)) openReleaseNotes()
   }, [tabsRestored, openReleaseNotes])
@@ -579,7 +556,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [closeRunLogPreview, openRequest],
   )
 
-  // Imagem compartilhada vira rascunho não salvo; os demais formatos criam collections.
+  // Shared images become unsaved drafts; other formats create collections.
   const { importCollectionsFromPath } = collections
   const importFromPath = useCallback(
     async (path: string): Promise<ImportOutcome> => {
@@ -593,9 +570,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [importCollectionsFromPath, closeRunLogPreview, openDraft, t, workspace.rootPath],
   )
 
-  // cURL colado na barra de endpoint vazia vira o conteúdo da própria aba. O
-  // parse é quase instantâneo; o tempo mínimo evita que o aviso de importação
-  // só pisque antes de a requisição inteira trocar.
+  // Pasted cURL replaces the empty endpoint tab. Keep the notice visible briefly to avoid flashing before the request changes.
   const { replaceTabContent } = workbench
   const [commandImportTabId, setCommandImportTabId] = useState<string | null>(null)
   const [commandImportCount, setCommandImportCount] = useState(0)
@@ -619,8 +594,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [commandImportTabId, replaceTabContent, showToast, t, workbench.activeTabId, workspace.rootPath],
   )
 
-  /** "Baixar resposta": grava o corpo no arquivo escolhido. Um corpo grande
-   * vai só pelo handle — o backend ainda o retém por inteiro. */
+  /** Save response bodies to the chosen file. Large bodies cross IPC by handle while retained in the backend. */
   const downloadResponse = async (value: ExecutionSuccess, requestName: string) => {
     const path = await pickResponseFile(responseFileName(requestName, value.headers, value.bodyEncoding), t('endpointBar.allFiles'))
     if (path === null) return
@@ -652,7 +626,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           ? undefined
           : findInheritedAuthentication(collections.collections, requestId).authentication
     const result = await workbench.send({ ignoreResponseSizeLimit: options?.ignoreResponseSizeLimit })
-    // Os efeitos do pré-script valem mesmo quando o envio falha.
+    // Pre-request script effects apply even when sending fails.
     const scriptEffects = result.ok ? result.value : result
     environments.applyScriptChanges((scriptEffects.environmentChanges ?? []).filter((change): change is { name: string; value: string } => change.value !== null))
     collections.applyScopedChanges(scriptEffects.scopedChanges ?? [])
@@ -683,10 +657,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       },
     }
     consoleLog.append(consoleEntry)
-    // Cada `al.console.log` (e a falha de script, se houve) entra no console
-    // como um evento próprio, fora do gravador: não é tráfego HTTP. O console
-    // é cronológico, então o lote é anexado diretamente
-    // na ordem em que o script os produziu.
+    // Append each script log/failure as a console event, outside the HTTP recorder, preserving script order.
     const scriptError = result.ok ? (result.value.scriptError?.message ?? null) : result.error.kind === 'script' ? result.error.message : null
     const scriptEvents = [
       ...(scriptEffects.scriptLogs ?? []).map((message) => ({ message, failed: false })),
@@ -722,8 +693,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     if (options?.download && result.ok) void downloadResponse(result.value, requestName)
   }
 
-  // "Reenviar sem limite" no painel de resposta: identidade estável (o painel
-  // é `memo`), sempre chamando o `handleSend` da renderização mais recente.
+  // Stable resend callback for the memoized response panel, calling the latest handleSend.
   const handleSendRef = useRef(handleSend)
   useEffect(() => {
     handleSendRef.current = handleSend
@@ -732,11 +702,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     void handleSendRef.current({ ignoreResponseSizeLimit: true })
   }, [])
 
-  /** Acrescenta ao script de pós-resposta da aba ativa uma linha que grava o valor
-   * escolhido no corpo da resposta numa variável de ambiente. */
-  // Depende só do script e do setter, não do objeto `workbench` (novo a cada
-  // render): o painel de resposta é `memo` e não deve renderizar de novo a
-  // cada tecla digitada no editor.
+  /** Append a post-response script statement saving a response value to an environment variable. */
+  // Depend on the script and setter only to preserve response panel memoization while typing.
   const { postResponseScript, setPostResponseScript } = workbench
   const handleCaptureValue = useCallback(
     (path: JsonPathSegment[]) => {
@@ -766,8 +733,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     }
   }, [recorderEntries, showToast, t])
 
-  // O painel sempre mostra todas as abas; o botão da barra inferior só escolhe
-  // qual fica ativa, e fecha o painel quando já é a aba ativa.
+  // Status bar buttons select a console tab, or close the console when already active.
   const openConsoleTab = (tab: ConsolePanelTab) => {
     if (consoleOpen && consoleTab === tab) {
       setConsoleOpen(false)
@@ -817,7 +783,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [historyEntries, loadFlowRun, loadCollectionRun, loadLoadRun, openRunLog, openRunner, restore, closeRunLogPreview, openHistoryEntry, showToast, t],
   )
 
-  /** Abre o runner de uma coleção ou pasta (reaproveita a aba se já aberta). */
+  /** Open a collection/folder runner, reusing its tab if present. */
   const handleRunCollection = useCallback(
     (nodeId: string) => {
       const node = findNode(collections.collections, nodeId)
@@ -858,8 +824,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [collections.collections, showToast, t],
   )
 
-  // Métodos estáveis do estado de flows; o objeto `flows` muda a cada render
-  // e, como dependência, tornaria instáveis as props da sidebar.
+  // Use stable flow methods to preserve sidebar prop identities.
   const { addImportedFlow, removeFlow } = flows
   const handleImportLoadTest = useCallback(() => {
     void (async () => {
@@ -897,9 +862,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   }, [addImportedFlow, notifyLocalChange, openFlowTab, pendingLoadTestImport, showToast, t, workspace.rootPath])
 
   const { appendMany: appendConsoleMany } = consoleLog
-  // Passos do runner chegam um por mensagem do canal; aplicá-los um a um
-  // renderizava o workbench inteiro a cada passo. Acumulados aqui, entram no
-  // console uma vez por quadro.
+  // Batch runner channel events into one console update per frame.
   const runnerLogBufferRef = useRef<ConsoleEntryInput[]>([])
   const runnerLogFrameRef = useRef<number | null>(null)
   useEffect(
@@ -950,8 +913,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [appendConsoleMany],
   )
 
-  // Requisição avulsa de flow (spec 0086): grava no node, não numa coleção.
-  // Se o node foi removido, a aba vira um rascunho comum.
+  // Inline flow requests (spec 0086) save to their node; removed nodes leave a normal draft.
   const saveFlowNodeTab = (tabId: string, flowId: string, nodeId: string) => {
     const node = flows.flows.find((flow) => flow.id === flowId)?.nodes.find((candidate) => candidate.id === nodeId)
     if (!node || node.kind !== 'inlineRequest') {
@@ -968,8 +930,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     showToast(t('toasts.inlineRequestSaved'))
   }
 
-  // Mock avulso de um bloco "Ligar mock" (spec 0121): grava no node, não no
-  // arquivo de mock servers. `false` quando o node não existe mais.
+  // Inline mock blocks (spec 0121) save to their node, not the mock server file. Return false if removed.
   const saveInlineMockServer = (flowId: string, nodeId: string, server: MockServerDto): boolean => {
     if (!flows.updateInlineMockServer(flowId, nodeId, server)) {
       showToast(t('toasts.inlineMockMissing'), 'error')
@@ -1014,9 +975,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const onToggleSidebarCollapsed = useCallback(() => setSidebarCollapsed((current) => !current), [])
 
-  // Props da sidebar (`memo`) com identidade estável: recriadas a cada
-  // render, faziam a sidebar e a árvore de coleções renderizarem de novo a
-  // cada tecla digitada no editor.
+  // Stable sidebar props prevent rerendering the sidebar and collection tree on each keystroke.
   const sidebarVersionControl = useMemo(
     () => ({
       rootPath: workspace.rootPath,
@@ -1044,8 +1003,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const onSettingsOpenChange = useCallback(
     (open: boolean) => {
       if (open) setSettingsCategory('general')
-      // A proteção de valores sensíveis muda o que o controle de versão
-      // compara no arquivo de ambientes: refaz a checagem local ao fechar.
+      // Sensitive-value protection changes environment comparisons; recheck local changes on close.
       else notifyLocalChange()
       setSettingsOpen(open)
     },
@@ -1087,7 +1045,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     ],
   )
 
-  // Documentação importada da requisição ativa (ADR 0035): aba Docs e sugestões.
+  // Imported docs for the active request (ADR 0035): Docs tab and suggestions.
   const activeDocsRef = useMemo(
     () =>
       workbench.activeTab.requestId === null
@@ -1126,7 +1084,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     const root = suggestionDocs ? jsonBodySchema(suggestionDocs) : null
     return suggestionDocs && root ? { root, schemas: suggestionDocs.schemas } : null
   }, [suggestionDocs])
-  // Informativo (não é sugestão): segue visível com as sugestões desligadas.
+  // Informational content remains visible with suggestions disabled.
   const pathParameterDocs = useMemo(() => {
     if (requestDocs.status !== 'ready') return undefined
     const docs: Record<string, VariableDoc> = {}
@@ -1155,7 +1113,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         : toAuthenticationInput(workbench.authorization),
     [inheritedAuthentication, workbench.authorization],
   )
-  // Um envio que termina pode ter recebido `Set-Cookie`: a troca de status recarrega o jar.
+  // Completed sends may receive Set-Cookie; reload the jar on status change.
   const sessionCookies = useSessionCookies(workbench.execution.status)
   const [sessionCookiesModalOpen, setSessionCookiesModalOpen] = useState(false)
   const generatedHeaders = useMemo(() => {
@@ -1338,9 +1296,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     deactivateVersionReview()
   }, [collections.collections, flows.flows, handleOpenRequest, openFlow, reviewedItem, deactivateVersionReview])
 
-  /** Remover um flow também fecha a aba correspondente, se estiver aberta —
-   * sem isso a aba continuava aberta apontando para um flow inexistente e
-   * caía na tela genérica de requisição (nenhum flow nem requisição ativos). */
+  /** Close deleted flow tabs to avoid dangling tabs falling through to the request screen. */
   const handleRemoveFlow = useCallback(
     (id: string) => {
       removeFlow(id)
@@ -1506,7 +1462,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     else openTabs.selectOpenTab(id)
   }
 
-  // Troca para a aba vizinha de forma circular (step 1 = direita, -1 = esquerda).
+  // Cycle through adjacent tabs (1 = right, -1 = left).
   const cycleBarTab = (step: number) => {
     const currentIndex = barTabs.findIndex((tab) => tab.id === barActiveTabId)
     const nextIndex = currentIndex === -1 ? 0 : (currentIndex + step + barTabs.length) % barTabs.length
@@ -1530,7 +1486,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'searchCollections':
       case 'toggleSidebar':
       case 'openSettings':
-        // Abrem ou mexem em painéis: não agem por trás de um modal.
+        // Panel actions must not run behind a modal.
         return !hasOpenModal()
       case 'closeTab':
       case 'openBlockPalette':
@@ -1539,17 +1495,17 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'deleteItem':
       case 'acceptSuggestion':
       case 'toggleSuggestions':
-        // Ações locais: a barra de abas, o canvas, as linhas da sidebar e os editores as despacham (ver `isLocalAction`).
+        // Local actions are dispatched by tabs, canvas, sidebar rows and editors (isLocalAction).
         return false
     }
   }
-  /** Mostra o painel de collections (abrindo a sidebar) e repassa o comando a ele. */
+  /** Show collections, expand the sidebar and forward the command. */
   const runCollectionsCommand = (command: CollectionsCommand) => {
     setSidebarTab('components')
     if (sidebarCollapsed) setSidebarCollapsed(false)
     setCollectionsCommand(command)
   }
-  /** O popover de nova requisição sai do "+" da barra de abas, como no clique. */
+  /** Anchor the new request popover to the tab bar plus button. */
   const openNewRequestFromShortcut = () => {
     const button = document.querySelector<HTMLElement>('.rw-open-tab-new')
     const main = document.querySelector<HTMLElement>('.rw-main')?.getBoundingClientRect()
@@ -1599,14 +1555,12 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     }
   }
 
-  // Atalhos configuráveis. Com Ctrl/Alt a combinação é sempre consumida; sem
-  // modificador (Enter, F-keys) ela só vale com o foco fora de controles que
-  // já usam a tecla (editores, botões, listas, modais) e com a ação disponível.
+  // Always consume Ctrl/Alt shortcuts. Unmodified shortcuts require an available action and focus outside controls already using the key.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isShortcutEventConsumed(event) || event.isComposing) return
       const action = findShortcutAction(shortcutBindings, event)
-      // Ações locais são despachadas pelo próprio componente (canvas, sidebar).
+      // Local actions are dispatched by their component (canvas, sidebar).
       if (!action || isLocalAction(action)) return
       const plain = !(event.ctrlKey || event.metaKey || event.altKey)
       if (plain && !isPlainShortcutTarget(event.target)) return
@@ -1661,7 +1615,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         </TitleBar>
 
         <div className="rw-body">
-          <div className="rw-sidebar-wrapper" style={{ width: sidebarCollapsed ? 48 : sidebarPanel.size + 48 }}>
+          <div className="rw-sidebar-wrapper" style={{ width: sidebarCollapsed ? 'var(--workbench-rail-width)' : `calc(${sidebarPanel.size}px + var(--workbench-rail-width))` }}>
             <WorkbenchSidebar
               collapsed={sidebarCollapsed}
               onToggleCollapsed={onToggleSidebarCollapsed}
@@ -1704,7 +1658,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               onSelect={selectBarTab}
               onPin={(id) => { if (!pseudoTabById(id)) openTabs.pinOpenTab(id) }}
               onClose={(id) => {
-                // A barra de abas já confirmou o descarte de alterações não salvas.
+                // The tab bar already confirmed discarding unsaved changes.
                 const pseudoTab = pseudoTabById(id)
                 if (pseudoTab) pseudoTab.close()
                 else openTabs.closeOpenTab(id)
@@ -1736,8 +1690,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               onEnvironmentChange={environments.setActiveEnvironmentId}
             />
 
-            {/* Sem indicador de carregamento: o chunk chega em milissegundos e um
-                spinner aqui borraria o canvas no WebKitGTK. */}
+            {/* No loading indicator: the chunk arrives quickly and a spinner would blur the canvas in WebKitGTK. */}
             <Suspense fallback={null}>
             {activePseudoTab ? (
               activePseudoTab.content
@@ -1897,9 +1850,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                             {queryExplorerCollapsed ? <ChevronRightIcon size={12} /> : <ChevronLeftIcon size={12} />}
                           </button>
                           <QueryPanel
-                            // Uma instância de editor por aba: o histórico de desfazer é da
-                            // aba; reaproveitar o editor fazia o Ctrl+Z, depois de trocar de
-                            // aba, trazer o texto da aba anterior para a atual.
+                            // One editor per tab keeps undo history from carrying content across tabs.
                             key={workbench.activeTabId ?? ''}
                             value={workbench.query}
                             onChange={workbench.setQuery}
@@ -2046,8 +1997,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                 />
               )
             })}
-            {/* Abas do runner ficam montadas (escondidas quando inativas) para
-                não perder os eventos de um run em andamento. */}
+            {/* Keep inactive runner tabs mounted to receive events from ongoing runs. */}
             <Suspense fallback={null}>
             {openTabs.runnerTabs.map((runnerTab) => (
               <CollectionRunner
@@ -2109,7 +2059,6 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             aria-label={recorder.recording ? t('devConsole.recorderRecordingAria') : t('devConsole.recorderOpenAria')}
             onClick={() => openConsoleTab('recording')}
           >
-            <RecordIcon size={14} />
             <span className="rw-statusbar-label">{t('devConsole.recorderTab')}</span>
             {recorder.entries.length > 0 && <span className="rw-statusbar-count">{recorder.entries.length}</span>}
           </button>
@@ -2120,9 +2069,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             aria-label={consoleOpen && consoleTab === 'console' ? t('devConsole.closeAria') : t('devConsole.openAria')}
             onClick={() => openConsoleTab('console')}
           >
-            <TerminalIcon size={14} />
             <span className="rw-statusbar-label">{t('devConsole.title')}</span>
-            {consoleLog.entries.length > 0 && <span className="rw-statusbar-count">{consoleLog.entries.length}</span>}
           </button>
           <div id="rw-import-statusbar-slot" className="rw-statusbar-import-slot" />
           <div className="rw-statusbar-end">
@@ -2185,7 +2132,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             anchor={newRequestPopover.anchor}
             onClose={closeNewRequestPopover}
             onSelect={(protocol) => {
-              // Sem isso a nova requisição ficaria escondida atrás da aba de runner ou notificação ativa.
+              // Bring the new request in front of active runner/notification tabs.
               closeRunLogPreview()
               workbench.newDraftTab(protocol, t('collections.newRequestName'))
               setNewRequestPopover(null)

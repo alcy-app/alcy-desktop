@@ -138,7 +138,7 @@ interface FlowsPanelSlice {
 
 interface MockServersPanelSlice {
   rootPath: string
-  /** Servidor da aba ativa, marcado na lista como as requisições abertas. */
+  /** Server of the active tab, highlighted in the list like open requests. */
   activeServerId: string | null
   onOpenServer: (serverId: string, label: string) => void
 }
@@ -152,8 +152,7 @@ interface WorkbenchSidebarProps {
   flows: FlowsPanelSlice
   valueMonitors: ValueMonitorsPanelProps
   mockServers: MockServersPanelSlice
-  /** Id do item (coleção/pasta/requisição/flow) → tipo de alteração local
-   * ainda não enviada — marca as linhas de "Componentes" com "M"/"A"/"D". */
+  /** Item id to unpushed local change kind; marks component rows with M/A/D. */
   changeMarkers: Map<string, ItemChangeKind>
   settingsOpen: boolean
   settingsCategory: SettingsCategory
@@ -183,8 +182,7 @@ interface SidebarContextMenuState {
   y: number
 }
 
-/** Menu de botão direito da barra de atividades. A lista mantém módulos
- * ocultos acessíveis sem precisar abrir as configurações. */
+/** Activity bar context menu, keeping hidden modules accessible without opening Settings. */
 function SidebarModulesContextMenu({
   menu,
   navigation,
@@ -321,7 +319,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
     onActiveTabChange?.(tab)
   }
   const [componentKind, setComponentKind] = useState<ComponentKind>('collections')
-  // Um comando de atalho para o painel de collections o traz à frente, se os flows estavam visíveis.
+  // Collection shortcut commands bring the collections panel in front of flows.
   const [seenCollectionsCommand, setSeenCollectionsCommand] = useState<CollectionsCommand | null>(null)
   if (collections.command !== seenCollectionsCommand) {
     setSeenCollectionsCommand(collections.command)
@@ -332,11 +330,11 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
   const availableNavigation = useMemo(
     () =>
       [
-        { id: 'components', label: t('components.tabLabel'), icon: <ComponentsIcon size={17} /> },
-        { id: 'environments', label: t('environments.ariaLabel'), icon: <VariablesIcon size={17} /> },
-        ...(FEATURE_FLAGS.valueMonitors ? [{ id: 'monitors' as const, label: t('monitors.title'), icon: <MonitorIcon size={17} /> }] : []),
-        { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={17} /> },
-        ...(FEATURE_FLAGS.gitlab ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={18} /> }] : []),
+        { id: 'components', label: t('components.tabLabel'), icon: <ComponentsIcon size={19} /> },
+        { id: 'environments', label: t('environments.ariaLabel'), icon: <VariablesIcon size={19} /> },
+        ...(FEATURE_FLAGS.valueMonitors ? [{ id: 'monitors' as const, label: t('monitors.title'), icon: <MonitorIcon size={19} /> }] : []),
+        { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={19} /> },
+        ...(FEATURE_FLAGS.gitlab ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
         ...EXTENSION_SIDEBAR_MODULES.map((module) => ({ id: module.id, label: module.label[language], icon: module.icon })),
       ] satisfies SidebarModuleNavigationItem[],
     [t, language],
@@ -346,8 +344,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
     [availableNavigation, moduleOrder],
   )
   const navigation = useMemo(() => allNavigation.filter((item) => !hiddenModules.has(item.id)), [allNavigation, hiddenModules])
-  // Uma preferência persistida pode ocultar a aba ativa padrão. Nesse caso, a
-  // primeira aba visível assume a apresentação sem alterar estado durante render.
+  // If preferences hide the default active tab, show the first visible one without setting state during render.
   const visibleActiveTab = navigation.some((item) => item.id === activeTab) ? activeTab : navigation[0].id
 
   const toggleModuleVisibility = (module: SidebarTab) => {
@@ -371,7 +368,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
     setModuleOrder(next)
   }
 
-  /** Move um passo entre os módulos visíveis (os ocultos mantêm o lugar na ordem). */
+  /** Move one step among visible modules, preserving hidden modules' positions. */
   const stepModule = (module: SidebarTab, direction: -1 | 1) => {
     const neighbor = navigation[navigation.findIndex((item) => item.id === module) + direction]
     if (neighbor) reorderModule(module, neighbor.id, direction === -1 ? 'before' : 'after')
@@ -384,7 +381,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
     onDrop: (dragged, target, edge) => reorderModule(dragged.id as SidebarTab, target.id as SidebarTab, edge === 'after' ? 'after' : 'before'),
   })
 
-  // Soltar o arraste sobre o próprio botão dispara um clique: ignora-o para não recolher o painel.
+  // Dropping onto the same button fires a click; suppress it to avoid collapsing the panel.
   const suppressClickRef = useRef(false)
   useEffect(() => {
     if (draggedId !== null) {
@@ -430,8 +427,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
         className="workbench-rail"
         aria-label={t('workbench.navigationAria')}
         onContextMenu={(event: ReactMouseEvent<HTMLElement>) => {
-          // Os ícones e Configurações têm seus próprios contextos; no fundo
-          // vazio, mostra somente a lista de visibilidade dos módulos.
+          // Buttons have their own context menus; the empty rail shows only module visibility options.
           if ((event.target as HTMLElement).closest('button')) return
           event.preventDefault()
           setContextMenu({ module: null, x: event.clientX, y: event.clientY })

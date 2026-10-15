@@ -3,7 +3,7 @@
    scroll container. `overflow: clip` (after the `hidden` fallback) keeps the
    sidebar from being a scroll container that `scrollIntoView` could shift. */
 .env-sidebar {
-  --workbench-sidebar-header-height: 44px;
+  --workbench-sidebar-header-height: var(--workbench-bar-height);
 
   position: relative;
   display: flex;
@@ -24,10 +24,10 @@
 
 .workbench-rail {
   display: flex;
-  flex: 0 0 48px;
+  flex: 0 0 var(--workbench-rail-width);
   flex-direction: column;
   align-items: center;
-  width: 48px;
+  width: var(--workbench-rail-width);
   padding: 8px 0;
   border-right: 1px solid var(--border);
   background: var(--bg);
@@ -55,8 +55,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--workbench-module-button-size);
+  height: var(--workbench-module-button-size);
   padding: 0;
   border: 0;
   border-radius: var(--radius-md);
@@ -128,7 +128,7 @@
   align-items: center;
   flex-shrink: 0;
   height: var(--workbench-sidebar-header-height);
-  padding: 0 12px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -137,7 +137,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  min-height: var(--control-height-sm);
   margin-left: -8px;
   padding: 0 8px;
   background: transparent;
@@ -155,7 +155,7 @@
   background: var(--surface-raised);
 }
 
-/* Sem anel de foco na cor de destaque: o fundo acima já indica o foco. */
+/* The background above indicates keyboard focus instead of an accent ring. */
 .component-kind-trigger:focus-visible {
   outline: none;
 }
@@ -217,7 +217,7 @@
   opacity: 1;
 }
 
-/* Cartão e itens do menu vêm de shared/ui/menu.css; aqui só o posicionamento. */
+/* Menu surfaces and items come from shared/ui/menu.css; only positioning belongs here. */
 .env-menu {
   position: absolute;
   right: 0;
@@ -239,7 +239,7 @@
   opacity: 0.4;
 }
 
-/* Linha de inserção: indica onde o item arrastado será solto. */
+/* Insertion indicator for a dragged item. */
 .env-list-row--drop-before {
   box-shadow: inset 0 2px 0 var(--accent);
 }
@@ -248,7 +248,7 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-/* Em tabelas, sombra em <tr> não é confiável: a linha vai nas células. */
+/* Table row shadows are unreliable; apply the insertion line to cells. */
 .env-variable-row--drop-before > td {
   box-shadow: inset 0 2px 0 var(--accent);
 }
@@ -271,7 +271,7 @@
   transition: opacity var(--duration-fast) var(--ease-out);
 }
 
-/* A alça aparece só onde é útil: ao passar o mouse na linha, com foco ou durante o arraste. */
+/* Show the grip on row hover, keyboard focus or during dragging. */
 .env-list-row:hover .env-grip:not(:disabled),
 .env-variable-row:hover .env-grip:not(:disabled),
 .env-sidebar .env-grip:focus-visible,
@@ -285,7 +285,7 @@
   color: var(--text);
 }
 
-/* Com um único item não há o que reordenar: a alça some, mas mantém o espaço para alinhar. */
+/* A single item cannot be reordered; hide its grip but retain alignment space. */
 .env-sidebar .env-grip:disabled {
   cursor: default;
   opacity: 0;
@@ -372,7 +372,7 @@
   flex-direction: column;
   gap: 8px;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 8px;
 }
 
 .env-detail-title {
@@ -401,7 +401,7 @@
 
 .env-search .env-search-input {
   min-height: 0;
-  padding: 5px 26px;
+  padding: 3px 26px;
   font-size: var(--font-size-sm);
 }
 
@@ -453,9 +453,9 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
-  padding: 10px 12px 12px;
+  padding: 8px;
   overflow-y: auto;
 }
 

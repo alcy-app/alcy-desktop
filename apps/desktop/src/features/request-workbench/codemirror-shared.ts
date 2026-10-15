@@ -10,14 +10,7 @@ import { tags } from '@lezer/highlight'
 
 export type CodeLanguage = 'json' | 'xml' | 'javascript' | 'html' | 'none'
 
-/**
- * Mesmas cores das classes `.json-token--*`/`.xml-token--*` (ver
- * `request-workbench.css`) — só muda o motor que as aplica. `var(--token)`
- * aqui é uma string CSS de verdade injetada via `EditorView.theme` (uma
- * folha de estilo real), não um valor computado uma vez, então segue o tema
- * claro/escuro do app normalmente. Compartilhado entre o visualizador de
- * resposta e o editor de corpo da requisição — ambos sobre CodeMirror 6.
- */
+/** Matches JSON/XML token colors in request-workbench.css. CSS variables injected through EditorView.theme follow theme changes for both request and response editors. */
 export const codeHighlightStyle = HighlightStyle.define([
   { tag: [tags.propertyName, tags.tagName], color: 'var(--accent-strong)', fontWeight: 600 },
   { tag: [tags.string, tags.attributeValue], color: 'var(--success)' },
@@ -33,7 +26,7 @@ export const codeEditorTheme = EditorView.theme({
     color: 'var(--text)',
     backgroundColor: 'transparent',
     fontFamily: 'var(--font-mono)',
-    fontSize: 'var(--font-size-md)',
+    fontSize: 'var(--font-size-code)',
   },
   '.cm-content': { padding: 0 },
   '.cm-gutters': {
@@ -45,14 +38,11 @@ export const codeEditorTheme = EditorView.theme({
   '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 4px' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { fontFamily: 'inherit', lineHeight: 'inherit' },
-  // Remove o box padrão do CodeMirror para tooltips (usado pelo hover de
-  // `{{variável}}`) — o cartão já se estiliza sozinho via `.var-preview`
-  // (ver `variable-preview.ts` e `template-highlight.css`).
+  // Remove the default CodeMirror tooltip box; variable preview cards style themselves through .var-preview (variable-preview.ts and template-highlight.css).
   '.cm-tooltip': { backgroundColor: 'transparent', border: 'none' },
 })
 
-/** Interações comuns aos editores de request e ao visualizador de resposta:
- * seleção com contraste consistente e margem de linhas acionável. */
+/** Shared request/response editor interactions: consistent selection contrast and clickable line gutters. */
 export const interactiveCodeEditorTheme = EditorView.theme(
   {
     '& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
@@ -74,7 +64,7 @@ export const interactiveCodeEditorTheme = EditorView.theme(
   },
 )
 
-/** Números de linha que também funcionam como margem de seleção. */
+/** Line numbers also act as a selection gutter. */
 export function selectableLineNumbers() {
   return lineNumbers({
     domEventHandlers: {
@@ -97,18 +87,12 @@ export function selectableLineNumbers() {
   })
 }
 
-/** Reserva na margem de números de linha espaço para dois dígitos desde o
- * início, para o texto não deslocar para a direita conforme o documento
- * cresce (o CodeMirror dimensiona a margem pelo maior número de linha). O
- * `12px` corresponde ao padding horizontal de `.cm-gutterElement` definido
- * em `codeEditorTheme` (box-sizing: border-box). */
+/** Reserve two digits in the line gutter so text does not shift as the document grows. The 12px matches horizontal gutter padding in codeEditorTheme (border-box). */
 export const twoDigitLineNumbersTheme = EditorView.theme({
   '.cm-lineNumbers .cm-gutterElement': { minWidth: 'calc(2ch + 12px)' },
 })
 
-/** Tema aplicado somente aos editores editáveis de requisição. Declarar o
- * caret na extensão do CodeMirror evita que o tema-base injetado em runtime
- * restaure a borda preta quando o editor recebe foco. */
+/** Editable request editors only. Define the caret in the CodeMirror theme so the injected base theme cannot restore a black border on focus. */
 export const editableCodeEditorTheme = EditorView.theme(
   {
     '&.cm-focused > .cm-scroller > .cm-cursorLayer .cm-cursor': {
@@ -122,16 +106,14 @@ export const editableCodeEditorTheme = EditorView.theme(
   },
 )
 
-/** Tab sem seleção insere uma unidade de indentação no cursor; com seleção,
- * indenta as linhas selecionadas. */
+/** Tab inserts one indentation unit without a selection, or indents selected lines. */
 export const insertIndentOrIndentMore: Command = (view) => {
   if (view.state.selection.ranges.some((range) => !range.empty)) return indentMore(view)
   view.dispatch(view.state.replaceSelection(view.state.facet(indentUnit)), { scrollIntoView: true, userEvent: 'input' })
   return true
 }
 
-/** Tab/Shift+Tab indentam dentro dos editores editáveis em vez de mover o
- * foco. Esc seguido de Tab ainda sai do editor (modo de foco do CodeMirror). */
+/** Tab/Shift+Tab indent editable code; Escape followed by Tab still leaves the editor (CodeMirror focus mode). */
 export const tabIndentKeymap = keymap.of([
   { key: 'Tab', run: insertIndentOrIndentMore, shift: indentLess },
 ])
@@ -144,19 +126,14 @@ export function languageExtensionFor(language: CodeLanguage): Extension {
   return []
 }
 
-// HTML (que traz junto os pacotes de CSS e JavaScript embutidos) só aparece
-// numa resposta HTML: o pacote fica num chunk próprio, carregado uma vez.
+// HTML includes embedded CSS and JavaScript support; load its chunk once, only for HTML responses.
 let htmlLanguageModule: Promise<typeof import('@codemirror/lang-html')> | null = null
 function loadHtmlLanguage(): Promise<Extension> {
   htmlLanguageModule ??= import('@codemirror/lang-html')
   return htmlLanguageModule.then((module) => module.html())
 }
 
-/**
- * Linguagem carregada sob demanda: o editor abre sem destaque e ganha a
- * linguagem assim que o módulo chega. Se a extensão sair do editor antes
- * disso (troca de linguagem, editor destruído), nada é aplicado.
- */
+/** Load languages on demand. Apply highlighting when ready unless the extension was removed or the editor destroyed. */
 function lazyLanguageExtension(load: () => Promise<Extension>): Extension {
   const compartment = new Compartment()
   return [
@@ -175,17 +152,12 @@ function lazyLanguageExtension(load: () => Promise<Extension>): Extension {
   ]
 }
 
-/** Fecha automaticamente os pares definidos nos dados da linguagem ativa
- * (JSON: `{`, `[`, `"`; JavaScript: também `(`, `'` e crase). Backspace
- * entre um par vazio apaga os dois; digitar o fechamento sobre um já
- * inserido apenas avança. O keymap tem precedência alta para vencer o
- * Backspace do `defaultKeymap`. */
+/** Auto-close pairs from the active language data. Backspace removes an empty pair; typing an existing closing character skips it. High precedence overrides defaultKeymap Backspace. */
 export function autoCloseBracketsExtension(): Extension {
   return [closeBrackets(), Prec.high(keymap.of(closeBracketsKeymap))]
 }
 
-/** O editor de query GraphQL não tem pacote de linguagem, então os pares vêm
- * daqui: sem aspas simples, que GraphQL não usa para strings. */
+/** GraphQL has no language package here; supply its pairs explicitly, excluding single quotes. */
 export function graphqlAutoCloseExtension(): Extension {
   return [
     EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{', '"'] } }]),
@@ -193,15 +165,12 @@ export function graphqlAutoCloseExtension(): Extension {
   ]
 }
 
-/** Tooltips do editor (lista de autocompletar, descrição da sugestão, hover
- * de `{{variável}}`) presos a `document.body`: dentro do editor, os painéis
- * com `overflow: hidden` cortavam a descrição que abre ao lado da lista. */
+/** Attach editor tooltips to document.body so overflow-hidden panels cannot clip completions, descriptions or variable previews. */
 export function floatingTooltips(): Extension {
   return tooltips({ parent: document.body })
 }
 
-/** Visual da lista de autocompletar do CodeMirror — editores de script e
- * sugestões de variáveis de ambiente `{{nome}}`. */
+/** CodeMirror completion list for scripts and environment variable suggestions. */
 export const completionTheme = EditorView.theme({
   '.cm-tooltip.cm-tooltip-autocomplete': {
     backgroundColor: 'var(--surface-overlay)',

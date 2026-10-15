@@ -14,7 +14,7 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  /* A janela nunca rola: cada painel cuida da própria rolagem. */
+  /* The window never scrolls; each panel owns its scrolling. */
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
@@ -42,7 +42,7 @@
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  min-height: 28px;
+  min-height: 24px;
   padding: 0 8px;
   border-top: 1px solid var(--border);
   background: var(--bg);
@@ -92,7 +92,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 24px;
+  min-height: 22px;
   padding: 0 8px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -102,10 +102,7 @@
   font-size: var(--font-size-sm);
 }
 
-/* A caixa do texto vai da linha de base ao topo das maiúsculas: o centro do
-   rótulo bate com o do ícone em qualquer fonte. Sem isso, fontes com área
-   acima do texto bem maior que a de baixo (a do sistema no Windows) deixam o
-   rótulo mais baixo que o ícone. */
+/* Trim text to cap height so labels align with icons even with fonts that have a large ascender area (e.g. Windows system fonts). */
 .rw-statusbar-label {
   text-box: trim-both cap alphabetic;
 }
@@ -181,26 +178,33 @@
   margin-left: auto;
 }
 
-/* Visual minimalista, no padrão de barra de ferramentas (texto + chevron,
-   sem caixa visível até hover/foco) — não é um campo de formulário comum. */
+/* Toolbar-style text and chevron; mouse focus keeps the resting appearance. */
 .rw-environment-select {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
+  flex: 0 1 160px;
+  min-width: min(96px, 40%);
+  max-width: 40%;
 }
 
 .rw-environment-select .ui-select-wrapper {
-  width: auto;
+  width: 100%;
+  min-width: 0;
 }
 
-.rw-environment-select .ui-select {
-  width: auto;
+.rw-environment-select .ui-select,
+.rw-environment-select .ui-select:focus:not(:disabled) {
+  width: 100%;
   background: transparent;
   border-color: transparent;
-  min-width: 132px;
-  padding: 5px 28px 5px 10px;
+  outline: none;
+  min-width: 0;
+  min-height: var(--control-height-sm);
+  padding: 2px 24px 2px 6px;
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+  text-overflow: ellipsis;
 }
 
 .rw-environment-select .ui-select:hover:not(:disabled) {
@@ -209,9 +213,9 @@
   color: var(--text);
 }
 
-.rw-environment-select .ui-select:focus:not(:disabled) {
-  background: var(--surface);
-  border-color: var(--border);
+.rw-environment-select .ui-select:focus-visible:not(:disabled):not([data-pointer-focus]) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
   color: var(--text);
 }
 
@@ -233,8 +237,12 @@
   overflow: hidden;
 }
 
-/* Breadcrumb + barra de URL em largura total, acima da requisição e da
-   resposta; a borda inferior separa o cabeçalho das duas áreas de trabalho. */
+.rw-request-header,
+.rw-request-response-layout {
+  --surface: var(--bg);
+}
+
+/* Full-width breadcrumb and URL bar above request and response; the bottom border separates the header from the work areas. */
 .rw-request-header {
   display: flex;
   flex-direction: column;
@@ -247,8 +255,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 28px;
-  padding: 6px 12px 0;
+  min-height: 24px;
+  padding: 4px 8px 0;
   flex-shrink: 0;
   overflow: hidden;
   background: var(--surface);
@@ -265,18 +273,12 @@
   overflow: hidden;
 }
 
-/* Alinhado à direita, na mesma borda do botão Enviar logo abaixo. */
+/* Align right with the Send button below. */
 .rw-request-breadcrumb-actions {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: var(--space-1);
-}
-
-/* Compacto para não aumentar a altura da linha do breadcrumb. */
-.rw-share-button.ui-button--sm {
-  min-height: 22px;
-  padding: 2px 8px;
 }
 
 .rw-request-breadcrumb-icon {
@@ -333,8 +335,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 48px;
-  padding: var(--space-2) var(--space-3);
+  min-height: 40px;
+  padding: 6px 8px;
   background: var(--surface);
   flex-shrink: 0;
 }
@@ -412,13 +414,12 @@
   border-radius: 0;
   background: transparent;
   min-height: var(--control-height-md);
-  /* Linha de 24 px + 4 px em cada lado: centraliza texto, caret e seleção.
-     A regra também alcança o overlay de variáveis, mantendo as camadas alinhadas. */
+  /* Center text, caret and selection using the control height. The variable overlay shares these metrics to keep layers aligned. */
   padding-block: var(--space-1);
   line-height: calc(var(--control-height-md) - var(--space-2));
 }
 
-/* Envolve só a URL (sem o método) para o aviso de importação cobrir o campo certo. */
+/* Wrap only the URL so the import notice covers the correct field. */
 .rw-endpoint-url {
   position: relative;
   display: flex;
@@ -426,9 +427,7 @@
   min-width: 0;
 }
 
-/* cURL colado: o aviso ocupa o lugar do texto enquanto o comando é convertido.
-   Fica acima do input (z-index 1) e do overlay de destaque (z-index 2) do
-   `TemplateHighlightedField`, cobrindo a URL substituída pela seleção inteira. */
+/* While pasted cURL is converted, show the notice above the input and variable overlay, covering the replaced URL and selection. */
 .rw-endpoint-importing {
   position: absolute;
   inset: 0;
@@ -476,33 +475,48 @@
 }
 
 .rw-endpoint-action {
-  min-width: 84px;
-  min-height: var(--control-height-md);
+  min-width: 96px;
+  min-height: var(--button-height-sm);
 }
 
-/* "Enviar" + seta das outras formas de enviar, colados como um só controle;
-   a largura total bate com a do "Cancelar" para o botão não pular ao enviar. */
+.rw-endpoint-action-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.rw-endpoint-action-content > svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.rw-endpoint-action-label {
+  text-box: trim-both cap alphabetic;
+}
+
+/* Send and its options arrow form one control. Match the Cancel width to avoid shifting on send. */
 .rw-endpoint-send-group {
   display: inline-flex;
   align-items: stretch;
 }
 
 .rw-endpoint-action--split {
-  min-width: 56px;
+  min-width: 64px;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
 .rw-endpoint-send-options {
-  width: 28px;
-  min-height: var(--control-height-md);
+  width: 32px;
+  min-height: var(--button-height-sm);
   padding-inline: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left-color: color-mix(in srgb, var(--on-accent) 25%, transparent);
 }
 
-/* Em portal no body, posicionado pelo componente (`top`/`right`). */
+/* Portaled into body; the component supplies top/right coordinates. */
 .rw-send-menu {
   position: fixed;
   z-index: var(--z-overlay);
@@ -519,8 +533,7 @@
   background: var(--surface);
 }
 
-/* Com pouco espaço vertical (ex.: console aberto), as abas não encolhem por
-   cima do conteúdo: o painel rola em vez de sobrepor. */
+/* When vertical space is limited (e.g. console open), scroll the panel instead of shrinking tabs over content. */
 .rw-request-pane > * {
   flex-shrink: 0;
 }
@@ -528,33 +541,27 @@
 .rw-request-pane > .rw-tabpanel {
   flex: 1 0 auto;
   min-height: 160px;
-  /* A borda inferior das abas já separa; evita uma linha dupla. */
+  /* The tabs already provide a separator; avoid a double border. */
   border-top: 0;
 }
 
-/* Aba Query: o painel ocupa só a altura disponível em vez de crescer até o
-   conteúdo, para o explorador de schema e o editor rolarem cada um por
-   dentro — e não o painel inteiro junto. */
+/* Constrain the Query panel to available height so the schema explorer and editor scroll independently. */
 .rw-request-pane > .rw-tabpanel--query {
   flex: 1 1 0;
 }
 
 .rw-request-pane > .ui-tabs {
-  /* Mesma altura de `.rw-response-toolbar`: com a resposta à direita, as
-     linhas logo abaixo do cabeçalho ficam alinhadas entre as duas colunas. */
-  min-height: 44px;
-  padding: 0 12px;
-  /* Painel estreito: as abas rolam na horizontal em vez de se sobrepor. */
+  /* Match .rw-response-toolbar so request and response rows align in the side-by-side layout. */
+  min-height: var(--workbench-bar-height);
+  padding: 0 8px;
+  /* Scroll tabs horizontally in narrow panels. */
   overflow-x: auto;
-  /* `overflow-x: auto` sozinho torna o eixo y `auto` também; sem isto o
-     WebKitGTK chegava a exibir um scrollbar vertical momentâneo. */
+  /* Setting only overflow-x: auto also makes the y axis auto, which caused transient vertical scrollbars in WebKitGTK. */
   overflow-y: hidden;
   scrollbar-width: none;
 }
 
-/* Tamanho zero além de `display: none`: o WebKitGTK nem sempre respeita o
-   `display` no pseudo-elemento e herdava os 10px do scrollbar global, que
-   piscava ao abrir uma requisição ou trocar de aba. */
+/* Use zero dimensions as well as display: none: WebKitGTK sometimes retained the global 10px scrollbar and flashed it on tab changes. */
 .rw-request-pane > .ui-tabs::-webkit-scrollbar {
   display: none;
   width: 0;
@@ -571,7 +578,7 @@
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 0;
-  padding: 12px;
+  padding: 8px;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -623,15 +630,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 34px;
-  padding: 2px 8px 2px 12px;
+  min-height: var(--control-height-md);
+  padding: 2px 8px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-raised);
 }
 
-/* Igual ao `.rw-request-body-editor` do corpo da requisição: o editor de
-   query (CodeMirror 6) preenche a altura disponível do layout e rola por
-   dentro. */
+/* Like the request body editor, the CodeMirror query editor fills available layout height and scrolls internally. */
 .rw-query-editor {
   flex: 1;
   min-height: 0;
@@ -687,8 +692,7 @@
   color: var(--accent-strong);
 }
 
-/* Mesma ideia da query acima: o editor da aba Body (REST) preenche a
-   altura disponível da aba em vez de ficar limitado a uma altura fixa. */
+/* The REST Body editor fills available tab height instead of using a fixed height. */
 .rw-request-body-panel {
   position: relative;
   flex: 1;
@@ -697,10 +701,7 @@
   flex-direction: column;
 }
 
-/* Igual ao `.rw-code-view` da resposta (CodeMirror 6), mas preenchendo a
-   altura do painel e rolando por dentro, em vez do `max-height` fixo usado
-   ali — o corpo da requisição vive num painel de altura já limitada pela
-   aba, não numa página que rola inteira. */
+/* Like the response code view, but filling a panel already constrained by its tab instead of a fixed maximum height. */
 .rw-request-body-editor {
   flex: 1;
   min-height: 0;
@@ -930,8 +931,7 @@
   flex-direction: column;
 }
 
-/* Formulário em grade: mesmo vocabulário visual das tabelas de Headers/Params
- * (bordas finas, linhas separadas, campos sem moldura até receber foco). */
+/* Grid form matching Headers/Params tables: fine borders, separated rows and fields unframed until focused. */
 .rw-auth-grid {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -1032,11 +1032,7 @@
   min-height: 0;
 }
 
-/* Sem `height` explícito — como `.rw-sidebar-wrapper`, deixa o `align-items:
-   stretch` padrão da linha (`.rw-request-response-layout--right`) preencher a
-   altura. Um `height: 100%` aqui não resolve de forma confiável em todo
-   motor de renderização (a altura de `.rw-request-response-layout` vem de
-   `flex-grow`, não de um valor explícito), então melhor não depender disso. */
+/* Use the flex row default align-items: stretch, as for the sidebar wrapper. A 100% height is unreliable when the parent height comes from flex-grow rather than an explicit value. */
 .rw-response-wrapper--right {
   min-width: 0;
 }
@@ -1055,8 +1051,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
-  padding: 6px 12px;
+  min-height: var(--workbench-bar-height);
+  padding: 2px 8px;
   border-bottom: 1px solid var(--border);
   font-size: var(--font-size-sm);
 }
@@ -1065,6 +1061,12 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.rw-response-toolbar .rw-history-trigger,
+.rw-response-toolbar .rw-monitor-toggle {
+  height: auto;
+  min-height: var(--control-height-sm);
 }
 
 .rw-response-summary--error {
@@ -1107,7 +1109,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Globo de conexão no resumo da resposta (`ResponseNetworkBadge`). */
+/* Connection globe in the response summary (ResponseNetworkBadge). */
 .rw-network-badge {
   display: inline-flex;
   align-items: center;
@@ -1135,7 +1137,7 @@
   color: var(--warning);
 }
 
-/* Mesma superfície de `.ui-tooltip`; não interativo. */
+/* Same surface as .ui-tooltip; non-interactive. */
 .rw-network-card {
   position: fixed;
   z-index: var(--z-drag-preview);
@@ -1197,26 +1199,19 @@
   overflow-y: auto;
 }
 
-/* `display: flex` acima tem que ceder para o atributo `hidden` (as três
-   abas — body/headers/errors — ficam montadas ao mesmo tempo, alternando
-   `hidden`, ver `ResponsePanel.tsx`): sem isto, a regra do autor sempre
-   vence o `display: none` do user-agent para `[hidden]`, e as três
-   aparecem empilhadas em vez de só a ativa. */
+/* Honor hidden for persistent response panels (ResponsePanel.tsx); otherwise the author display:flex overrides the user-agent hidden rule and stacks all panels. */
 .rw-response-body[hidden] {
   display: none;
 }
 
-/* Estados sem corpo rolável (idle/loading/erro) — centraliza a mensagem em
-   vez de deixá-la colada no topo de um painel que pode ficar bem alto (ex.:
-   layout lateral, onde o painel ocupa a altura inteira da janela). */
+/* Center idle/loading/error states within the available response area, including a full-height side panel. */
 .rw-response-body--placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* Envio do histórico sem resposta guardada: mensagem e link empilhados,
-   centralizados na aba (Body ou Headers). */
+/* Center the message and link when a historical send has no stored response. */
 .rw-response-not-stored {
   display: flex;
   flex-direction: column;
@@ -1258,7 +1253,7 @@
 .rw-code-block {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-code);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
@@ -1420,12 +1415,7 @@
   min-width: 128px;
 }
 
-/* Dentro de `.rw-response-body` (o painel de resposta, que já ocupa a altura
-   disponível da tela e rola por dentro — ver acima) o `max-height: 60vh`
-   genérico sobrava: o editor crescia até 60vh e rolava por dentro *enquanto*
-   `.rw-response-body` também rolava em volta dele, duas barras de rolagem
-   para o mesmo conteúdo. Aqui o editor preenche a altura restante do painel
-   e só o `cm-scroller` rola — igual ao padrão de `.rw-request-body-editor`. */
+/* Inside .rw-response-body, fill remaining height and let only cm-scroller scroll, like .rw-request-body-editor. The generic 60vh limit otherwise produced nested scrollbars. */
 .rw-response-body .rw-code-block-wrapper {
   flex: 1;
   min-height: 0;
@@ -1504,7 +1494,7 @@
   font-family: var(--font-mono);
 }
 
-/* ---- Motion: transições de interação e entrada de conteúdo ---- */
+/* Motion: interaction and content transitions. */
 
 .rw-link-button,
 .rw-query-explorer-handle,
@@ -1516,13 +1506,12 @@
     filter var(--duration-fast) var(--ease-out);
 }
 
-/* Conteúdo do tabpanel entra com fade curto ao trocar de aba. */
+/* Fade tab panel content in briefly on tab changes. */
 .rw-tabpanel > * {
   animation: ui-fade-in var(--duration-fast) var(--ease-out);
 }
 
-/* ---- Resposta: spinner e fade entre estados (barra indeterminada é
-   `shared/ui/loading-bar.css`, reaproveitada fora da resposta também) ---- */
+/* Response spinner and state transitions. The shared loading bar lives in shared/ui/loading-bar.css. */
 
 .rw-response-summary {
   display: inline-flex;
@@ -1547,7 +1536,7 @@
   transition: border-color var(--duration-fast) var(--ease-out);
 }
 
-/* Substituto de foco para o editor (que remove o outline): borda do painel. */
+/* The panel border indicates focus when the editor removes its outline. */
 .rw-query-editor-panel:focus-within {
   border-color: var(--border-strong);
 }
@@ -1558,8 +1547,7 @@
   gap: 6px;
 }
 
-/* Aba Scripts: seletor pré/pós no topo, editor preenchendo o resto e, abaixo,
-   a saída da última execução (logs e falha do script). */
+/* Scripts: pre/post selector above the editor, followed by the last execution output (logs and failure). */
 .rw-scripts-panel {
   flex: 1;
   min-height: 0;

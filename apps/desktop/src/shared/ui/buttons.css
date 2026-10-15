@@ -1,22 +1,17 @@
-/*
- * Classes utilitárias de botão — base única + variantes, com estados
- * consistentes (hover, active, pressed, disabled). Hierarquia: `primary`
- * sólido só para a ação principal da área; `ghost` é o secundário neutro
- * (superfície + borda); `danger`/`success` sólidos para confirmações.
- */
+/* Shared button base and variants with consistent hover, active, pressed and disabled states. Solid primary is for the main action; ghost is neutral; solid danger/success indicate confirmations. */
 
 .ui-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   font: inherit;
   font-weight: var(--font-weight-medium);
   line-height: var(--leading-tight);
   cursor: pointer;
-  min-height: var(--control-height-md);
+  min-height: var(--button-height-md);
   transition:
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
@@ -38,13 +33,13 @@
 }
 
 .ui-button--sm {
-  min-height: var(--control-height-sm);
+  min-height: var(--button-height-sm);
   padding: 4px 10px;
   font-size: var(--font-size-sm);
 }
 
 .ui-button--md {
-  padding: 6px 14px;
+  padding: 5px 12px;
   font-size: var(--font-size-base);
 }
 
@@ -73,7 +68,7 @@
   background: var(--control-active-bg);
 }
 
-/* Botão alternável (`aria-pressed`): ligado = destaque suave, nunca sólido. */
+/* Toggle buttons (aria-pressed) use a soft highlight when enabled. */
 .ui-button--ghost[aria-pressed='true'],
 .ui-button--ghost[aria-pressed='true']:hover:not(:disabled) {
   background: var(--accent-softer);

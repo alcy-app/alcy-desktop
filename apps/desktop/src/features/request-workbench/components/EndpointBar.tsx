@@ -23,18 +23,18 @@ interface EndpointBarProps {
   endpointUrl: string
   onEndpointUrlChange: (value: string) => void
   onSend: () => void
-  /** "Baixar resposta": envia e, com sucesso, grava o corpo da resposta num arquivo. */
+  /** Send and save the response body to a file on success. */
   onSendAndDownload: () => void
   onCancel: () => void
   isSending: boolean
   environmentVariables: EnvironmentVariableDto[]
   routeParams?: RouteParamEntry[]
   onUpdateRouteParamValue?: (id: string, value: string) => void
-  /** Documentação dos parâmetros de path usados na URL como `{{nome}}`. */
+  /** Documentation for path parameters used in the URL as variable placeholders. */
   pathParameterDocs?: Record<string, VariableDoc>
-  /** `curl`/`wget` colado com a URL vazia ou toda selecionada: o texto não entra no campo e vira a requisição da aba. */
+  /** Pasted curl/wget replaces an empty or fully selected URL with an imported request. */
   onPasteCommand?: (command: string) => void
-  /** Comando colado sendo convertido; o campo fica bloqueado até terminar. */
+  /** Lock the field while a pasted command is being converted. */
   isImportingCommand?: boolean
 }
 
@@ -58,8 +58,7 @@ export function EndpointBar({
   const { t } = useLanguage()
   const methodClass = protocol === 'rest' ? `rw-endpoint-method--${method}` : 'rw-endpoint-method--graphql'
 
-  // Vale com a URL vazia ou com ela inteira selecionada (Ctrl+A): nos dois
-  // casos o texto colado substituiria a URL toda.
+  // Import only when pasting would replace the entire URL (empty or fully selected).
   const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
     const input = event.currentTarget
     const replacesAll = input.selectionStart === 0 && input.selectionEnd === input.value.length
@@ -118,8 +117,10 @@ export function EndpointBar({
       </div>
       {isSending ? (
         <Button className="rw-endpoint-action" variant="danger" size="sm" onClick={onCancel} aria-busy>
-          <Spinner size={13} />
-          {t('common.cancel')}
+          <span className="rw-endpoint-action-content">
+            <Spinner size={13} />
+            <span className="rw-endpoint-action-label">{t('common.cancel')}</span>
+          </span>
         </Button>
       ) : (
         <div className="rw-endpoint-send-group">
@@ -145,8 +146,7 @@ interface MenuPosition {
 
 const MENU_GAP_PX = 4
 
-/** Seta ao lado de "Enviar" com as outras formas de enviar. O menu vai em
- * portal, com posição fixa sob a seta (mesmo padrão do `ShareMenu`). */
+/** Send options arrow with a fixed-position menu portaled below it, like ShareMenu. */
 function SendOptionsMenu({ onSendAndDownload, disabled = false }: { onSendAndDownload: () => void; disabled?: boolean }) {
   const { t } = useLanguage()
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -154,15 +154,14 @@ function SendOptionsMenu({ onSendAndDownload, disabled = false }: { onSendAndDow
   const [position, setPosition] = useState<MenuPosition | null>(null)
   const open = position !== null
 
-  // Desabilitar com o menu aberto (ex.: importação de comando) também o fecha.
+  // Disabling the control (e.g. during command import) also closes its menu.
   if (disabled && open) setPosition(null)
 
   useEffect(() => {
     if (!open) return
-    // Foco inicial aqui, e não com `autoFocus`: o React focaria o item antes de
-    // ligar `menuRef`, e o blur do botão fecharia o menu na hora.
+    // Focus after menuRef attaches; autoFocus could blur the button and close the menu first.
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-    // A posição é fixa na tela; redimensionar a janela deixaria o menu solto.
+    // Close on resize because the menu uses fixed viewport coordinates.
     const close = () => setPosition(null)
     window.addEventListener('resize', close)
     return () => window.removeEventListener('resize', close)
@@ -178,7 +177,7 @@ function SendOptionsMenu({ onSendAndDownload, disabled = false }: { onSendAndDow
     setPosition({ top: rect.bottom + MENU_GAP_PX, right: window.innerWidth - rect.right })
   }
 
-  // Eventos do portal sobem pela árvore do React, mas no DOM o menu fica fora do host.
+  // Portal events bubble through React, but the menu is outside the host in the DOM.
   const closeOnBlur = (event: FocusEvent<HTMLDivElement>) => {
     const next = event.relatedTarget as Node | null
     if (!event.currentTarget.contains(next) && !menuRef.current?.contains(next)) setPosition(null)

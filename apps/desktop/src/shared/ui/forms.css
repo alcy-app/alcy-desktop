@@ -5,7 +5,7 @@
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   color: var(--text);
   font: inherit;
   font-size: var(--font-size-md);
@@ -26,12 +26,7 @@
   border-color: var(--border-strong);
 }
 
-/*
- * `:not(:disabled)` no :hover acima tem especificidade maior que uma
- * pseudo-classe simples (0,3,0 vs 0,2,0) — sem repeti-lo aqui, passar o
- * mouse sobre o campo e clicar (o caso comum) deixa o :hover vencer a
- * cascata e a borda de foco nunca aparece.
- */
+/* Repeat :not(:disabled) so focus wins over the more specific hover rule (0,3,0 vs 0,2,0) while the pointer remains over the field. */
 .ui-input:focus:not(:disabled),
 .ui-textarea:focus:not(:disabled),
 .ui-select:focus:not(:disabled) {
@@ -54,7 +49,7 @@
 .ui-input--mono,
 .ui-textarea--mono {
   font-family: var(--font-mono);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-code);
 }
 
 .ui-textarea {
@@ -80,12 +75,7 @@
   cursor: default;
 }
 
-/*
- * O popup nativo herda fundo e cor do próprio <select>. Como variantes usam
- * fundo transparente e trocam o fundo no :hover (ex.: seletor de método), a
- * lista alternava entre claro e escuro ao mover o mouse. Cores explícitas nas
- * opções desacoplam o popup do estado do campo.
- */
+/* Native select popups inherit field colors. Explicit option colors prevent transparent or hover-dependent variants from switching the popup palette on hover. */
 .ui-select option {
   background-color: var(--surface-overlay);
   color: var(--text);

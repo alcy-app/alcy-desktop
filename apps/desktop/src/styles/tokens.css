@@ -1,13 +1,6 @@
-/*
- * Design tokens do app. Tudo é semântico: cada tema (`data-theme` no <html>,
- * definido por shared/appearance/) sobrescreve somente o bloco de cores e
- * sombras, sem tocar nos arquivos de feature. O tema claro é o padrão (`:root`).
- * As cores "soft" derivam da base via color-mix (WebKitGTK ≥ 2.40 e
- * Chromium ≥ 111), então herdam qualquer mudança de paleta. Ao alterar uma
- * paleta, atualize também `THEME_PREVIEW` em shared/appearance/theme.ts.
- */
+/* Semantic app tokens. Themes (data-theme on <html>, set by shared/appearance/) override colors and shadows only. Light is the default. Soft colors derive from the palette through color-mix (WebKitGTK >= 2.40, Chromium >= 111). Update THEME_PREVIEW in shared/appearance/theme.ts when changing a palette. */
 :root {
-  /* Cor — base (tema claro, padrão) */
+  /* Colors: base (default light theme). */
   --bg: #f4f5f8;
   --surface: #ffffff;
   --surface-raised: #f8f9fb;
@@ -32,7 +25,7 @@
   --shadow-md: 0 8px 24px rgba(20, 23, 31, 0.12);
   --shadow-lg: 0 16px 44px rgba(20, 23, 31, 0.18);
 
-  /* Cor — derivadas */
+  /* Colors: derived. */
   --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
   --accent-softer: color-mix(in srgb, var(--accent) 10%, transparent);
   --selection-bg: color-mix(in srgb, var(--accent) 24%, var(--surface-raised));
@@ -40,7 +33,7 @@
   --success-soft: color-mix(in srgb, var(--success) 13%, transparent);
   --warning-soft: color-mix(in srgb, var(--warning) 13%, transparent);
 
-  /* Cor — categorias de bloco do canvas de flows (spec 0087) */
+  /* Colors: flow canvas blocks (spec 0087). */
   --flow-tone-start: var(--success);
   --flow-tone-control: var(--accent);
   --flow-tone-request: var(--info);
@@ -50,7 +43,7 @@
   --flow-tone-note: #ca8a04;
   --flow-tone-mock: #4f46e5;
 
-  /* Cor — paleta fixa de rótulos de collection (ADR 0060) */
+  /* Colors: collection label palette (ADR 0060). */
   --label-gray: #6b7280;
   --label-red: #dc2626;
   --label-orange: #ea580c;
@@ -61,23 +54,19 @@
   --label-purple: #7c3aed;
   --label-pink: #db2777;
 
-  /* Tipografia */
+  /* Typography. */
   --font-sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, monospace;
-  /*
-   * `--text-scale` é o multiplicador de texto ajustável em Configurações (ver
-   * shared/appearance/); o padrão é 1, aplicado pelo provider assim que
-   * monta. Cada tamanho abaixo é `calc()` sobre esse fator para que o
-   * slider escale toda a tipografia do app sem precisar tocar em CSS de
-   * feature.
-   */
+  /* The Settings text multiplier defaults to 1. Each size uses calc() so the slider scales typography without feature CSS changes. */
   --text-scale: 1;
-  /* Só para rótulos ínfimos (ex.: número num badge de contagem) — não use para texto normal. */
+  /* Tiny labels only (e.g. count badges); do not use for normal text. */
   --font-size-2xs: calc(9px * var(--text-scale));
   --font-size-xs: calc(11px * var(--text-scale));
   --font-size-sm: calc(12px * var(--text-scale));
-  --font-size-md: calc(13px * var(--text-scale));
-  --font-size-base: calc(13px * var(--text-scale));
+  --font-size-md: calc(12px * var(--text-scale));
+  --font-size-base: calc(12px * var(--text-scale));
+  /* Code stays readable independently of interface density. */
+  --font-size-code: calc(13px * var(--text-scale));
   --font-size-lg: calc(15px * var(--text-scale));
   --font-size-xl: calc(19px * var(--text-scale));
   --font-size-2xl: calc(24px * var(--text-scale));
@@ -87,29 +76,27 @@
   --leading-tight: 1.2;
   --leading-normal: 1.4;
 
-  /* Forma e elevação */
+  /* Shape and elevation. */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
   --radius-full: 999px;
 
-  /* Controles */
-  --control-height-sm: 28px;
-  --control-height-md: 32px;
-  --control-height-lg: 40px;
-  /*
-   * `--icon-scale` é o multiplicador de ícones ajustável em Configurações;
-   * os ícones de shared/ui/icons.tsx e a caixa dos botões só de ícone
-   * acompanham esse fator, independente da escala de texto.
-   */
+  /* Controls. */
+  --control-height-sm: 24px;
+  --control-height-md: 28px;
+  --control-height-lg: 36px;
+  --button-height-sm: 26px;
+  --button-height-md: 30px;
+  /* Shared rows stay aligned when the user increases text or icon size. */
+  --workbench-bar-height: max(32px, calc(var(--icon-button-size-sm) + 8px), calc(24px * var(--text-scale) + 4px));
+  --workbench-module-button-size: calc(34px * var(--icon-scale));
+  --workbench-rail-width: calc(var(--workbench-module-button-size) + 12px);
+  /* The Settings icon multiplier scales shared/ui/icons.tsx and icon button boxes independently of text. */
   --icon-scale: 1;
   --icon-button-size-sm: calc(var(--control-height-sm) * var(--icon-scale));
   --icon-button-size-md: calc(var(--control-height-md) * var(--icon-scale));
-  /*
-   * Superfícies de controle (botões, seletores segmentados). Derivadas do
-   * texto/superfície via color-mix para funcionar em qualquer tema sem
-   * redefinição: o hover escurece no claro e clareia no escuro.
-   */
+  /* Control surfaces derive from text/surface colors through color-mix so hover darkens light themes and lightens dark themes. */
   --control-bg: var(--surface);
   --control-border: var(--border);
   --control-border-hover: var(--border-strong);
@@ -122,7 +109,7 @@
   --focus-ring: 2px solid var(--accent-strong);
   --focus-ring-offset: 2px;
 
-  /* Espaçamento (base 4px) */
+  /* Spacing (4px base). */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -147,7 +134,7 @@
 }
 
 [data-theme='dark'] {
-  /* Cor — base (tema escuro) */
+  /* Colors: base (dark theme). */
   --bg: #111216;
   --surface: #181a20;
   --surface-raised: #1d2027;
