@@ -1,11 +1,20 @@
-/* Fontes empacotadas localmente (app local-first, sem rede). Licenças OFL em src/assets/fonts/. */
+/* Fonts bundled locally (local-first app, no network). OFL licenses in src/assets/fonts/. */
 
+/* Inter's vertical metrics are declared explicitly. They repeat the file's own
+   values (ascender 1984, descender -494, line gap 0 at 2048 units per em, the
+   same in hhea and OS/2), which center the cap height in the line box. On
+   Windows, WebView2 drew text about 2px above the center of buttons, badges
+   and tabs, as if it derived other metrics from the file; the overrides keep
+   every engine on these. */
 @font-face {
   font-family: 'Inter';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
   src: url('../assets/fonts/Inter-Regular.woff2') format('woff2');
+  ascent-override: 96.875%;
+  descent-override: 24.1211%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -14,6 +23,9 @@
   font-weight: 500;
   font-display: swap;
   src: url('../assets/fonts/Inter-Medium.woff2') format('woff2');
+  ascent-override: 96.875%;
+  descent-override: 24.1211%;
+  line-gap-override: 0%;
 }
 
 @font-face {
@@ -22,6 +34,9 @@
   font-weight: 600;
   font-display: swap;
   src: url('../assets/fonts/Inter-SemiBold.woff2') format('woff2');
+  ascent-override: 96.875%;
+  descent-override: 24.1211%;
+  line-gap-override: 0%;
 }
 
 @font-face {
