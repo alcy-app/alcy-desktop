@@ -600,6 +600,7 @@ const en: Record<TranslationKey, string> = {
   'response.formatXml': 'XML',
   'response.formatHtml': 'HTML',
   'response.formatText': 'Text',
+  'response.formatSwitchAria': '{format} format, change format',
   'response.previewToggle': 'Preview',
   'response.bodyPreviewTitle': 'Response HTML preview',
   'response.bodyLoadImage': 'Load image',

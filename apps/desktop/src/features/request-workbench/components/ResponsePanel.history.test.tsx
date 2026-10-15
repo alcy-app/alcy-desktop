@@ -272,7 +272,7 @@ describe('ResponsePanel — histórico de envios', () => {
     expect(await screen.findByText('"a": 1', { exact: false })).toBeInTheDocument()
     expect(screen.getByText('"a": 2', { exact: false })).toBeInTheDocument()
     expect(compareRequestSends).toHaveBeenCalledWith({ rootPath: '/ws', baseId: 'previous', targetId: 'current' })
-    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Formato de exibição do corpo' })).not.toBeInTheDocument()
     expect(screen.queryByText(/As respostas são/)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Fechar comparação' }))

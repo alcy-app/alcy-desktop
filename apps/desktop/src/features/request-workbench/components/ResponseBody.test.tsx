@@ -11,10 +11,18 @@ const FORMAT_SELECTOR_NAME = 'Formato de exibição do corpo'
 
 const FORMAT_LABELS = { json: 'JSON', xml: 'XML', html: 'HTML', text: 'Texto' }
 
-function formatOption(format: keyof typeof FORMAT_LABELS) {
-  return within(screen.getByRole('radiogroup', { name: FORMAT_SELECTOR_NAME })).getByRole('radio', {
-    name: FORMAT_LABELS[format],
-  })
+function formatSwitch() {
+  return within(screen.getByRole('group', { name: FORMAT_SELECTOR_NAME }))
+}
+
+/** The trigger only shows the current format; the others are listed after it expands. */
+function expectFormat(format: keyof typeof FORMAT_LABELS) {
+  expect(formatSwitch().getByRole('button', { expanded: false })).toHaveTextContent(FORMAT_LABELS[format])
+}
+
+function chooseFormat(format: keyof typeof FORMAT_LABELS) {
+  fireEvent.click(formatSwitch().getByRole('button', { expanded: false }))
+  fireEvent.click(formatSwitch().getByRole('button', { name: FORMAT_LABELS[format] }))
 }
 
 describe('ResponseBody', () => {
@@ -23,7 +31,39 @@ describe('ResponseBody', () => {
 
     expect(screen.getByText('"name"')).toBeInTheDocument()
     expect(screen.getByText('"ana"')).toBeInTheDocument()
-    expect(formatOption('json')).toBeChecked()
+    expectFormat('json')
+  })
+
+  it('shows only the current format and reveals the others on demand', () => {
+    render(<ResponseBody body={{ kind: 'inline', body: '{"name":"ana"}' }} bodyEncoding="text" headers={[]} />)
+
+    const trigger = formatSwitch().getByRole('button', { expanded: false })
+    expect(trigger).toHaveTextContent('JSON')
+    const options = document.getElementById(trigger.getAttribute('aria-controls') ?? '')
+    expect(options).toHaveAttribute('inert')
+
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(options).not.toHaveAttribute('inert')
+    expect(within(options as HTMLElement).getAllByRole('button').map((option) => option.textContent)).toEqual([
+      'XML',
+      'HTML',
+      'Texto',
+    ])
+
+    fireEvent.keyDown(trigger, { key: 'Escape' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
+  it('collapses after choosing a format and returns focus to the trigger', () => {
+    render(<ResponseBody body={{ kind: 'inline', body: '{"name":"ana"}' }} bodyEncoding="text" headers={[]} />)
+
+    chooseFormat('xml')
+
+    const trigger = formatSwitch().getByRole('button', { expanded: false })
+    expect(trigger).toHaveTextContent('XML')
+    expect(trigger).toHaveFocus()
   })
 
   it('não reprocessa a formatação quando o corpo não muda entre renders', () => {
@@ -63,7 +103,7 @@ describe('ResponseBody', () => {
 
     expect(screen.getAllByText('root').length).toBeGreaterThan(0)
     expect(screen.getAllByText('name').length).toBeGreaterThan(0)
-    expect(formatOption('xml')).toBeChecked()
+    expectFormat('xml')
   })
 
   it('alterna para texto bruto ao escolher "Texto" no seletor de formato', () => {
@@ -75,7 +115,7 @@ describe('ResponseBody', () => {
       />,
     )
 
-    fireEvent.click(formatOption('text'))
+    chooseFormat('text')
 
     expect(screen.getByText('<root><name>ana</name></root>')).toBeInTheDocument()
   })
@@ -83,9 +123,9 @@ describe('ResponseBody', () => {
   it('permite forçar um formato diferente do detectado (JSON visto como XML)', () => {
     render(<ResponseBody body={{ kind: 'inline', body: '{"name":"ana"}' }} bodyEncoding="text" headers={[]} />)
 
-    expect(formatOption('json')).toBeChecked()
+    expectFormat('json')
 
-    fireEvent.click(formatOption('xml'))
+    chooseFormat('xml')
 
     expect(screen.getByText('{"name":"ana"}')).toBeInTheDocument()
   })
@@ -103,7 +143,7 @@ describe('ResponseBody', () => {
     expect(iframe).not.toBeNull()
     expect(iframe).toHaveAttribute('sandbox', '')
     expect(iframe).toHaveAttribute('srcdoc', '<p>ola</p>')
-    expect(formatOption('html')).toBeChecked()
+    expectFormat('html')
     expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -139,7 +179,7 @@ describe('ResponseBody', () => {
     )
 
     expect(screen.getByText('não é json nem xml')).toBeInTheDocument()
-    expect(formatOption('text')).toBeChecked()
+    expectFormat('text')
   })
 
   it('renderiza uma imagem a partir de um corpo base64 inline, ignorando o seletor de formato', () => {
@@ -154,7 +194,7 @@ describe('ResponseBody', () => {
     const img = container.querySelector('img')
     expect(img).not.toBeNull()
     expect(img).toHaveAttribute('src', 'data:image/png;base64,aGVsbG8=')
-    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: FORMAT_SELECTOR_NAME })).not.toBeInTheDocument()
   })
 
   describe('corpo windowed', () => {
@@ -175,7 +215,7 @@ describe('ResponseBody', () => {
 
       expect(screen.getByText('Resposta muito grande - exibida em partes.')).toBeInTheDocument()
       expect(screen.getByText('primeiro pedaço')).toBeInTheDocument()
-      expect(formatOption('text')).toBeChecked()
+      expectFormat('text')
       expect(readSpy).not.toHaveBeenCalled()
 
       readSpy.mockRestore()

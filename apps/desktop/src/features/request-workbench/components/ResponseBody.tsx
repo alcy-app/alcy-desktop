@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { ResponseBodyEncoding, ResponseBodyOutput, ResponseHeader } from '../../../bindings/execute-graphql-request'
 import { readResponseBodyChunk } from '../../../bindings/read-response-body-chunk'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
-import { SegmentedControl } from '../../../shared/ui/SegmentedControl'
+import { ChevronRightIcon } from '../../../shared/ui/icons'
 import { contentTypeOf, detectBodyMode } from '../response-body-mode'
 import type { ResponseBodyMode } from '../response-body-mode'
 import { ResponseCodeView } from './ResponseCodeView'
@@ -94,22 +94,72 @@ const FORMAT_LABEL_KEY: Record<ResponseBodyMode, 'response.formatJson' | 'respon
 }
 
 /**
- * Seletor único de formato — substitui os toggles formatted/raw e
- * rendered/code separados das specs 0034/0035. Sempre mostra as 4 opções,
- * mesmo quando a detecção automática (`detectBodyMode`) achou `text`: o
- * usuário pode forçar JSON/XML/HTML manualmente quando sabe mais sobre a
- * resposta do que a detecção. Vale também para corpos `windowed` (spec 0039).
+ * Single format selector — replaces the separate formatted/raw and
+ * rendered/code toggles of specs 0034/0035. Only the current format shows;
+ * the trigger slides the other ones out beside it. Every format stays
+ * available even when automatic detection (`detectBodyMode`) found `text`:
+ * the user can force JSON/XML/HTML when they know more about the response
+ * than the detection does. Also applies to `windowed` bodies (spec 0039).
  */
 function FormatSelector({ value, onChange }: { value: ResponseBodyMode; onChange: (value: ResponseBodyMode) => void }) {
   const { t } = useLanguage()
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const optionsId = useId()
+  const currentLabel = t(FORMAT_LABEL_KEY[value])
+
+  const close = (restoreFocus: boolean) => {
+    setOpen(false)
+    if (restoreFocus) triggerRef.current?.focus()
+  }
+
   return (
-    <SegmentedControl<ResponseBodyMode>
-      layout="inline"
-      ariaLabel={t('response.formatSelectorLabel')}
-      value={value}
-      onChange={onChange}
-      options={FORMAT_OPTIONS.map((format) => ({ value: format, label: t(FORMAT_LABEL_KEY[format]) }))}
-    />
+    <div
+      role="group"
+      aria-label={t('response.formatSelectorLabel')}
+      className={`rw-format-switch${open ? ' rw-format-switch--open' : ''}`}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation()
+          close(true)
+        }
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="rw-format-switch-current"
+        aria-label={t('response.formatSwitchAria', { format: currentLabel })}
+        aria-expanded={open}
+        aria-controls={optionsId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {currentLabel}
+        <ChevronRightIcon size={12} className="rw-format-switch-chevron" />
+      </button>
+      {/* Collapsed options stay in the DOM so the width can animate; `inert`
+          keeps them out of the tab order and the accessibility tree. */}
+      <div id={optionsId} className="rw-format-switch-options" inert={!open}>
+        <div className="rw-format-switch-options-inner">
+          {FORMAT_OPTIONS.filter((format) => format !== value).map((format) => (
+            <button
+              key={format}
+              type="button"
+              className="rw-format-switch-option"
+              onClick={() => {
+                onChange(format)
+                close(true)
+              }}
+            >
+              {t(FORMAT_LABEL_KEY[format])}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 

@@ -599,6 +599,7 @@ const ptBR = {
   'response.formatXml': 'XML',
   'response.formatHtml': 'HTML',
   'response.formatText': 'Texto',
+  'response.formatSwitchAria': 'Formato {format}, trocar formato',
   'response.previewToggle': 'Preview',
   'response.bodyPreviewTitle': 'Preview do HTML da resposta',
   'response.bodyLoadImage': 'Carregar imagem',

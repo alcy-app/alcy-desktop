@@ -1299,6 +1299,91 @@
   gap: 8px;
 }
 
+/* Response format switch: the current format sits on the segmented track's
+   thumb; the other formats slide out beside it (the grid column animates
+   from 0fr to 1fr, so no width is hardcoded). */
+.rw-format-switch {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 2px;
+  background: var(--segmented-track-bg);
+  border-radius: var(--radius-md);
+}
+
+.rw-format-switch-current,
+.rw-format-switch-option {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.rw-format-switch-current {
+  gap: var(--space-1);
+  padding: 0 6px 0 10px;
+  background: var(--segmented-thumb-bg);
+  box-shadow: var(--segmented-thumb-shadow);
+  color: var(--text-heading);
+}
+
+.rw-format-switch-chevron {
+  color: var(--text-muted);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.rw-format-switch--open .rw-format-switch-chevron {
+  transform: rotate(180deg);
+}
+
+.rw-format-switch-options {
+  display: grid;
+  grid-template-columns: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-columns var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+
+.rw-format-switch--open .rw-format-switch-options {
+  grid-template-columns: 1fr;
+  opacity: 1;
+}
+
+.rw-format-switch-options-inner {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding-left: 2px;
+  overflow: hidden;
+}
+
+.rw-format-switch-option {
+  flex: none;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.rw-format-switch-option:hover {
+  color: var(--text);
+}
+
+/* Inside the clipped options, an outer focus ring would be cut off. */
+.rw-format-switch-option:focus-visible {
+  outline-offset: -2px;
+}
+
 .rw-code-view .cm-editor {
   height: auto;
 }
