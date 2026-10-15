@@ -4,8 +4,15 @@
 //! feita por valores simples: entra um `ScriptInput`, sai um `ScriptOutput`
 //! com o que o script alterou.
 
+use std::rc::Rc;
+use std::sync::Arc;
+
 use boa_engine::{Context, JsError, JsValue, Source};
 use thiserror::Error;
+
+mod packages;
+
+pub use packages::{NPM_PREFIX, ScriptPackages, npm_requests, resolve_specifier};
 
 /// Limites defensivos do runtime e dos dados que atravessam o interpretador.
 const LOOP_ITERATION_LIMIT: u64 = 1_000_000;
@@ -14,6 +21,11 @@ const STACK_SIZE_LIMIT: usize = 4_096;
 const MAX_SCRIPT_SOURCE_BYTES: usize = 256 * 1024;
 const MAX_SCRIPT_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SCRIPT_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+/// Native stack of the thread a script runs on. Boa's parser and module
+/// linking recurse on the native stack, outside its own recursion limit:
+/// real npm bundles need more than the 2 MiB of a default worker thread, and
+/// overflowing aborts the whole process (spec 0128).
+const SCRIPT_THREAD_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptPhase {
@@ -99,6 +111,9 @@ pub struct ScriptInput {
     /// Variáveis compartilhadas pelo runner/flow atual, sem persistência.
     pub runtime: Vec<ScriptVariable>,
     pub iteration: ScriptIteration,
+    /// npm packages the host downloaded for this script's `require('npm:…')`
+    /// calls (spec 0128); empty when it requires none.
+    pub packages: Arc<ScriptPackages>,
 }
 
 /// Resultado de um `al.test(name, fn)`: passou quando `fn` não lançou.
@@ -143,6 +158,46 @@ pub struct ScriptError {
     pub message: String,
     pub line: Option<u32>,
 }
+
+/// Globals `require` and `crypto.getRandomValues` (spec 0128), on top of the
+/// natives in `packages`. Bundled libraries are evaluated as CommonJS modules
+/// the first time they are required; npm packages as ES modules. Either way
+/// the result is cached for the rest of the run.
+const REQUIRE_PRELUDE: &str = r#"
+var crypto = {
+  getRandomValues: function (array) {
+    if (!array || typeof array.byteLength !== 'number' || array instanceof Float32Array || array instanceof Float64Array) {
+      throw new TypeError('crypto.getRandomValues espera um array de inteiros tipado');
+    }
+    var bytes = __randomBytes(array.byteLength);
+    var view = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+    for (var i = 0; i < bytes.length; i++) view[i] = bytes[i];
+    return array;
+  }
+};
+var require = (function () {
+  var cache = {};
+  return function require(name) {
+    name = String(name);
+    if (Object.prototype.hasOwnProperty.call(cache, name)) return cache[name];
+    var exported;
+    if (name.indexOf('npm:') === 0) {
+      exported = __requireNpm(name.slice(4).trim());
+    } else {
+      var source = __bundledSource(name);
+      if (source === undefined) {
+        throw new Error("módulo '" + name + "' não encontrado; disponíveis: lodash, crypto-js, moment, uuid ou 'npm:<pacote>@<versão>'");
+      }
+      var module = { exports: {} };
+      var factory = (0, eval)('(function (module, exports) {\n' + source + '\n})');
+      factory.call(module.exports, module, module.exports);
+      exported = module.exports;
+    }
+    cache[name] = exported;
+    return exported;
+  };
+})();
+"#;
 
 /// Prelúdio que monta o `al` sobre um único objeto `__host` (JSON) injetado
 /// pelo host. Só lógica JS pura: nada de I/O.
@@ -467,6 +522,7 @@ var al = (function (host) {
   };
   api.console.info = api.console.log; api.console.warn = api.console.log; api.console.error = api.console.log;
   if (responseApi) api.response = responseApi;
+  api.require = require;
   api.__state = function () {
     return JSON.stringify({
       request: request,
@@ -486,7 +542,30 @@ var al = (function (host) {
 })(JSON.parse(__hostJson));
 "#;
 
+/// Runs a script on its own thread, with a native stack large enough for
+/// the interpreter (see [`SCRIPT_THREAD_STACK_BYTES`]), and waits for it.
 pub fn run_script(
+    phase: ScriptPhase,
+    source: &str,
+    input: &ScriptInput,
+) -> Result<ScriptOutput, ScriptError> {
+    let fail = |message: String| ScriptError {
+        phase,
+        message,
+        line: None,
+    };
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("alcy-script".to_string())
+            .stack_size(SCRIPT_THREAD_STACK_BYTES)
+            .spawn_scoped(scope, || execute(phase, source, input))
+            .map_err(|error| fail(format!("falha ao iniciar o script: {error}")))?
+            .join()
+            .unwrap_or_else(|_| Err(fail("o script terminou inesperadamente".to_string())))
+    })
+}
+
+fn execute(
     phase: ScriptPhase,
     source: &str,
     input: &ScriptInput,
@@ -507,7 +586,14 @@ pub fn run_script(
         ));
     }
 
-    let mut context = Context::default();
+    let loader = Rc::new(packages::PackageLoader::new(input.packages.clone()));
+    let mut context = Context::builder()
+        .module_loader(loader.clone())
+        .build()
+        .map_err(|error| fail(error.to_string(), None))?;
+    let _active_loader = packages::ActiveLoader::set(loader);
+    packages::register_natives(&mut context)
+        .map_err(|error| fail(describe(&error, &mut context), None))?;
     context
         .runtime_limits_mut()
         .set_loop_iteration_limit(LOOP_ITERATION_LIMIT);
@@ -547,6 +633,9 @@ pub fn run_script(
         .eval(Source::from_bytes(&format!(
             "var __hostJson = {host_literal};"
         )))
+        .map_err(|error| fail(describe(&error, &mut context), None))?;
+    context
+        .eval(Source::from_bytes(REQUIRE_PRELUDE))
         .map_err(|error| fail(describe(&error, &mut context), None))?;
     context
         .eval(Source::from_bytes(PRELUDE))
@@ -771,6 +860,7 @@ mod tests {
             local: Vec::new(),
             runtime: Vec::new(),
             iteration: ScriptIteration::default(),
+            packages: Arc::default(),
         }
     }
 
@@ -1252,5 +1342,216 @@ mod tests {
             &context,
         ).unwrap();
         assert!(output.tests[0].passed, "{:?}", output.tests[0].message);
+    }
+
+    /// Runs `source` and returns what it logged.
+    fn logs_of(source: &str, input: &ScriptInput) -> Vec<String> {
+        run_script(ScriptPhase::PreRequest, source, input)
+            .unwrap_or_else(|error| panic!("{}", error.message))
+            .logs
+    }
+
+    #[test]
+    fn requires_the_bundled_libraries() {
+        let logs = logs_of(
+            r#"
+            var _ = require('lodash');
+            var CryptoJS = require('crypto-js');
+            var moment = require('moment');
+            var uuid = require('uuid');
+            al.console.log(JSON.stringify(_.chunk([1, 2, 3], 2)));
+            al.console.log(CryptoJS.SHA256('abc').toString());
+            al.console.log(CryptoJS.enc.Base64.stringify(CryptoJS.HmacSHA256('msg', 'key')));
+            al.console.log(moment.utc('2024-01-02T03:04:05Z').format('YYYY/MM/DD HH:mm'));
+            al.console.log(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid.v4()));
+            al.console.log(CryptoJS.lib.WordArray.random(16).sigBytes);
+            "#,
+            &input(),
+        );
+        assert_eq!(
+            logs,
+            vec![
+                "[[1,2],[3]]",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                // Reference: `printf msg | openssl dgst -sha256 -hmac key -binary | base64`.
+                "LZPLwb4We8sWN6SiPL/wGnh48MUO6DOVTqUiG7G4xig=",
+                "2024/01/02 03:04",
+                "true",
+                "16",
+            ]
+        );
+    }
+
+    #[test]
+    fn caches_a_required_module_and_exposes_al_require() {
+        let logs = logs_of(
+            "al.console.log(require('lodash') === al.require('lodash'));",
+            &input(),
+        );
+        assert_eq!(logs, vec!["true"]);
+    }
+
+    #[test]
+    fn rejects_an_unknown_module_with_the_available_ones() {
+        let error =
+            run_script(ScriptPhase::PreRequest, "require('cheerio')", &input()).unwrap_err();
+        assert!(
+            error.message.contains("'cheerio' não encontrado"),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains("npm:"), "{}", error.message);
+    }
+
+    #[test]
+    fn get_random_values_fills_typed_arrays() {
+        let logs = logs_of(
+            r#"
+            var bytes = crypto.getRandomValues(new Uint8Array(64));
+            var nonZero = 0; for (var i = 0; i < bytes.length; i++) if (bytes[i] !== 0) nonZero++;
+            al.console.log(nonZero > 32);
+            al.console.log(crypto.getRandomValues(new Uint32Array(2)).length);
+            try { crypto.getRandomValues(new Uint8Array(70000)); } catch (e) { al.console.log(e instanceof RangeError); }
+            "#,
+            &input(),
+        );
+        assert_eq!(logs, vec!["true", "2", "true"]);
+    }
+
+    fn with_packages(entries: &[(&str, &str)], modules: &[(&str, &str)]) -> ScriptInput {
+        let mut input = input();
+        input.packages = Arc::new(ScriptPackages {
+            entries: entries
+                .iter()
+                .map(|(name, path)| (name.to_string(), path.to_string()))
+                .collect(),
+            modules: modules
+                .iter()
+                .map(|(path, source)| (path.to_string(), source.to_string()))
+                .collect(),
+        });
+        input
+    }
+
+    #[test]
+    fn requires_an_npm_package_with_its_imports() {
+        let input = with_packages(
+            &[("greet@1.0.0", "/greet@1.0.0/es2022/greet.bundle.mjs")],
+            &[
+                (
+                    "/greet@1.0.0/es2022/greet.bundle.mjs",
+                    "import { prefix } from \"/node/prefix.mjs\"; import { suffix } from \"./suffix.mjs\"; \
+                     export default function greet(name) { return prefix + name + suffix; }",
+                ),
+                ("/node/prefix.mjs", "export const prefix = 'hi ';"),
+                (
+                    "/greet@1.0.0/es2022/suffix.mjs",
+                    "export const suffix = '!';",
+                ),
+            ],
+        );
+        let logs = logs_of(
+            "var greet = require('npm:greet@1.0.0'); al.console.log(greet('ana')); \
+             al.console.log(al.require('npm:greet@1.0.0') === greet);",
+            &input,
+        );
+        assert_eq!(logs, vec!["hi ana!", "true"]);
+    }
+
+    #[test]
+    fn an_npm_package_without_default_export_returns_its_namespace() {
+        let input = with_packages(
+            &[("consts@2.0.0", "/consts.mjs")],
+            &[(
+                "/consts.mjs",
+                "export const answer = 42; export function twice(n) { return n * 2; }",
+            )],
+        );
+        let logs = logs_of(
+            "var c = require('npm:consts@2.0.0'); al.console.log(c.twice(c.answer));",
+            &input,
+        );
+        assert_eq!(logs, vec!["84"]);
+    }
+
+    #[test]
+    fn reports_npm_packages_that_were_not_downloaded_or_fail() {
+        let error = run_script(
+            ScriptPhase::PreRequest,
+            "require('npm:missing@1.0.0')",
+            &input(),
+        )
+        .unwrap_err();
+        assert!(
+            error.message.contains("não disponível: missing@1.0.0"),
+            "{}",
+            error.message
+        );
+
+        let input = with_packages(
+            &[("broken@1.0.0", "/broken.mjs")],
+            &[(
+                "/broken.mjs",
+                "import { x } from \"/absent.mjs\"; export default x;",
+            )],
+        );
+        let error = run_script(
+            ScriptPhase::PreRequest,
+            "require('npm:broken@1.0.0')",
+            &input,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("/absent.mjs"), "{}", error.message);
+
+        let input = with_packages(
+            &[("throws@1.0.0", "/throws.mjs")],
+            &[("/throws.mjs", "throw new Error('boom'); export default 1;")],
+        );
+        let error = run_script(
+            ScriptPhase::PreRequest,
+            "require('npm:throws@1.0.0')",
+            &input,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("boom"), "{}", error.message);
+    }
+
+    #[test]
+    fn finds_literal_npm_requests() {
+        let source = r#"
+            const dayjs = require('npm:dayjs@1.11.13');
+            const again = al.require( "npm:dayjs@1.11.13" );
+            const scoped = pm.require(`npm:@scope/pkg@2.0.0`);
+            const local = require('lodash');
+            const dynamic = require('npm:' + name);
+            const template = require(`npm:${name}`);
+        "#;
+        assert_eq!(
+            npm_requests(source),
+            vec!["dayjs@1.11.13", "@scope/pkg@2.0.0"]
+        );
+    }
+
+    #[test]
+    fn resolves_esm_sh_specifiers() {
+        let referrer = std::path::Path::new("/pkg@1.0.0/es2022/pkg.mjs");
+        assert_eq!(
+            resolve_specifier("/node/buffer.mjs", Some(referrer)).as_deref(),
+            Some("/node/buffer.mjs")
+        );
+        assert_eq!(
+            resolve_specifier("https://esm.sh/node/util.mjs", None).as_deref(),
+            Some("/node/util.mjs")
+        );
+        assert_eq!(
+            resolve_specifier("./chunk.mjs", Some(referrer)).as_deref(),
+            Some("/pkg@1.0.0/es2022/chunk.mjs")
+        );
+        assert_eq!(
+            resolve_specifier("../../other.mjs", Some(referrer)).as_deref(),
+            Some("/other.mjs")
+        );
+        assert_eq!(resolve_specifier("lodash", Some(referrer)), None);
+        assert_eq!(resolve_specifier("https://evil.example/x.mjs", None), None);
     }
 }

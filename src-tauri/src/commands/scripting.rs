@@ -2,7 +2,8 @@
 //! converte entre os DTOs de entrada e os valores simples do script, roda o
 //! script fora do worker assíncrono e acumula os efeitos (ambiente e logs).
 
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use alcy_app::RequestExecutor;
 use alcy_domain::{
@@ -10,9 +11,12 @@ use alcy_domain::{
     ScopedVariableChange, VariableScope, VariableScopeKind, apply_scoped_changes,
     record_scoped_change, variable_scopes,
 };
+use alcy_script_packages::{
+    PackageCache, PackageError, esm_sh_client, fetch_from_esm_sh, resolve_packages,
+};
 use alcy_scripting::{
-    ScriptError, ScriptHeader, ScriptInput, ScriptIteration, ScriptOutput, ScriptPhase,
-    ScriptRequest, ScriptResponse, ScriptVariable, run_script,
+    ScriptError, ScriptHeader, ScriptInput, ScriptIteration, ScriptOutput, ScriptPackages,
+    ScriptPhase, ScriptRequest, ScriptResponse, ScriptVariable, npm_requests, run_script,
 };
 use serde::Serialize;
 
@@ -319,11 +323,49 @@ fn script_environment(environment: &[EnvironmentVariableDto]) -> Vec<ScriptVaria
         .collect()
 }
 
+/// Cache of npm packages for scripts (spec 0128), set once at startup. The
+/// script runners are free functions shared by requests, the collection
+/// runner and flows, so the cache is process-wide instead of command state.
+static SCRIPT_PACKAGES: OnceLock<PackageCache> = OnceLock::new();
+
+/// Registers the folder that caches npm packages required by scripts.
+pub(crate) fn init_script_packages(dir: PathBuf) {
+    let _ = SCRIPT_PACKAGES.set(PackageCache::new(dir));
+}
+
+/// Downloads (or reads from the cache) the npm packages `source` requires.
+async fn script_packages(source: &str) -> Result<ScriptPackages, PackageError> {
+    let names = npm_requests(source);
+    if names.is_empty() {
+        return Ok(ScriptPackages::default());
+    }
+    let cache = SCRIPT_PACKAGES
+        .get()
+        .ok_or_else(|| PackageError::Cache("cache de pacotes não inicializada".to_string()))?;
+    let client = esm_sh_client()?;
+    resolve_packages(&names, cache, |path| {
+        let client = client.clone();
+        async move { fetch_from_esm_sh(&client, &path).await }
+    })
+    .await
+}
+
 async fn run_blocking(
     phase: ScriptPhase,
     source: String,
-    input: ScriptInput,
+    mut input: ScriptInput,
 ) -> Result<ScriptOutput, ScriptError> {
+    // Packages are downloaded here, asynchronously and outside the
+    // interpreter, which never touches the network.
+    input.packages = Arc::new(
+        script_packages(&source)
+            .await
+            .map_err(|error| ScriptError {
+                phase,
+                message: error.to_string(),
+                line: None,
+            })?,
+    );
     tauri::async_runtime::spawn_blocking(move || run_script(phase, &source, &input))
         .await
         .unwrap_or_else(|error| {
@@ -383,6 +425,7 @@ pub(crate) async fn run_pre_request_in(
         local: effects.local_variables.clone(),
         runtime: effects.runtime_variables.clone(),
         iteration: iteration.clone(),
+        packages: Default::default(),
     };
     let output = run_blocking(ScriptPhase::PreRequest, source.to_string(), input).await?;
 
@@ -518,6 +561,7 @@ pub(crate) async fn run_post_response_in(
         local: effects.local_variables.clone(),
         runtime: effects.runtime_variables.clone(),
         iteration: iteration.clone(),
+        packages: Default::default(),
     };
     let output = run_blocking(ScriptPhase::PostResponse, source.to_string(), input).await?;
     effects.local_variables = output.local.clone();

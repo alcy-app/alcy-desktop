@@ -70,6 +70,7 @@ dependencies = [
  "alcy-openapi",
  "alcy-platform",
  "alcy-rest",
+ "alcy-script-packages",
  "alcy-scripting",
  "alcy-storage",
  "alcy-webclient",
@@ -225,10 +226,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "alcy-script-packages"
+version = "0.1.0"
+dependencies = [
+ "alcy-scripting",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "alcy-scripting"
 version = "0.1.0"
 dependencies = [
  "boa_engine",
+ "getrandom 0.3.4",
  "serde_json",
  "thiserror 2.0.20",
 ]

@@ -189,6 +189,16 @@ Responsible for:
 
 Canonical data and rebuildable data must stay separate.
 
+### Scripting
+
+`alcy-scripting` runs pre-request and post-response scripts in `boa_engine`
+with no I/O (ADR 0018), on its own thread with a large native stack.
+`require` loads libraries bundled in the crate, or npm packages that the host
+downloads before the script runs: `alcy-script-packages` scans the script for
+literal `require('npm:…')` calls, fetches the packages from esm.sh and caches
+them in the app data folder, and the interpreter receives their modules as
+plain sources (ADR 0061). This is the only network access scripts can cause.
+
 ## Initial structure
 
 ```text
@@ -202,6 +212,8 @@ crates/alcy-load/      # reusable load plan, scheduler, runtime and metrics
 crates/alcy-graphql/   # GraphQL capability
 crates/alcy-openapi/   # import of OpenAPI documents
 crates/alcy-rest/      # REST capability
+crates/alcy-scripting/ # script interpreter (boa) and `require`
+crates/alcy-script-packages/ # npm packages for scripts (esm.sh + cache)
 crates/alcy-storage/   # local persistence
 crates/alcy-platform/  # native integrations
 ```

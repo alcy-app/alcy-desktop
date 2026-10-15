@@ -5,7 +5,11 @@ edition = "2024"
 publish = false
 
 [dependencies]
-boa_engine = "0.22"
+# `annex-b`: legacy built-ins (`substr`, `escape`…) that bundled libraries
+# (uuid) and scripts imported from other tools rely on.
+boa_engine = { version = "0.22", features = ["annex-b"] }
+# OS randomness for `crypto.getRandomValues` (uuid, crypto-js); already in the lockfile.
+getrandom = "0.3"
 serde_json = "1.0"
 thiserror = "2"
 

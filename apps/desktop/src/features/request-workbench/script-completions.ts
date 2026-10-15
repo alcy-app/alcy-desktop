@@ -13,6 +13,15 @@ const fn = (label: string, template: string, detail: string, info: string): Memb
 
 const prop = (label: string, detail: string, info: string): Member => ({ label, detail, info, type: 'property' })
 
+/** `require` (spec 0128), também disponível como `al.require`. */
+const requireCompletion = fn(
+  'require',
+  "require('${module}')",
+  '(name) → module',
+  'Carrega uma biblioteca: lodash, crypto-js, moment e uuid já vêm com o app; ' +
+    "'npm:<pacote>@<versão>' baixa um pacote do npm na primeira execução e o guarda para uso offline.",
+)
+
 /** Membros do objeto `al`, por caminho (`al.request.headers`, ...). A API de
  * scripts está descrita na spec 0054; `al.response` só existe no pós-resposta. */
 function membersOf(path: string, phase: ScriptPhase): Member[] {
@@ -43,6 +52,7 @@ function membersOf(path: string, phase: ScriptPhase): Member[] {
         ),
         prop('iteration', 'iteração', 'Iteração atual do runner de coleções (index, count). Fora do runner: 0 de 1.'),
         prop('iterationData', 'dados', 'Valores da linha do arquivo de dados na iteração atual do runner.'),
+        requireCompletion,
       ]
     case 'al.request':
       return [
@@ -121,9 +131,12 @@ export function completionSource(phase: ScriptPhase) {
     const from = word.to - partial.length
 
     if (path === '') {
-      // Sem ponto: oferece o próprio `al` ao digitar ao menos uma letra.
+      // No dot: offers `al` and `require` once at least one letter is typed.
       if (partial === '') return null
-      return { from, options: [{ label: 'al', type: 'variable', detail: 'Alcy', info: 'Objeto com a API de scripts do Alcy.' }] }
+      return {
+        from,
+        options: [{ label: 'al', type: 'variable', detail: 'Alcy', info: 'Objeto com a API de scripts do Alcy.' }, requireCompletion],
+      }
     }
 
     const options = membersOf(path, phase)

@@ -25,6 +25,7 @@ alcy-http-proxy = { path = "../crates/alcy-http-proxy" }
 alcy-openapi = { path = "../crates/alcy-openapi" }
 alcy-platform = { path = "../crates/alcy-platform" }
 alcy-rest = { path = "../crates/alcy-rest" }
+alcy-script-packages = { path = "../crates/alcy-script-packages" }
 alcy-scripting = { path = "../crates/alcy-scripting" }
 alcy-storage = { path = "../crates/alcy-storage" }
 alcy-webclient = { path = "../crates/alcy-webclient" }

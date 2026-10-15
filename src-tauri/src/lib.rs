@@ -259,6 +259,7 @@ pub fn run_with(extensions: Vec<Extension>) {
             });
 
             let app_data_dir = app.path().app_data_dir()?;
+            commands::scripting::init_script_packages(app_data_dir.join("script-packages"));
             app.manage(SchemaStore::new(app_data_dir.join("schema-cache")));
             app.manage(VersionControlCaches::new(
                 app_data_dir.join("gitlab-content-cache"),

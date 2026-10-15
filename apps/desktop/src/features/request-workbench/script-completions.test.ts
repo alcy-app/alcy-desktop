@@ -12,8 +12,8 @@ function complete(text: string, phase: 'pre' | 'post', explicit = false): Comple
 const labels = (result: CompletionResult | null) => result?.options.map((option) => option.label) ?? []
 
 describe('completionSource', () => {
-  it('sugere o objeto al a partir da primeira letra', () => {
-    expect(labels(complete('a', 'pre'))).toEqual(['al'])
+  it('sugere o objeto al e o require a partir da primeira letra', () => {
+    expect(labels(complete('a', 'pre'))).toEqual(['al', 'require'])
   })
 
   it('não sugere nada sem texto digitado', () => {
@@ -21,7 +21,7 @@ describe('completionSource', () => {
   })
 
   it('lista os membros de al, com response só no pós-resposta', () => {
-    const runnerMembers = ['test', 'expect', 'iteration', 'iterationData']
+    const runnerMembers = ['test', 'expect', 'iteration', 'iterationData', 'require']
     const scopes = ['environment', 'collection', 'folder', 'variables', 'runtime', 'info']
     expect(labels(complete('al.', 'pre'))).toEqual(['request', ...scopes.slice(0, 3), ...scopes.slice(3), 'console', ...runnerMembers])
     expect(labels(complete('al.', 'post'))).toEqual(['request', 'response', ...scopes.slice(0, 3), ...scopes.slice(3), 'console', ...runnerMembers])

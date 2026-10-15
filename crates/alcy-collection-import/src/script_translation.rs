@@ -110,6 +110,9 @@ fn mappings(d: ScriptDialect) -> &'static [(&'static str, &'static str)] {
             ("postman.getEnvironmentVariable", "al.environment.get"),
             ("postman.clearEnvironmentVariable", "al.environment.unset"),
             ("pm.collectionVariables", "al.collection"),
+            // `require` exists in the sandbox (spec 0128); `pm.require` is its
+            // Postman alias for npm packages.
+            ("pm.require", "al.require"),
             ("pm.iterationData", "al.iterationData"),
             ("pm.response.responseTime", "al.response.time"),
             ("pm.response.responseSize", "al.response.size"),
@@ -186,7 +189,6 @@ fn unsupported(d: ScriptDialect) -> &'static [&'static str] {
             "pm.request.auth",
             "pm.setNextRequest",
             "postman.setNextRequest",
-            "require",
             "fetch",
             "setTimeout",
             "setInterval",
@@ -198,7 +200,6 @@ fn unsupported(d: ScriptDialect) -> &'static [&'static str] {
             "bru.runner",
             "bru.getSecret",
             "bru.setSecret",
-            "require",
             "fetch",
             "setTimeout",
             "setInterval",
@@ -282,6 +283,21 @@ mod tests {
         let r = translate("pm.sendRequest('x')", ScriptDialect::Postman);
         assert!(r.source.starts_with("al.unsupportedCommand"));
         assert_eq!(r.warnings.len(), 1);
+    }
+    #[test]
+    fn keeps_require_and_translates_pm_require() {
+        let r = translate(
+            "const _ = require('lodash');\nconst dayjs = pm.require('npm:dayjs@1.11.13');",
+            ScriptDialect::Postman,
+        );
+        assert_eq!(
+            r.source,
+            "const _ = require('lodash');\nconst dayjs = al.require('npm:dayjs@1.11.13');"
+        );
+        assert!(r.warnings.is_empty());
+        let bruno = translate("const moment = require('moment');", ScriptDialect::Bruno);
+        assert_eq!(bruno.source, "const moment = require('moment');");
+        assert!(bruno.warnings.is_empty());
     }
     #[test]
     fn respects_shadowed_globals() {

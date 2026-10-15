@@ -1681,6 +1681,9 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
                 count: self.iteration_count,
                 data: Vec::new(),
             },
+            // npm packages are not downloaded for load scripts (spec 0128);
+            // the bundled libraries still work.
+            packages: Default::default(),
         };
         let node_id = script.node_id.clone();
         let code = script.code.clone();
