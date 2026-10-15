@@ -23,6 +23,7 @@ src-tauri/gen/
 
 # Agents
 CLAUDE.md
+.claude/worktrees/
 
 # Variáveis locais (VITE_* são embutidas no bundle)
 .env

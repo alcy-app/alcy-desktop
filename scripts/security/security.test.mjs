@@ -126,6 +126,10 @@ describe('guarda dos agentes: shell', () => {
       'export CARGO_BUILD_TARGET_DIR=/tmp/x',
       "cargo check --config 'build.target-dir=\"/tmp/x\"'",
       'echo \'target-dir = "/tmp/x"\' >> .cargo/config.toml',
+      "sed -i 's/a/b/' .claude/worktrees/agent-1/src-tauri/tauri.conf.json",
+      'echo x >> .claude/worktrees/agent-1/.claude/settings.json',
+      'echo x >> .claude/worktrees/../settings.json',
+      'rm -rf .claude/worktrees/agent-1',
     ]) {
       assert.equal(decision(command), 'ask', command)
     }
@@ -146,6 +150,7 @@ describe('guarda dos agentes: shell', () => {
       'node scripts/check-security-invariants.mjs',
       'grep -rn commit docs/',
       "sed -i 's/a/b/' apps/desktop/src/App.tsx",
+      "sed -i 's/a/b/' /repo/.claude/worktrees/agent-1/apps/desktop/src/App.tsx",
       'rm -rf /tmp/build',
     ]) {
       assert.equal(decision(command), null, command)
@@ -180,6 +185,19 @@ describe('guarda dos agentes: arquivos', () => {
     assert.equal(run('Edit', join(PROJECT, 'apps/desktop/src/App.tsx')), null)
     assert.equal(run('Read', join(PROJECT, 'src-tauri/tauri.conf.json')), null)
     assert.equal(run('Read', join(PROJECT, 'apps/desktop/.env.example')), null)
+  })
+
+  test('agent worktrees follow the same rules as the main checkout', () => {
+    const worktree = join(PROJECT, '.claude/worktrees/agent-1')
+    assert.equal(run('Edit', join(worktree, 'apps/desktop/src/App.tsx')), null)
+    assert.equal(run('Write', join(worktree, 'crates/alcy-x/src/lib.rs')), null)
+    assert.equal(run('Edit', join(worktree, 'src-tauri/tauri.conf.json')), 'ask')
+    assert.equal(run('Write', join(worktree, '.claude/settings.json')), 'ask')
+    assert.equal(run('Edit', join(worktree, 'AGENTS.md')), 'ask')
+    assert.equal(run('Edit', join(worktree, 'Cargo.toml')), 'ask')
+    assert.equal(run('Write', join(worktree, 'apps/desktop/.env')), 'deny')
+    assert.equal(run('Write', join(worktree, '../../settings.json')), 'ask')
+    assert.equal(run('Write', join(PROJECT, '.claude/worktrees/x.json')), 'ask')
   })
 })
 

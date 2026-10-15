@@ -1,9 +1,9 @@
-// Decisões dos hooks PreToolUse dos agentes (Claude Code e Codex).
-// `deny` bloqueia a ação; `ask` exige confirmação humana mesmo que haja regra
-// de permissão liberando o comando; `null` segue o fluxo normal de permissões.
+// Decisions of the agents' PreToolUse hooks (Claude Code and Codex).
+// `deny` blocks the action; `ask` requires human confirmation even when a
+// permission rule allows the command; `null` follows the normal permission flow.
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import {
   AGENT_CONFIRM_PATHS,
@@ -17,9 +17,9 @@ import {
 const deny = (reason) => ({ decision: 'deny', reason })
 const ask = (reason) => ({ decision: 'ask', reason })
 
-// Opções globais do git antes do subcomando (`git -C dir -c k=v commit`).
+// Global git options before the subcommand (`git -C dir -c k=v commit`).
 const GIT = String.raw`\bgit(?:\s+-[cC]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+`
-// Opções do pnpm antes do subcomando (`pnpm --filter desktop add x`).
+// pnpm options before the subcommand (`pnpm --filter desktop add x`).
 const PNPM = String.raw`\bpnpm(?:\s+(?:--filter|-F|-C|--dir)\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+`
 
 const BASH_DENY = [
@@ -51,13 +51,17 @@ const BASH_ASK = [
   [/--target-dir\b|\bCARGO_(BUILD_)?TARGET_DIR\b|\bbuild\.target-dir\b/, 'usar um diretório de build diferente do configurado'],
 ]
 
-// Nomes que identificam arquivos protegidos em comandos de shell (inclusive
-// quando o agente entra na pasta antes de editá-los).
+// Names that identify protected files in shell commands (including when the
+// agent changes into the folder before editing them).
 const PROTECTED_NAMES = [
   ...new Set(
     AGENT_CONFIRM_PATHS.map((entry) => entry.replace(/\/$/, '').split('/').pop()),
   ),
 ]
+// Agent worktrees live under `.claude/worktrees/<name>/` and follow the same
+// rules as the main checkout, so that prefix alone does not make a path
+// protected; what follows it is still checked.
+const WORKTREE_PREFIX = /\.claude\/worktrees\/(?!\.\.?\/)[^/\s"';&|]+\//g
 const SHELL_WRITE =
   /(>>?\s*\S|\btee\b|\bsed\b[^\n;&|]*\s-[a-zA-Z]*i|\bperl\b[^\n;&|]*\s-[a-zA-Z]*i|\b(mv|cp|rm|truncate|chmod|ln|dd|patch)\s|\bpython3?\s+(-c|-)(\s|$)|\bnode\s+(-e|--eval|-p)\b|\bgit\s+(checkout|restore|apply|stash\s+pop)\b)/
 
@@ -69,7 +73,8 @@ export function decideBash(command) {
     if (pattern.test(command)) return ask(`Política do repositório: ${reason}.`)
   }
   if (SHELL_WRITE.test(command)) {
-    const touched = PROTECTED_NAMES.filter((name) => command.includes(name))
+    const target = command.replace(WORKTREE_PREFIX, '')
+    const touched = PROTECTED_NAMES.filter((name) => target.includes(name))
     if (touched.length > 0) {
       return ask(`Política do repositório: o comando pode alterar arquivos protegidos (${touched.join(', ')}).`)
     }
@@ -86,8 +91,16 @@ function relativeTo(base, path) {
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.replace(/\\/g, '/') : null
 }
 
-// Conteúdo de um manifesto de crate depois da edição, ou `null` quando não dá
-// para calculá-lo (a edição então pede confirmação).
+// Path relative to the checkout that contains `absolute`: the agent worktree
+// under `.claude/worktrees/<name>/` when it is inside one, else the project.
+function checkoutRelative(projectDir, absolute) {
+  const inProject = relativeTo(projectDir, absolute)
+  const worktree = inProject?.match(/^\.claude\/worktrees\/([^/]+)\//)
+  return worktree ? relativeTo(join(projectDir, '.claude', 'worktrees', worktree[1]), absolute) : inProject
+}
+
+// Content of a crate manifest after the edit, or `null` when it cannot be
+// computed (the edit then asks for confirmation).
 function crateManifestChange(absolute, apply) {
   if (!apply) return null
   const before = existsSync(absolute) ? readFileSync(absolute, 'utf8') : ''
@@ -111,7 +124,7 @@ export function decideFile(filePath, { projectDir, home = homedir(), write, appl
   if (inHome && CARGO_SETTINGS.includes(inHome)) {
     return ask('Política do repositório: alterar a configuração global do Cargo exige confirmação.')
   }
-  const inProject = relativeTo(projectDir, absolute)
+  const inProject = checkoutRelative(projectDir, absolute)
   if (inProject && CRATE_MANIFEST.test(inProject)) {
     const changed = crateManifestChange(absolute, apply)
     if (changed?.length === 0) return null
@@ -136,7 +149,7 @@ export function patchPaths(command) {
   return [...new Set(paths)]
 }
 
-// Arquivos de um patch do `apply_patch`, com as linhas de cada um.
+// Files of an `apply_patch` patch, with the lines of each one.
 function patchFiles(command) {
   const files = new Map()
   let current = null
@@ -168,8 +181,8 @@ function findLines(lines, target, from) {
   return -1
 }
 
-// Aplica os trechos (`@@`) de um `Update File` como o `apply_patch`: a linha
-// após `@@` localiza o ponto de partida; contexto e remoções precisam existir.
+// Applies the hunks (`@@`) of an `Update File` like `apply_patch` does: the line
+// after `@@` locates the starting point; context and removals must exist.
 function applyHunks(before, patchLines) {
   const hunks = []
   for (const line of patchLines) {
@@ -202,8 +215,8 @@ function applyHunks(before, patchLines) {
   return lines.join('\n')
 }
 
-// Reproduz o efeito do patch sobre o conteúdo atual de um arquivo; arquivos
-// movidos ficam sem conteúdo conhecido.
+// Reproduces the patch's effect on a file's current content; moved files have
+// no known content.
 function patchApplier(file) {
   if (!file || file.moved) return undefined
   if (file.kind === 'Delete') return () => ''
@@ -233,7 +246,7 @@ function replaceText(text, { old_string, new_string, replace_all }) {
   return replace_all ? text.split(old_string).join(new_string) : text.replace(old_string, () => new_string)
 }
 
-// Reproduz a edição da ferramenta sobre o conteúdo atual do arquivo.
+// Reproduces the tool's edit on the file's current content.
 function editApplier(tool, input) {
   if (tool === 'Write') return () => (typeof input.content === 'string' ? input.content : null)
   if (tool === 'Edit') return (before) => replaceText(before, input)
