@@ -82,28 +82,19 @@ import { RequestMethodBadge } from './RequestMethodBadge'
 import './collections-panel.css'
 import './collection-labels.css'
 
-// Só abre ao importar: fica num chunk próprio, fora da abertura do app.
+// Load the import UI in its own chunk, outside app startup.
 const ImportCollectionModal = lazy(() => import('./ImportCollectionModal').then((module) => ({ default: module.ImportCollectionModal })))
 
-/** `'collection'` é uma pasta no nível raiz — mesma forma que `'folder'`, tratada de forma diferente ao
- * decidir o que um arraste sobre ela significa (reordenar coleções vs. aninhar uma pasta). */
+/** A collection is a root folder; dragging onto it reorders collections rather than nesting a folder. */
 type NodeKind = 'request' | 'folder' | 'collection'
 
-/** Alvos do arraste: linhas da árvore ou o canvas do flow aberto (spec 0095), que marca a si mesmo com
- * `data-drop-kind="flow"`. */
+/** Drop targets are tree rows or the open flow canvas, marked with data-drop-kind="flow" (spec 0095). */
 type DropTargetKind = NodeKind | 'flow'
 
-/** Como destacar a linha sob o cursor durante um arraste: `'before'`/`'after'` desenham uma borda no
- * lado por onde o item entraria ao reordenar entre irmãos; `'into'` destaca a linha inteira, indicando
- * que o item seria movido para dentro dela (aninhamento), não reordenado ao lado. */
+/** Before/after highlight a sibling insertion edge; into highlights the whole row for nesting. */
 type DropIndicator = 'before' | 'after' | 'into'
 
-/**
- * Decide o que um drop de `draggedKind` sobre `targetKind` significa dado `zone` (a metade/terço do
- * alvo sob o cursor, vindo do hook de arraste) — pastas são as únicas que suportam as duas coisas
- * dependendo de onde o cursor está (borda = reordena como irmã, meio = aninha); para os demais pares
- * válidos o resultado não depende de `zone`, é sempre uma coisa ou a outra.
- */
+/** Resolve a drop from its target zone. Folder drops reorder at an edge or nest in the middle; other valid pairs have one outcome. */
 function resolveDrop(
   draggedKind: NodeKind,
   targetKind: NodeKind,
@@ -121,50 +112,45 @@ function resolveDrop(
   return { indicator: 'into', reorder: false }
 }
 
-/** Ação pedida ao painel por um atalho global: renomear a collection recém-criada,
- * abrir a importação ou focar a busca. Objeto novo a cada disparo. */
+/** A global shortcut requests renaming a new collection, importing, or focusing search. Each invocation has a new object. */
 export type CollectionsCommand = { kind: 'rename'; id: string } | { kind: 'import' } | { kind: 'search' }
 
 interface CollectionsPanelProps {
   collections: TreeNode[]
   expandedIds: Set<string>
   openRequestId: string | null
-  /** Id do item (coleção/pasta/requisição) → tipo de alteração local ainda
-   * não enviada, para marcar as linhas com "M"/"A"/"D". */
+  /** Item ID to unpushed local change kind, displayed as M/A/D on tree rows. */
   changeMarkers: Map<string, ItemChangeKind>
   onToggleExpanded: (id: string) => void
   onCollapseAll: () => void
   onExpandAll: () => void
   onRevealRequest: (id: string) => void
-  /** Cria uma collection (com `name`, ou o nome padrão) e devolve o id dela. */
+  /** Create a collection with the supplied or default name and return its ID. */
   onAddCollection: (name?: string) => string
-  /** Cria uma pasta em `parentId` (com `name`, ou o nome padrão) e devolve o id dela. */
+  /** Create a folder under parentId with the supplied or default name and return its ID. */
   onAddFolder: (parentId: string, name?: string) => string
   onAddRequest: (parentId: string, name: string, protocol: RequestProtocol) => { id: string; name: string }
-  /** Abre o popover de tipos para criar uma requisição avulsa (rascunho, não vinculado a nenhuma
-   * coleção) — usado pelo "+" da barra de ferramentas; `anchor` é o retângulo do botão. Uma requisição
-   * só passa a existir numa coleção quando o usuário salva (`SaveRequestModal`). */
+  /** Open the type picker for a standalone draft from the toolbar. The anchor is the button rectangle; SaveRequestModal adds the request to a collection. */
   onCreateStandaloneRequest: (anchor: DOMRect) => void
   onOpenRequest: (id: string, content: RequestContent, name: string) => void
-  /** Duplo clique na requisição: tira a aba do modo de pré-visualização (itálico). */
+  /** Double-clicking pins a request tab, ending its italic preview state. */
   onPinRequest: (id: string) => void
   onRename: (id: string, name: string) => void
   onUpdateAuthentication: (id: string, authentication: AuthenticationInput) => void
   onUpdateVariables: (id: string, variables: ScopedVariableDto[]) => void
-  /** Collections favoritas, pessoais desta máquina (ADR 0060): aparecem primeiro. */
+  /** Machine-local favorite collections appear first (ADR 0060). */
   favoriteIds: ReadonlySet<string>
-  /** Marca/desmarca uma ou várias (seleção múltipla); `existingIds` deixa o estado das favoritas
-   * descartar ids de collections removidas. */
+  /** Toggle one or more favorites. existingIds lets the favorite state discard removed collections. */
   onSetFavorites: (ids: string[], favorite: boolean, existingIds: string[]) => void
-  /** Rótulos de collection (ADR 0060): liga/desliga em uma ou várias collections e gerencia em todas. */
+  /** Toggle labels for one or more collections and manage the label catalog (ADR 0060). */
   onAssignLabel: (ids: string[], label: CollectionLabelDto, assigned: boolean) => void
   onRenameLabel: (oldName: string, newName: string) => void
   onRecolorLabel: (name: string, color: LabelColor) => void
   onRemoveLabel: (name: string) => void
   onRemove: (id: string) => void
-  /** Remove de uma vez os itens selecionados, já normalizados (spec 0104). */
+  /** Remove the normalized selection together (spec 0104). */
   onRemoveMany: (ids: string[]) => void
-  /** Move de uma vez as pastas/requisições selecionadas para `targetParentId` (spec 0104). */
+  /** Move selected folders and requests to targetParentId together (spec 0104). */
   onMoveMany: (ids: string[], targetParentId: string) => void
   onDuplicateRequest: (id: string) => { id: string; name: string; content: RequestContent }
   onMoveRequest: (id: string, targetParentId: string) => void
@@ -174,25 +160,24 @@ interface CollectionsPanelProps {
   onReorderCollections: (id: string, targetId: string, edge: SiblingEdge) => void
   onSortChildren: (id: string, direction: AlphabeticalSortDirection) => void
   onExportCollection: (id: string) => void
-  /** Exporta as coleções selecionadas num único arquivo (spec 0104). */
+  /** Export selected collections into one file (spec 0104). */
   onExportCollections: (ids: string[]) => void
-  /** Abre o runner da coleção/pasta (spec 0073). */
+  /** Open the collection or folder runner (spec 0073). */
   onRunCollection: (id: string) => void
-  /** Cria um flow com as requisições do item encadeadas (spec 0095). */
+  /** Create a flow chaining the item's requests (spec 0095). */
   onGenerateFlow: (id: string) => void
-  /** Abre o export da coleção/pasta como webclient (spec 0113). */
+  /** Open collection or folder export as a webclient (spec 0113). */
   onExportWebclient: (id: string) => void
-  /** Itens largados sobre o canvas de um flow (um só, ou a seleção arrastada em grupo); `point` em
-   * coordenadas de tela (specs 0095 e 0104). */
+  /** Drop an item or dragged selection onto a flow canvas; point uses screen coordinates (specs 0095 and 0104). */
   onDropOnFlow: (itemIds: string[], flowId: string, point: { x: number; y: number }) => void
   onExportAll: () => void
   onPrepareImportFromPath: (path: string) => Promise<PrepareImportResult>
   onPrepareImportFromUrl: (url: string) => Promise<PrepareImportResult>
   onPrepareImportFromText: (content: string) => Promise<PrepareImportResult>
   onCommitPreparedImport: (id: string, includeDocumentation: boolean) => Promise<ImportOutcome>
-  /** Variáveis do ambiente ativo — usadas pelos campos de autenticação do modal de pasta/coleção. */
+  /** Active environment variables used by the folder or collection authentication modal. */
   environmentVariables: EnvironmentVariableDto[]
-  /** Comando pendente de um atalho; o painel o executa e avisa por `onCommandHandled`. */
+  /** Execute a pending shortcut command and acknowledge it through onCommandHandled. */
   command?: CollectionsCommand | null
   onCommandHandled?: () => void
 }
@@ -200,13 +185,11 @@ interface CollectionsPanelProps {
 interface ItemShortcutHandlers {
   rename: () => void
   remove: () => void
-  /** Só requisições têm "Duplicar". */
+  /** Only requests support duplication. */
   duplicate?: () => void
 }
 
-/** Os atalhos do item (renomear, F2; duplicar, Ctrl+D; remover, Delete)
- * pressionados com foco na linha — que recebe foco ao ser clicada
- * (`tabIndex={-1}`) — ou num botão dela, mas não no campo de nome aberto. */
+/** Handle F2, Ctrl+D, and Delete on a clicked row (tabIndex=-1) or its buttons, excluding an active rename field. */
 function useItemShortcuts({ rename, remove, duplicate }: ItemShortcutHandlers) {
   const { bindings } = useShortcuts()
   return (event: ReactKeyboardEvent) => {
@@ -225,7 +208,7 @@ function useItemShortcuts({ rename, remove, duplicate }: ItemShortcutHandlers) {
   }
 }
 
-/** A pasta tem alguma requisição, em qualquer profundidade — sem isso não há o que gerar num flow. */
+/** Whether a folder contains any request at any depth and can generate a flow. */
 function containsRequest(node: TreeNode): boolean {
   return node.requests.length > 0 || node.folders.some(containsRequest)
 }
@@ -269,7 +252,7 @@ interface RequestRowProps {
   onStartRename: (id: string) => void
   onCommitRename: (id: string, name: string) => void
   onRemove: (id: string, kind: NodeKind, label: string) => void
-  /** Remoção pelo atalho: com a linha numa seleção múltipla, remove a seleção. */
+  /** Removing a selected row through a shortcut removes the whole selection. */
   onRemoveShortcut: (id: string, kind: NodeKind, label: string) => void
   onDuplicate: (id: string) => void
   onMove: (id: string) => void
@@ -278,13 +261,13 @@ interface RequestRowProps {
   onOpenMenu: (id: string) => void
   onCloseMenu: () => void
   onDragPointerDown: (id: string, kind: NodeKind, label: string, event: ReactPointerEvent) => void
-  /** Trata o clique como seleção (modificadores ou modo seleção); `true` = consumido, sem abrir/expandir. */
+  /** Return true when modifiers or selection mode consume the click without opening or expanding. */
   onSelectClick: (id: string, event: ReactMouseEvent) => boolean
-  /** "Selecionar" do menu de contexto: liga o modo seleção com o item já marcado. */
+  /** The Select context-menu action enables selection mode with this item checked. */
   onStartSelection: (id: string) => void
 }
 
-/** Linha selecionada colada a outra selecionada acima/abaixo: o grupo vira um bloco só, sem cantos entre as linhas. */
+/** Adjacent selected rows form one block without rounded corners between them. */
 interface SelectionJoin {
   above: boolean
   below: boolean
@@ -295,7 +278,7 @@ function pushSelectionJoinClasses(classNames: string[], join: SelectionJoin | un
   if (join?.below) classNames.push('collections-row--joined-below')
 }
 
-/** Checkbox de linha do modo seleção — só espelha o estado; o clique sobe para a linha, que alterna. */
+/** Reflect selection state; clicks bubble to the row that toggles it. */
 function RowCheckbox({ checked, label }: { checked: boolean; label: string }) {
   const { t } = useLanguage()
   return (
@@ -416,58 +399,60 @@ function RequestRow({
 
         {changeKind && <ChangeMarker kind={changeKind} />}
 
-        <OptionsMenu
-          label={t('collections.moreOptionsAria', { name: label })}
-          wrapperClassName="collections-menu-wrapper"
-          menuClassName="collections-menu"
-          menuPlacement="auto"
-          menuBoundarySelector=".env-sidebar"
-          isOpen={isMenuOpen}
-          onToggle={() => onToggleMenu(request.id)}
-          onClose={onCloseMenu}
-        >
-          {/* Grupos por função, separados por divisórias: gerar, editar, organizar e, por último, remover. */}
-          <MenuItem
-            label={t('collections.generateFlowMenuItem')}
-            onSelect={() => {
-              onGenerateFlow(request.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuSeparator />
-          <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
-          <MenuItem
-            label={t('collections.duplicateMenuItem')}
-            onSelect={() => {
-              onDuplicate(request.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuSeparator />
-          <MenuItem
-            label={t('collections.moveMenuItem')}
-            onSelect={() => {
-              onMove(request.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuItem
-            label={t('collections.selectMenuItem')}
-            onSelect={() => {
-              onStartSelection(request.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuSeparator />
-          <MenuItem
-            label={t('common.remove')}
-            danger
-            onSelect={() => {
-              onRemove(request.id, 'request', label)
-              onCloseMenu()
-            }}
-          />
-        </OptionsMenu>
+        <div className="collections-row-actions">
+          <OptionsMenu
+            label={t('collections.moreOptionsAria', { name: label })}
+            wrapperClassName="collections-menu-wrapper"
+            menuClassName="collections-menu"
+            menuPlacement="auto"
+            menuBoundarySelector=".env-sidebar"
+            isOpen={isMenuOpen}
+            onToggle={() => onToggleMenu(request.id)}
+            onClose={onCloseMenu}
+          >
+            {/* Group menu actions with separators: generate, edit, organize, then remove. */}
+            <MenuItem
+              label={t('collections.generateFlowMenuItem')}
+              onSelect={() => {
+                onGenerateFlow(request.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuSeparator />
+            <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
+            <MenuItem
+              label={t('collections.duplicateMenuItem')}
+              onSelect={() => {
+                onDuplicate(request.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuSeparator />
+            <MenuItem
+              label={t('collections.moveMenuItem')}
+              onSelect={() => {
+                onMove(request.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuItem
+              label={t('collections.selectMenuItem')}
+              onSelect={() => {
+                onStartSelection(request.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuSeparator />
+            <MenuItem
+              label={t('common.remove')}
+              danger
+              onSelect={() => {
+                onRemove(request.id, 'request', label)
+                onCloseMenu()
+              }}
+            />
+          </OptionsMenu>
+        </div>
       </div>
     </li>
   )
@@ -481,7 +466,7 @@ interface FolderRowProps {
   renamingId: string | null
   menuOpenId: string | null
   changeMarkers: Map<string, ItemChangeKind>
-  /** Pastas/coleções sem marca própria que contêm algo alterado — a "bolinha". */
+  /** Folders or collections containing nested changes without a change of their own use a dot marker. */
   nestedChangeMarkers: Map<string, ItemChangeKind>
   onToggleExpanded: (id: string) => void
   onAddFolder: (parentId: string) => string
@@ -511,18 +496,18 @@ interface FolderRowProps {
   selectedIds: ReadonlySet<string>
   selectionJoins: ReadonlyMap<string, SelectionJoin>
   selectionMode: boolean
-  /** A seleção inteira está sendo arrastada (todas as linhas selecionadas ficam esmaecidas). */
+  /** Dragging the selection dims every selected row. */
   groupDragging: boolean
   onSelectClick: (id: string, event: ReactMouseEvent) => boolean
-  /** "Selecionar" do menu de contexto: liga o modo seleção com o item já marcado. */
+  /** The Select context-menu action enables selection mode with this item checked. */
   onStartSelection: (id: string) => void
-  /** Só collections (nível raiz) são favoritadas e têm rótulos. */
+  /** Only root collections have favorites and labels. */
   isFavorite?: boolean
   onToggleFavorite?: (id: string) => void
   onOpenLabels?: (id: string) => void
 }
 
-/** Bolinhas dos rótulos depois do nome da collection; o tooltip lista os nomes. */
+/** Label dots follow the collection name; the tooltip lists their names. */
 function CollectionLabelDots({ labels }: { labels: CollectionLabelDto[] }) {
   const { t } = useLanguage()
   const names = labels.map((label) => label.name).join(', ')
@@ -597,8 +582,8 @@ function FolderRow({
   const isExpanded = expandedIds.has(node.id)
   const isRenaming = renamingId === node.id
   const isMenuOpen = menuOpenId === node.id
-  // "Exportar" troca o conteúdo do menu pelas formas de exportar, como o
-  // "Compartilhar" das requisições; fechar o menu volta à lista completa.
+  // Export replaces menu contents with export formats, like request sharing.
+  // Closing the menu restores the complete action list.
   const [showExportOptions, setShowExportOptions] = useState(false)
   if (!isMenuOpen && showExportOptions) setShowExportOptions(false)
   const label = node.name || t('common.unnamed')
@@ -648,8 +633,8 @@ function FolderRow({
         tabIndex={-1}
         onClick={(event) => {
           if (onSelectClick(node.id, event)) return
-          // Só expandir deixa o item "em uso"; recolher ou clicar num item vazio o larga — sem o
-          // foco, a linha não fica destacada como se ainda estivesse selecionada.
+          // Expanding keeps the row focused; collapsing or clicking an empty row releases it
+          // so the row does not retain a selection-like highlight.
           if (!hasChildren || isExpanded) event.currentTarget.blur()
           if (hasChildren) onToggleExpanded(node.id)
         }}
@@ -701,167 +686,168 @@ function FolderRow({
 
         {changeKind ? <ChangeMarker kind={changeKind} /> : nestedChangeKind ? <ChangeDot kind={nestedChangeKind} /> : null}
 
-        {kind === 'collection' && onToggleFavorite && (
+        <div className="collections-row-actions">
+          {kind === 'collection' && onToggleFavorite && (
+            <IconButton
+              className="collections-favorite-button"
+              icon={<StarIcon size={12} filled={isFavorite} />}
+              label={t(isFavorite ? 'collections.unfavoriteAction' : 'collections.favoriteAction', { name: label })}
+              aria-pressed={isFavorite}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onToggleFavorite(node.id)
+              }}
+            />
+          )}
+
           <IconButton
-            className="collections-favorite-button"
-            icon={<StarIcon size={12} filled={isFavorite} />}
-            label={t(isFavorite ? 'collections.unfavoriteAction' : 'collections.favoriteAction', { name: label })}
-            aria-pressed={isFavorite}
+            className="collections-sort-button"
+            icon={nextSortDirection === 'ascending' ? <SortAscendingIcon size={12} /> : <SortDescendingIcon size={12} />}
+            label={t(nextSortDirection === 'ascending' ? 'collections.sortAscendingAction' : 'collections.sortDescendingAction')}
+            disabled={!hasChildren}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation()
-              onToggleFavorite(node.id)
+              onSort(node.id)
             }}
           />
-        )}
 
-        <IconButton
-          className="collections-sort-button"
-          icon={nextSortDirection === 'ascending' ? <SortAscendingIcon size={12} /> : <SortDescendingIcon size={12} />}
-          label={t(nextSortDirection === 'ascending' ? 'collections.sortAscendingAction' : 'collections.sortDescendingAction')}
-          disabled={!hasChildren}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation()
-            onSort(node.id)
-          }}
-        />
-
-        <OptionsMenu
-          label={t('collections.moreOptionsAria', { name: label })}
-          wrapperClassName="collections-menu-wrapper"
-          menuClassName="collections-menu"
-          menuPlacement="auto"
-          menuBoundarySelector=".env-sidebar"
-          isOpen={isMenuOpen}
-          onToggle={() => onToggleMenu(node.id)}
-          onClose={onCloseMenu}
-        >
-          {showExportOptions ? (
-            <>
-              {kind === 'collection' && (
+          <OptionsMenu
+            label={t('collections.moreOptionsAria', { name: label })}
+            wrapperClassName="collections-menu-wrapper"
+            menuClassName="collections-menu"
+            menuPlacement="auto"
+            menuBoundarySelector=".env-sidebar"
+            isOpen={isMenuOpen}
+            onToggle={() => onToggleMenu(node.id)}
+            onClose={onCloseMenu}
+          >
+            {showExportOptions ? (
+              <>
+                {kind === 'collection' && (
+                  <MenuItem
+                    label={t('collections.exportMenu.alcy')}
+                    autoFocus
+                    onSelect={() => {
+                      onExport(node.id)
+                      onCloseMenu()
+                    }}
+                  />
+                )}
                 <MenuItem
-                  label={t('collections.exportMenu.alcy')}
-                  autoFocus
+                  label={t('collections.exportMenu.webclient')}
+                  autoFocus={kind !== 'collection'}
+                  disabled={!containsRequest(node)}
+                  onSelect={() => {
+                    onExportWebclient(node.id)
+                    onCloseMenu()
+                  }}
+                />
+              </>
+            ) : (
+              <>
+            {/* Group menu actions with separators: create, run, organize collections, settings, edit, then remove. */}
+            <MenuItem
+              label={t('collections.addFolderMenuItem')}
+              onSelect={() => {
+                onAddFolder(node.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuItem
+              label={t('collections.addRequestMenuItem')}
+              onSelect={() => {
+                if (rowRef.current) onOpenAddRequest(node.id, rowRef.current.getBoundingClientRect())
+                onCloseMenu()
+              }}
+            />
+            <MenuSeparator />
+            <MenuItem
+              label={t('collections.runMenuItem')}
+              onSelect={() => {
+                onRun(node.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuItem
+              label={t('collections.generateFlowMenuItem')}
+              disabled={!containsRequest(node)}
+              onSelect={() => {
+                onGenerateFlow(node.id)
+                onCloseMenu()
+              }}
+            />
+            {kind === 'collection' && (onToggleFavorite || onOpenLabels) && (
+              <>
+                <MenuSeparator />
+                {onToggleFavorite && (
+                  <MenuItem
+                    label={t(isFavorite ? 'collections.unfavoriteMenuItem' : 'collections.favoriteMenuItem')}
+                    onSelect={() => {
+                      onToggleFavorite(node.id)
+                      onCloseMenu()
+                    }}
+                  />
+                )}
+                {onOpenLabels && (
+                  <MenuItem
+                    label={t('collections.labelsMenuItem')}
+                    onSelect={() => {
+                      onOpenLabels(node.id)
+                      onCloseMenu()
+                    }}
+                  />
+                )}
+              </>
+            )}
+            <MenuSeparator />
+            <MenuItem
+              label={t('collections.manageMenuItem')}
+              onSelect={() => {
+                onOpenSettings(node.id)
+                onCloseMenu()
+              }}
+            />
+            {FEATURE_FLAGS.webclientExport ? (
+              <MenuItem
+                label={t('collections.exportMenuItem')}
+                disabled={kind === 'folder' && !containsRequest(node)}
+                onSelect={() => setShowExportOptions(true)}
+              />
+            ) : (
+              kind === 'collection' && (
+                <MenuItem
+                  label={t('collections.exportMenuItem')}
                   onSelect={() => {
                     onExport(node.id)
                     onCloseMenu()
                   }}
                 />
-              )}
-              <MenuItem
-                label={t('collections.exportMenu.webclient')}
-                autoFocus={kind !== 'collection'}
-                disabled={!containsRequest(node)}
-                onSelect={() => {
-                  onExportWebclient(node.id)
-                  onCloseMenu()
-                }}
-              />
-            </>
-          ) : (
-            <>
-          {/* Grupos por função, separados por divisórias: criar, executar, organizar (só collections),
-              configurar, editar e, por último, remover. */}
-          <MenuItem
-            label={t('collections.addFolderMenuItem')}
-            onSelect={() => {
-              onAddFolder(node.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuItem
-            label={t('collections.addRequestMenuItem')}
-            onSelect={() => {
-              if (rowRef.current) onOpenAddRequest(node.id, rowRef.current.getBoundingClientRect())
-              onCloseMenu()
-            }}
-          />
-          <MenuSeparator />
-          <MenuItem
-            label={t('collections.runMenuItem')}
-            onSelect={() => {
-              onRun(node.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuItem
-            label={t('collections.generateFlowMenuItem')}
-            disabled={!containsRequest(node)}
-            onSelect={() => {
-              onGenerateFlow(node.id)
-              onCloseMenu()
-            }}
-          />
-          {kind === 'collection' && (onToggleFavorite || onOpenLabels) && (
-            <>
-              <MenuSeparator />
-              {onToggleFavorite && (
-                <MenuItem
-                  label={t(isFavorite ? 'collections.unfavoriteMenuItem' : 'collections.favoriteMenuItem')}
-                  onSelect={() => {
-                    onToggleFavorite(node.id)
-                    onCloseMenu()
-                  }}
-                />
-              )}
-              {onOpenLabels && (
-                <MenuItem
-                  label={t('collections.labelsMenuItem')}
-                  onSelect={() => {
-                    onOpenLabels(node.id)
-                    onCloseMenu()
-                  }}
-                />
-              )}
-            </>
-          )}
-          <MenuSeparator />
-          <MenuItem
-            label={t('collections.manageMenuItem')}
-            onSelect={() => {
-              onOpenSettings(node.id)
-              onCloseMenu()
-            }}
-          />
-          {FEATURE_FLAGS.webclientExport ? (
+              )
+            )}
+            <MenuSeparator />
+            <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
             <MenuItem
-              label={t('collections.exportMenuItem')}
-              disabled={kind === 'folder' && !containsRequest(node)}
-              onSelect={() => setShowExportOptions(true)}
+              label={t('collections.selectMenuItem')}
+              onSelect={() => {
+                onStartSelection(node.id)
+                onCloseMenu()
+              }}
             />
-          ) : (
-            kind === 'collection' && (
-              <MenuItem
-                label={t('collections.exportMenuItem')}
-                onSelect={() => {
-                  onExport(node.id)
-                  onCloseMenu()
-                }}
-              />
-            )
-          )}
-          <MenuSeparator />
-          <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
-          <MenuItem
-            label={t('collections.selectMenuItem')}
-            onSelect={() => {
-              onStartSelection(node.id)
-              onCloseMenu()
-            }}
-          />
-          <MenuSeparator />
-          <MenuItem
-            label={t('common.remove')}
-            danger
-            onSelect={() => {
-              onRemove(node.id, kind, label)
-              onCloseMenu()
-            }}
-          />
-            </>
-          )}
-        </OptionsMenu>
+            <MenuSeparator />
+            <MenuItem
+              label={t('common.remove')}
+              danger
+              onSelect={() => {
+                onRemove(node.id, kind, label)
+                onCloseMenu()
+              }}
+            />
+              </>
+            )}
+          </OptionsMenu>
+        </div>
       </div>
 
       {hasChildren && isExpanded && (
@@ -1010,21 +996,20 @@ export function CollectionsPanel({
   const importCancelledRef = useRef(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  /** Pastas que o usuário colapsou durante a busca; valem só para o texto em que foram colapsadas. */
+  /** Folders collapsed during search stay collapsed only for the current search text. */
   const [searchCollapsed, setSearchCollapsed] = useState<{ query: string; ids: ReadonlySet<string> }>(() => ({
     query: '',
     ids: new Set(),
   }))
-  /** Direção aplicada por último em cada collection/pasta; o botão mostra a próxima direção. */
+  /** Last sort direction for each collection or folder; its button shows the next direction. */
   const [lastSortDirections, setLastSortDirections] = useState<ReadonlyMap<string, AlphabeticalSortDirection>>(() => new Map())
-  /** Objeto novo a cada clique (não só o id) para que localizar a mesma requisição de novo role de novo. */
+  /** A new object per click makes repeated reveal requests scroll to the item again. */
   const [revealTarget, setRevealTarget] = useState<{ id: string } | null>(null)
   const [pendingRemove, setPendingRemove] = useState<{ id: string; kind: NodeKind; label: string } | null>(null)
-  /** Filtros por favoritas e rótulos (ADR 0060), combinados com o texto da busca. */
+  /** Combine favorite and label filters with search text (ADR 0060). */
   const [filters, setFilters] = useState<CollectionFilters>(NO_COLLECTION_FILTERS)
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
-  /** Modal de rótulos: das collections `collectionIds` (uma, ou a seleção múltipla) ou, com a lista
-   * vazia, só para gerenciar o catálogo. */
+  /** Edit labels for collectionIds, or manage the catalog when the list is empty. */
   const [labelsModal, setLabelsModal] = useState<{ collectionIds: string[] } | null>(null)
   const catalog = useMemo(() => labelCatalog(collections), [collections])
   const labelUsage = useMemo(() => {
@@ -1037,16 +1022,14 @@ export function CollectionsPanel({
     }
     return usage
   }, [collections])
-  /** Um rótulo excluído ou renomeado sai do filtro sozinho, sem deixar um chip órfão. */
+  /** Remove deleted or renamed labels from filters to avoid orphaned chips. */
   const activeFilters: CollectionFilters = useMemo(() => {
     const labelKeys = new Set([...filters.labelKeys].filter((key) => labelUsage.has(key)))
     return { favoritesOnly: filters.favoritesOnly, labelKeys }
   }, [filters, labelUsage])
   const filtering = hasCollectionFilters(activeFilters)
 
-  /** Seleção múltipla (spec 0104): estado visual local. `selectedIds` pode guardar ids que já saíram
-   * da árvore ou estão dentro de outro item selecionado — `selection` é a versão normalizada (só o
-   * que existe, sem descendentes de selecionados, na ordem da árvore) sobre a qual as ações agem. */
+  /** Local selection state (spec 0104). Normalize stale IDs and selected descendants into existing top-level items in tree order before applying actions. */
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null)
   const [selectionMode, setSelectionMode] = useState(false)
@@ -1076,7 +1059,7 @@ export function CollectionsPanel({
         return node ? contentCounts(node) : { folders: 0, requests: 0 }
       })()
     : { folders: 0, requests: 0 }
-  /** Destinos proibidos para o grupo: os próprios itens e tudo dentro das pastas selecionadas. */
+  /** Exclude selected items and descendants of selected folders as group destinations. */
   const groupBlockedIds = useMemo(() => {
     const blocked = folderSubtreeIds(collections, selection)
     for (const id of selection) blocked.add(id)
@@ -1089,11 +1072,10 @@ export function CollectionsPanel({
     setSelectionMode(false)
   }
 
-  /** Arrastar uma linha selecionada, com mais de um item na seleção, leva o grupo inteiro. */
+  /** Dragging a selected row carries the entire multi-item selection. */
   const isGroupDrag = (id: string) => selection.length > 1 && selectedIds.has(id)
 
-  /** O grupo entra em pastas/coleções (sobre uma requisição, na pasta dela); com coleção na
-   * seleção só o canvas de um flow aceita o grupo — coleções não se aninham. */
+  /** Groups enter the target folder or request parent. Groups containing collections can only enter a flow canvas, since collections cannot nest. */
   const groupDropParentId = (target: DragRef<DropTargetKind>): string | null => {
     if (target.kind === 'flow' || selectionHasCollection || groupBlockedIds.has(target.id)) return null
     if (target.kind !== 'request') return target.id
@@ -1131,8 +1113,7 @@ export function CollectionsPanel({
     }
   }
 
-  /** Nem toda combinação arrastada/alvo faz algo (ex.: pasta sobre requisição) — usado tanto para decidir a
-   * ação no drop quanto para não destacar um alvo que não vai reagir ao soltar. */
+  /** Reject invalid dragged/target pairs both for the drop action and its highlight. */
   const isValidDrop = (draggedKind: DropTargetKind, targetKind: DropTargetKind): boolean => {
     if (targetKind === 'flow') return true
     if (draggedKind === 'request') return true
@@ -1140,7 +1121,7 @@ export function CollectionsPanel({
     return targetKind !== 'request'
   }
 
-  /** Favoritas ficam num grupo à parte no topo: reordenar collections só vale dentro do mesmo grupo. */
+  /** Favorites form a separate group at the top; reorder collections only within their group. */
   const sameFavoriteGroup = (id: string, targetId: string) => favoriteIds.has(id) === favoriteIds.has(targetId)
 
   const canDrop = (dragged: DragRef<DropTargetKind>, target: DragRef<DropTargetKind>): boolean => {
@@ -1208,8 +1189,8 @@ export function CollectionsPanel({
     canDrop({ id: draggedId, kind: draggedKind }, { id: rawDragOverId, kind: dragOverKind })
       ? rawDragOverId
       : null
-  // O canvas do flow não é uma linha: não há borda nem destaque de linha a desenhar. O grupo sempre
-  // entra numa pasta — a da requisição alvo, ou a pasta alvo —, então o destaque é o de "para dentro".
+  // A flow canvas has no tree row edge to highlight. Groups always enter a folder:
+  // either the target folder or the parent of the target request.
   const dropIndicator: DropIndicator | null =
     !dragOverId || !draggedKind || !dragOverKind || !dragOverEdge || draggedKind === 'flow' || dragOverKind === 'flow'
       ? null
@@ -1217,7 +1198,7 @@ export function CollectionsPanel({
         ? 'into'
         : resolveDrop(draggedKind, dragOverKind, dragOverEdge).indicator
 
-  /** Ctrl/Shift+clique são seleção, não o início de um arraste; Shift também não seleciona texto. */
+  /** Ctrl/Shift clicks select rather than drag; Shift also prevents text selection. */
   const startRowDrag = (id: string, kind: NodeKind, label: string, event: ReactPointerEvent) => {
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       if (event.shiftKey) event.preventDefault()
@@ -1247,7 +1228,7 @@ export function CollectionsPanel({
     setMenuOpenId((current) => (current === id ? null : id))
   }
 
-  /** Botão direito sempre abre o menu (não alterna) — clicar de novo no mesmo item não deveria fechá-lo. */
+  /** Right-click always opens the menu rather than toggling it closed for the same row. */
   const openMenu = (id: string) => setMenuOpenId(id)
 
   const closeMenu = () => setMenuOpenId(null)
@@ -1266,7 +1247,7 @@ export function CollectionsPanel({
     setSearchQuery('')
   }
 
-  /** Só há o que localizar se a requisição aberta estiver de fato na árvore (abas avulsas não estão). */
+  /** Reveal only requests that actually belong to the tree, excluding standalone tabs. */
   const canReveal = openRequestId !== null && findAncestorIds(collections, openRequestId) !== null
 
   const revealOpenRequest = () => {
@@ -1280,7 +1261,7 @@ export function CollectionsPanel({
     setRevealTarget({ id: openRequestId })
   }
 
-  /** A linha só existe no DOM depois que as pastas expandem e a busca fecha; rola até ela nesse commit. */
+  /** Scroll after expanding ancestors and closing search, when the row exists in the DOM. */
   useEffect(() => {
     if (!revealTarget) return
     document.querySelector(`[data-drop-id="${CSS.escape(revealTarget.id)}"]`)?.scrollIntoView?.({ block: 'nearest' })
@@ -1291,10 +1272,7 @@ export function CollectionsPanel({
   const orderedCollections = useMemo(() => sortFavoritesFirst(collections, favoriteIds), [collections, favoriteIds])
   const filteredCollections = filterCollections(orderedCollections, activeFilters, favoriteIds)
   const displayedCollections = isSearching ? filterTree(filteredCollections, trimmedQuery) : filteredCollections
-  /** Enquanto a busca está ativa, ignora o estado de expansão do usuário e abre tudo — a árvore
-   * filtrada já só contém pastas/coleções que casam com a busca ou têm algo por dentro que casa, então
-   * escondê-las atrás de um "colapsado" anterior não ajudaria. O usuário ainda pode colapsar pastas
-   * nos resultados; esse colapso é local à busca e volta a abrir tudo quando o texto muda. */
+  /** Search expands matching ancestors independently of saved expansion. Users can collapse results until the search text changes. */
   const searchCollapsedIds = searchCollapsed.query === trimmedQuery ? searchCollapsed.ids : new Set<string>()
   const renderExpandedIds = isSearching
     ? new Set([...allFolderIds(displayedCollections)].filter((id) => !searchCollapsedIds.has(id)))
@@ -1325,12 +1303,7 @@ export function CollectionsPanel({
     setSelectedIds((current) => toggleTreeSelection(collections, current, id))
   }
 
-  /**
-   * Shift+clique seleciona o intervalo de linhas visíveis entre a âncora (último item clicado) e
-   * `id` — somando à seleção com Ctrl junto; Ctrl/Cmd+clique, ou qualquer clique no modo seleção,
-   * alterna o item. Ctrl/Shift+clique liga o modo seleção (checkboxes), igual ao menu "Selecionar".
-   * Fora dele, um clique simples limpa a seleção e segue o comportamento normal da linha.
-   */
+  /** Shift selects the visible range from the anchor; Ctrl adds the range. Ctrl/Cmd or selection-mode clicks toggle items. Modifier clicks enable selection mode; plain clicks clear selection before opening. */
   const handleSelectClick = (id: string, event: ReactMouseEvent): boolean => {
     const additive = event.ctrlKey || event.metaKey
     if (event.shiftKey && selectionAnchorId !== null) {
@@ -1365,7 +1338,7 @@ export function CollectionsPanel({
       setPendingBatchRemove(true)
       return
     }
-    // Um item só segue a mesma confirmação da remoção individual.
+    // A single item uses the same confirmation as individual removal.
     const [id] = selection
     const node = findNode(collections, id)
     const kind: NodeKind = isCollectionId(id) ? 'collection' : node ? 'folder' : 'request'
@@ -1377,8 +1350,7 @@ export function CollectionsPanel({
     else requestRemove(id, kind, label)
   }
 
-  /** Comando de um atalho global, aplicado no render em que chega (estado local); o efeito
-   * abaixo foca a busca e avisa o workbench, que o descarta — remontar o painel não o repete. */
+  /** Apply a shortcut command in render; the effect focuses search and acknowledges it so remounting does not repeat the command. */
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [appliedCommand, setAppliedCommand] = useState<CollectionsCommand | null>(null)
   if (command && command !== appliedCommand) {
@@ -1386,7 +1358,7 @@ export function CollectionsPanel({
     if (command.kind === 'import') setImportModalOpen(true)
     else if (command.kind === 'search') setSearchOpen(true)
     else {
-      // A collection nova não casaria com a busca nem com os filtros abertos.
+      // A new collection may not match the current search or filters.
       setSearchOpen(false)
       setSearchQuery('')
       setFilters(NO_COLLECTION_FILTERS)
@@ -1400,15 +1372,7 @@ export function CollectionsPanel({
     onCommandHandled?.()
   }, [command, onCommandHandled])
 
-  /** Fecha o menu de opções aberto ao clicar fora dele — independente de hover/foco, para que o menu
-   * (aberto por clique direito ou pelo botão "..." de uma linha, ou pelo "..." da barra de ferramentas)
-   * permaneça ativo até um clique fora ou a abertura de outro menu (que já fecha este por reusar o
-   * mesmo estado `menuOpenId`/`moreMenuOpen`). `pointerdown` dispara antes de `contextmenu`, então
-   * clicar com o botão direito em outra linha fecha este menu antes de abrir o novo, sem piscar.
-   * O seletor usa `.ui-menu-host` (classe comum de todo `OptionsMenu`, ver `Menu.tsx`) em vez de
-   * `.collections-menu-wrapper` — que só cobre o menu de linha — para não fechar o próprio menu
-   * "..." (`.collections-toolbar-menu-wrapper`) no `pointerdown` de um clique nos seus próprios
-   * itens, o que impediria o `click` seguinte de chegar a eles. */
+  /** Close menus on outside pointerdown, including when right-click opens another row. Use the shared ui-menu-host selector so toolbar menu item clicks also reach their handlers. */
   useEffect(() => {
     if (menuOpenId === null && !moreMenuOpen && !filterMenuOpen) return
 
@@ -1428,7 +1392,7 @@ export function CollectionsPanel({
 
   const toggleFavorite = (id: string) => onSetFavorites([id], !favoriteIds.has(id), collectionIds())
 
-  /** Na seleção múltipla, a estrela desmarca só quando todas já são favoritas; senão, marca todas. */
+  /** Unfavorite a selection only when all its collections are already favorites; otherwise favorite all. */
   const selectionAllFavorite = selectionOnlyCollections && selection.every((id) => favoriteIds.has(id))
   const toggleSelectionFavorite = () => onSetFavorites(selection, !selectionAllFavorite, collectionIds())
 
@@ -1447,7 +1411,7 @@ export function CollectionsPanel({
     setFilterMenuOpen(false)
   }
 
-  /** Disponível com a busca aberta ou fechada: filtrar só por rótulos não exige digitar nada. */
+  /** Label filtering works with search open or closed and does not require search text. */
   const filterMenu = collections.length > 0 && (
     <OptionsMenu
       label={t('collections.filterMenuAria')}
@@ -1493,7 +1457,7 @@ export function CollectionsPanel({
     </OptionsMenu>
   )
 
-  /** Collections-alvo que ainda existem; o modal fecha se todas saírem da árvore enquanto aberto. */
+  /** Keep only existing target collections; close the label modal when all targets disappear. */
   const labelsModalTargets = (labelsModal?.collectionIds ?? []).flatMap((id) => {
     const collection = collections.find((candidate) => candidate.id === id)
     return collection ? [collection] : []
@@ -1555,7 +1519,7 @@ export function CollectionsPanel({
                 disabled={!canReveal}
                 onClick={revealOpenRequest}
               />
-              {/* "Criar Collection" fica no popover do "+"; sem Collections o "..." não teria item nenhum. */}
+              {/* Create Collection lives in the plus popover; an empty tree has no toolbar menu actions. */}
               {collections.length > 0 && (
                 <OptionsMenu
                   label={t('collections.moreOptionsMenuAria')}

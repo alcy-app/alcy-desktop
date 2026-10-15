@@ -98,13 +98,16 @@
 }
 
 .collections-row {
+  --collections-row-background: var(--surface);
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
   border-radius: var(--radius-sm);
-  min-height: 24px;
+  min-height: max(24px, var(--icon-button-size-sm));
   padding: 0 4px;
   cursor: pointer;
+  background: var(--collections-row-background);
   /* Use pointer events because native HTML5 drag and drop is unreliable over text in some Linux WebViews. Prevent text selection while dragging. */
   user-select: none;
   -webkit-user-select: none;
@@ -130,18 +133,18 @@
 
 .collections-row:focus:not(.collections-row--open),
 .collections-row:hover {
-  background: var(--surface-raised);
+  --collections-row-background: var(--surface-raised);
 }
 
 .collections-row--open {
-  background: var(--accent-softer);
+  --collections-row-background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
 
 /* Multiple selection (spec 0104) wins over hover/focus so rows remain highlighted. */
 .collections-row.collections-row--selected,
 .collections-row.collections-row--selected:hover,
 .collections-row.collections-row--selected:focus {
-  background: var(--selection-bg);
+  --collections-row-background: var(--selection-bg);
 }
 
 /* Consecutive selected rows form one block: round only the first top and last bottom corners. */
@@ -161,7 +164,7 @@
 }
 
 .collections-row--drop-into {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  --collections-row-background: color-mix(in srgb, var(--accent) 32%, var(--surface));
   box-shadow: inset 0 0 0 2px var(--accent-strong);
   border-radius: var(--radius-md);
 }
@@ -345,23 +348,53 @@
 .collections-menu-wrapper {
   position: relative;
   flex-shrink: 0;
+}
+
+/* Overlay actions keep the name's full width, including while the row is hovered. */
+.collections-row-actions {
+  position: absolute;
+  inset-block: 0;
+  right: 4px;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 4px;
+  background: var(--collections-row-background);
   opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
 }
 
-.collections-sort-button,
-.collections-sort-button:disabled {
-  opacity: 0;
+.collections-row-actions::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  right: 100%;
+  width: 12px;
+  background: linear-gradient(to right, transparent, var(--collections-row-background));
+  pointer-events: none;
 }
 
-.collections-row:hover .collections-sort-button,
-.collections-sort-button:focus-visible {
+.collections-row:hover > .collections-row-actions,
+.collections-row:has(.collections-row-actions :focus-visible) > .collections-row-actions,
+.collections-row--favorite > .collections-row-actions,
+.collections-row-actions:has(.ui-menu-host--open) {
   opacity: 1;
+  pointer-events: auto;
 }
 
-.collections-row:hover .collections-menu-wrapper,
-.collections-menu-wrapper:focus-within,
-.collections-menu-wrapper.ui-menu-host--open {
-  opacity: 1;
+.collections-row-actions:has(.ui-menu-host--open) {
+  z-index: var(--z-overlay);
+}
+
+/* Idle favorites retain their star without an empty strip for the other actions. */
+.collections-row--favorite:not(:hover):not(:has(.collections-row-actions :focus-visible)) > .collections-row-actions:not(:has(.ui-menu-host--open)) > :not(.collections-favorite-button) {
+  display: none;
+}
+
+.collections-row:has(.collections-name-input) > .collections-row-actions {
+  visibility: hidden;
 }
 
 /* Menu surfaces and items come from shared/ui/menu.css; only positioning belongs here. */
@@ -397,10 +430,6 @@
 
 /* ---- Motion ---- */
 
-.collections-menu-wrapper {
-  transition: opacity var(--duration-fast) var(--ease-out);
-}
-
 .collections-row {
   transition:
     background-color var(--duration-fast) var(--ease-out),
@@ -409,16 +438,6 @@
 }
 
 /* Favorites and filters (ADR 0060). */
-
-.collections-favorite-button {
-  opacity: 0;
-}
-
-.collections-row:hover .collections-favorite-button,
-.collections-favorite-button:focus-visible,
-.collections-row--favorite .collections-favorite-button {
-  opacity: 1;
-}
 
 .collections-row--favorite .collections-favorite-button {
   color: var(--warning);
