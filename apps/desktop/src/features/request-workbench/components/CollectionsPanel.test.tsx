@@ -1,7 +1,7 @@
 import { useState, type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '../../../test-utils'
-import { allFolderIds, type RequestContent, type RequestSummary, type TreeNode } from '../collection-tree'
+import { allFolderIds, emptyGrpcCall, type RequestContent, type RequestSummary, type TreeNode } from '../collection-tree'
 import { CollectionsPanel } from './CollectionsPanel'
 
 const emptyContent = (): RequestContent => ({
@@ -16,6 +16,7 @@ const emptyContent = (): RequestContent => ({
   headers: [],
   authentication: { type: 'none' },
   routeParams: [],
+  grpc: emptyGrpcCall,
 })
 
 const request = (id: string, name: string): RequestSummary => ({ id, name, protocol: 'graphql', content: emptyContent() })

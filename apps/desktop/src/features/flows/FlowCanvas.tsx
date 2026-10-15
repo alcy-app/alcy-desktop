@@ -19,7 +19,7 @@ import { useToast } from '../../shared/ui/use-toast'
 import { hasOpenModal } from '../../shared/ui/open-modals'
 import { comboFromEvent, comboFromMouseEvent, isShortcutFor } from '../../shared/shortcuts/shortcuts'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
-import { findRequest } from '../request-workbench/collection-tree'
+import { findRequest, requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
 import { BlockPalette } from './BlockPalette'
 import type { PaletteKind } from './BlockPalette'
@@ -589,7 +589,7 @@ export function FlowCanvas({
           label: request ? request.name || t('common.unnamed') : node.id.slice(0, 8),
           kindLabel: t('flows.canvas.newRequestBlockLabel'),
           request: request
-            ? `${request.protocol === 'graphql' ? 'GraphQL' : request.content.method.toUpperCase()} ${request.content.endpointUrl}`
+            ? `${requestMethodLabel(request)} ${request.content.endpointUrl}`
             : undefined,
         }
       }

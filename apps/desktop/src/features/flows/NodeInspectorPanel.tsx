@@ -14,6 +14,7 @@ import { CloseIcon, PlusIcon, SearchIcon, TrashIcon } from '../../shared/ui/icon
 import { useToast } from '../../shared/ui/use-toast'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import { describeVariable } from '../request-workbench/template-highlight'
+import { requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
 import type { ComparisonOperatorState, ConditionState, LoadNodeKindState, SimpleNodeKindState, VariableAssignmentState } from './flows.types'
 import { SIMPLE_NODE_LABEL_KEY } from './simple-node-types'
@@ -68,10 +69,7 @@ const MAX_SLEEP_MS = 10 * 60 * 1000
 /** Maior limite de iterações aceito pelo motor (`MAX_WHILE_ITERATIONS`). */
 const MAX_WHILE_ITERATIONS = 10_000
 
-function methodLabel(request: RequestSummary): string {
-  if (request.protocol === 'graphql') return 'GraphQL'
-  return request.content.method.toUpperCase()
-}
+const methodLabel = requestMethodLabel
 
 /** Painel que abre ao selecionar um node no canvas — conteúdo específico por
  * kind (não um schema genérico, já que `Block`/`Request` não têm campos de

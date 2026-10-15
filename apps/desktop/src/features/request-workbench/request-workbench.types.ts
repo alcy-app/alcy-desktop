@@ -9,8 +9,10 @@ import type {
   HttpMethodInput,
   RawBodyLanguage,
 } from '../../bindings/execute-rest-request'
+import type { ExecuteGrpcRequestOutput } from '../../bindings/execute-grpc-request'
+import type { GrpcCommandError, GrpcSchemaSummary } from '../../bindings/load-grpc-schema'
 import type { LoadSchemaError, LoadSchemaOutput } from '../../bindings/load-schema'
-import type { RequestContent } from './collection-tree'
+import type { GrpcCallState, RequestContent } from './collection-tree'
 
 export type { HttpMethodInput, RawBodyLanguage }
 
@@ -18,10 +20,11 @@ export type { HttpMethodInput, RawBodyLanguage }
  * reaproveitar `RequestProtocol` de `collection-tree.ts`) porque descreve
  * conceitos distintos: uma aba aberta vs. o que uma requisição salva numa
  * coleção carrega. Hoje os dois têm os mesmos valores. */
-export type WorkbenchProtocol = 'graphql' | 'rest'
+export type WorkbenchProtocol = 'graphql' | 'rest' | 'grpc'
 
 export type RequestTabId =
   | 'docs'
+  | 'message'
   | 'query'
   | 'variables'
   | 'params'
@@ -109,8 +112,18 @@ export interface AuthorizationState {
   scope: string
 }
 
-export type ExecutionSuccess = ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput
-export type ExecutionFailure = ExecuteGraphqlRequestError | ExecuteRestRequestError
+export type ExecutionSuccess = ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput | ExecuteGrpcRequestOutput
+export type ExecutionFailure = ExecuteGraphqlRequestError | ExecuteRestRequestError | GrpcCommandError
+
+/** HTTP results (REST, GraphQL); `null` for a gRPC one, which has no HTTP status. */
+export function httpResultOf(result: ExecutionSuccess): ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput | null {
+  return 'statusCode' in result ? result : null
+}
+
+/** gRPC result, or `null` for the HTTP ones. */
+export function grpcResultOf(result: ExecutionSuccess | null | undefined): ExecuteGrpcRequestOutput | null {
+  return result && 'messageCount' in result ? result : null
+}
 
 /** `ExecuteRestRequestOutput` não tem `graphqlErrors` (REST não tem erros
  * GraphQL) — `null` quando `result` é `undefined`/vem de uma execução REST. */
@@ -126,6 +139,12 @@ export type ExecutionState =
   /** `responseNotStored`: envio reaberto do histórico que guardou só status, tempo e tamanho. */
   | { status: 'success'; result: ExecutionSuccess; responseNotStored?: boolean }
   | { status: 'error'; error: ExecutionFailure }
+
+export type GrpcSchemaLoadState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; schema: GrpcSchemaSummary }
+  | { status: 'error'; error: GrpcCommandError }
 
 export type SchemaLoadState =
   | { status: 'idle' }
@@ -186,4 +205,7 @@ export interface WorkbenchTab {
   lastSendId: string | null
   schema: SchemaLoadState
   schemaExecutionId: string | null
+  /** gRPC call of the tab (spec 0129); default for the other protocols. */
+  grpc: GrpcCallState
+  grpcSchema: GrpcSchemaLoadState
 }

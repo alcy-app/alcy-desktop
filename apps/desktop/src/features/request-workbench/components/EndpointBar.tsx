@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ClipboardEvent, FocusEvent } from 'react'
+import type { ClipboardEvent, FocusEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import type { HttpMethodInput } from '../../../bindings/execute-rest-request'
@@ -36,6 +36,8 @@ interface EndpointBarProps {
   onPasteCommand?: (command: string) => void
   /** Lock the field while a pasted command is being converted. */
   isImportingCommand?: boolean
+  /** Service/method picker shown in place of the HTTP method for gRPC. */
+  grpcMethodPicker?: ReactNode
 }
 
 export function EndpointBar({
@@ -54,6 +56,7 @@ export function EndpointBar({
   pathParameterDocs,
   onPasteCommand,
   isImportingCommand = false,
+  grpcMethodPicker,
 }: EndpointBarProps) {
   const { t } = useLanguage()
   const methodClass = protocol === 'rest' ? `rw-endpoint-method--${method}` : 'rw-endpoint-method--graphql'
@@ -72,7 +75,9 @@ export function EndpointBar({
   return (
     <div className="rw-endpoint-bar">
       <div className="rw-endpoint-field" aria-busy={isImportingCommand || undefined}>
-        {protocol === 'rest' ? (
+        {protocol === 'grpc' ? (
+          grpcMethodPicker
+        ) : protocol === 'rest' ? (
           <Select
             className={`rw-endpoint-method rw-endpoint-method--select ${methodClass}`}
             aria-label={t('endpointBar.methodLabel')}
@@ -127,7 +132,8 @@ export function EndpointBar({
           <Button className="rw-endpoint-action rw-endpoint-action--split" variant="primary" size="sm" onClick={onSend} disabled={isImportingCommand}>
             {t('endpointBar.send')}
           </Button>
-          <SendOptionsMenu onSendAndDownload={onSendAndDownload} disabled={isImportingCommand} />
+          {/* Saving the response to a file is an HTTP option. */}
+          {protocol !== 'grpc' && <SendOptionsMenu onSendAndDownload={onSendAndDownload} disabled={isImportingCommand} />}
         </div>
       )}
       {isImportingCommand && (

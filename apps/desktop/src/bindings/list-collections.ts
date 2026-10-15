@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { GrpcCallDto } from './grpc-call'
 import type { AuthenticationInput, HeaderInput } from './execute-graphql-request'
 import type { HttpMethodInput, RestBodyInput } from './execute-rest-request'
 
@@ -26,6 +27,8 @@ export interface SavedRequestDto {
   routeParams?: RouteParameterDto[]
   /** Documentação importada desta chamada (ADR 0035); ausente em DTOs antigos. */
   docsRef?: DocsRefDto | null
+  /** gRPC method and schema source (spec 0129); absent for other protocols. */
+  grpc?: GrpcCallDto | null
 }
 
 /** Aponta para uma operação em `alcy-api-docs.json` — não usa o id da requisição. */

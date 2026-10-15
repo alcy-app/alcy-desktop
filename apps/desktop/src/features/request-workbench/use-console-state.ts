@@ -1,3 +1,4 @@
+import type { GrpcCommandError } from '../../bindings/load-grpc-schema'
 import { useCallback, useState } from 'react'
 import type {
   ConnectionInfo,
@@ -66,7 +67,7 @@ export interface ConsoleEntry {
   outcome: 'success' | 'error'
   statusCode: number | null
   hasGraphqlErrors: boolean
-  errorKind: ExecuteGraphqlRequestError['kind'] | null
+  errorKind: ExecuteGraphqlRequestError['kind'] | GrpcCommandError['kind'] | null
   /** Só em eventos `script`: a mensagem logada, ou a falha do script quando `outcome` é `error`. */
   scriptMessage: string | null
   detail: ConsoleEntryDetail | null

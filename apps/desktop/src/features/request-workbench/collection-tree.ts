@@ -7,12 +7,44 @@ import type {
 import type { CollectionLabelDto, DocsRefDto, ScopedVariableDto } from '../../bindings/list-collections'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import type { HttpMethodInput, RestBodyInput } from '../../bindings/execute-rest-request'
+import type { GrpcSchemaSourceDto } from '../../bindings/grpc-call'
 import type { ItemChangeKind } from '../../bindings/gitlab-types'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
 import { definedVariables } from '../environments/defined-variables'
 import { emptyRestBody } from './body-state'
 
-export type RequestProtocol = 'graphql' | 'rest'
+export type RequestProtocol = 'graphql' | 'rest' | 'grpc'
+
+/** What a gRPC request calls (spec 0129); the other protocols keep the
+ * default and ignore it, like `method`/`body` for GraphQL. */
+export interface GrpcCallState {
+  /** Fully qualified service (`package.Service`); empty until chosen. */
+  service: string
+  method: string
+  schemaSource: GrpcSchemaSourceDto
+  /** `null` uses the configured request timeout. */
+  deadlineMs: number | null
+  /** The request message, as JSON. */
+  message: string
+}
+
+export const emptyGrpcCall: GrpcCallState = {
+  service: '',
+  method: '',
+  schemaSource: { type: 'reflection' },
+  deadlineMs: null,
+  message: '{}',
+}
+
+export function sameGrpcCall(a: GrpcCallState, b: GrpcCallState): boolean {
+  return (
+    a.service === b.service &&
+    a.method === b.method &&
+    a.deadlineMs === b.deadlineMs &&
+    a.message === b.message &&
+    JSON.stringify(a.schemaSource) === JSON.stringify(b.schemaSource)
+  )
+}
 
 export interface RouteParameter {
   name: string
@@ -36,6 +68,7 @@ export interface RequestContent {
   preRequestScript: string
   postResponseScript: string
   routeParams: RouteParameter[]
+  grpc: GrpcCallState
 }
 
 export interface RequestSummary {
@@ -48,10 +81,39 @@ export interface RequestSummary {
   docsRef?: DocsRefDto | null
 }
 
+/** A request's method as labels show it: the HTTP method, or the protocol
+ * name for protocols without one. */
+export function requestMethodLabel(request: Pick<RequestSummary, 'protocol' | 'content'>): string {
+  switch (request.protocol) {
+    case 'graphql':
+      return 'GraphQL'
+    case 'grpc':
+      return 'gRPC'
+    case 'rest':
+      return request.content.method.toUpperCase()
+  }
+}
+
 /** Conteúdo de uma requisição recém-criada, ainda sem edição — os defaults
  * dependem do protocolo. Nasce sem URL (spec 0089): nenhum endereço base é
  * presumido, nem nas coleções nem nos flows. */
 export function emptyRequestContent(protocol: RequestProtocol): RequestContent {
+  if (protocol === 'grpc') {
+    return {
+      protocol: 'grpc',
+      endpointUrl: '',
+      query: '',
+      variables: '',
+      method: 'post',
+      body: emptyRestBody,
+      headers: [],
+      authentication: { type: 'inherit' },
+      preRequestScript: '',
+      postResponseScript: '',
+      routeParams: [],
+      grpc: emptyGrpcCall,
+    }
+  }
   if (protocol === 'rest') {
     return {
       protocol: 'rest',
@@ -65,6 +127,7 @@ export function emptyRequestContent(protocol: RequestProtocol): RequestContent {
       preRequestScript: '',
       postResponseScript: '',
       routeParams: [],
+      grpc: emptyGrpcCall,
     }
   }
 
@@ -80,6 +143,7 @@ export function emptyRequestContent(protocol: RequestProtocol): RequestContent {
     preRequestScript: '',
     postResponseScript: '',
     routeParams: [],
+    grpc: emptyGrpcCall,
   }
 }
 

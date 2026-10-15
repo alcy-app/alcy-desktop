@@ -21,7 +21,7 @@ interface ScriptsPanelProps {
 
 /** Falha de script da última execução; os logs (`al.console.log`) vão para o console do app. */
 function lastRunError(execution: ExecutionState): string | null {
-  if (execution.status === 'success') return execution.result.scriptError?.message ?? null
+  if (execution.status === 'success') return 'scriptError' in execution.result ? (execution.result.scriptError?.message ?? null) : null
   if (execution.status === 'error' && execution.error.kind === 'script') return execution.error.message
   return null
 }

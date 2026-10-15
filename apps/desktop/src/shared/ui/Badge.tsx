@@ -1,7 +1,7 @@
 import type { HTMLAttributes } from 'react'
 import './badge.css'
 
-type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning' | 'error'
+type BadgeTone = 'neutral' | 'accent' | 'success' | 'warning' | 'error' | 'info'
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone

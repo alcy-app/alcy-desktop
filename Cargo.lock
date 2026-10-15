@@ -66,6 +66,7 @@ dependencies = [
  "alcy-domain",
  "alcy-gitlab",
  "alcy-graphql",
+ "alcy-grpc",
  "alcy-http-proxy",
  "alcy-openapi",
  "alcy-platform",

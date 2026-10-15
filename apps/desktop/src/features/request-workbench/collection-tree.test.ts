@@ -4,6 +4,7 @@ import {
   applyScopedChanges,
   descendantIds,
   duplicateRequest,
+  emptyGrpcCall,
   filterTree,
   findAncestorIds,
   findInheritedAuthentication,
@@ -61,6 +62,7 @@ const emptyContent = (): RequestContent => ({
   headers: [],
   authentication: { type: 'none' },
   routeParams: [],
+  grpc: emptyGrpcCall,
 })
 
 const request = (id: string, name: string, content: RequestContent = emptyContent()): RequestSummary => ({

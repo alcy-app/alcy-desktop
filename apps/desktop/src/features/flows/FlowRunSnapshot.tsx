@@ -6,7 +6,7 @@ import type { FlowRunDetailDto } from '../../bindings/get-flow-run-history'
 import type { FlowNodeOutputDto } from '../../bindings/get-flow-node-output'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import { useLanguage } from '../../shared/i18n/use-language'
-import { findRequest } from '../request-workbench/collection-tree'
+import { findRequest, requestMethodLabel } from '../request-workbench/collection-tree'
 import type { TreeNode } from '../request-workbench/collection-tree'
 import { isSimpleFlowNode, snapViewportToWholePixels, toFlowEdges, toFlowNodes } from './flow-canvas-mapping'
 import type { FlowNode } from './flow-canvas-mapping'
@@ -103,7 +103,7 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables }: F
           label: request ? request.name || t('common.unnamed') : node.id.slice(0, 8),
           kindLabel: t('flows.canvas.newRequestBlockLabel'),
           request: request
-            ? `${request.protocol === 'graphql' ? 'GraphQL' : request.content.method.toUpperCase()} ${request.content.endpointUrl}`
+            ? `${requestMethodLabel(request)} ${request.content.endpointUrl}`
             : undefined,
         }
       }

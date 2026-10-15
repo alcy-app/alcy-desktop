@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cancelGraphqlRequest } from '../../bindings/cancel-graphql-request'
 import { executeGraphqlRequest } from '../../bindings/execute-graphql-request'
+import { executeGrpcRequest } from '../../bindings/execute-grpc-request'
 import { executeRestRequest } from '../../bindings/execute-rest-request'
 import type { HttpMethodInput, RawBodyLanguage } from '../../bindings/execute-rest-request'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
+import { loadGrpcSchema as loadGrpcSchemaBinding } from '../../bindings/load-grpc-schema'
 import { loadSchema as loadSchemaBinding } from '../../bindings/load-schema'
 import { releaseResponseBody } from '../../bindings/release-response-body'
 import { matchExistingRows, type BulkRow } from '../../shared/bulk-edit'
@@ -18,14 +20,14 @@ import {
   toBodyState,
   toRestBodyInput,
 } from './body-state'
-import { emptyRequestContent, mergeScopedVariables, variableScopesFor } from './collection-tree'
+import { emptyGrpcCall, emptyRequestContent, mergeScopedVariables, sameGrpcCall, variableScopesFor } from './collection-tree'
 import {
   emptyAuthorizationState,
   sameAuthentication,
   toAuthenticationInput,
   toAuthorizationState,
 } from './authorization-state'
-import type { RequestContent, RequestProtocol, TreeNode } from './collection-tree'
+import type { GrpcCallState, RequestContent, RequestProtocol, TreeNode } from './collection-tree'
 import { createEmptyQuery, ensureFieldPath, parseQuery, setFieldArgument, toggleField } from './graphql-query-tree'
 import {
   buildUrlWithParams,
@@ -117,7 +119,21 @@ function createTab(overrides: Partial<WorkbenchTab> = {}): WorkbenchTab {
     lastSendId: null,
     schema: { status: 'idle' },
     schemaExecutionId: null,
+    grpc: emptyGrpcCall,
+    grpcSchema: { status: 'idle' },
     ...overrides,
+  }
+}
+
+/** First section of a freshly opened tab, per protocol. */
+function firstSectionOf(protocol: RequestProtocol): RequestTabId {
+  switch (protocol) {
+    case 'rest':
+      return 'params'
+    case 'grpc':
+      return 'message'
+    case 'graphql':
+      return 'query'
   }
 }
 
@@ -126,9 +142,9 @@ function tabFromContent(requestId: string | null, name: string, content: Request
     requestId,
     name,
     protocol: content.protocol,
-    // 'query' (default de createTab) não existe em REST_TABS — abas REST reabertas
-    // (requisição salva, restauração de aba/histórico) precisam do default de newDraftTab.
-    activeSection: content.protocol === 'rest' ? 'params' : 'query',
+    // 'query' (default de createTab) só existe em GraphQL: abas reabertas
+    // (requisição salva, restauração de aba/histórico) usam a seção do protocolo.
+    activeSection: firstSectionOf(content.protocol),
     endpointUrl: content.endpointUrl,
     query: content.query,
     variables: content.variables,
@@ -140,6 +156,7 @@ function tabFromContent(requestId: string | null, name: string, content: Request
     params: paramsFromUrl(content.endpointUrl),
     routeParams: routeParamsFromUrl(content.endpointUrl, content.routeParams),
     authorization: toAuthorizationState(content.authentication),
+    grpc: content.grpc,
     savedContent: content,
     dirty: requestId === null,
   })
@@ -159,6 +176,7 @@ export function contentOf(tab: WorkbenchTab): RequestContent {
     authentication: toAuthenticationInput(tab.authorization),
     preRequestScript: tab.preRequestScript,
     postResponseScript: tab.postResponseScript,
+    grpc: tab.grpc,
   }
 }
 
@@ -190,7 +208,8 @@ function contentDiffersFromSaved(tab: WorkbenchTab): boolean {
     tab.postResponseScript !== saved.postResponseScript ||
     !sameHeaders(tab.headers, saved.headers) ||
     !sameRouteParams(tab.routeParams, saved.routeParams) ||
-    !sameAuthentication(toAuthenticationInput(tab.authorization), saved.authentication)
+    !sameAuthentication(toAuthenticationInput(tab.authorization), saved.authentication) ||
+    !sameGrpcCall(tab.grpc, saved.grpc)
   )
 }
 
@@ -316,6 +335,39 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     return result
   }, [state.activeTabId, activeTab, environmentVariables, collections, rootPath, updateTab])
 
+  /** Calls the active gRPC tab's method (spec 0129). */
+  const sendGrpc = useCallback(async () => {
+    const tabId = state.activeTabId
+    const tab = activeTab
+    releaseIfWindowed(tab.execution)
+    const id = crypto.randomUUID()
+    updateTab(tabId, { pinned: true, executionId: id, execution: { status: 'loading', startedAt: Date.now() } })
+
+    const result = await executeGrpcRequest({
+      executionId: id,
+      rootPath,
+      endpoint: tab.endpointUrl,
+      schemaSource: tab.grpc.schemaSource,
+      service: tab.grpc.service,
+      method: tab.grpc.method,
+      deadlineMs: tab.grpc.deadlineMs,
+      message: tab.grpc.message,
+      headers: tab.headers.map((header) => ({ name: header.name, value: header.value, enabled: header.enabled })),
+      authentication: toAuthenticationInput(tab.authorization),
+      requestId: tab.requestId,
+      tabId,
+      environmentVariables: environmentVariables.map(({ name, value, sensitive }) => ({ name, value, sensitive })),
+      variableScopes: variableScopesFor(collections, tab.requestId),
+    })
+
+    updateTab(tabId, {
+      executionId: null,
+      lastSendId: id,
+      execution: result.ok ? { status: 'success', result: result.value } : { status: 'error', error: result.error },
+    })
+    return result
+  }, [state.activeTabId, activeTab, environmentVariables, collections, rootPath, updateTab])
+
   const cancel = useCallback(() => {
     if (activeTab.executionId) {
       void cancelGraphqlRequest(activeTab.executionId)
@@ -360,6 +412,40 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
       void cancelGraphqlRequest(activeTab.schemaExecutionId)
     }
   }, [activeTab.schemaExecutionId])
+
+  /** Services and methods of the active gRPC tab's server (spec 0129). */
+  const loadGrpcSchema = useCallback(
+    async (forceRefresh: boolean) => {
+      const tabId = state.activeTabId
+      const tab = activeTab
+      const id = crypto.randomUUID()
+      updateTab(tabId, { schemaExecutionId: id, grpcSchema: { status: 'loading' } })
+
+      const result = await loadGrpcSchemaBinding({
+        executionId: id,
+        rootPath,
+        endpoint: tab.endpointUrl,
+        schemaSource: tab.grpc.schemaSource,
+        headers: tab.headers.map((header) => ({ name: header.name, value: header.value, enabled: header.enabled })),
+        authentication: toAuthenticationInput(tab.authorization),
+        requestId: tab.requestId,
+        environmentVariables: environmentVariables.map(({ name, value, sensitive }) => ({ name, value, sensitive })),
+        variableScopes: variableScopesFor(collections, tab.requestId),
+        forceRefresh,
+      })
+
+      updateTab(tabId, {
+        schemaExecutionId: null,
+        grpcSchema: result.ok ? { status: 'success', schema: result.value } : { status: 'error', error: result.error },
+      })
+    },
+    [state.activeTabId, activeTab, environmentVariables, collections, rootPath, updateTab],
+  )
+
+  const updateGrpc = useCallback(
+    (patch: Partial<GrpcCallState>) => updateActiveTab((tab) => ({ grpc: { ...tab.grpc, ...patch } })),
+    [updateActiveTab],
+  )
 
   /** Para uma requisição GraphQL já salva, o schema (campos disponíveis no
    * `QueryExplorer`) é buscado sozinho assim que a aba é aberta — sem exigir
@@ -596,19 +682,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   /** Abre uma aba em branco — sempre um rascunho avulso (`requestId: null`). */
   const newDraftTab = useCallback((protocol: RequestProtocol, name = '') => {
     setState((current) => {
-      const content = emptyRequestContent(protocol)
-      const tab =
-        protocol === 'rest'
-          ? createTab({
-              name,
-              protocol: 'rest',
-              method: content.method,
-              endpointUrl: content.endpointUrl,
-              activeSection: 'params',
-              savedContent: content,
-              dirty: true,
-            })
-          : tabFromContent(null, name, content)
+      const tab = tabFromContent(null, name, emptyRequestContent(protocol))
       return { tabs: [...current.tabs, tab], activeTabId: tab.id }
     })
   }, [])
@@ -837,6 +911,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
           params: next.params,
           routeParams: next.routeParams,
           authorization: next.authorization,
+          grpc: next.grpc,
         }
       }),
     [updateTab],
@@ -999,11 +1074,16 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     updateAuthorization,
     execution: activeTab.execution,
     send,
+    sendGrpc,
     cancel,
     clearResponse,
     schema: activeTab.schema,
     loadSchema,
     cancelSchemaLoad,
+    grpc: activeTab.grpc,
+    updateGrpc,
+    grpcSchema: activeTab.grpcSchema,
+    loadGrpcSchema,
     toggleQueryField,
     setQueryFieldArgument,
   }

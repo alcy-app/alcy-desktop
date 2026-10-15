@@ -108,3 +108,8 @@
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
+
+.new-request-popover-badge--grpc {
+  background: var(--surface-raised);
+  color: var(--info);
+}

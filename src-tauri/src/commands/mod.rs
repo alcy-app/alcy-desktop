@@ -26,6 +26,7 @@ pub mod flows;
 pub mod general_settings;
 pub mod get_load_run_history;
 pub mod gitlab;
+pub mod grpc;
 pub mod history;
 pub mod import_fetcher;
 pub mod load_dataset_assets;

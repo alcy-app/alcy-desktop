@@ -30,6 +30,14 @@ export function RequestMethodBadge({ protocol, method, className, 'aria-hidden':
     )
   }
 
+  if (protocol === 'grpc') {
+    return (
+      <Badge tone="info" className={className} aria-hidden={ariaHidden}>
+        gRPC
+      </Badge>
+    )
+  }
+
   return (
     <Badge tone="accent" className={className} aria-hidden={ariaHidden}>
       GQL

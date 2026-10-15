@@ -1,6 +1,8 @@
 import type { SettingsCategory } from '../settings-menu/SettingsMenu'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkspaceDto } from '../../bindings/create-workspace'
+import type { ExecuteGraphqlRequestOutput } from '../../bindings/execute-graphql-request'
+import type { ExecuteRestRequestOutput } from '../../bindings/execute-rest-request'
 import { exportHar } from '../../bindings/export-har'
 import { pickExportFile } from '../../bindings/pick-export-file'
 import { pickResponseFile } from '../../bindings/pick-response-file'
@@ -64,6 +66,9 @@ import { ScriptsPanel } from './components/ScriptsPanel'
 import { captureStatement } from './json-value-index'
 import type { JsonPathSegment } from './json-value-index'
 import { RestScreen } from './components/RestScreen'
+import { GrpcMessagePanel } from './components/GrpcMessagePanel'
+import { GrpcMethodPicker } from './components/GrpcMethodPicker'
+import { GrpcSchemaPanel } from './components/GrpcSchemaPanel'
 import { ResponsePanel } from './components/ResponsePanel'
 import type { ResponsePanelLayout } from './components/ResponsePanel'
 import { NewRequestPopover } from './components/NewRequestPopover'
@@ -122,7 +127,7 @@ import type { RequestContent, RequestSummary } from './collection-tree'
 import { graphqlErrorsOf } from './request-workbench.types'
 import { formatSize } from './response-summary'
 import { responseFileName } from './response-file-name'
-import type { ExecutionSuccess, RequestTabId } from './request-workbench.types'
+import type { RequestTabId, WorkbenchProtocol } from './request-workbench.types'
 import { VariableEditingContext } from './variable-editing-context'
 import type { VariableEditing } from './variable-editing-context'
 import './request-workbench.css'
@@ -152,6 +157,25 @@ const REST_TABS: { id: RequestTabId; label: string }[] = [
   { id: 'headers', label: 'Headers' },
   { id: 'authorization', label: 'Authorization' },
 ]
+
+/** gRPC requests (spec 0129): no scripts yet, metadata in place of headers. */
+const GRPC_TABS: { id: RequestTabId; label: string }[] = [
+  { id: 'message', label: 'Message' },
+  { id: 'headers', label: 'Metadata' },
+  { id: 'authorization', label: 'Authorization' },
+  { id: 'schema', label: 'Schema' },
+]
+
+function requestTabsFor(protocol: WorkbenchProtocol): { id: RequestTabId; label: string }[] {
+  switch (protocol) {
+    case 'rest':
+      return REST_TABS
+    case 'grpc':
+      return GRPC_TABS
+    case 'graphql':
+      return GRAPHQL_TABS
+  }
+}
 
 const RESPONSE_LAYOUT_STORAGE_KEY = 'alcy:panel:response-layout'
 
@@ -595,7 +619,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   )
 
   /** Save response bodies to the chosen file. Large bodies cross IPC by handle while retained in the backend. */
-  const downloadResponse = async (value: ExecutionSuccess, requestName: string) => {
+  const downloadResponse = async (value: ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput, requestName: string) => {
     const path = await pickResponseFile(responseFileName(requestName, value.headers, value.bodyEncoding), t('endpointBar.allFiles'))
     if (path === null) return
     const result = await saveResponseBody({
@@ -612,7 +636,28 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     }
   }
 
+  /** gRPC has no scripts, cookies or HTTP recording yet (spec 0129): the
+   * console only notes the call, and history gets the send. */
+  const handleSendGrpc = async () => {
+    const endpointUrl = workbench.endpointUrl
+    const result = await workbench.sendGrpc()
+    consoleLog.append({
+      kind: 'request',
+      endpointUrl,
+      executedAtMs: Date.now(),
+      durationMs: result.ok ? result.value.durationMs : null,
+      outcome: result.ok && result.value.status.code === 0 ? 'success' : 'error',
+      statusCode: null,
+      hasGraphqlErrors: false,
+      errorKind: result.ok ? null : result.error.kind,
+      scriptMessage: null,
+      detail: null,
+    })
+    void history.refresh()
+  }
+
   const handleSend = async (options?: { ignoreResponseSizeLimit?: boolean; download?: boolean }) => {
+    if (workbench.protocol === 'grpc') return handleSendGrpc()
     const requestName = workbench.activeTab.name
     const endpointUrl = workbench.endpointUrl
     const routeParams = workbench.routeParams
@@ -630,7 +675,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     const scriptEffects = result.ok ? result.value : result
     environments.applyScriptChanges((scriptEffects.environmentChanges ?? []).filter((change): change is { name: string; value: string } => change.value !== null))
     collections.applyScopedChanges(scriptEffects.scopedChanges ?? [])
-    const value: ExecutionSuccess | null = result.ok ? result.value : null
+    const value = result.ok ? result.value : null
     const graphqlErrors = graphqlErrorsOf(value)
     const consoleEntry: ConsoleEntryInput = {
       kind: 'request',
@@ -1132,6 +1177,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       matchingCookies.length > 0
         ? [{ name: 'Cookie', value: cookieHeaderValue(matchingCookies), reason: t('headers.generatedCookieTooltip') }]
         : []
+    // gRPC sends the authentication as metadata; cookies are HTTP only.
+    if (workbench.protocol === 'grpc') return header ? [header] : []
     if (workbench.protocol !== 'rest') return [...cookie, ...authorization]
     return [
       ...defaultGeneratedHeaders({
@@ -1700,6 +1747,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               <RestScreen
                 onAddGraphqlRequest={() => workbench.newDraftTab('graphql', t('collections.newRequestName'))}
                 onAddRestRequest={() => workbench.newDraftTab('rest', t('collections.newRequestName'))}
+                onAddGrpcRequest={() => workbench.newDraftTab('grpc', t('collections.newRequestName'))}
               />
             ) : openTabs.activeOpenTab?.kind === 'runner' || activeMockServerTab ? null : activeNotificationTab ? (
               <NotificationDetails key={activeNotificationTab.id} notification={activeNotificationTab.notification} />
@@ -1765,10 +1813,13 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                             </Button>
                           </Tooltip>
                         )}
-                        <ShareMenu
-                          onShareAsCode={() => setShareModalOpen(true)}
-                          onShareAsImage={() => setScreenshotModalOpen(true)}
-                        />
+                        {/* Code and image sharing only describe HTTP requests (spec 0129). */}
+                        {workbench.protocol !== 'grpc' && (
+                          <ShareMenu
+                            onShareAsCode={() => setShareModalOpen(true)}
+                            onShareAsImage={() => setScreenshotModalOpen(true)}
+                          />
+                        )}
                       </>
                     }
                   />
@@ -1786,6 +1837,15 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                     routeParams={workbench.routeParams}
                     onUpdateRouteParamValue={workbench.updateRouteParam}
                     pathParameterDocs={pathParameterDocs}
+                    grpcMethodPicker={
+                      <GrpcMethodPicker
+                        schema={workbench.grpcSchema}
+                        service={workbench.grpc.service}
+                        method={workbench.grpc.method}
+                        onSelect={(service, method) => workbench.updateGrpc({ service, method })}
+                        onLoad={(forceRefresh) => void workbench.loadGrpcSchema(forceRefresh)}
+                      />
+                    }
                     onPasteCommand={(command) => void importCommandIntoActiveTab(command)}
                     isImportingCommand={commandImportTabId !== null && commandImportTabId === workbench.activeTabId}
                   />
@@ -1800,7 +1860,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                     style={effectiveResponseLayout === 'right' ? { minWidth: REQUEST_PANE_MIN_WIDTH } : undefined}
                   >
                     <Tabs
-                      tabs={(workbench.protocol === 'rest' ? REST_TABS : GRAPHQL_TABS).map((tab) =>
+                      tabs={requestTabsFor(workbench.protocol).map((tab) =>
                         tab.id === 'scripts' ? { ...tab, badge: scriptCount } : tab,
                       )}
                       activeTab={workbench.activeSection}
@@ -1816,6 +1876,17 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       className={workbench.activeSection === 'query' ? 'rw-tabpanel rw-tabpanel--query ui-tabpanel-motion' : 'rw-tabpanel ui-tabpanel-motion'}
                     >
                       {workbench.activeSection === 'docs' && <DocsPanel state={requestDocs} />}
+                      {workbench.activeSection === 'message' && (
+                        <GrpcMessagePanel
+                          key={workbench.activeTabId ?? ''}
+                          service={workbench.grpc.service}
+                          method={workbench.grpc.method}
+                          message={workbench.grpc.message}
+                          onMessageChange={(message) => workbench.updateGrpc({ message })}
+                          schema={workbench.grpcSchema}
+                          environmentVariables={effectiveVariables}
+                        />
+                      )}
                       {workbench.activeSection === 'query' && (
                         <div className="rw-query-layout">
                           {!queryExplorerCollapsed && (
@@ -1928,7 +1999,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           valueSuggestionsFor={headerNameSuggestions ? headerValueSuggestionsFor : undefined}
                           generatedHeaders={generatedHeaders}
                           overwrittenHeaderNames={headersOverwrittenByAuthorization}
-                          sessionCookieCount={sessionCookies.cookies.length}
+                          sessionCookieCount={workbench.protocol === 'grpc' ? 0 : sessionCookies.cookies.length}
                           onOpenSessionCookies={() => setSessionCookiesModalOpen(true)}
                         />
                       )}
@@ -1940,7 +2011,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           inheritedFrom={inheritedAuthentication}
                         />
                       )}
-                      {workbench.activeSection === 'schema' && (
+                      {workbench.activeSection === 'schema' && workbench.protocol === 'grpc' && (
+                        <GrpcSchemaPanel
+                          grpc={workbench.grpc}
+                          onChange={workbench.updateGrpc}
+                          schema={workbench.grpcSchema}
+                          onLoad={(forceRefresh) => void workbench.loadGrpcSchema(forceRefresh)}
+                          rootPath={workspace.rootPath}
+                        />
+                      )}
+                      {workbench.activeSection === 'schema' && workbench.protocol !== 'grpc' && (
                         <SchemaPanel schema={workbench.schema} onLoad={workbench.loadSchema} onCancel={workbench.cancelSchemaLoad} />
                       )}
                     </div>

@@ -1,7 +1,7 @@
 import type { Node } from '@xyflow/react'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import type { TranslationKey } from '../../shared/i18n/translations'
-import { emptyRequestContent } from '../request-workbench/collection-tree'
+import { emptyRequestContent, requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary } from '../request-workbench/collection-tree'
 import type {
   ComparisonOperatorState,
@@ -143,8 +143,7 @@ export function newInlineRequest(name: string): SimpleNodeKindState {
 
 /** `MÉTODO url` de uma requisição, como o log e o node mostram. */
 export function describeRequest(request: RequestSummary): string {
-  const method = request.protocol === 'graphql' ? 'GraphQL' : request.content.method.toUpperCase()
-  return `${method} ${request.content.endpointUrl}`
+  return `${requestMethodLabel(request)} ${request.content.endpointUrl}`
 }
 
 /** Espera exibida no node e no log: ms abaixo de 1 s, segundos acima. */

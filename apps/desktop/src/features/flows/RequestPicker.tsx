@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { ChevronLeftIcon, FolderIcon, SearchIcon, SendIcon } from '../../shared/ui/icons'
 import { useTooltip } from '../../shared/ui/use-tooltip'
+import { requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
 
 const PICKER_WIDTH_PX = 280
@@ -21,10 +22,7 @@ interface RequestPickerProps {
 
 type PickerEntry = { kind: 'folder'; node: TreeNode } | { kind: 'request'; request: RequestSummary }
 
-function methodLabel(request: RequestSummary): string {
-  if (request.protocol === 'graphql') return 'GraphQL'
-  return request.content.method.toUpperCase()
-}
+const methodLabel = requestMethodLabel
 
 /** Seletor navegável (coleção → pastas → requisição) ancorado no
  * `RequestNode` que disparou a abertura — mesmo padrão de portal/ancoragem

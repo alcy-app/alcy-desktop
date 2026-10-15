@@ -59,6 +59,10 @@ export function errorLabel(t: Translate, error: ExecutionFailure): string {
       return t('response.errorInvalidVariablesLabel')
     case 'cancelled':
       return t('response.errorCancelledLabel')
+    case 'connection':
+      return t('response.errorConnectionLabel')
+    case 'schema':
+      return t('response.errorSchemaLabel')
   }
 }
 
@@ -84,6 +88,10 @@ export function describeError(t: Translate, error: ExecutionFailure): string {
       return t('response.errorInvalidVariables', { message: error.message })
     case 'cancelled':
       return t('response.errorCancelled')
+    case 'connection':
+      return t('response.errorConnection', { message: error.message })
+    case 'schema':
+      return t('response.errorSchema', { message: error.message })
   }
 }
 

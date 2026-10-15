@@ -19,6 +19,13 @@ export function MethodBadge({ protocol, method }: { protocol: string | null; met
       </Badge>
     )
   }
+  if (protocol === 'grpc') {
+    return (
+      <Badge tone="info" className="runner-method">
+        gRPC
+      </Badge>
+    )
+  }
   return (
     <Badge tone={METHOD_TONE[method] ?? 'neutral'} className="runner-method">
       {method ? method.toUpperCase() : '—'}

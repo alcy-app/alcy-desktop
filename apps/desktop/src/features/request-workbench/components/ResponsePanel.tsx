@@ -10,7 +10,7 @@ import { IconButton } from '../../../shared/ui/IconButton'
 import { LoadingBar } from '../../../shared/ui/LoadingBar'
 import { Tooltip } from '../../../shared/ui/Tooltip'
 import { useToast } from '../../../shared/ui/use-toast'
-import { graphqlErrorsOf } from '../request-workbench.types'
+import { graphqlErrorsOf, grpcResultOf, httpResultOf } from '../request-workbench.types'
 import { describeError, errorDetail, errorLabel, formatSize, statusTone } from '../response-summary'
 import type { ExecutionState, ResponseTabId } from '../request-workbench.types'
 import { Tabs } from '../../../shared/ui/Tabs'
@@ -78,6 +78,9 @@ const RESPONSE_TABS: { id: ResponseTabId; label: string }[] = [
 ]
 
 const CURRENT_VIEW: ResponseView = { kind: 'current' }
+
+/** gRPC messages are shown as JSON (spec 0129). */
+const GRPC_BODY_HEADERS = [{ name: 'content-type', value: 'application/json' }]
 const NO_SOURCE: RequestSendsSource = { rootPath: '', requestId: null, tabId: null }
 
 export const ResponsePanel = memo(function ResponsePanel({
@@ -141,8 +144,10 @@ export const ResponsePanel = memo(function ResponsePanel({
   // Sem o corpo, não dá para saber se houve erros GraphQL.
   const graphqlErrors = success && !notStored ? graphqlErrorsOf(success.result) : null
   const hasGraphqlErrors = !!graphqlErrors && graphqlErrors.length > 0
+  const http = success ? httpResultOf(success.result) : null
+  const grpc = grpcResultOf(success?.result)
   // `testResults` pode faltar em execuções restauradas de formatos antigos.
-  const testResults = success ? (success.result.testResults ?? []) : []
+  const testResults = http ? (http.testResults ?? []) : []
   const hasTests = testResults.length > 0
   const failedTests = testResults.filter((test) => !test.passed).length
   const tabs = RESPONSE_TABS.filter(
@@ -218,20 +223,30 @@ export const ResponsePanel = memo(function ResponsePanel({
               </button>
             </Tooltip>
           )}
-          {view.kind !== 'compare' && displayed?.status === 'success' && (
+          {view.kind !== 'compare' && grpc && (
+            <span className="rw-response-summary">
+              <span className={`rw-response-status rw-response-status--${grpc.status.code === 0 ? 'success' : 'error'}`}>
+                gRPC {grpc.status.codeName}
+              </span>
+              <span className="rw-response-metric">{grpc.durationMs} ms</span>
+              <span className="rw-response-metric">{formatSize(grpc.sizeBytes)}</span>
+              <span className="rw-response-metric">{t('response.grpcMessageCount', { count: grpc.messageCount })}</span>
+            </span>
+          )}
+          {view.kind !== 'compare' && displayed?.status === 'success' && http && (
             <span className="rw-response-summary">
               {/* Sends do histórico não guardam a conexão (versão HTTP vazia). */}
-              {displayed.result.connection.httpVersion !== '' && <ResponseNetworkBadge connection={displayed.result.connection} />}
-              <span className={`rw-response-status rw-response-status--${statusTone(displayed.result.statusCode)}`}>
-                HTTP {displayed.result.statusCode}
+              {http.connection.httpVersion !== '' && <ResponseNetworkBadge connection={http.connection} />}
+              <span className={`rw-response-status rw-response-status--${statusTone(http.statusCode)}`}>
+                HTTP {http.statusCode}
               </span>
               {graphqlErrors !== null && (
                 <span className={`rw-response-status rw-response-status--${hasGraphqlErrors ? 'error' : 'success'}`}>
                   {hasGraphqlErrors ? 'GraphQL: Error' : 'GraphQL: Success'}
                 </span>
               )}
-              <span className="rw-response-metric">{displayed.result.durationMs} ms</span>
-              <span className="rw-response-metric">{formatSize(displayed.result.sizeBytes)}</span>
+              <span className="rw-response-metric">{http.durationMs} ms</span>
+              <span className="rw-response-metric">{formatSize(http.sizeBytes)}</span>
             </span>
           )}
           {view.kind !== 'compare' && displayed?.status === 'error' && (
@@ -303,6 +318,7 @@ export const ResponsePanel = memo(function ResponsePanel({
         <>
           <Tabs
             tabs={tabs.map((tab) => {
+              if (tab.id === 'headers' && grpc) return { ...tab, label: 'Metadata' }
               if (tab.id === 'errors' && graphqlErrors) return { ...tab, badge: graphqlErrors.length }
               if (tab.id === 'tests') {
                 return {
@@ -338,14 +354,20 @@ export const ResponsePanel = memo(function ResponsePanel({
           >
             {notStored ? (
               <ResponseNotStored onChangeSetting={onOpenHistorySettings} />
+            ) : grpc && grpc.status.code !== 0 && grpc.messageCount === 0 ? (
+              <FailureMessage
+                className="rw-response-failure"
+                summary={`${grpc.status.codeName}${grpc.status.message ? `: ${grpc.status.message}` : ''}`}
+                detail={null}
+              />
             ) : (
               <ResponseBody
                 // Formato escolhido e texto carregado são do corpo exibido: outra
                 // aba ou outro envio começa do zero, sem herdar o estado anterior.
                 key={`${viewKey}\n${view.kind}\n${success.result.body.kind === 'windowed' ? success.result.body.handle : ''}`}
                 body={success.result.body}
-                bodyEncoding={success.result.bodyEncoding}
-                headers={success.result.headers}
+                bodyEncoding={http ? http.bodyEncoding : 'text'}
+                headers={http ? http.headers : GRPC_BODY_HEADERS}
                 onCaptureValue={view.kind === 'current' ? onCaptureValue : undefined}
                 monitor={bodyMonitor}
               />
@@ -361,7 +383,7 @@ export const ResponsePanel = memo(function ResponsePanel({
             {notStored ? (
               <ResponseNotStored onChangeSetting={onOpenHistorySettings} />
             ) : (
-              <ResponseHeadersList headers={success.result.headers} />
+              <ResponseHeadersList headers={grpc ? [...grpc.headers, ...grpc.trailers] : success.result.headers} />
             )}
           </div>
           {graphqlErrors !== null && (

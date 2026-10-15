@@ -572,6 +572,10 @@
   --method-color: var(--accent-strong);
 }
 
+.flow-node-method--grpc {
+  --method-color: var(--info);
+}
+
 .flow-node-url {
   display: block;
   width: 100%;

@@ -34,3 +34,8 @@
   background: var(--error-soft);
   color: var(--error);
 }
+
+.ui-badge--info {
+  background: var(--surface-raised);
+  color: var(--info);
+}

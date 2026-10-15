@@ -17,7 +17,10 @@ pub use call::{CallHandle, CallOutcome, GrpcEvent, GrpcStatus, MetadataEntry, st
 pub use codec::DynamicCodec;
 pub use connect::{ConnectionSettings, GrpcTarget, connect};
 pub use error::GrpcError;
+// Types the composition root keeps between calls (schema cache, channels).
+pub use prost_reflect::DescriptorPool;
 pub use schema::{
     MethodKind, MethodSummary, SchemaSummary, ServiceSummary, compile_proto_files, describe,
     find_method, message_from_json, message_to_json, reflect, resolve_against,
 };
+pub use tonic::transport::Channel;

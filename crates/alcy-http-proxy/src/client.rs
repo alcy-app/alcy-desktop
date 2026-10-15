@@ -44,6 +44,20 @@ impl ProxyPlan {
             }
         }
     }
+
+    /// Proxy for a connection to `url`, for clients that do not go through
+    /// `SharedHttpClient` (gRPC, spec 0129); `None` connects directly. The
+    /// system mode reads the current configuration on every call.
+    pub async fn proxy_for(&self, url: &reqwest::Url) -> Option<reqwest::Url> {
+        match self {
+            Self::Disabled => None,
+            Self::Pac(script) => script.proxy_for(url),
+            Self::System => SystemState::capture(None)
+                .load_script()
+                .await
+                .proxy_for(url),
+        }
+    }
 }
 
 pub(crate) async fn download_pac(url: &str) -> Result<String, ProxyError> {

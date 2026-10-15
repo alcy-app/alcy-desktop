@@ -54,6 +54,7 @@ use commands::gitlab::{
     begin_gitlab_login, cancel_gitlab_operation, list_gitlab_accounts, list_gitlab_branches,
     list_gitlab_projects, logout_gitlab, test_gitlab_connection,
 };
+use commands::grpc::{GrpcSchemaCache, execute_grpc_request, load_grpc_schema};
 use commands::history::{
     get_collection_run_history, get_flow_run_history, get_history_entry, list_history,
 };
@@ -209,6 +210,7 @@ pub fn run_with(extensions: Vec<Extension>) {
 
     tauri::Builder::default()
         .manage(ExecutionRegistry::default())
+        .manage(GrpcSchemaCache::default())
         .manage(WorkspaceOperationCoordinator::default())
         .manage(FlowExecutionRegistry::default())
         .manage(FlowRunOutputs::default())
@@ -352,6 +354,8 @@ pub fn run_with(extensions: Vec<Extension>) {
             log_invocations(tauri::generate_handler![
                 execute_graphql_request,
                 execute_rest_request,
+                execute_grpc_request,
+                load_grpc_schema,
                 check_body_files,
                 cancel_graphql_request,
                 list_environments,

@@ -12,6 +12,8 @@ export const ERROR_LABEL_KEY: Record<Exclude<ConsoleEntry['errorKind'], null>, T
   responseTooLarge: 'response.errorResponseTooLargeLabel',
   invalidVariables: 'response.errorInvalidVariablesLabel',
   cancelled: 'response.errorCancelledLabel',
+  connection: 'response.errorConnectionLabel',
+  schema: 'response.errorSchemaLabel',
 }
 
 export function entryLevel(entry: ConsoleEntry): ConsoleEntryLevel {

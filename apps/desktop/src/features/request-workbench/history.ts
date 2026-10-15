@@ -1,7 +1,10 @@
+import type { ExecuteGrpcRequestOutput } from '../../bindings/execute-grpc-request'
 import type { HistoryEntryDetailDto } from '../../bindings/get-history-entry'
 import type { HistoryEntrySummaryDto } from '../../bindings/list-history'
 import { emptyRestBody, restBodyFromDto } from './body-state'
+import { emptyGrpcCall, emptyRequestContent } from './collection-tree'
 import type { RequestContent } from './collection-tree'
+import { grpcCodeName } from './grpc-status'
 import type { ExecutionState } from './request-workbench.types'
 
 export interface HistoryDateGroup {
@@ -57,6 +60,21 @@ export function groupHistoryByDate(entries: HistoryEntrySummaryDto[]): HistoryDa
 }
 
 export function historyDetailToContent(detail: HistoryEntryDetailDto): RequestContent {
+  if (detail.protocol === 'grpc') {
+    return {
+      ...emptyRequestContent('grpc'),
+      endpointUrl: detail.endpoint,
+      headers: detail.headers,
+      authentication: detail.authentication,
+      grpc: {
+        service: detail.grpc?.service ?? '',
+        method: detail.grpc?.method ?? '',
+        schemaSource: detail.grpc?.schemaSource ?? { type: 'reflection' },
+        deadlineMs: detail.grpc?.deadlineMs ?? null,
+        message: detail.body,
+      },
+    }
+  }
   if (detail.protocol === 'rest') {
     return {
       protocol: 'rest',
@@ -70,6 +88,7 @@ export function historyDetailToContent(detail: HistoryEntryDetailDto): RequestCo
       preRequestScript: '',
       postResponseScript: '',
       routeParams: [],
+      grpc: emptyGrpcCall,
     }
   }
 
@@ -85,10 +104,48 @@ export function historyDetailToContent(detail: HistoryEntryDetailDto): RequestCo
     preRequestScript: '',
     postResponseScript: '',
     routeParams: [],
+    grpc: emptyGrpcCall,
+  }
+}
+
+/** A gRPC send as history keeps it: the status in `grpc-status`/
+ * `grpc-message` among the metadata, the received messages as the body. */
+function grpcResultFromHistory(
+  outcome: Extract<HistoryEntryDetailDto['outcome'], { type: 'success' }>,
+): ExecuteGrpcRequestOutput {
+  const value = (name: string) => outcome.headers.find((header) => header.name === name)?.value
+  const code = Number(value('grpc-status') ?? '2')
+  const body = outcome.body
+  const messageCount =
+    body.kind === 'windowed' ? 0 : body.body.trim() === '' ? 0 : body.body.trimStart().startsWith('[') ? countArray(body.body) : 1
+  return {
+    status: { code, codeName: grpcCodeName(code), message: value('grpc-message') ?? '' },
+    durationMs: outcome.durationMs,
+    sizeBytes: outcome.sizeBytes,
+    messageCount,
+    body,
+    headers: outcome.headers.filter((header) => header.name !== 'grpc-status' && header.name !== 'grpc-message'),
+    trailers: [],
+  }
+}
+
+function countArray(json: string): number {
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return Array.isArray(parsed) ? parsed.length : 1
+  } catch {
+    return 1
   }
 }
 
 export function historyDetailToExecutionState(detail: HistoryEntryDetailDto): ExecutionState {
+  if (detail.outcome.type === 'success' && detail.protocol === 'grpc') {
+    return {
+      status: 'success',
+      result: grpcResultFromHistory(detail.outcome),
+      ...(detail.outcome.responseStored === false && { responseNotStored: true }),
+    }
+  }
   if (detail.outcome.type === 'success') {
     const { statusCode, durationMs, sizeBytes, body, bodyEncoding, headers, graphqlErrors, responseStored } = detail.outcome
     // O histórico persistido sempre guarda o corpo inteiro em disco, mas

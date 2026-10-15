@@ -5,7 +5,9 @@ import { toAuthenticationInput } from '../authorization-state'
 import { buildSnippetRequest, type SnippetBody, type SnippetTab } from '../code-snippets/snippet-request'
 import { harRedactionContext, redactHeaders, type HarRedactionContext } from '../har-redaction'
 import { formatJsonBody, formatPartialJsonBody } from '../json-format'
-import { graphqlErrorsOf, type ExecutionFailure, type ExecutionState, type ExecutionSuccess } from '../request-workbench.types'
+import { graphqlErrorsOf, httpResultOf, type ExecutionFailure, type ExecutionState } from '../request-workbench.types'
+
+type HttpResult = NonNullable<ReturnType<typeof httpResultOf>>
 import { resolveTemplateForDisplay } from '../resolve-url'
 import { detectBodyMode } from '../response-body-mode'
 import { formatSize, statusTone, type StatusTone } from '../response-summary'
@@ -150,7 +152,7 @@ function requestBodyBlocks(
   }
 }
 
-function responseBodyBlock(result: ExecutionSuccess, options: ScreenshotOptions, text: ScreenshotContentText): ScreenshotBlock {
+function responseBodyBlock(result: HttpResult, options: ScreenshotOptions, text: ScreenshotContentText): ScreenshotBlock {
   const limit = lineLimitValue(options.lineLimit)
   if (result.bodyEncoding === 'base64') return codeBlock(null, 'text', text.binaryBody(formatSize(result.sizeBytes)), limit)
 
@@ -168,7 +170,7 @@ function responseBodyBlock(result: ExecutionSuccess, options: ScreenshotOptions,
   return codeBlock(null, mode, formatted, limit, note)
 }
 
-function screenshotStatus(result: ExecutionSuccess): ScreenshotStatus {
+function screenshotStatus(result: HttpResult): ScreenshotStatus {
   const graphqlErrors = graphqlErrorsOf(result)
   return {
     statusCode: result.statusCode,
@@ -194,7 +196,9 @@ function buildResponse(
   if (!fields.status && !fields.responseHeaders && !fields.responseBody) return null
   if (execution.status === 'error') return { kind: 'error', message: text.errorMessage(execution.error) }
   if (execution.status !== 'success') return null
-  const { result } = execution
+  // gRPC responses are not part of the image yet (spec 0129).
+  const result = httpResultOf(execution.result)
+  if (!result) return null
   return {
     kind: 'success',
     status: fields.status ? screenshotStatus(result) : null,
@@ -224,7 +228,7 @@ export function buildScreenshotContent(
 
   const ownAuthentication = toAuthenticationInput(tab.authorization)
   const authentication = ownAuthentication.type === 'inherit' ? source.inheritedAuthentication : ownAuthentication
-  const success = execution.status === 'success' ? execution.result : null
+  const success = execution.status === 'success' ? httpResultOf(execution.result) : null
   const redaction = hideSensitive
     ? harRedactionContext(source.environmentVariables, (success?.environmentChanges ?? []).filter((change): change is { name: string; value: string } => change.value !== null), authentication)
     : null

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HistoryEntryDetailDto } from '../../bindings/get-history-entry'
 import type { HistoryEntrySummaryDto } from '../../bindings/list-history'
+import { emptyGrpcCall } from './collection-tree'
 import { filterHistory, groupHistoryByDate, historyDetailToContent, historyDetailToExecutionState } from './history'
 
 function summary(id: string, executedAtMs: number): HistoryEntrySummaryDto {
@@ -88,6 +89,7 @@ describe('historyDetailToContent', () => {
       preRequestScript: '',
       postResponseScript: '',
       routeParams: [],
+      grpc: emptyGrpcCall,
     })
   })
 
@@ -124,6 +126,7 @@ describe('historyDetailToContent', () => {
       preRequestScript: '',
       postResponseScript: '',
       routeParams: [],
+      grpc: emptyGrpcCall,
     })
   })
 })

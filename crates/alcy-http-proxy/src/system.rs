@@ -184,6 +184,18 @@ impl SystemState {
         self
     }
 
+    /// Proxy for `url` under this configuration, with the same precedence as
+    /// [`Self::apply`]; outside Windows, the proxy environment variables.
+    pub(crate) fn proxy_for(&self, url: &Url) -> Option<Url> {
+        let SystemProxy::Windows(windows) = &self.settings else {
+            return env_proxy_for(url, |name| std::env::var(name).ok());
+        };
+        if let Script::Loaded(script) = &self.script {
+            return script.proxy_for(url);
+        }
+        windows.manual.proxy_for(url)
+    }
+
     pub(crate) fn apply(&self, builder: ClientBuilder) -> ClientBuilder {
         let SystemProxy::Windows(windows) = &self.settings else {
             return builder;
@@ -310,6 +322,44 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     rest.ends_with(last)
 }
 
+/// Proxy from `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` (either case) for `url`,
+/// unless `NO_PROXY` lists its host (`*`, exact, or a domain suffix).
+fn env_proxy_for(url: &Url, var: impl Fn(&str) -> Option<String>) -> Option<Url> {
+    let first = |names: &[&str]| {
+        names
+            .iter()
+            .find_map(|name| var(name).filter(|value| !value.trim().is_empty()))
+    };
+    let host = url
+        .host_str()?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    if let Some(no_proxy) = first(&["NO_PROXY", "no_proxy"]) {
+        let bypassed = no_proxy.split(',').map(str::trim).any(|entry| {
+            let entry = entry.trim_start_matches('.').to_ascii_lowercase();
+            let entry = entry.split(':').next().unwrap_or_default();
+            entry == "*"
+                || (!entry.is_empty() && (host == entry || host.ends_with(&format!(".{entry}"))))
+        });
+        if bypassed {
+            return None;
+        }
+    }
+    let value = if url.scheme() == "https" {
+        first(&["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"])
+    } else {
+        first(&["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"])
+    }?;
+    let value = value.trim();
+    if value.contains("://") {
+        Url::parse(value)
+    } else {
+        Url::parse(&format!("http://{value}"))
+    }
+    .ok()
+}
+
 #[cfg(windows)]
 fn env_proxy_configured() -> bool {
     [
@@ -327,6 +377,49 @@ fn env_proxy_configured() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_proxy_follows_the_scheme_and_no_proxy() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        let vars: &'static [(&str, &str)] = &[
+            ("HTTPS_PROXY", "proxy.corp:3128"),
+            ("http_proxy", "http://plain.corp:8080"),
+            ("NO_PROXY", "localhost, .internal.example ,10.0.0.1:443"),
+        ];
+        let proxy = |url: &str| {
+            env_proxy_for(&Url::parse(url).unwrap(), env(vars)).map(|proxy| proxy.to_string())
+        };
+        assert_eq!(
+            proxy("https://api.example.com:443").as_deref(),
+            Some("http://proxy.corp:3128/")
+        );
+        assert_eq!(
+            proxy("http://api.example.com:50051").as_deref(),
+            Some("http://plain.corp:8080/")
+        );
+        assert_eq!(proxy("https://localhost:8443"), None);
+        assert_eq!(proxy("https://svc.internal.example:443"), None);
+        assert_eq!(proxy("https://internal.example:443"), None);
+        assert_eq!(proxy("https://10.0.0.1:443"), None);
+        assert_eq!(
+            env_proxy_for(&Url::parse("https://a.b").unwrap(), env(&[])),
+            None
+        );
+        assert_eq!(
+            env_proxy_for(
+                &Url::parse("https://a.b").unwrap(),
+                env(&[("ALL_PROXY", "http://all:1"), ("no_proxy", "*")])
+            ),
+            None
+        );
+    }
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { GrpcCallDto } from './grpc-call'
 import type {
   AuthenticationInput,
   GraphqlErrorOutput,
@@ -40,6 +41,8 @@ export interface HistoryEntryDetailDto {
   authentication: AuthenticationInput
   executedAtMs: number
   outcome: HistoryOutcomeDetail
+  /** gRPC method and schema source; absent for the other protocols. */
+  grpc?: GrpcCallDto | null
 }
 
 export type GetHistoryEntryResult = { ok: true; value: HistoryEntryDetailDto } | { ok: false; error: HistoryError }

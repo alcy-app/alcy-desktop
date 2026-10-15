@@ -58,6 +58,8 @@ function tab(overrides: Partial<WorkbenchTab> = {}): WorkbenchTab {
     executionId: null,
     lastSendId: null,
     schema: { status: 'idle' },
+    grpc: savedContent.grpc,
+    grpcSchema: { status: 'idle' },
     schemaExecutionId: null,
     ...overrides,
   }
@@ -240,5 +242,28 @@ describe('abas fixadas na sessão', () => {
       { id: 'loose', requestId: 'request-2', name: 'Ping', draft: null },
     ])
     expect(parseTabSession(snapshot)?.tabs.map((entry) => entry.fixed)).toEqual([true, undefined])
+  })
+})
+
+describe('parseTabSession with gRPC drafts', () => {
+  it('restores a gRPC draft and drops one with a malformed call', () => {
+    const grpc = {
+      service: 'test.Greeter',
+      method: 'SayHello',
+      schemaSource: { type: 'protoFiles', files: ['protos/a.proto'], importPaths: [] },
+      deadlineMs: 2000,
+      message: '{"name": "ana"}',
+    }
+    const parsed = parseTabSession({
+      version: 1,
+      activeTabId: 'ok',
+      tabs: [
+        { id: 'ok', requestId: null, name: 'Hello', draft: { protocol: 'grpc', endpointUrl: 'localhost:50051', grpc } },
+        { id: 'bad', requestId: null, name: 'Bad', draft: { protocol: 'grpc', grpc: { ...grpc, schemaSource: { type: 'ftp' } } } },
+      ],
+    })
+
+    expect(parsed?.tabs).toHaveLength(1)
+    expect(parsed?.tabs[0]?.draft).toEqual({ ...emptyRequestContent('grpc'), endpointUrl: 'localhost:50051', grpc })
   })
 })

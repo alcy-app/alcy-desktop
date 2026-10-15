@@ -114,10 +114,24 @@ function isValidAuthentication(authentication: unknown): boolean {
   return fields !== undefined && hasStrings(authentication, fields)
 }
 
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+/** A saved gRPC call (spec 0129): every field of `GrpcCallState`, well formed. */
+function isValidGrpcCall(grpc: unknown): grpc is RequestContent['grpc'] {
+  if (!isRecord(grpc) || !hasStrings(grpc, ['service', 'method', 'message'])) return false
+  if (grpc.deadlineMs !== null && typeof grpc.deadlineMs !== 'number') return false
+  const source = grpc.schemaSource
+  if (!isRecord(source)) return false
+  if (source.type === 'reflection') return true
+  return source.type === 'protoFiles' && isStringList(source.files) && isStringList(source.importPaths)
+}
+
 /** Conteúdo gravado, completado com os padrões do protocolo para campos ausentes (formato
  * aditivo). `null` se algum campo presente tiver forma inválida. */
 function parseContent(raw: unknown): RequestContent | null {
-  if (!isRecord(raw) || (raw.protocol !== 'rest' && raw.protocol !== 'graphql')) return null
+  if (!isRecord(raw) || (raw.protocol !== 'rest' && raw.protocol !== 'graphql' && raw.protocol !== 'grpc')) return null
   const content = { ...emptyRequestContent(raw.protocol) }
   const merged = { ...content, ...raw } as Record<string, unknown>
 
@@ -127,6 +141,7 @@ function parseContent(raw: unknown): RequestContent | null {
   if (!isNameValueList(merged.headers, ['value']) || !isNameValueList(merged.routeParams, ['value'])) return null
   if (!(merged.headers as Record<string, unknown>[]).every((header) => typeof header.enabled === 'boolean')) return null
   if (!isValidBody(merged.body) || !isValidAuthentication(merged.authentication)) return null
+  if (!isValidGrpcCall(merged.grpc)) return null
 
   return {
     protocol: raw.protocol,
@@ -140,6 +155,7 @@ function parseContent(raw: unknown): RequestContent | null {
     authentication: merged.authentication as RequestContent['authentication'],
     preRequestScript: merged.preRequestScript as string,
     postResponseScript: merged.postResponseScript as string,
+    grpc: merged.grpc,
   }
 }
 

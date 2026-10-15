@@ -143,6 +143,8 @@ function queryEditorText(): string {
 
 const executeGraphqlRequest = vi.fn()
 const executeRestRequest = vi.fn()
+const executeGrpcRequest = vi.fn()
+const loadGrpcSchema = vi.fn()
 const cancelGraphqlRequest = vi.fn()
 const listEnvironments = vi.fn()
 const saveEnvironments = vi.fn()
@@ -257,6 +259,14 @@ vi.mock('../../bindings/execute-graphql-request', () => ({
 
 vi.mock('../../bindings/execute-rest-request', () => ({
   executeRestRequest: (...args: unknown[]) => executeRestRequest(...args),
+}))
+
+vi.mock('../../bindings/execute-grpc-request', () => ({
+  executeGrpcRequest: (...args: unknown[]) => executeGrpcRequest(...args),
+}))
+
+vi.mock('../../bindings/load-grpc-schema', () => ({
+  loadGrpcSchema: (...args: unknown[]) => loadGrpcSchema(...args),
 }))
 
 vi.mock('../../bindings/cancel-graphql-request', () => ({
@@ -523,6 +533,75 @@ describe('RequestWorkbench', () => {
     expect(screen.getByLabelText('Endpoint')).toHaveValue('')
     expect(screen.getByRole('tab', { name: 'Query', selected: true })).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Método HTTP' })).not.toBeInTheDocument()
+  })
+
+  describe('requisições gRPC', () => {
+    it('cria uma requisição gRPC, escolhe o método, gera a mensagem e mostra o status da resposta', async () => {
+      const template = '{\n  "name": ""\n}'
+      loadGrpcSchema.mockResolvedValue({
+        ok: true,
+        value: {
+          services: [
+            {
+              name: 'test.Greeter',
+              methods: [
+                {
+                  name: 'SayHello',
+                  kind: 'unary',
+                  inputType: 'test.HelloRequest',
+                  outputType: 'test.HelloReply',
+                  inputTemplate: template,
+                  inputSchema: { type: 'object', properties: { name: { type: 'string' } } },
+                },
+              ],
+            },
+          ],
+        },
+      })
+      executeGrpcRequest.mockResolvedValue({
+        ok: true,
+        value: {
+          status: { code: 0, codeName: 'OK', message: '' },
+          durationMs: 12,
+          sizeBytes: 9,
+          messageCount: 1,
+          body: { kind: 'inline', body: '{"message": "hi"}' },
+          headers: [{ name: 'x-server', value: 'test' }],
+          trailers: [],
+        },
+      })
+      render()
+      await screen.findByLabelText('Ambiente')
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Nova requisição gRPC' }))
+      expect(screen.getByRole('tab', { name: 'Message' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('tab', { name: 'Metadata' })).toBeInTheDocument()
+      expect(screen.queryByRole('tab', { name: 'Scripts' })).not.toBeInTheDocument()
+
+      fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: 'localhost:50051' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Método gRPC' }))
+      await waitFor(() => expect(loadGrpcSchema).toHaveBeenCalledTimes(1))
+      expect(loadGrpcSchema.mock.calls[0][0]).toMatchObject({ endpoint: 'localhost:50051', schemaSource: { type: 'reflection' } })
+      fireEvent.click(await screen.findByRole('option', { name: /SayHello/ }))
+      expect(screen.getByText('test.HelloRequest')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Gerar exemplo' }))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+
+      await waitFor(() => expect(executeGrpcRequest).toHaveBeenCalledTimes(1))
+      expect(executeGrpcRequest.mock.calls[0][0]).toMatchObject({
+        endpoint: 'localhost:50051',
+        service: 'test.Greeter',
+        method: 'SayHello',
+        message: template,
+        deadlineMs: null,
+      })
+      expect(executeRestRequest).not.toHaveBeenCalled()
+      expect(await screen.findByText('gRPC OK')).toBeInTheDocument()
+      expect(screen.getByText('1 mensagem(ns)')).toBeInTheDocument()
+      // The request's metadata tab and the response's (headers and trailers).
+      expect(screen.getAllByRole('tab', { name: 'Metadata' })).toHaveLength(2)
+    })
   })
 
   describe('cURL colado na barra de endpoint', () => {
@@ -2509,6 +2588,7 @@ describe('RequestWorkbench', () => {
         expect(within(types).getAllByRole('option').map((option) => option.textContent)).toEqual([
           'HTTPHTTP',
           'GQLGraphQL',
+          'gRPCgRPC',
           'Criar Collection',
         ])
         expect(within(types).getByRole('separator')).toBeInTheDocument()
@@ -2530,6 +2610,8 @@ describe('RequestWorkbench', () => {
 
         fireEvent.click(addRequestButton())
         const types = screen.getByRole('listbox', { name: 'Tipos de requisição' })
+        // HTTP → GraphQL → gRPC → Criar Collection.
+        fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'Enter' })
@@ -3156,7 +3238,7 @@ describe('RequestWorkbench', () => {
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
       }
 
-      it('abre o popover de tipos somente com GraphQL e HTTP, filtrando pela busca', async () => {
+      it('abre o popover de tipos com HTTP, GraphQL e gRPC, filtrando pela busca', async () => {
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -3167,7 +3249,7 @@ describe('RequestWorkbench', () => {
         fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
 
         const types = screen.getByRole('listbox', { name: 'Tipos de requisição' })
-        expect(within(types).getAllByRole('option').map((option) => option.textContent)).toEqual(['HTTPHTTP', 'GQLGraphQL'])
+        expect(within(types).getAllByRole('option').map((option) => option.textContent)).toEqual(['HTTPHTTP', 'GQLGraphQL', 'gRPCgRPC'])
         expect(screen.getByLabelText('Buscar tipo de requisição')).toHaveFocus()
 
         fireEvent.change(screen.getByLabelText('Buscar tipo de requisição'), { target: { value: 'graph' } })
@@ -3175,6 +3257,10 @@ describe('RequestWorkbench', () => {
         expect(within(types).getByRole('option', { name: 'GraphQL' })).toBeInTheDocument()
 
         fireEvent.change(screen.getByLabelText('Buscar tipo de requisição'), { target: { value: 'grpc' } })
+        expect(within(types).getAllByRole('option')).toHaveLength(1)
+        expect(within(types).getByRole('option', { name: 'gRPC' })).toBeInTheDocument()
+
+        fireEvent.change(screen.getByLabelText('Buscar tipo de requisição'), { target: { value: 'soap' } })
         expect(within(types).queryAllByRole('option')).toHaveLength(0)
         expect(screen.getByText('Nenhum tipo encontrado.')).toBeInTheDocument()
       })

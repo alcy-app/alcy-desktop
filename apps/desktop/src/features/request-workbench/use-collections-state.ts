@@ -59,6 +59,7 @@ import {
 } from './collection-tree'
 import type { RequestContent, RequestProtocol, RequestSummary, TreeNode } from './collection-tree'
 import type { AlphabeticalSortDirection } from './collection-tree'
+import { emptyGrpcCall } from './collection-tree'
 
 const SAVE_DEBOUNCE_MS = 500
 
@@ -71,8 +72,8 @@ export type ImportScriptStats = { count: number; incompatible: number }
 
 export type ImportOutcome = { ok: true; scripts?: ImportScriptStats } | { ok: false; message: string }
 
-/** O backend só reconhece `graphql`/`rest`; qualquer outro valor não deveria
- * ter passado pela validação de domínio antes de chegar aqui. */
+/** The backend only knows `graphql`/`rest`/`grpc` (it rejects any other
+ * protocol when loading), so the cast is safe. */
 export function requestFromDto(dto: SavedRequestDto): RequestSummary {
   const protocol = dto.protocol as RequestProtocol
 
@@ -82,7 +83,28 @@ export function requestFromDto(dto: SavedRequestDto): RequestSummary {
     protocol,
     ...(dto.docsRef ? { docsRef: dto.docsRef } : {}),
     content:
-      protocol === 'rest'
+      protocol === 'grpc'
+        ? {
+            protocol: 'grpc',
+            endpointUrl: dto.endpoint,
+            query: '',
+            variables: '',
+            method: dto.method,
+            body: emptyRestBody,
+            headers: dto.headers,
+            authentication: dto.authentication,
+            preRequestScript: dto.preRequestScript ?? '',
+            postResponseScript: dto.postResponseScript ?? '',
+            routeParams: [],
+            grpc: {
+              service: dto.grpc?.service ?? '',
+              method: dto.grpc?.method ?? '',
+              schemaSource: dto.grpc?.schemaSource ?? emptyGrpcCall.schemaSource,
+              deadlineMs: dto.grpc?.deadlineMs ?? null,
+              message: dto.body,
+            },
+          }
+        : protocol === 'rest'
         ? {
             protocol: 'rest',
             endpointUrl: dto.endpoint,
@@ -95,6 +117,7 @@ export function requestFromDto(dto: SavedRequestDto): RequestSummary {
             preRequestScript: dto.preRequestScript ?? '',
             postResponseScript: dto.postResponseScript ?? '',
             routeParams: dto.routeParams ?? [],
+            grpc: emptyGrpcCall,
           }
         : {
             protocol: 'graphql',
@@ -108,7 +131,20 @@ export function requestFromDto(dto: SavedRequestDto): RequestSummary {
             preRequestScript: dto.preRequestScript ?? '',
             postResponseScript: dto.postResponseScript ?? '',
             routeParams: [],
+            grpc: emptyGrpcCall,
           },
+  }
+}
+
+/** The document body a saved request carries on the wire, per protocol. */
+function bodyTextOf(content: RequestSummary['content']): string {
+  switch (content.protocol) {
+    case 'rest':
+      return restBodyText(content.body)
+    case 'grpc':
+      return content.grpc.message
+    case 'graphql':
+      return content.query
   }
 }
 
@@ -123,7 +159,7 @@ export function requestToDto(request: RequestSummary): SavedRequestDto {
     protocol: request.protocol,
     endpoint: request.content.endpointUrl,
     method: request.content.method,
-    body: request.content.protocol === 'rest' ? restBodyText(request.content.body) : request.content.query,
+    body: bodyTextOf(request.content),
     restBody: request.content.protocol === 'rest' ? request.content.body : null,
     variables: request.content.variables,
     headers: request.content.headers,
@@ -132,6 +168,16 @@ export function requestToDto(request: RequestSummary): SavedRequestDto {
     postResponseScript: request.content.postResponseScript,
     routeParams: request.content.routeParams,
     ...(request.docsRef ? { docsRef: request.docsRef } : {}),
+    ...(request.content.protocol === 'grpc'
+      ? {
+          grpc: {
+            service: request.content.grpc.service,
+            method: request.content.grpc.method,
+            schemaSource: request.content.grpc.schemaSource,
+            deadlineMs: request.content.grpc.deadlineMs,
+          },
+        }
+      : {}),
   }
 }
 

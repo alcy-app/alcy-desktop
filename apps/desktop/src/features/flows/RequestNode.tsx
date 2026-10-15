@@ -5,6 +5,7 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { AlertIcon, CopyIcon, SendIcon } from '../../shared/ui/icons'
 import { IconButton } from '../../shared/ui/IconButton'
 import { useToast } from '../../shared/ui/use-toast'
+import { requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import { describeVariable } from '../request-workbench/template-highlight'
@@ -41,8 +42,8 @@ export type RequestNodeType = Node<
 /** Método da requisição no cabeçalho do cartão, com a mesma cor por método
  * do editor de requisições. */
 export function RequestMethodBadge({ request }: { request: RequestSummary }) {
-  const method = request.protocol === 'graphql' ? 'graphql' : request.content.method
-  return <span className={`flow-node-method flow-node-method--${method}`}>{request.protocol === 'graphql' ? 'GraphQL' : method.toUpperCase()}</span>
+  const tone = request.protocol === 'rest' ? request.content.method : request.protocol
+  return <span className={`flow-node-method flow-node-method--${tone}`}>{requestMethodLabel(request)}</span>
 }
 
 /** Id curto do node e botão de copiar a referência `{{nodes.<id>...}}`. */

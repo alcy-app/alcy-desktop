@@ -15,10 +15,11 @@ const REQUEST_TYPES: Array<{
   protocol: RequestProtocol
   label: string
   badge: string
-  hintKey: 'collections.protocolGraphqlHint' | 'collections.protocolRestHint'
+  hintKey: 'collections.protocolGraphqlHint' | 'collections.protocolRestHint' | 'collections.protocolGrpcHint'
 }> = [
   { protocol: 'rest', label: 'HTTP', badge: 'HTTP', hintKey: 'collections.protocolRestHint' },
   { protocol: 'graphql', label: 'GraphQL', badge: 'GQL', hintKey: 'collections.protocolGraphqlHint' },
+  { protocol: 'grpc', label: 'gRPC', badge: 'gRPC', hintKey: 'collections.protocolGrpcHint' },
 ]
 
 interface NewRequestPopoverProps {
