@@ -38,7 +38,7 @@ Read `ARCHITECTURE.md` before changing boundaries between modules.
 - Do not change persisted contracts without considering migration.
 - Record architecturally relevant changes in `ARCHITECTURE.md`.
 - Do not weaken tests, lint or type checking to get a task done.
-- Write documentation and code comments in English. Portuguese text that still exists is translated when the file is touched; `CHANGELOG.md` entries are written in English too, and the interface keeps its pt-BR/en translations.
+- Write documentation and code comments in English. Portuguese text that still exists is translated when the file is touched; `CHANGELOG.md` is the exception, written in Brazilian Portuguese (pt-BR) with its Keep a Changelog headings (`Unreleased`, `Added`, `Changed`…) kept in English, and the interface keeps its pt-BR/en translations.
 - When creating or changing `CHANGELOG.md`, follow the `changelog` skill (`.agents/skills/changelog/SKILL.md`).
 
 ## Agent safety
