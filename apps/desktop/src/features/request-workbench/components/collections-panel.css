@@ -118,8 +118,11 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/* The row's 2px gap is tight for the folder → name pair; together with the
+   margin it matches the 8px between icon and name in the flows list. */
 .collections-folder-icon {
   flex-shrink: 0;
+  margin-right: 6px;
   color: var(--text-muted);
 }
 
