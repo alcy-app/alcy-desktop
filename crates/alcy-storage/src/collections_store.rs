@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use alcy_domain::{
     Authentication, BodyPayload, Collection, CollectionLabel, DocsRef, Endpoint,
-    EnvironmentVariable, Folder, FormDataField, FormDataFieldValue, HeaderEntry, HttpMethod,
-    LabelColor, ProtocolId, RawBodyLanguage, Request, RequestDocument, RouteParameter,
-    SavedRequest, UrlEncodedField,
+    EnvironmentVariable, Folder, FormDataField, FormDataFieldValue, GrpcCall, GrpcSchemaSource,
+    HeaderEntry, HttpMethod, LabelColor, ProtocolId, RawBodyLanguage, Request, RequestDocument,
+    RouteParameter, SavedRequest, UrlEncodedField,
 };
 use serde::{Deserialize, Serialize};
 
@@ -98,6 +98,68 @@ pub(crate) struct PersistedRequest {
     /// importada, para que requisições comuns não mudem no disco.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     docs_ref: Option<PersistedDocsRef>,
+    /// Additive (spec 0129): only gRPC requests write it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grpc: Option<PersistedGrpcCall>,
+}
+
+/// Also stored in history details (`history_store.rs`).
+#[derive(Serialize, Deserialize)]
+pub(crate) struct PersistedGrpcCall {
+    service: String,
+    method: String,
+    #[serde(default)]
+    schema_source: PersistedGrpcSchemaSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deadline_ms: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum PersistedGrpcSchemaSource {
+    #[default]
+    Reflection,
+    ProtoFiles {
+        files: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        import_paths: Vec<String>,
+    },
+}
+
+pub(crate) fn grpc_from_persisted(persisted: PersistedGrpcCall) -> GrpcCall {
+    GrpcCall {
+        service: persisted.service,
+        method: persisted.method,
+        schema_source: match persisted.schema_source {
+            PersistedGrpcSchemaSource::Reflection => GrpcSchemaSource::Reflection,
+            PersistedGrpcSchemaSource::ProtoFiles {
+                files,
+                import_paths,
+            } => GrpcSchemaSource::ProtoFiles {
+                files,
+                import_paths,
+            },
+        },
+        deadline_ms: persisted.deadline_ms,
+    }
+}
+
+pub(crate) fn persisted_from_grpc(call: &GrpcCall) -> PersistedGrpcCall {
+    PersistedGrpcCall {
+        service: call.service.clone(),
+        method: call.method.clone(),
+        schema_source: match &call.schema_source {
+            GrpcSchemaSource::Reflection => PersistedGrpcSchemaSource::Reflection,
+            GrpcSchemaSource::ProtoFiles {
+                files,
+                import_paths,
+            } => PersistedGrpcSchemaSource::ProtoFiles {
+                files: files.clone(),
+                import_paths: import_paths.clone(),
+            },
+        },
+        deadline_ms: call.deadline_ms,
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -287,20 +349,20 @@ fn write_collections_file(path: &Path, collections: &[Collection]) -> Result<(),
     Ok(())
 }
 
-fn protocol_to_str(protocol: ProtocolId) -> &'static str {
+pub(crate) fn protocol_to_str(protocol: ProtocolId) -> &'static str {
     match protocol {
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Rest => "rest",
+        ProtocolId::Grpc => "grpc",
     }
 }
 
-fn protocol_from_str(value: &str) -> Result<ProtocolId, StorageError> {
+pub(crate) fn protocol_from_str(value: &str) -> Result<ProtocolId, StorageError> {
     match value {
         "graphql" => Ok(ProtocolId::GraphQl),
         "rest" => Ok(ProtocolId::Rest),
-        other => Err(StorageError::Corrupted(format!(
-            "protocolo de requisição desconhecido: {other}"
-        ))),
+        "grpc" => Ok(ProtocolId::Grpc),
+        other => Err(StorageError::UnsupportedProtocol(other.to_string())),
     }
 }
 
@@ -509,7 +571,8 @@ pub(crate) fn request_from_persisted(
             })
             .collect(),
     )
-    .with_scripts(persisted.pre_request_script, persisted.post_response_script);
+    .with_scripts(persisted.pre_request_script, persisted.post_response_script)
+    .with_grpc(persisted.grpc.map(grpc_from_persisted).unwrap_or_default());
 
     let saved = SavedRequest::new(persisted.id, persisted.name, request)
         .map_err(|error| StorageError::Corrupted(error.to_string()))?;
@@ -565,6 +628,8 @@ pub(crate) fn persisted_from_request(request: &SavedRequest) -> PersistedRequest
             source_id: docs_ref.source_id.clone(),
             operation_id: docs_ref.operation_id.clone(),
         }),
+        grpc: (request.request.document.protocol == ProtocolId::Grpc)
+            .then(|| persisted_from_grpc(&request.request.grpc)),
     }
 }
 
@@ -898,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn load_fails_with_corrupted_for_an_unknown_protocol() {
+    fn load_fails_naming_a_protocol_this_build_does_not_support() {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
         fs::write(
@@ -910,8 +975,67 @@ mod tests {
 
         let error = store.load().unwrap_err();
 
-        assert!(matches!(error, StorageError::Corrupted(_)));
+        assert!(matches!(error, StorageError::UnsupportedProtocol(ref name) if name == "soap"));
+        assert!(error.to_string().contains("atualize o app"));
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_then_load_round_trips_grpc_requests_and_omits_grpc_for_other_protocols() {
+        let root = temp_root();
+        let store = CollectionsStore::new(root.clone());
+        let reflected = Request::new(
+            Endpoint::new("grpcs://{{host}}:443").unwrap(),
+            RequestDocument::new(ProtocolId::Grpc, r#"{"name": "{{user}}"}"#),
+            "",
+            vec![HeaderEntry::new("x-tenant", "acme", true).unwrap()],
+            Authentication::Inherit,
+        )
+        .with_grpc(GrpcCall {
+            service: "helloworld.Greeter".to_string(),
+            method: "SayHello".to_string(),
+            schema_source: GrpcSchemaSource::Reflection,
+            deadline_ms: Some(5_000),
+        });
+        let from_files = Request::new(
+            Endpoint::saved("localhost:50051"),
+            RequestDocument::new(ProtocolId::Grpc, "{}"),
+            "",
+            vec![],
+            Authentication::None,
+        )
+        .with_grpc(GrpcCall {
+            service: "routeguide.RouteGuide".to_string(),
+            method: "RouteChat".to_string(),
+            schema_source: GrpcSchemaSource::ProtoFiles {
+                files: vec!["protos/route_guide.proto".to_string()],
+                import_paths: vec!["protos".to_string(), "third_party".to_string()],
+            },
+            deadline_ms: None,
+        });
+        let collections = vec![
+            Collection::new(
+                "collection-1",
+                "Services",
+                vec![],
+                vec![
+                    SavedRequest::new("request-1", "Say hello", reflected).unwrap(),
+                    SavedRequest::new("request-2", "Route chat", from_files).unwrap(),
+                    SavedRequest::new("request-3", "Ping", sample_request("query { ping }"))
+                        .unwrap(),
+                ],
+            )
+            .unwrap(),
+        ];
+
+        store.save(&collections).unwrap();
+
+        assert_eq!(store.load().unwrap(), collections);
+        let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert_eq!(raw.matches("\"grpc\":").count(), 2, "{raw}");
+        assert!(raw.contains("\"protocol\": \"grpc\""), "{raw}");
+        assert!(raw.contains("\"type\": \"protoFiles\""), "{raw}");
         fs::remove_dir_all(&root).ok();
     }
 

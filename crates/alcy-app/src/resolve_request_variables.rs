@@ -94,10 +94,11 @@ pub fn resolve_request_variables(
     let endpoint_url = apply_route_parameters(&resolve(request.endpoint.url())?, &route_parameters);
     let endpoint = Endpoint::new(endpoint_url).map_err(ResolveRequestError::Endpoint)?;
 
-    let body = if request.document.protocol == ProtocolId::Rest {
-        resolve(&request.document.body)?
-    } else {
-        request.document.body.clone()
+    // A GraphQL query is sent as typed (its own `$variables` carry values);
+    // REST bodies and gRPC messages (JSON) take `{{variables}}`.
+    let body = match request.document.protocol {
+        ProtocolId::Rest | ProtocolId::Grpc => resolve(&request.document.body)?,
+        ProtocolId::GraphQl => request.document.body.clone(),
     };
     let document = RequestDocument::new(request.document.protocol, body);
 
@@ -198,7 +199,8 @@ pub fn resolve_request_variables(
         request.pre_request_script.clone(),
         request.post_response_script.clone(),
     )
-    .with_redirect_policy(request.redirect_policy))
+    .with_redirect_policy(request.redirect_policy)
+    .with_grpc(request.grpc.clone()))
 }
 
 #[cfg(test)]
@@ -228,6 +230,40 @@ mod tests {
             ),
             "https://api.example.com:8443/users/42?next=/:id#/:id"
         );
+    }
+
+    #[test]
+    fn resolves_variables_in_a_grpc_message_and_keeps_the_call() {
+        let call = alcy_domain::GrpcCall {
+            service: "helloworld.Greeter".to_string(),
+            method: "SayHello".to_string(),
+            deadline_ms: Some(2_000),
+            ..Default::default()
+        };
+        let request = Request::new(
+            Endpoint::new("{{host}}:50051").unwrap(),
+            RequestDocument::new(ProtocolId::Grpc, r#"{"name": "{{user}}"}"#),
+            "",
+            vec![],
+            Authentication::None,
+        )
+        .with_grpc(call.clone());
+        let variables = vec![
+            EnvironmentVariable::new("host", "localhost", false).unwrap(),
+            EnvironmentVariable::new("user", "ana", false).unwrap(),
+        ];
+
+        let resolved = resolve_request_variables(
+            &request,
+            &variables,
+            &NodeRunHistory::default(),
+            &no_ancestors(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.endpoint.url(), "localhost:50051");
+        assert_eq!(resolved.document.body, r#"{"name": "ana"}"#);
+        assert_eq!(resolved.grpc, call);
     }
 
     #[test]

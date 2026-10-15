@@ -21,14 +21,51 @@ pub(crate) struct ProtocolDispatchingExecutor<'a> {
 
 impl RequestExecutor for ProtocolDispatchingExecutor<'_> {
     async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {
-        if request.document.protocol == ProtocolId::Rest {
-            let mut request = request.clone();
-            request.body_payload = request
-                .body_payload
-                .with_files_resolved_against(self.workspace_root);
-            self.rest.execute(&request).await
-        } else {
-            self.graphql.execute(request).await
+        match request.document.protocol {
+            ProtocolId::Rest => {
+                let mut request = request.clone();
+                request.body_payload = request
+                    .body_payload
+                    .with_files_resolved_against(self.workspace_root);
+                self.rest.execute(&request).await
+            }
+            ProtocolId::GraphQl => self.graphql.execute(request).await,
+            // The gRPC executor arrives in a later slice of spec 0129.
+            ProtocolId::Grpc => Err(ExecutionError::InvalidRequest(
+                "requisições gRPC ainda não podem ser enviadas nesta versão".to_string(),
+            )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alcy_domain::{Authentication, Endpoint, RequestDocument};
+
+    #[tokio::test]
+    async fn a_grpc_request_is_never_sent_by_an_http_executor() {
+        let graphql = ReqwestGraphqlExecutor::new();
+        let rest = ReqwestRestExecutor::new();
+        let dispatcher = ProtocolDispatchingExecutor {
+            graphql: &graphql,
+            rest: &rest,
+            workspace_root: Path::new("."),
+        };
+        let request = Request::new(
+            // Unreachable on purpose: an HTTP executor would fail with a
+            // network error, not with `InvalidRequest`.
+            Endpoint::new("http://127.0.0.1:9").unwrap(),
+            RequestDocument::new(ProtocolId::Grpc, "{}"),
+            "",
+            vec![],
+            Authentication::None,
+        );
+
+        let error = dispatcher.execute(&request).await.unwrap_err();
+
+        assert!(
+            matches!(error, ExecutionError::InvalidRequest(ref message) if message.contains("gRPC"))
+        );
     }
 }

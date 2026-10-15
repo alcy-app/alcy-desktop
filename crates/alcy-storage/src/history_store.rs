@@ -15,6 +15,9 @@ use alcy_domain::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::collections_store::{
+    PersistedGrpcCall, grpc_from_persisted, persisted_from_grpc, protocol_from_str, protocol_to_str,
+};
 use crate::storage_error::StorageError;
 
 const CURRENT_MANIFEST_VERSION: u32 = 2;
@@ -146,6 +149,9 @@ struct PersistedDetail<'a> {
     url_encoded: Vec<PersistedUrlEncodedField>,
     #[serde(default)]
     binary_file_path: String,
+    /// Additive (spec 0129): only gRPC sends write it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grpc: Option<PersistedGrpcCall>,
 }
 
 fn default_persisted_method() -> String {
@@ -593,23 +599,6 @@ fn persisted_response_body(body: &str, encoding: BodyEncoding) -> (Cow<'_, str>,
     }
 }
 
-fn protocol_to_str(protocol: ProtocolId) -> &'static str {
-    match protocol {
-        ProtocolId::GraphQl => "graphql",
-        ProtocolId::Rest => "rest",
-    }
-}
-
-fn protocol_from_str(value: &str) -> Result<ProtocolId, StorageError> {
-    match value {
-        "graphql" => Ok(ProtocolId::GraphQl),
-        "rest" => Ok(ProtocolId::Rest),
-        other => Err(StorageError::Corrupted(format!(
-            "protocolo de requisição desconhecido: {other}"
-        ))),
-    }
-}
-
 fn method_to_str(method: HttpMethod) -> &'static str {
     match method {
         HttpMethod::Get => "get",
@@ -980,6 +969,8 @@ fn detail_from_entry(entry: &HistoryEntry) -> PersistedDetail<'_> {
         form_data: body_fields.form_data,
         url_encoded: body_fields.url_encoded,
         binary_file_path: body_fields.binary_file_path,
+        grpc: (entry.request.document.protocol == ProtocolId::Grpc)
+            .then(|| persisted_from_grpc(&entry.request.grpc)),
     }
 }
 
@@ -1004,7 +995,8 @@ fn entry_from_parts(
         authentication,
     )
     .with_method(method)
-    .with_body_payload(body_payload);
+    .with_body_payload(body_payload)
+    .with_grpc(detail.grpc.map(grpc_from_persisted).unwrap_or_default());
 
     let mut response_body_truncated = false;
     let mut response_omitted = false;
@@ -1138,6 +1130,7 @@ fn entry_from_v1(persisted: PersistedHistoryEntryV1) -> Result<HistoryEntry, Sto
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alcy_domain::{GrpcCall, GrpcSchemaSource};
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1709,6 +1702,47 @@ mod tests {
 
         assert_eq!(loaded, Some(entry));
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn record_then_load_entry_round_trips_a_grpc_request() {
+        let root = temp_root();
+        let store = HistoryStore::new(root.clone(), week());
+        let request = Request::new(
+            Endpoint::new("localhost:50051").unwrap(),
+            RequestDocument::new(ProtocolId::Grpc, r#"{"name": "ana"}"#),
+            "",
+            vec![],
+            Authentication::None,
+        )
+        .with_grpc(GrpcCall {
+            service: "helloworld.Greeter".to_string(),
+            method: "SayHello".to_string(),
+            schema_source: GrpcSchemaSource::ProtoFiles {
+                files: vec!["hello.proto".to_string()],
+                import_paths: vec![],
+            },
+            deadline_ms: Some(1_000),
+        });
+        let entry = HistoryEntry::new(
+            "entry-1",
+            request,
+            HistoryOutcome::Success(Response::new(
+                200,
+                5,
+                r#"{"message": "hi ana"}"#,
+                vec![],
+                ResponseMetadata::default(),
+            )),
+            millis_now(),
+        );
+
+        store.record(entry.clone()).unwrap();
+
+        assert_eq!(store.load_entry("entry-1").unwrap(), Some(entry));
+        let summaries = store.load_summaries().unwrap();
+        assert_eq!(summaries[0].protocol, ProtocolId::Grpc);
         fs::remove_dir_all(&root).ok();
     }
 

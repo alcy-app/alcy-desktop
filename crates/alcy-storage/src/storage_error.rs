@@ -15,6 +15,11 @@ pub enum StorageError {
     Corrupted(String),
     #[error("versão de arquivo não suportada: {0}")]
     UnsupportedVersion(u32),
+    /// A request uses a protocol this build does not know (saved by a newer
+    /// one). Loading fails as a whole, so the file is never saved back without
+    /// the requests it could not read (ADR 0062).
+    #[error("o arquivo usa o protocolo '{0}', que esta versão do Alcy não suporta; atualize o app")]
+    UnsupportedProtocol(String),
     #[error("falha ao acessar a chave de criptografia local: {0}")]
     Secrets(String),
 }

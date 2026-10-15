@@ -1245,6 +1245,7 @@ mod tests {
                             pre_request_script: String::new(),
                             post_response_script: String::new(),
                             docs_ref: None,
+                            grpc: None,
                         }),
                     },
                 ),

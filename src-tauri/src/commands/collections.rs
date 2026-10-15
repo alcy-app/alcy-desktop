@@ -7,8 +7,8 @@ use std::{collections::HashMap, time::SystemTime};
 use alcy_domain::{
     ApiDocsSourceKind, Authentication, BodyPayload, Collection, CollectionError, CollectionLabel,
     DocsRef, Endpoint, EnvironmentVariable, EnvironmentVariableError, Folder, FolderError,
-    HeaderEntry, HeaderError, LabelColor, ProtocolId, Request, RequestDocument, RouteParameter,
-    SavedRequest, SavedRequestError,
+    GrpcCall, GrpcSchemaSource, HeaderEntry, HeaderError, LabelColor, ProtocolId, Request,
+    RequestDocument, RouteParameter, SavedRequest, SavedRequestError,
 };
 use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, StorageError};
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,72 @@ pub struct SavedRequestDto {
     /// antigos e em requisições sem documentação.
     #[serde(default)]
     pub docs_ref: Option<DocsRefDto>,
+    /// Method and schema source of a gRPC request (spec 0129); absent for the
+    /// other protocols and in older DTOs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<GrpcCallDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcCallDto {
+    pub service: String,
+    pub method: String,
+    pub schema_source: GrpcSchemaSourceDto,
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum GrpcSchemaSourceDto {
+    Reflection,
+    #[serde(rename_all = "camelCase")]
+    ProtoFiles {
+        files: Vec<String>,
+        #[serde(default)]
+        import_paths: Vec<String>,
+    },
+}
+
+impl From<&GrpcCall> for GrpcCallDto {
+    fn from(call: &GrpcCall) -> Self {
+        Self {
+            service: call.service.clone(),
+            method: call.method.clone(),
+            schema_source: match &call.schema_source {
+                GrpcSchemaSource::Reflection => GrpcSchemaSourceDto::Reflection,
+                GrpcSchemaSource::ProtoFiles {
+                    files,
+                    import_paths,
+                } => GrpcSchemaSourceDto::ProtoFiles {
+                    files: files.clone(),
+                    import_paths: import_paths.clone(),
+                },
+            },
+            deadline_ms: call.deadline_ms,
+        }
+    }
+}
+
+impl From<GrpcCallDto> for GrpcCall {
+    fn from(dto: GrpcCallDto) -> Self {
+        Self {
+            service: dto.service,
+            method: dto.method,
+            schema_source: match dto.schema_source {
+                GrpcSchemaSourceDto::Reflection => GrpcSchemaSource::Reflection,
+                GrpcSchemaSourceDto::ProtoFiles {
+                    files,
+                    import_paths,
+                } => GrpcSchemaSource::ProtoFiles {
+                    files,
+                    import_paths,
+                },
+            },
+            deadline_ms: dto.deadline_ms,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -226,6 +292,7 @@ fn protocol_to_str(protocol: ProtocolId) -> &'static str {
     match protocol {
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Rest => "rest",
+        ProtocolId::Grpc => "grpc",
     }
 }
 
@@ -233,6 +300,7 @@ fn protocol_from_str(value: &str) -> Result<ProtocolId, CollectionsCommandError>
     match value {
         "graphql" => Ok(ProtocolId::GraphQl),
         "rest" => Ok(ProtocolId::Rest),
+        "grpc" => Ok(ProtocolId::Grpc),
         other => Err(invalid(format!(
             "protocolo de requisição desconhecido: {other}"
         ))),
@@ -345,6 +413,8 @@ pub(crate) fn request_to_dto(request: &SavedRequest) -> SavedRequestDto {
             source_id: docs_ref.source_id.clone(),
             operation_id: docs_ref.operation_id.clone(),
         }),
+        grpc: (request.request.document.protocol == ProtocolId::Grpc)
+            .then(|| GrpcCallDto::from(&request.request.grpc)),
     }
 }
 
@@ -382,7 +452,8 @@ pub(crate) fn request_from_dto(
                 })
                 .collect(),
         )
-        .with_scripts(dto.pre_request_script, dto.post_response_script);
+        .with_scripts(dto.pre_request_script, dto.post_response_script)
+        .with_grpc(dto.grpc.map(GrpcCall::from).unwrap_or_default());
 
     let saved = SavedRequest::new(dto.id, dto.name, request)
         .map_err(|error: SavedRequestError| invalid(error))?;
@@ -1450,6 +1521,7 @@ mod tests {
             pre_request_script: String::new(),
             post_response_script: String::new(),
             docs_ref: None,
+            grpc: None,
         }
     }
 
@@ -1527,6 +1599,43 @@ mod tests {
         let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
 
         assert_eq!(collections, dtos);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_then_list_round_trips_a_grpc_request_with_its_call() {
+        let root = temp_root();
+        let mut request = sample_saved_request("request-1", "Say hello");
+        request.protocol = "grpc".to_string();
+        request.endpoint = "localhost:50051".to_string();
+        request.body = "{\"name\":\"ana\"}".to_string();
+        request.grpc = Some(GrpcCallDto {
+            service: "helloworld.Greeter".to_string(),
+            method: "SayHello".to_string(),
+            schema_source: GrpcSchemaSourceDto::ProtoFiles {
+                files: vec!["protos/hello.proto".to_string()],
+                import_paths: vec!["protos".to_string()],
+            },
+            deadline_ms: Some(3_000),
+        });
+        let dtos = vec![CollectionDto {
+            variables: vec![],
+            labels: vec![],
+            authentication: SavedRequestAuthenticationDto::Inherit,
+            id: "collection-1".to_string(),
+            name: "Services".to_string(),
+            folders: vec![],
+            requests: vec![request],
+        }];
+
+        save_collections_inner(root.clone(), dtos.clone()).unwrap();
+        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+
+        assert_eq!(collections, dtos);
+        let json = serde_json::to_value(&collections[0].requests[0]).unwrap();
+        assert_eq!(json["grpc"]["schemaSource"]["type"], "protoFiles");
+        assert_eq!(json["grpc"]["schemaSource"]["importPaths"][0], "protos");
 
         fs::remove_dir_all(&root).ok();
     }

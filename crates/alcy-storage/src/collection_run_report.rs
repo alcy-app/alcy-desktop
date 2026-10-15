@@ -96,8 +96,10 @@ impl Row<'_> {
             .step
             .and_then(|step| step.protocol.as_deref())
             .or_else(|| self.plan.map(|plan| plan.protocol.as_str()));
-        if protocol == Some("graphql") {
-            return "GQL".to_string();
+        match protocol {
+            Some("graphql") => return "GQL".to_string(),
+            Some("grpc") => return "gRPC".to_string(),
+            _ => {}
         }
         self.step
             .map(|step| step.method.as_str())

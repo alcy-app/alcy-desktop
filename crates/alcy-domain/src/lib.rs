@@ -12,6 +12,7 @@ mod execution_error;
 mod flow;
 mod general_settings;
 mod gitlab;
+mod grpc_call;
 mod header;
 mod history_entry;
 mod http_method;
@@ -63,6 +64,7 @@ pub use gitlab::{
     API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, GitlabAccount, GitlabAccountError, MANIFEST_FILE,
     VALUE_MONITORS_FILE, VERSIONED_FILES, WorkspaceLink, classify, normalize_instance_url,
 };
+pub use grpc_call::{GrpcCall, GrpcSchemaSource};
 pub use header::{HeaderEntry, HeaderError};
 pub use history_entry::{HistoryEntry, HistoryFailureKind, HistoryOutcome};
 pub use http_method::HttpMethod;

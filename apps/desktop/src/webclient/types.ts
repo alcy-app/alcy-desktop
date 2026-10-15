@@ -35,7 +35,7 @@ export type BodyPayload =
   | { type: 'formData'; fields: Field[] }
   | { type: 'binary' }
 
-export type UnsupportedFeature = 'binaryBody' | 'formDataFile' | 'digestAuthentication'
+export type UnsupportedFeature = 'binaryBody' | 'formDataFile' | 'digestAuthentication' | 'grpc'
 
 export interface WebclientRequest {
   id: string

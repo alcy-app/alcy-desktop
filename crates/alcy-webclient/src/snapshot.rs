@@ -160,6 +160,9 @@ pub enum UnsupportedFeature {
     BinaryBody,
     FormDataFile,
     DigestAuthentication,
+    /// gRPC needs HTTP/2 trailers, which browser `fetch` cannot read
+    /// (spec 0129).
+    Grpc,
 }
 
 /// Ambiente escolhido no export, com os valores que o app tem em memória.
@@ -345,13 +348,22 @@ fn language_name(language: RawBodyLanguage) -> &'static str {
 /// Scripts ficam de fora: o webclient não executa código salvo na coleção.
 fn to_request(saved: &SavedRequest) -> SnapshotRequest {
     let request = &saved.request;
+    let mut unsupported = Vec::new();
+    // A gRPC request is exported so the tree stays whole, but flagged: the
+    // browser cannot send it.
     let protocol = match request.document.protocol {
         ProtocolId::GraphQl => SnapshotProtocol::Graphql,
         ProtocolId::Rest => SnapshotProtocol::Rest,
+        ProtocolId::Grpc => {
+            unsupported.push(UnsupportedFeature::Grpc);
+            SnapshotProtocol::Rest
+        }
     };
-    let mut unsupported = Vec::new();
     let body_payload = match protocol {
         SnapshotProtocol::Graphql => SnapshotBody::None,
+        SnapshotProtocol::Rest if request.document.protocol == ProtocolId::Grpc => {
+            SnapshotBody::None
+        }
         SnapshotProtocol::Rest => match &request.body_payload {
             BodyPayload::None => SnapshotBody::None,
             BodyPayload::Raw { language } => SnapshotBody::Raw {
@@ -599,5 +611,27 @@ mod tests {
                 UnsupportedFeature::DigestAuthentication
             ]
         );
+    }
+
+    #[test]
+    fn exports_a_grpc_request_flagged_as_unsupported() {
+        let grpc = SavedRequest::new(
+            "g1",
+            "Say hello",
+            Request::new(
+                Endpoint::new("localhost:50051").unwrap(),
+                RequestDocument::new(ProtocolId::Grpc, r#"{"name": "ana"}"#),
+                "",
+                vec![],
+                Authentication::None,
+            ),
+        )
+        .unwrap();
+        let collection = Collection::new("c", "C", vec![], vec![grpc]).unwrap();
+
+        let root = build_root(&collection, None).unwrap();
+
+        assert_eq!(root.requests[0].unsupported, vec![UnsupportedFeature::Grpc]);
+        assert_eq!(root.requests[0].body_payload, SnapshotBody::None);
     }
 }

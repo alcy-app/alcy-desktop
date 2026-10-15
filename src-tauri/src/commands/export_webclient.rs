@@ -275,6 +275,7 @@ mod tests {
             post_response_script: String::new(),
             route_params: vec![],
             docs_ref: None,
+            grpc: None,
         };
         CollectionDto {
             id: "c1".into(),

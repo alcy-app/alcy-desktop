@@ -1,4 +1,6 @@
-use crate::{Authentication, BodyPayload, Endpoint, HeaderEntry, HttpMethod, RequestDocument};
+use crate::{
+    Authentication, BodyPayload, Endpoint, GrpcCall, HeaderEntry, HttpMethod, RequestDocument,
+};
 
 /// Política de redirecionamento aplicada por uma execução HTTP. É efêmera:
 /// coleções e requisições avulsas continuam com o comportamento padrão de
@@ -40,6 +42,9 @@ pub struct Request {
     /// Parâmetros substituídos nos placeholders `:nome` do caminho somente
     /// no momento da execução.
     pub route_parameters: Vec<RouteParameter>,
+    /// Method and schema source of a gRPC request (spec 0129); ignored by
+    /// the other executors, like `body_payload` and `variables`.
+    pub grpc: GrpcCall,
     /// Ignora o limite de tamanho de resposta configurado no executor. Só o
     /// "reenviar sem limite" da interface liga isto, para um envio pontual;
     /// não é persistido.
@@ -68,6 +73,7 @@ impl Request {
             post_response_script: String::new(),
             body_payload: BodyPayload::default(),
             route_parameters: Vec::new(),
+            grpc: GrpcCall::default(),
             unlimited_response_size: false,
             redirect_policy: RedirectPolicy::Follow,
         }
@@ -105,6 +111,11 @@ impl Request {
 
     pub fn with_route_parameters(mut self, parameters: Vec<RouteParameter>) -> Self {
         self.route_parameters = parameters;
+        self
+    }
+
+    pub fn with_grpc(mut self, grpc: GrpcCall) -> Self {
+        self.grpc = grpc;
         self
     }
 }

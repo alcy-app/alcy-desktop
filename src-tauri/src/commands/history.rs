@@ -11,6 +11,7 @@ use alcy_storage::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::commands::collections::GrpcCallDto;
 use crate::commands::execute_collection_run::{
     RunStepDto, node_output_from_recorded, step_dto_from_recorded,
 };
@@ -177,6 +178,9 @@ pub struct HistoryEntryDetailDto {
     pub authentication: AuthenticationInput,
     pub executed_at_ms: u64,
     pub outcome: HistoryOutcomeDetailDto,
+    /// gRPC method and schema source (`None` for the other protocols).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<GrpcCallDto>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -202,6 +206,7 @@ pub(crate) fn protocol_to_str(protocol: ProtocolId) -> &'static str {
     match protocol {
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Rest => "rest",
+        ProtocolId::Grpc => "grpc",
     }
 }
 
@@ -315,6 +320,8 @@ fn detail_from_entry(entry: HistoryEntry, body_cache: &ResponseBodyCache) -> His
         rest_body: (entry.request.document.protocol == ProtocolId::Rest).then(|| {
             body_input_from_domain(&entry.request.document.body, &entry.request.body_payload)
         }),
+        grpc: (entry.request.document.protocol == ProtocolId::Grpc)
+            .then(|| GrpcCallDto::from(&entry.request.grpc)),
         body: entry.request.document.body,
         variables: entry.request.variables,
         headers: entry
