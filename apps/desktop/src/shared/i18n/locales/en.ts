@@ -715,6 +715,11 @@ const en: Record<TranslationKey, string> = {
   'environments.reorderEnvironmentAria': 'Reorder environment {name}',
   'environments.reorderVariableAria': 'Reorder variable {name}',
   'environments.movedAnnouncement': '{name} moved to position {position} of {total}',
+  'environments.searchPlaceholder': 'Search variables...',
+  'environments.searchAria': 'Search environment variables',
+  'environments.searchClearAria': 'Clear search',
+  'environments.searchEmptyState': 'No variables found.',
+  'environments.reorderDisabledWhileSearching': 'Clear the search to reorder',
 
   // flows sidebar panel (flow list) + flow canvas
   'flows.subTabLabel': 'Flows',

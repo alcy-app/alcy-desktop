@@ -1,14 +1,25 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, PointerEvent } from 'react'
 import { parseBulk, serializeBulk, type BulkRow } from '../../shared/bulk-edit'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { BulkEditor } from '../../shared/ui/BulkEditor'
 import { BulkEditToggle } from '../../shared/ui/BulkEditToggle'
 import { Checkbox } from '../../shared/ui/Checkbox'
+import { EmptyState } from '../../shared/ui/EmptyState'
 import { IconButton } from '../../shared/ui/IconButton'
 import { InlineEditInput } from '../../shared/ui/InlineEditInput'
+import { Input } from '../../shared/ui/Input'
 import { Button } from '../../shared/ui/Button'
-import { AlertIcon, EyeIcon, EyeOffIcon, GripIcon, PlusIcon, TrashIcon } from '../../shared/ui/icons'
+import {
+  AlertIcon,
+  CloseIcon,
+  EyeIcon,
+  EyeOffIcon,
+  GripIcon,
+  PlusIcon,
+  SearchIcon,
+  TrashIcon,
+} from '../../shared/ui/icons'
 import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { DragPreview } from '../../shared/DragPreview'
@@ -16,6 +27,7 @@ import { usePointerDrag } from '../../shared/use-pointer-drag'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
 import { SENSITIVE_MASK, type EnvironmentState, type VariableRow } from './environments.types'
 import { RemoveEnvironmentModal } from './RemoveEnvironmentModal'
+import { filterVariables, normalizeVariableQuery } from './filter-variables'
 import { isReorderKey, keyboardMove } from './reorder'
 import './environments.css'
 
@@ -47,12 +59,14 @@ interface ReorderHandleProps {
   label: string
   hint: string
   disabled: boolean
+  /** Id of an element explaining why the handle is disabled, for assistive technology. */
+  describedBy?: string
   onPointerDown: (event: PointerEvent) => void
   onKeyDown: (event: KeyboardEvent) => void
 }
 
 /** Alça de reordenação: arrastar com o mouse ou, com foco, usar ↑/↓/Home/End. */
-function ReorderHandle({ kind, id, label, hint, disabled, onPointerDown, onKeyDown }: ReorderHandleProps) {
+function ReorderHandle({ kind, id, label, hint, disabled, describedBy, onPointerDown, onKeyDown }: ReorderHandleProps) {
   return (
     <Tooltip label={hint} className="env-grip-host">
       <IconButton
@@ -61,13 +75,17 @@ function ReorderHandle({ kind, id, label, hint, disabled, onPointerDown, onKeyDo
         label={label}
         tooltip={false}
         disabled={disabled}
+        aria-describedby={describedBy}
         aria-keyshortcuts={REORDER_KEYSHORTCUTS}
         data-env-grip={`${kind}:${id}`}
         onPointerDown={(event) => {
           if (event.button !== 0 || disabled) return
           onPointerDown(event)
         }}
-        onKeyDown={onKeyDown}
+        onKeyDown={(event) => {
+          if (disabled) return
+          onKeyDown(event)
+        }}
       />
     </Tooltip>
   )
@@ -101,8 +119,23 @@ export function EnvironmentsPanel({
   // Alça que deve recuperar o foco depois de mover pelo teclado: ao reordenar, o React pode
   // reinserir o nó da linha no DOM, e o navegador tira o foco de um nó reinserido.
   const pendingFocusRef = useRef<string | null>(null)
+  // Variable search, scoped to the environment it was typed in. `keepIds` are rows edited while filtering: they
+  // stay visible until the query changes, so a row does not vanish mid-typing once it stops matching.
+  const [search, setSearch] = useState<{ environmentId: string; query: string; keepIds: ReadonlySet<string> } | null>(
+    null,
+  )
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const reorderDisabledHintId = useId()
+
+  // Switching to another environment (here or from elsewhere in the app) starts with an empty search.
+  if (search !== null && search.environmentId !== activeEnvironmentId) setSearch(null)
 
   const activeEnvironment = environments.find((environment) => environment.id === activeEnvironmentId) ?? null
+  const searchQuery = search?.query ?? ''
+  const isFiltering = normalizeVariableQuery(searchQuery) !== ''
+  const visibleVariables = activeEnvironment
+    ? filterVariables(activeEnvironment.variables, searchQuery, search?.keepIds)
+    : []
 
   const { draggedId, draggedKind, draggedLabel, dragOverId, dragOverKind, dragOverEdge, position, startDrag } =
     usePointerDrag<ReorderKind>({
@@ -171,6 +204,20 @@ export function EnvironmentsPanel({
       return next
     })
   }
+
+  /** Edits always target the variable id; while filtering, the edited row is pinned visible (see `keepIds`). */
+  const updateVariable = (environmentId: string, variableId: string, patch: Partial<Omit<VariableRow, 'id'>>) => {
+    if (isFiltering) {
+      setSearch((current) =>
+        current === null || current.keepIds.has(variableId)
+          ? current
+          : { ...current, keepIds: new Set(current.keepIds).add(variableId) },
+      )
+    }
+    onUpdateVariable(environmentId, variableId, patch)
+  }
+
+  const clearSearch = (environmentId: string) => setSearch({ environmentId, query: '', keepIds: new Set() })
 
   const environmentIds = environments.map((environment) => environment.id)
   const variableIds = activeEnvironment?.variables.map((variable) => variable.id) ?? []
@@ -298,7 +345,9 @@ export function EnvironmentsPanel({
 
           <BulkEditToggle
             bulk={bulkText !== null}
-            onChange={(enter) =>
+            onChange={(enter) => {
+              // Bulk editing always covers every variable: the search does not apply there, so it is dropped.
+              setSearch(null)
               setBulk(
                 enter
                   ? {
@@ -312,8 +361,43 @@ export function EnvironmentsPanel({
                     }
                   : null,
               )
-            }
+            }}
           />
+
+          {bulkText === null && (activeEnvironment.variables.length > 0 || search !== null) && (
+            <div className="env-search">
+              <SearchIcon size={12} className="env-search-icon" />
+              <Input
+                ref={searchInputRef}
+                type="text"
+                className="env-search-input"
+                value={searchQuery}
+                placeholder={t('environments.searchPlaceholder')}
+                aria-label={t('environments.searchAria')}
+                onChange={(event) =>
+                  setSearch({ environmentId: activeEnvironment.id, query: event.target.value, keepIds: new Set() })
+                }
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || searchQuery === '') return
+                  // Consumed here so Esc only clears the field and does not also close an enclosing surface.
+                  event.preventDefault()
+                  event.stopPropagation()
+                  clearSearch(activeEnvironment.id)
+                }}
+              />
+              {searchQuery !== '' && (
+                <IconButton
+                  className="env-search-clear"
+                  icon={<CloseIcon size={11} />}
+                  label={t('environments.searchClearAria')}
+                  onClick={() => {
+                    clearSearch(activeEnvironment.id)
+                    searchInputRef.current?.focus()
+                  }}
+                />
+              )}
+            </div>
+          )}
 
           {bulkText !== null ? (
             <BulkEditor
@@ -327,116 +411,136 @@ export function EnvironmentsPanel({
             />
           ) : (
             <>
-              <table className="env-variables-table">
-                <caption className="rw-visually-hidden">{t('environments.variablesCaption', { name: activeEnvironment.name })}</caption>
-                <thead>
-                  <tr>
-                    <th scope="col" className="env-grip-cell">
-                      <span className="rw-visually-hidden">{t('environments.orderColumn')}</span>
-                    </th>
-                    <th scope="col">{t('environments.variableColumn')}</th>
-                    <th scope="col">{t('common.value')}</th>
-                    <th scope="col">{t('environments.sensitiveColumn')}</th>
-                    <th scope="col">
-                      <span className="rw-visually-hidden">{t('common.remove')}</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeEnvironment.variables.map((variable) => {
-                    const isRevealed = revealed.has(variable.id)
-                    const variableLabel = variable.name || t('environments.variableFallback')
-                    return (
-                      <tr
-                        key={variable.id}
-                        className={dragClasses('variable', variable.id, 'env-variable-row')}
-                        data-env-drop-id={variable.id}
-                        data-env-drop-kind="variable"
-                      >
-                        <td className="env-grip-cell">
-                          <ReorderHandle
-                            kind="variable"
-                            id={variable.id}
-                            label={t('environments.reorderVariableAria', { name: variableLabel })}
-                            hint={t('environments.reorderHint')}
-                            disabled={activeEnvironment.variables.length <= 1}
-                            onPointerDown={(event) => startDrag(variable.id, 'variable', variableLabel, event)}
-                            onKeyDown={(event) =>
-                              handleReorderKey(event, 'variable', variableIds, variable.id, variableLabel, (targetId, edge) =>
-                                onMoveVariable(activeEnvironment.id, variable.id, targetId, edge),
-                              )
-                            }
-                          />
-                        </td>
-                        <td>
-                          <label className="rw-visually-hidden" htmlFor={`env-var-name-${variable.id}`}>
-                            {t('environments.variableNameLabel')}
-                          </label>
-                          <InlineEditInput
-                            id={`env-var-name-${variable.id}`}
-                            value={variable.name}
-                            onChange={(event) =>
-                              onUpdateVariable(activeEnvironment.id, variable.id, { name: event.target.value })
-                            }
-                            placeholder={t('environments.namePlaceholder')}
-                          />
-                        </td>
-                        <td>
-                          <label className="rw-visually-hidden" htmlFor={`env-var-value-${variable.id}`}>
-                            {t('environments.variableValueLabel')}
-                          </label>
-                          <div className="env-variable-value-cell">
-                            <InlineEditInput
-                              id={`env-var-value-${variable.id}`}
-                              type={variable.sensitive && !isRevealed ? 'password' : 'text'}
-                              value={variable.value}
-                              onChange={(event) =>
-                                onUpdateVariable(activeEnvironment.id, variable.id, { value: event.target.value })
+              <span id={reorderDisabledHintId} hidden>
+                {t('environments.reorderDisabledWhileSearching')}
+              </span>
+              {isFiltering && visibleVariables.length === 0 ? (
+                <div role="status">
+                  <EmptyState icon={<SearchIcon size={22} />} title={t('environments.searchEmptyState')} />
+                </div>
+              ) : (
+                <table className="env-variables-table">
+                  <caption className="rw-visually-hidden">{t('environments.variablesCaption', { name: activeEnvironment.name })}</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col" className="env-grip-cell">
+                        <span className="rw-visually-hidden">{t('environments.orderColumn')}</span>
+                      </th>
+                      <th scope="col">{t('environments.variableColumn')}</th>
+                      <th scope="col">{t('common.value')}</th>
+                      <th scope="col">{t('environments.sensitiveColumn')}</th>
+                      <th scope="col">
+                        <span className="rw-visually-hidden">{t('common.remove')}</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleVariables.map((variable) => {
+                      const isRevealed = revealed.has(variable.id)
+                      const variableLabel = variable.name || t('environments.variableFallback')
+                      return (
+                        <tr
+                          key={variable.id}
+                          className={dragClasses('variable', variable.id, 'env-variable-row')}
+                          data-env-drop-id={variable.id}
+                          data-env-drop-kind="variable"
+                        >
+                          <td className="env-grip-cell">
+                            <ReorderHandle
+                              kind="variable"
+                              id={variable.id}
+                              label={t('environments.reorderVariableAria', { name: variableLabel })}
+                              // Reordering a filtered subset would be ambiguous: it is disabled until the search is cleared.
+                              hint={
+                                isFiltering ? t('environments.reorderDisabledWhileSearching') : t('environments.reorderHint')
                               }
-                              placeholder={t('environments.valuePlaceholder')}
+                              disabled={isFiltering || activeEnvironment.variables.length <= 1}
+                              describedBy={isFiltering ? reorderDisabledHintId : undefined}
+                              onPointerDown={(event) => startDrag(variable.id, 'variable', variableLabel, event)}
+                              onKeyDown={(event) =>
+                                handleReorderKey(event, 'variable', variableIds, variable.id, variableLabel, (targetId, edge) =>
+                                  onMoveVariable(activeEnvironment.id, variable.id, targetId, edge),
+                                )
+                              }
                             />
-                            {variable.sensitive && (
-                              <Tooltip label={isRevealed ? t('environments.hide') : t('environments.reveal')}>
-                                <IconButton
-                                  icon={isRevealed ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}
-                                  label={`${isRevealed ? t('environments.hide') : t('environments.reveal')} ${t('environments.revealAria', {
-                                    name: variable.name || t('environments.variableFallback'),
-                                  })}`}
-                                  onClick={() => toggleRevealed(variable.id)}
-                                  tooltip={false}
-                                />
-                              </Tooltip>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <label className="rw-visually-hidden" htmlFor={`env-var-sensitive-${variable.id}`}>
-                            {t('environments.sensitiveCheckboxLabel', {
-                              name: variable.name || t('environments.variableFallback'),
-                            })}
-                          </label>
-                          <Checkbox
-                            id={`env-var-sensitive-${variable.id}`}
-                            checked={variable.sensitive}
-                            onChange={(event) =>
-                              onUpdateVariable(activeEnvironment.id, variable.id, { sensitive: event.target.checked })
-                            }
-                          />
-                        </td>
-                        <td>
-                          <IconButton
-                            icon={<TrashIcon size={13} />}
-                            label={t('environments.removeVariableAria', { name: variable.name || t('common.unnamed') })}
-                            onClick={() => onRemoveVariable(activeEnvironment.id, variable.id)}
-                          />
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                          </td>
+                          <td>
+                            <label className="rw-visually-hidden" htmlFor={`env-var-name-${variable.id}`}>
+                              {t('environments.variableNameLabel')}
+                            </label>
+                            <InlineEditInput
+                              id={`env-var-name-${variable.id}`}
+                              value={variable.name}
+                              onChange={(event) =>
+                                updateVariable(activeEnvironment.id, variable.id, { name: event.target.value })
+                              }
+                              placeholder={t('environments.namePlaceholder')}
+                            />
+                          </td>
+                          <td>
+                            <label className="rw-visually-hidden" htmlFor={`env-var-value-${variable.id}`}>
+                              {t('environments.variableValueLabel')}
+                            </label>
+                            <div className="env-variable-value-cell">
+                              <InlineEditInput
+                                id={`env-var-value-${variable.id}`}
+                                type={variable.sensitive && !isRevealed ? 'password' : 'text'}
+                                value={variable.value}
+                                onChange={(event) =>
+                                  updateVariable(activeEnvironment.id, variable.id, { value: event.target.value })
+                                }
+                                placeholder={t('environments.valuePlaceholder')}
+                              />
+                              {variable.sensitive && (
+                                <Tooltip label={isRevealed ? t('environments.hide') : t('environments.reveal')}>
+                                  <IconButton
+                                    icon={isRevealed ? <EyeOffIcon size={13} /> : <EyeIcon size={13} />}
+                                    label={`${isRevealed ? t('environments.hide') : t('environments.reveal')} ${t('environments.revealAria', {
+                                      name: variable.name || t('environments.variableFallback'),
+                                    })}`}
+                                    onClick={() => toggleRevealed(variable.id)}
+                                    tooltip={false}
+                                  />
+                                </Tooltip>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <label className="rw-visually-hidden" htmlFor={`env-var-sensitive-${variable.id}`}>
+                              {t('environments.sensitiveCheckboxLabel', {
+                                name: variable.name || t('environments.variableFallback'),
+                              })}
+                            </label>
+                            <Checkbox
+                              id={`env-var-sensitive-${variable.id}`}
+                              checked={variable.sensitive}
+                              onChange={(event) =>
+                                updateVariable(activeEnvironment.id, variable.id, { sensitive: event.target.checked })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <IconButton
+                              icon={<TrashIcon size={13} />}
+                              label={t('environments.removeVariableAria', { name: variable.name || t('common.unnamed') })}
+                              onClick={() => onRemoveVariable(activeEnvironment.id, variable.id)}
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
 
-              <Button variant="ghost" onClick={() => onAddVariable(activeEnvironment.id)}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  // The new row starts blank and would never match: clearing the search keeps it in view.
+                  if (search !== null) clearSearch(activeEnvironment.id)
+                  onAddVariable(activeEnvironment.id)
+                }}
+              >
                 <PlusIcon size={12} />
                 {t('environments.addVariableButton')}
               </Button>

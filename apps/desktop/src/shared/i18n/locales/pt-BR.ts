@@ -714,6 +714,11 @@ const ptBR = {
   'environments.reorderEnvironmentAria': 'Reordenar ambiente {name}',
   'environments.reorderVariableAria': 'Reordenar variável {name}',
   'environments.movedAnnouncement': '{name} movido para a posição {position} de {total}',
+  'environments.searchPlaceholder': 'Buscar variáveis...',
+  'environments.searchAria': 'Buscar variáveis do ambiente',
+  'environments.searchClearAria': 'Limpar busca',
+  'environments.searchEmptyState': 'Nenhuma variável encontrada.',
+  'environments.reorderDisabledWhileSearching': 'Limpe a busca para reordenar',
 
   // flows sidebar panel (lista de flows) + canvas do flow
   'flows.subTabLabel': 'Flows',

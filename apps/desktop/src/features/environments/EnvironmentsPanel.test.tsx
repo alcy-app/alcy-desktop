@@ -150,4 +150,176 @@ describe('EnvironmentsPanel', () => {
       expect(screen.getByRole('button', { name: 'Reordenar ambiente Local' })).toBeDisabled()
     })
   })
+
+  describe('variable search', () => {
+    const environments = [
+      {
+        id: 'env-1',
+        name: 'Local',
+        variables: [
+          { id: 'var-1', name: 'baseUrl', value: 'https://API.local', sensitive: false },
+          { id: 'var-2', name: 'apiToken', value: 'super-secret', sensitive: true },
+          { id: 'var-3', name: 'timeout', value: '30', sensitive: false },
+        ],
+      },
+      {
+        id: 'env-2',
+        name: 'Staging',
+        variables: [{ id: 'var-4', name: 'region', value: 'us-east', sensitive: false }],
+      },
+    ]
+
+    const panel = (overrides: Partial<Parameters<typeof EnvironmentsPanel>[0]> = {}) => (
+      <EnvironmentsPanel
+        environments={environments}
+        activeEnvironmentId="env-1"
+        onSelectEnvironment={noop}
+        onAddEnvironment={noop}
+        onRemoveEnvironment={noop}
+        onDuplicateEnvironment={noop}
+        onRenameEnvironment={noop}
+        onMoveEnvironment={noop}
+        onAddVariable={noop}
+        onUpdateVariable={noop}
+        onRemoveVariable={noop}
+        onMoveVariable={noop}
+        onReplaceVariables={noop}
+        {...overrides}
+      />
+    )
+
+    const searchInput = () => screen.getByRole('textbox', { name: 'Buscar variáveis do ambiente' })
+    const search = (query: string) => fireEvent.change(searchInput(), { target: { value: query } })
+    const visibleNames = () =>
+      screen.queryAllByRole('textbox', { name: 'Nome da variável' }).map((input) => (input as HTMLInputElement).value)
+
+    it('shows every variable while the query is empty', () => {
+      render(panel())
+
+      expect(searchInput()).toHaveValue('')
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
+    })
+
+    it('filters by name and non-sensitive value, ignoring case', () => {
+      render(panel())
+
+      search('API')
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken'])
+
+      search('  30 ')
+      expect(visibleNames()).toEqual(['timeout'])
+    })
+
+    it('never matches the value of a sensitive variable', () => {
+      render(panel())
+
+      search('super-secret')
+      expect(visibleNames()).toEqual([])
+      expect(screen.getByText('Nenhuma variável encontrada.')).toBeInTheDocument()
+      expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    })
+
+    it('clears the query with Esc and with the clear button', () => {
+      render(panel())
+
+      search('timeout')
+      fireEvent.keyDown(searchInput(), { key: 'Escape' })
+      expect(searchInput()).toHaveValue('')
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
+
+      search('timeout')
+      fireEvent.click(screen.getByRole('button', { name: 'Limpar busca' }))
+      expect(searchInput()).toHaveValue('')
+      expect(searchInput()).toHaveFocus()
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
+    })
+
+    it('edits and removes the filtered variable by id, keeping an edited row visible', () => {
+      const onUpdateVariable = vi.fn()
+      const onRemoveVariable = vi.fn()
+      const { rerender } = render(panel({ onUpdateVariable, onRemoveVariable }))
+
+      search('timeout')
+      fireEvent.change(screen.getByRole('textbox', { name: 'Nome da variável' }), { target: { value: 'delay' } })
+      expect(onUpdateVariable).toHaveBeenCalledWith('env-1', 'var-3', { name: 'delay' })
+
+      // The renamed row no longer matches, but stays in view while it is being edited.
+      const renamed = environments.map((environment) =>
+        environment.id === 'env-1'
+          ? {
+              ...environment,
+              variables: environment.variables.map((variable) =>
+                variable.id === 'var-3' ? { ...variable, name: 'delay' } : variable,
+              ),
+            }
+          : environment,
+      )
+      rerender(panel({ environments: renamed, onUpdateVariable, onRemoveVariable }))
+      expect(visibleNames()).toEqual(['delay'])
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remover variável delay' }))
+      expect(onRemoveVariable).toHaveBeenCalledWith('env-1', 'var-3')
+    })
+
+    it('disables reordering while filtering and explains why', () => {
+      const onMoveVariable = vi.fn()
+      render(panel({ onMoveVariable }))
+
+      search('a')
+      const grip = screen.getByRole('button', { name: 'Reordenar variável baseUrl' })
+      expect(grip).toBeDisabled()
+      expect(grip).toHaveAccessibleDescription('Limpe a busca para reordenar')
+      fireEvent.keyDown(grip, { key: 'ArrowDown' })
+      expect(onMoveVariable).not.toHaveBeenCalled()
+
+      fireEvent.keyDown(searchInput(), { key: 'Escape' })
+      expect(screen.getByRole('button', { name: 'Reordenar variável baseUrl' })).toBeEnabled()
+    })
+
+    it('clears the query when adding a variable so the new row is visible', () => {
+      const onAddVariable = vi.fn()
+      render(panel({ onAddVariable }))
+
+      search('timeout')
+      fireEvent.click(screen.getByRole('button', { name: 'Adicionar variável' }))
+      expect(onAddVariable).toHaveBeenCalledWith('env-1')
+      expect(searchInput()).toHaveValue('')
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
+    })
+
+    it('does not apply to bulk editing', () => {
+      render(panel())
+
+      search('timeout')
+      fireEvent.click(screen.getByRole('radio', { name: 'Edição em massa' }))
+      expect(screen.queryByRole('textbox', { name: 'Buscar variáveis do ambiente' })).not.toBeInTheDocument()
+      const bulkText = (screen.getByRole('textbox', { name: 'Variáveis em massa' }) as HTMLTextAreaElement).value
+      expect(bulkText).toContain('baseUrl')
+      expect(bulkText).toContain('timeout')
+      expect(bulkText).not.toContain('super-secret')
+
+      fireEvent.click(screen.getByRole('radio', { name: 'Chave-valor' }))
+      expect(searchInput()).toHaveValue('')
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
+    })
+
+    it('resets the query when another environment is opened', () => {
+      const { rerender } = render(panel())
+
+      search('timeout')
+      rerender(panel({ activeEnvironmentId: 'env-2' }))
+      expect(searchInput()).toHaveValue('')
+      expect(visibleNames()).toEqual(['region'])
+
+      rerender(panel({ activeEnvironmentId: 'env-1' }))
+      expect(searchInput()).toHaveValue('')
+      expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
+    })
+
+    it('hides the search when the environment has no variables', () => {
+      render(panel({ environments: [{ id: 'env-1', name: 'Local', variables: [] }] }))
+
+      expect(screen.queryByRole('textbox', { name: 'Buscar variáveis do ambiente' })).not.toBeInTheDocument()
+    })
+  })
 })
