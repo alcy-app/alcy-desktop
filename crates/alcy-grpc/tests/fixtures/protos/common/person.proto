@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package common;
+
+message Person {
+  string name = 1;
+  Mood mood = 2;
+  repeated string tags = 3;
+  map<string, int64> scores = 4;
+}
+
+enum Mood {
+  MOOD_UNSPECIFIED = 0;
+  HAPPY = 1;
+}

@@ -189,6 +189,19 @@ Responsible for:
 
 Canonical data and rebuildable data must stay separate.
 
+### gRPC
+
+`alcy-grpc` calls any method of any service without generated code (spec
+0129, ADR 0062): message types come from server reflection or from local
+`.proto` files compiled in-process, messages are JSON at the edges and
+protobuf on the wire. One streaming engine serves the four call kinds and
+reports events (sent, headers, received, finished with status and
+trailers). It has its own transport (tonic over hyper/h2 with rustls), since
+the shared HTTP client has no HTTP/2: certificates are always verified,
+against the system roots plus the configured custom CAs, and HTTP proxies
+are reached through a `CONNECT` tunnel. Like the other protocol crates, it
+is dispatched to only from the composition root.
+
 ### Scripting
 
 `alcy-scripting` runs pre-request and post-response scripts in `boa_engine`
@@ -210,6 +223,7 @@ crates/alcy-collection-import/ # import of external collection formats
 crates/alcy-gitlab/    # GitLab client (OAuth PKCE and API v4)
 crates/alcy-load/      # reusable load plan, scheduler, runtime and metrics
 crates/alcy-graphql/   # GraphQL capability
+crates/alcy-grpc/      # gRPC capability (reflection, .proto, streaming)
 crates/alcy-openapi/   # import of OpenAPI documents
 crates/alcy-rest/      # REST capability
 crates/alcy-scripting/ # script interpreter (boa) and `require`

@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package test;
+
+import "common/person.proto";
+import "google/protobuf/timestamp.proto";
+
+service Greeter {
+  rpc SayHello (HelloRequest) returns (HelloReply);
+  rpc LotsOfReplies (HelloRequest) returns (stream HelloReply);
+  rpc LotsOfGreetings (stream HelloRequest) returns (HelloReply);
+  rpc BidiHello (stream HelloRequest) returns (stream HelloReply);
+}
+
+message HelloRequest {
+  common.Person person = 1;
+  int32 times = 2;
+  google.protobuf.Timestamp sent_at = 3;
+  oneof channel {
+    string email = 4;
+    string phone = 5;
+  }
+}
+
+message HelloReply {
+  string message = 1;
+}
