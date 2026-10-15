@@ -394,8 +394,6 @@ const en: Record<TranslationKey, string> = {
   'scripts.error': 'Script error: {message}',
 
   // bulk edit (headers, params, variables)
-  'bulk.modeAria': 'Edit mode',
-  'bulk.keyValue': 'Key-Value',
   'bulk.bulkEdit': 'Bulk Edit',
   'bulk.placeholder': 'key:value',
   'bulk.hint': 'One per line, as key:value.',

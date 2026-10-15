@@ -24,7 +24,7 @@ describe('HeadersPanel — edição em massa', () => {
         environmentVariables={[]}
       />,
     )
-    fireEvent.click(screen.getByRole('radio', { name: /edição em massa/i }))
+    fireEvent.click(screen.getByRole('button', { name: /edição em massa/i }))
     expect(screen.getByRole('textbox')).toHaveValue('Accept:json\n// X-Off:1')
   })
 
@@ -109,7 +109,7 @@ describe('HeadersPanel — edição em massa', () => {
   it('envia as linhas interpretadas a cada alteração do texto', () => {
     const onReplaceAll = vi.fn()
     render(<HeadersPanel headers={[]} onAdd={noop} onUpdate={noop} onRemove={noop} onReplaceAll={onReplaceAll} environmentVariables={[]} />)
-    fireEvent.click(screen.getByRole('radio', { name: /edição em massa/i }))
+    fireEvent.click(screen.getByRole('button', { name: /edição em massa/i }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'A: 1\n// B: 2' } })
     expect(onReplaceAll).toHaveBeenLastCalledWith([
       { name: 'A', value: '1', enabled: true },

@@ -393,8 +393,6 @@ const ptBR = {
   'scripts.error': 'Erro no script: {message}',
 
   // edição em massa (headers, params, variáveis)
-  'bulk.modeAria': 'Modo de edição',
-  'bulk.keyValue': 'Chave-valor',
   'bulk.bulkEdit': 'Edição em massa',
   'bulk.placeholder': 'chave:valor',
   'bulk.hint': 'Uma por linha, no formato chave:valor.',

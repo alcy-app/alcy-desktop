@@ -291,14 +291,16 @@ describe('EnvironmentsPanel', () => {
       render(panel())
 
       search('timeout')
-      fireEvent.click(screen.getByRole('radio', { name: 'Edição em massa' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Edição em massa' }))
+      expect(screen.getByRole('button', { name: 'Edição em massa' })).toHaveAttribute('aria-pressed', 'true')
       expect(screen.queryByRole('textbox', { name: 'Buscar variáveis do ambiente' })).not.toBeInTheDocument()
       const bulkText = (screen.getByRole('textbox', { name: 'Variáveis em massa' }) as HTMLTextAreaElement).value
       expect(bulkText).toContain('baseUrl')
       expect(bulkText).toContain('timeout')
       expect(bulkText).not.toContain('super-secret')
 
-      fireEvent.click(screen.getByRole('radio', { name: 'Chave-valor' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Edição em massa' }))
+      expect(screen.getByRole('button', { name: 'Edição em massa' })).toHaveAttribute('aria-pressed', 'false')
       expect(searchInput()).toHaveValue('')
       expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
     })

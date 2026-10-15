@@ -806,13 +806,15 @@
 .rw-headers-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
 
+/* Pinned to the right whatever buttons precede it (the generated headers and
+   cookie buttons are hidden while bulk editing). */
 .rw-headers-toolbar .ui-bulk-toolbar {
   margin-bottom: 0;
+  margin-left: auto;
 }
 
 .rw-generated-headers-toggle {
