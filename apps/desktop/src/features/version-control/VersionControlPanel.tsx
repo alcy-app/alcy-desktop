@@ -62,7 +62,12 @@ export function VersionControlPanel(props: VersionControlPanelProps) {
     )
   ) : <LinkedView {...props} />
 
-  if (props.embedded) return <div className="vc-sidebar-panel">{body}</div>
+  if (props.embedded) {
+    // In the sidebar the linked view pins its repository header over a scrolling
+    // body; the other states (loading, no account, link form) scroll as a whole.
+    const linked = props.vc.linkLoaded && accountsLoaded && props.vc.link !== null
+    return <div className="vc-sidebar-panel sidebar-panel-layout">{linked ? body : <div className="sidebar-panel-scroll">{body}</div>}</div>
+  }
   return <Modal title={t('vc.panel.title')} closeAriaLabel={t('vc.panel.close')} onClose={props.onClose ?? (() => {})} className="vc-modal">{body}</Modal>
 }
 
@@ -204,27 +209,29 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
       <div className="vc-branch"><BranchIcon size={13} />{vc.link.branch}</div>
     </div>
 
-    <Input className="vc-commit-message" id="vc-commit-message" value={vc.message} aria-label={t('vc.commit.messageLabel')} placeholder={t('vc.commit.messagePlaceholder')} disabled={working} onChange={(event) => vc.setMessage(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canPush) void push() }} />
-    <Button className="vc-primary-action" isLoading={vc.busy === 'push'} disabled={!canPush} onClick={() => void push()}>{t('vc.action.commitAndPush')}</Button>
+    <div className="vc-linked-body">
+      <Input className="vc-commit-message" id="vc-commit-message" value={vc.message} aria-label={t('vc.commit.messageLabel')} placeholder={t('vc.commit.messagePlaceholder')} disabled={working} onChange={(event) => vc.setMessage(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canPush) void push() }} />
+      <Button className="vc-primary-action" isLoading={vc.busy === 'push'} disabled={!canPush} onClick={() => void push()}>{t('vc.action.commitAndPush')}</Button>
 
-    {vc.error && <InlineAlert>{gitlabErrorMessage(vc.error, t)}</InlineAlert>}
-    {loadError && Object.values(detailKeys).includes(loadError.key) && <InlineAlert>{loadError.message}</InlineAlert>}
-    {vc.notice && <p className="vc-notice" role="status">{vc.notice}</p>}
+      {vc.error && <InlineAlert>{gitlabErrorMessage(vc.error, t)}</InlineAlert>}
+      {loadError && Object.values(detailKeys).includes(loadError.key) && <InlineAlert>{loadError.message}</InlineAlert>}
+      {vc.notice && <p className="vc-notice" role="status">{vc.notice}</p>}
 
-    {conflicts.length > 0 && <section className="vc-change-section vc-change-section--conflicts">
-      <header className="vc-section-header"><button type="button" onClick={() => toggleSection('conflicts')} aria-expanded={!collapsed.has('conflicts')}>{collapsed.has('conflicts') ? <ChevronRightIcon /> : <ChevronDownIcon />}<h3>{t('vc.sections.conflicts')} <span>{conflicts.length}</span></h3></button></header>
-      {!collapsed.has('conflicts') && conflicts.map((file) => <div className="vc-conflict-row" key={file.name}>
-        <button type="button" className="vc-tree-label" onClick={() => void openReview(file, null, 'outgoing')}><span>{FILE_LABELS[file.name] ?? file.name}</span><small>{file.name}</small></button>
-        <Button variant="ghost" disabled={working || loadingDetailNames.has(file.name)} onClick={() => void openConflict(file)}>{t('vc.resolve.open')}</Button>
-      </div>)}
-    </section>}
+      {conflicts.length > 0 && <section className="vc-change-section vc-change-section--conflicts">
+        <header className="vc-section-header"><button type="button" onClick={() => toggleSection('conflicts')} aria-expanded={!collapsed.has('conflicts')}>{collapsed.has('conflicts') ? <ChevronRightIcon /> : <ChevronDownIcon />}<h3>{t('vc.sections.conflicts')} <span>{conflicts.length}</span></h3></button></header>
+        {!collapsed.has('conflicts') && conflicts.map((file) => <div className="vc-conflict-row" key={file.name}>
+          <button type="button" className="vc-tree-label" onClick={() => void openReview(file, null, 'outgoing')}><span>{FILE_LABELS[file.name] ?? file.name}</span><small>{file.name}</small></button>
+          <Button variant="ghost" disabled={working || loadingDetailNames.has(file.name)} onClick={() => void openConflict(file)}>{t('vc.resolve.open')}</Button>
+        </div>)}
+      </section>}
 
-    <ChangeSection kind="upcoming" files={upcomingFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('upcoming')} vc={vc} onToggle={() => toggleSection('upcoming')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} onPull={onPull} />
-    <ChangeSection kind="staged" files={stagedFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('staged')} vc={vc} onToggle={() => toggleSection('staged')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} />
-    <ChangeSection kind="changes" files={changedFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('changes')} vc={vc} onToggle={() => toggleSection('changes')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} />
+      <ChangeSection kind="upcoming" files={upcomingFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('upcoming')} vc={vc} onToggle={() => toggleSection('upcoming')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} onPull={onPull} />
+      <ChangeSection kind="staged" files={stagedFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('staged')} vc={vc} onToggle={() => toggleSection('staged')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} />
+      <ChangeSection kind="changes" files={changedFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('changes')} vc={vc} onToggle={() => toggleSection('changes')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} />
 
-    {vc.summary === 'clean' && !vc.checking && conflicts.length === 0 && upcomingFiles.length === 0 && localFiles.length === 0 && <p className="vc-clean-state">{t('vc.changes.empty')}</p>}
-    {inlineReview && <DiffView rootPath={rootPath} fileName={inlineReview.name} version={vc.files} remoteRevision={vc.files.find((file) => file.name === inlineReview.name)?.remoteRevision} direction={inlineReview.direction} onClose={() => setInlineReview(null)} />}
+      {vc.summary === 'clean' && !vc.checking && conflicts.length === 0 && upcomingFiles.length === 0 && localFiles.length === 0 && <p className="vc-clean-state">{t('vc.changes.empty')}</p>}
+      {inlineReview && <DiffView rootPath={rootPath} fileName={inlineReview.name} version={vc.files} remoteRevision={vc.files.find((file) => file.name === inlineReview.name)?.remoteRevision} direction={inlineReview.direction} onClose={() => setInlineReview(null)} />}
+    </div>
   </div>
 }
 

@@ -1,7 +1,7 @@
-/* `position: relative` torna a sidebar o bloco de contenção dos elementos
-   absolutos dos painéis (ex.: rótulos `.rw-visually-hidden` da tabela de
-   variáveis). Sem isso eles se posicionam pela viewport, escapam do scroll da
-   sidebar e criam uma área rolável fantasma abaixo da janela. */
+/* The sidebar itself never scrolls: the header stays put and the tab panel
+   below it (or, in panels with a pinned toolbar, the panel's body) is the
+   scroll container. `overflow: clip` (after the `hidden` fallback) keeps the
+   sidebar from being a scroll container that `scrollIntoView` could shift. */
 .env-sidebar {
   --workbench-sidebar-header-height: 44px;
 
@@ -10,16 +10,9 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  /* A linha no fundo continua a borda inferior do cabeçalho sob a calha da
-     scrollbar (track transparente), área que o cabeçalho sticky não alcança.
-     O fundo não rola com o conteúdo, então a linha fica fixa na altura dele. */
-  background:
-    linear-gradient(var(--border), var(--border)) no-repeat 0
-      calc(var(--workbench-sidebar-header-height) - 1px) / 100% 1px,
-    var(--surface);
-  padding: 0 12px 12px;
-  gap: 10px;
-  overflow-y: auto;
+  background: var(--surface);
+  overflow: hidden;
+  overflow: clip;
 }
 
 .workbench-navigation {
@@ -124,15 +117,17 @@
   }
 }
 
+/* Outside the scroll container. The header is a stacking context that caps
+   its component kind menu, so it must sit above everything in the panel
+   below, including the pinned toolbars (`--z-raised`, workbench-modules.css)
+   that come later in the DOM. */
 .workbench-sidebar-header {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-raised);
+  position: relative;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: center;
   flex-shrink: 0;
   height: var(--workbench-sidebar-header-height);
-  margin: 0 -12px;
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -448,11 +443,29 @@
   min-width: 0;
 }
 
-/* `display: contents` mantém o papel/id de aria-controls sem entrar na árvore
-   de layout — os filhos continuam participando do flex column de .env-sidebar
-   como se estivessem soltos, preservando o espaçamento original. */
+/* By default the whole panel scrolls below the sidebar header, with a single
+   scrollbar on the sidebar's edge. `position: relative` makes it the
+   containing block of the panels' absolute elements (e.g. the
+   `.rw-visually-hidden` labels of the variables table), so they scroll with
+   the content instead of creating a phantom scroll area. */
 .env-tabpanel {
-  display: contents;
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+}
+
+/* Panels with a pinned toolbar (`.sidebar-panel-layout`, see
+   workbench-modules.css) fill the tab panel and scroll their own body. */
+.env-tabpanel--pinned-toolbar {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  overflow: clip;
 }
 
 
@@ -471,8 +484,8 @@
     opacity var(--duration-fast) var(--ease-out);
 }
 
-/* O componente ativo é remontado na troca de módulo; a animação fica nos
-   filhos porque `.env-tabpanel` usa `display: contents`. */
+/* The active panel is remounted when the module changes, while the tab panel
+   element stays mounted: the animation sits on its children. */
 .env-tabpanel > * {
   animation: ui-panel-in var(--duration-base) var(--ease-out);
 }

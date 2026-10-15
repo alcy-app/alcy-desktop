@@ -86,4 +86,15 @@ describe('FlowsPanel', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remover' }))
     expect(onRemoveFlow).toHaveBeenCalledWith('flow-1')
   })
+
+  it('keeps the toolbar pinned outside the scrolling body that holds the list', () => {
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar flows' }))
+
+    const toolbar = document.querySelector('.sidebar-panel-toolbar') as HTMLElement
+    const scrollBody = document.querySelector('.sidebar-panel-scroll') as HTMLElement
+    expect(toolbar).toContainElement(screen.getByRole('textbox'))
+    expect(toolbar).not.toContainElement(scrollBody)
+    expect(scrollBody).toContainElement(flowItem())
+  })
 })

@@ -1500,225 +1500,230 @@ export function CollectionsPanel({
   })
 
   return (
-    <>
-      <div className="collections-toolbar">
-        {searchOpen ? (
-          <>
-          <div className="collections-search">
-            <SearchIcon size={12} className="collections-search-icon" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              className="collections-search-input"
-              value={searchQuery}
-              autoFocus
-              placeholder={t('collections.searchPlaceholder')}
-              aria-label={t('collections.searchPlaceholder')}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') closeSearch()
-              }}
-            />
-            <IconButton
-              className="collections-search-close"
-              icon={<CloseIcon size={11} />}
-              label={t('collections.searchCloseAria')}
-              onClick={closeSearch}
-            />
-          </div>
-          {filterMenu}
-          </>
-        ) : (
-          <>
-            <IconButton icon={<SearchIcon size={12} />} label={t('collections.searchAria')} onClick={() => setSearchOpen(true)} />
+    <div className="sidebar-panel-layout">
+      {/* Pinned above the tree: search, filters, active filter chips and the selection bar. */}
+      <div className="sidebar-panel-toolbar">
+        <div className="collections-toolbar">
+          {searchOpen ? (
+            <>
+            <div className="collections-search">
+              <SearchIcon size={12} className="collections-search-icon" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                className="collections-search-input"
+                value={searchQuery}
+                autoFocus
+                placeholder={t('collections.searchPlaceholder')}
+                aria-label={t('collections.searchPlaceholder')}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') closeSearch()
+                }}
+              />
+              <IconButton
+                className="collections-search-close"
+                icon={<CloseIcon size={11} />}
+                label={t('collections.searchCloseAria')}
+                onClick={closeSearch}
+              />
+            </div>
             {filterMenu}
-            <IconButton
-              icon={<PlusIcon size={12} />}
-              label={t('collections.addRequestMenuItem')}
-              onClick={(event) => onCreateStandaloneRequest(event.currentTarget.getBoundingClientRect())}
-            />
-            <IconButton
-              icon={<ImportIcon size={12} />}
-              label={t('collections.importButton')}
-              onClick={() => setImportModalOpen(true)}
-            />
-            <IconButton
-              icon={expandedIds.size === 0 ? <ExpandAllIcon size={12} /> : <CollapseAllIcon size={12} />}
-              label={t(expandedIds.size === 0 ? 'collections.expandAllAria' : 'collections.collapseAllAria')}
-              onClick={expandedIds.size === 0 ? onExpandAll : onCollapseAll}
-            />
-            <IconButton
-              icon={<LocateIcon size={12} />}
-              label={t('collections.revealActiveAria')}
-              disabled={!canReveal}
-              onClick={revealOpenRequest}
-            />
-            {/* "Criar Collection" fica no popover do "+"; sem Collections o "..." não teria item nenhum. */}
-            {collections.length > 0 && (
-              <OptionsMenu
-                label={t('collections.moreOptionsMenuAria')}
-                wrapperClassName="collections-toolbar-menu-wrapper"
-                menuClassName="collections-menu"
-                isOpen={moreMenuOpen}
-                onToggle={() => setMoreMenuOpen((current) => !current)}
-                onClose={() => setMoreMenuOpen(false)}
-              >
-                <MenuItem
-                  label={t('collections.exportAllButton')}
-                  onSelect={() => {
-                    void onExportAll()
-                    setMoreMenuOpen(false)
-                  }}
+            </>
+          ) : (
+            <>
+              <IconButton icon={<SearchIcon size={12} />} label={t('collections.searchAria')} onClick={() => setSearchOpen(true)} />
+              {filterMenu}
+              <IconButton
+                icon={<PlusIcon size={12} />}
+                label={t('collections.addRequestMenuItem')}
+                onClick={(event) => onCreateStandaloneRequest(event.currentTarget.getBoundingClientRect())}
+              />
+              <IconButton
+                icon={<ImportIcon size={12} />}
+                label={t('collections.importButton')}
+                onClick={() => setImportModalOpen(true)}
+              />
+              <IconButton
+                icon={expandedIds.size === 0 ? <ExpandAllIcon size={12} /> : <CollapseAllIcon size={12} />}
+                label={t(expandedIds.size === 0 ? 'collections.expandAllAria' : 'collections.collapseAllAria')}
+                onClick={expandedIds.size === 0 ? onExpandAll : onCollapseAll}
+              />
+              <IconButton
+                icon={<LocateIcon size={12} />}
+                label={t('collections.revealActiveAria')}
+                disabled={!canReveal}
+                onClick={revealOpenRequest}
+              />
+              {/* "Criar Collection" fica no popover do "+"; sem Collections o "..." não teria item nenhum. */}
+              {collections.length > 0 && (
+                <OptionsMenu
+                  label={t('collections.moreOptionsMenuAria')}
+                  wrapperClassName="collections-toolbar-menu-wrapper"
+                  menuClassName="collections-menu"
+                  isOpen={moreMenuOpen}
+                  onToggle={() => setMoreMenuOpen((current) => !current)}
+                  onClose={() => setMoreMenuOpen(false)}
+                >
+                  <MenuItem
+                    label={t('collections.exportAllButton')}
+                    onSelect={() => {
+                      void onExportAll()
+                      setMoreMenuOpen(false)
+                    }}
+                  />
+                </OptionsMenu>
+              )}
+            </>
+          )}
+        </div>
+
+        {filtering && (
+          <div className="collections-filter-chips" role="group" aria-label={t('collections.activeFiltersAria')}>
+            {activeFilters.favoritesOnly && (
+              <span className="collection-label-chip">
+                <StarIcon size={11} filled className="collection-label-chip-icon" />
+                <span className="collection-label-chip-name">{t('collections.filterFavoritesChip')}</span>
+                <IconButton
+                  icon={<CloseIcon size={9} />}
+                  label={t('collections.removeFilterAria', { name: t('collections.filterFavoritesChip') })}
+                  onClick={toggleFavoritesFilter}
                 />
-              </OptionsMenu>
+              </span>
             )}
-          </>
+            {catalog
+              .filter((label) => activeFilters.labelKeys.has(labelKey(label.name)))
+              .map((label) => (
+                <span key={labelKey(label.name)} className="collection-label-chip" data-label-color={label.color}>
+                  <LabelDot color={label.color} />
+                  <span className="collection-label-chip-name" title={label.name}>{label.name}</span>
+                  <IconButton
+                    icon={<CloseIcon size={9} />}
+                    label={t('collections.removeFilterAria', { name: label.name })}
+                    onClick={() => toggleLabelFilter(labelKey(label.name))}
+                  />
+                </span>
+              ))}
+            <button type="button" className="collections-filter-clear" onClick={clearFilters}>
+              {t('collections.clearFilters')}
+            </button>
+          </div>
+        )}
+
+        {(selection.length > 0 || selectionMode) && (
+          <div className="collections-selection-bar" role="toolbar" aria-label={t('collections.selectionBarAria')}>
+            <span className="collections-selection-count">
+              {selection.length === 1
+                ? t('collections.selectionCountOne')
+                : t('collections.selectionCount', { count: selection.length })}
+            </span>
+            <IconButton
+              icon={<FolderOpenIcon size={13} />}
+              label={t('collections.moveRequestButton')}
+              disabled={selection.length === 0 || selectionHasCollection}
+              onClick={() => setBatchMoveOpen(true)}
+            />
+            <IconButton
+              icon={<DownloadIcon size={13} />}
+              label={t('collections.exportMenuItem')}
+              disabled={!selectionOnlyCollections}
+              onClick={() => onExportCollections(selection)}
+            />
+            <IconButton
+              icon={<StarIcon size={13} filled={selectionAllFavorite} />}
+              label={t(selectionAllFavorite ? 'collections.selectionUnfavorite' : 'collections.selectionFavorite')}
+              aria-pressed={selectionAllFavorite}
+              disabled={!selectionOnlyCollections}
+              onClick={toggleSelectionFavorite}
+            />
+            <IconButton
+              icon={<TagIcon size={13} />}
+              label={t('collections.selectionLabels')}
+              disabled={!selectionOnlyCollections}
+              onClick={() => setLabelsModal({ collectionIds: selection })}
+            />
+            <IconButton
+              icon={<TrashIcon size={13} />}
+              label={t('common.remove')}
+              variant="danger"
+              disabled={selection.length === 0}
+              onClick={removeSelection}
+            />
+            <span className="collections-selection-divider" aria-hidden="true" />
+            <IconButton icon={<CloseIcon size={11} />} label={t('collections.selectionClearAria')} onClick={clearSelection} />
+          </div>
         )}
       </div>
 
-      {filtering && (
-        <div className="collections-filter-chips" role="group" aria-label={t('collections.activeFiltersAria')}>
-          {activeFilters.favoritesOnly && (
-            <span className="collection-label-chip">
-              <StarIcon size={11} filled className="collection-label-chip-icon" />
-              <span className="collection-label-chip-name">{t('collections.filterFavoritesChip')}</span>
-              <IconButton
-                icon={<CloseIcon size={9} />}
-                label={t('collections.removeFilterAria', { name: t('collections.filterFavoritesChip') })}
-                onClick={toggleFavoritesFilter}
-              />
-            </span>
-          )}
-          {catalog
-            .filter((label) => activeFilters.labelKeys.has(labelKey(label.name)))
-            .map((label) => (
-              <span key={labelKey(label.name)} className="collection-label-chip" data-label-color={label.color}>
-                <LabelDot color={label.color} />
-                <span className="collection-label-chip-name" title={label.name}>{label.name}</span>
-                <IconButton
-                  icon={<CloseIcon size={9} />}
-                  label={t('collections.removeFilterAria', { name: label.name })}
-                  onClick={() => toggleLabelFilter(labelKey(label.name))}
-                />
-              </span>
-            ))}
-          <button type="button" className="collections-filter-clear" onClick={clearFilters}>
-            {t('collections.clearFilters')}
-          </button>
-        </div>
-      )}
-
-      {(selection.length > 0 || selectionMode) && (
-        <div className="collections-selection-bar" role="toolbar" aria-label={t('collections.selectionBarAria')}>
-          <span className="collections-selection-count">
-            {selection.length === 1
-              ? t('collections.selectionCountOne')
-              : t('collections.selectionCount', { count: selection.length })}
-          </span>
-          <IconButton
-            icon={<FolderOpenIcon size={13} />}
-            label={t('collections.moveRequestButton')}
-            disabled={selection.length === 0 || selectionHasCollection}
-            onClick={() => setBatchMoveOpen(true)}
-          />
-          <IconButton
-            icon={<DownloadIcon size={13} />}
-            label={t('collections.exportMenuItem')}
-            disabled={!selectionOnlyCollections}
-            onClick={() => onExportCollections(selection)}
-          />
-          <IconButton
-            icon={<StarIcon size={13} filled={selectionAllFavorite} />}
-            label={t(selectionAllFavorite ? 'collections.selectionUnfavorite' : 'collections.selectionFavorite')}
-            aria-pressed={selectionAllFavorite}
-            disabled={!selectionOnlyCollections}
-            onClick={toggleSelectionFavorite}
-          />
-          <IconButton
-            icon={<TagIcon size={13} />}
-            label={t('collections.selectionLabels')}
-            disabled={!selectionOnlyCollections}
-            onClick={() => setLabelsModal({ collectionIds: selection })}
-          />
-          <IconButton
-            icon={<TrashIcon size={13} />}
-            label={t('common.remove')}
-            variant="danger"
-            disabled={selection.length === 0}
-            onClick={removeSelection}
-          />
-          <span className="collections-selection-divider" aria-hidden="true" />
-          <IconButton icon={<CloseIcon size={11} />} label={t('collections.selectionClearAria')} onClick={clearSelection} />
-        </div>
-      )}
-
-      {collections.length === 0 ? (
-        <EmptyState icon={<FolderIcon size={22} />} title={t('collections.emptyState')} />
-      ) : (isSearching || filtering) && displayedCollections.length === 0 ? (
-        isSearching ? (
-          <EmptyState icon={<SearchIcon size={22} />} title={t('collections.searchEmptyState')} />
+      <div className="sidebar-panel-scroll">
+        {collections.length === 0 ? (
+          <EmptyState icon={<FolderIcon size={22} />} title={t('collections.emptyState')} />
+        ) : (isSearching || filtering) && displayedCollections.length === 0 ? (
+          isSearching ? (
+            <EmptyState icon={<SearchIcon size={22} />} title={t('collections.searchEmptyState')} />
+          ) : (
+            <EmptyState icon={<FilterIcon size={22} />} title={t('collections.filtersEmptyState')} />
+          )
         ) : (
-          <EmptyState icon={<FilterIcon size={22} />} title={t('collections.filtersEmptyState')} />
-        )
-      ) : (
-        <ul
-          className="collections-tree"
-          aria-label={t('collections.treeLabel')}
-          onKeyDown={(event) => {
-            if (event.key !== 'Escape' || (selectedIds.size === 0 && !selectionMode)) return
-            if (event.target instanceof HTMLInputElement) return
-            clearSelection()
-          }}
-        >
-          {displayedCollections.map((collection) => (
-            <FolderRow
-              key={collection.id}
-              node={collection}
-              depth={0}
-              expandedIds={renderExpandedIds}
-              openRequestId={openRequestId}
-              renamingId={renamingId}
-              menuOpenId={menuOpenId}
-              changeMarkers={changeMarkers}
-              nestedChangeMarkers={nestedChangeMarkers}
-              onToggleExpanded={toggleExpanded}
-              onAddFolder={addFolder}
-              onOpenAddRequest={(parentId, anchor) => setAddRequestTarget({ parentId, anchor })}
-              onOpenRequest={onOpenRequest}
-              onPinRequest={onPinRequest}
-              onStartRename={setRenamingId}
-              onCommitRename={commitRename}
-              onRemove={requestRemove}
-              onRemoveShortcut={removeFromShortcut}
-              onDuplicateRequest={duplicateRequest}
-              onMoveRequest={setMoveRequestId}
-              onExport={onExportCollection}
-              onExportWebclient={onExportWebclient}
-              onRun={onRunCollection}
-              onGenerateFlow={onGenerateFlow}
-              onOpenSettings={setSettingsNodeId}
-              nextSortDirectionFor={nextSortDirection}
-              onSort={sortChildren}
-              onToggleMenu={toggleMenu}
-              onOpenMenu={openMenu}
-              onCloseMenu={closeMenu}
-              draggedId={draggedId}
-              dragOverId={dragOverId}
-              dropIndicator={dropIndicator}
-              onDragPointerDown={startRowDrag}
-              selectedIds={selectedIds}
-              selectionJoins={selectionJoins}
-              selectionMode={selectionMode}
-              groupDragging={groupDragging}
-              onSelectClick={handleSelectClick}
-              onStartSelection={startSelection}
-              isFavorite={favoriteIds.has(collection.id)}
-              onToggleFavorite={toggleFavorite}
-              onOpenLabels={(id) => setLabelsModal({ collectionIds: [id] })}
-            />
-          ))}
-        </ul>
-      )}
+          <ul
+            className="collections-tree"
+            aria-label={t('collections.treeLabel')}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape' || (selectedIds.size === 0 && !selectionMode)) return
+              if (event.target instanceof HTMLInputElement) return
+              clearSelection()
+            }}
+          >
+            {displayedCollections.map((collection) => (
+              <FolderRow
+                key={collection.id}
+                node={collection}
+                depth={0}
+                expandedIds={renderExpandedIds}
+                openRequestId={openRequestId}
+                renamingId={renamingId}
+                menuOpenId={menuOpenId}
+                changeMarkers={changeMarkers}
+                nestedChangeMarkers={nestedChangeMarkers}
+                onToggleExpanded={toggleExpanded}
+                onAddFolder={addFolder}
+                onOpenAddRequest={(parentId, anchor) => setAddRequestTarget({ parentId, anchor })}
+                onOpenRequest={onOpenRequest}
+                onPinRequest={onPinRequest}
+                onStartRename={setRenamingId}
+                onCommitRename={commitRename}
+                onRemove={requestRemove}
+                onRemoveShortcut={removeFromShortcut}
+                onDuplicateRequest={duplicateRequest}
+                onMoveRequest={setMoveRequestId}
+                onExport={onExportCollection}
+                onExportWebclient={onExportWebclient}
+                onRun={onRunCollection}
+                onGenerateFlow={onGenerateFlow}
+                onOpenSettings={setSettingsNodeId}
+                nextSortDirectionFor={nextSortDirection}
+                onSort={sortChildren}
+                onToggleMenu={toggleMenu}
+                onOpenMenu={openMenu}
+                onCloseMenu={closeMenu}
+                draggedId={draggedId}
+                dragOverId={dragOverId}
+                dropIndicator={dropIndicator}
+                onDragPointerDown={startRowDrag}
+                selectedIds={selectedIds}
+                selectionJoins={selectionJoins}
+                selectionMode={selectionMode}
+                groupDragging={groupDragging}
+                onSelectClick={handleSelectClick}
+                onStartSelection={startSelection}
+                isFavorite={favoriteIds.has(collection.id)}
+                onToggleFavorite={toggleFavorite}
+                onOpenLabels={(id) => setLabelsModal({ collectionIds: [id] })}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
 
       <DragPreview label={draggedLabel} position={position} />
 
@@ -1916,6 +1921,6 @@ export function CollectionsPanel({
           onCancel={() => setPendingRemove(null)}
         />
       )}
-    </>
+    </div>
   )
 }

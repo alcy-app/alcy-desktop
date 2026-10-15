@@ -38,13 +38,13 @@ export function MockServersPanel({ rootPath, activeServerId, onOpenServer }: Moc
     await refresh()
     onOpenServer(server.id, server.name)
   }
-  return <section className="mock-server-browser" aria-label={t('mockServers.title')}>
-    <div className="mock-server-browser__toolbar">
+  return <section className="mock-server-browser sidebar-panel-layout" aria-label={t('mockServers.title')}>
+    <div className="mock-server-browser__toolbar sidebar-panel-toolbar">
       <button type="button" className="mock-server-browser__new" onClick={() => void create()}><PlusIcon size={14} />{t('mockServers.panel.new')}</button>
       <button type="button" className="mock-server-browser__refresh" aria-label={t('mockServers.panel.refresh')} onClick={() => void refresh()}><RefreshIcon size={14} /></button>
     </div>
     {message && <p className="mock-server-browser__message" role="status">{message}</p>}
-    <div className="mock-server-browser__list">
+    <div className="mock-server-browser__list sidebar-panel-scroll">
       {summaries.length === 0 && <div className="mock-server-browser__empty"><MockServerIcon size={28} /><strong>{t('mockServers.panel.empty')}</strong></div>}
       {summaries.map((server) => <button type="button" className="mock-server-browser__item" key={server.id} aria-current={server.id === activeServerId ? 'page' : undefined} onClick={() => onOpenServer(server.id, server.name)}>
         <span className={server.running ? 'mock-server-browser__status mock-server-browser__status--running' : 'mock-server-browser__status'} />

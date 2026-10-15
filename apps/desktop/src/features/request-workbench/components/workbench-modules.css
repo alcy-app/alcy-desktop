@@ -37,3 +37,34 @@
 .workbench-rail-button.workbench-rail-button--drop-after {
   box-shadow: inset 0 -3px 0 var(--accent-strong);
 }
+
+/* Sidebar panels with a toolbar over a list (search, filters, add/import…):
+   the toolbar stays pinned and only the body below the divider scrolls. The
+   shell switches the tab panel to `.env-tabpanel--pinned-toolbar` for these
+   modules, so the layout fills it exactly. */
+.sidebar-panel-layout {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Stacking context above the body, so the toolbar's dropdowns overlay the list. */
+.sidebar-panel-toolbar {
+  position: relative;
+  z-index: var(--z-raised);
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* The panel's only scroll container (a single scrollbar on the sidebar's
+   edge). `position: relative` keeps absolute descendants (visually hidden
+   labels, row menus) inside it, so they scroll with the rows. */
+.sidebar-panel-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+}

@@ -1,13 +1,12 @@
-.mock-server-browser { display: flex; min-height: 0; height: 100%; flex-direction: column; }
-.mock-server-browser__toolbar { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border-subtle); }
+/* Layout (pinned toolbar over a scrolling list) comes from the shared `.sidebar-panel-*` classes in workbench-modules.css. */
+.mock-server-browser__toolbar { display: flex; gap: 6px; }
 .mock-server-browser__new, .mock-server-browser__refresh { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text); font: inherit; cursor: pointer; }
 .mock-server-browser__new { flex: 1; }
 .mock-server-browser__refresh { width: 30px; }
 .mock-server-browser__new:hover, .mock-server-browser__refresh:hover, .mock-server-browser__item:hover { background: var(--selection-bg); }
 .mock-server-browser__item[aria-current='page'] { background: var(--accent-softer); }
 .mock-server-browser__item[aria-current='page'] .mock-server-browser__item-copy strong { color: var(--text-heading); }
-.mock-server-browser__message { margin: 8px; color: var(--text); font-size: var(--font-size-sm); }
-.mock-server-browser__list { min-height: 0; overflow-y: auto; padding: 6px; }
+.mock-server-browser__message { margin: 8px 12px; color: var(--text); font-size: var(--font-size-sm); }
 .mock-server-browser__item { width: 100%; display: grid; grid-template-columns: 8px minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .mock-server-browser__status { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--text-muted); box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-muted) 18%, transparent); }
 .mock-server-browser__status--running { background: var(--success); box-shadow: 0 0 0 2px var(--success-soft); }

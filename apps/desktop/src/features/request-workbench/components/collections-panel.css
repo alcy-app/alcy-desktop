@@ -82,10 +82,10 @@
   background: var(--border);
 }
 
-/* Sem overflow/flex próprios: o scroll é do `.env-sidebar` como um todo (um
-   só scrollbar, na borda da sidebar), não desta lista isoladamente — dois
-   containers com overflow-y independentes causavam um scrollbar "piscando"
-   ao perder o foco. */
+/* No overflow of its own: the scroll belongs to the panel's
+   `.sidebar-panel-scroll` (a single scrollbar, on the sidebar's edge), not to
+   this list — two nested containers with independent overflow-y made the
+   scrollbar "flicker" on blur. */
 .collections-tree {
   list-style: none;
   margin: 0;

@@ -47,6 +47,10 @@ import './workbench-modules.css'
 
 export type SidebarTab = SidebarModuleId
 
+/** Modules whose panel pins its toolbar over a scrolling body (`.sidebar-panel-layout`).
+ * The others, extension modules included, scroll as a whole inside the tab panel. */
+const PINNED_TOOLBAR_MODULES: ReadonlySet<SidebarTab> = new Set<SidebarTab>(['components', 'history', 'git'])
+
 interface EnvironmentsPanelSlice {
   environments: EnvironmentState[]
   unreadableSecrets: string[]
@@ -531,7 +535,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
             )}
           </header>
           <div
-            className="env-tabpanel"
+            className={PINNED_TOOLBAR_MODULES.has(visibleActiveTab) ? 'env-tabpanel env-tabpanel--pinned-toolbar' : 'env-tabpanel'}
             id={`sidebar-panel-${visibleActiveTab}`}
             role="tabpanel"
             aria-labelledby={`sidebar-tab-${visibleActiveTab}`}

@@ -56,9 +56,9 @@ const onOpenSettings = vi.fn()
 const onPull = vi.fn()
 const onResolveConflict = vi.fn()
 
-function Harness() {
+function Harness({ embedded = false }: { embedded?: boolean }) {
   const vc = useVersionControl(ROOT, onFilesChanged)
-  return <VersionControlPanel rootPath={ROOT} vc={vc} onClose={() => {}} onOpenSettings={onOpenSettings} onPull={onPull} onResolveConflict={onResolveConflict} />
+  return <VersionControlPanel rootPath={ROOT} vc={vc} onClose={() => {}} onOpenSettings={onOpenSettings} onPull={onPull} onResolveConflict={onResolveConflict} embedded={embedded} />
 }
 
 beforeEach(() => {
@@ -178,6 +178,18 @@ describe('VersionControlPanel — vinculado', () => {
 
     expect(await screen.findByText('Tudo sincronizado.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Commit e enviar' })).toBeDisabled()
+  })
+
+  it('in the sidebar, pins the repository header outside the scrolling body', async () => {
+    getVersionStatus.mockResolvedValue(status([{ name: 'alcy-flows.json', state: 'clean' }]))
+    render(<Harness embedded />)
+
+    expect(await screen.findByText('Tudo sincronizado.')).toBeInTheDocument()
+    const header = document.querySelector('.vc-repository') as HTMLElement
+    const body = document.querySelector('.vc-linked-body') as HTMLElement
+    expect(header).toContainElement(screen.getByRole('button', { name: 'Atualizar' }))
+    expect(header).not.toContainElement(body)
+    expect(body).toContainElement(screen.getByText('Tudo sincronizado.'))
   })
 
   it('não declara sincronização antes da primeira consulta válida', async () => {

@@ -37,6 +37,23 @@ describe('HistoryPanel', () => {
     expect(tooltip).toHaveClass('ui-tooltip--multiline')
   })
 
+  it('keeps the filter toolbar pinned outside the scrolling body that holds the entries', () => {
+    renderPanel()
+
+    const toolbar = document.querySelector('.sidebar-panel-toolbar') as HTMLElement
+    const scrollBody = document.querySelector('.sidebar-panel-scroll') as HTMLElement
+    expect(toolbar).toContainElement(screen.getByRole('button', { name: 'Filtrar histórico' }))
+    expect(toolbar).not.toContainElement(scrollBody)
+    expect(scrollBody).toContainElement(screen.getByText('Fluxo de login'))
+  })
+
+  it('renders the empty state inside the scrolling body', () => {
+    render(<HistoryPanel entries={[]} loaded activeComponentKind={null} onRestore={() => {}} onRefresh={() => {}} />)
+
+    const scrollBody = document.querySelector('.sidebar-panel-scroll') as HTMLElement
+    expect(scrollBody).toContainElement(screen.getByText('Nenhuma requisição executada ainda.'))
+  })
+
   it('não mostra tooltip de URL no nome de um flow', async () => {
     renderPanel()
     fireEvent.mouseEnter(screen.getByText('Fluxo de login'))

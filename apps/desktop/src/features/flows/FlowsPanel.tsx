@@ -65,8 +65,8 @@ export function FlowsPanel({ flows, changeMarkers, onAddFlow, onAddLoadFlow, onI
   }
 
   return (
-    <>
-      <div className="flows-toolbar">
+    <div className="sidebar-panel-layout">
+      <div className="flows-toolbar sidebar-panel-toolbar">
         {searchOpen ? (
           <div className="flows-search">
             <SearchIcon size={12} className="flows-search-icon" />
@@ -99,112 +99,114 @@ export function FlowsPanel({ flows, changeMarkers, onAddFlow, onAddLoadFlow, onI
         )}
       </div>
 
-      {flows.length === 0 ? (
-        <EmptyState icon={<FlowIcon size={22} />} title={t('flows.emptyState')} />
-      ) : isSearching && displayedFlows.length === 0 ? (
-        <EmptyState icon={<SearchIcon size={22} />} title={t('flows.searchEmptyState')} />
-      ) : (
-        <ul className="flows-list" aria-label={t('flows.listLabel')}>
-          {displayedFlows.map((flow) => {
-            const isRenaming = flow.id === renamingId
-            const label = flow.name || t('common.unnamed')
-            const changeKind = changeMarkers.get(flow.id)
-            return (
-              <li
-                key={flow.id}
-                className={[
-                  'flows-list-row',
-                  draggedId === flow.id ? 'flows-list-row--dragging' : '',
-                  dragOverId === flow.id && dragOverEdge ? `flows-list-row--drop-${dragOverEdge}` : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                data-flow-drop-id={flow.id}
-                data-flow-drop-kind="flow"
-                onContextMenu={(event) => {
-                  // Botão direito sempre abre o menu (não alterna), como nas coleções.
-                  event.preventDefault()
-                  setMenuOpenId(flow.id)
-                }}
-                onPointerDown={(event) => {
-                  // Com a busca ativa a lista é parcial, e renomeando o toque é do campo de nome.
-                  if (event.button !== 0 || isSearching || isRenaming) return
-                  startDrag(flow.id, 'flow', label, event)
-                }}
-              >
-                <button
-                  type="button"
-                  className="flows-list-item"
-                  onClick={(event) => {
-                    // Foco explícito: o item focado é o alvo dos atalhos de
-                    // renomear e remover, e nem toda WebView foca um botão ao clicar.
-                    event.currentTarget.focus()
-                    onOpenFlow(flow.id)
+      <div className="sidebar-panel-scroll">
+        {flows.length === 0 ? (
+          <EmptyState icon={<FlowIcon size={22} />} title={t('flows.emptyState')} />
+        ) : isSearching && displayedFlows.length === 0 ? (
+          <EmptyState icon={<SearchIcon size={22} />} title={t('flows.searchEmptyState')} />
+        ) : (
+          <ul className="flows-list" aria-label={t('flows.listLabel')}>
+            {displayedFlows.map((flow) => {
+              const isRenaming = flow.id === renamingId
+              const label = flow.name || t('common.unnamed')
+              const changeKind = changeMarkers.get(flow.id)
+              return (
+                <li
+                  key={flow.id}
+                  className={[
+                    'flows-list-row',
+                    draggedId === flow.id ? 'flows-list-row--dragging' : '',
+                    dragOverId === flow.id && dragOverEdge ? `flows-list-row--drop-${dragOverEdge}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  data-flow-drop-id={flow.id}
+                  data-flow-drop-kind="flow"
+                  onContextMenu={(event) => {
+                    // Botão direito sempre abre o menu (não alterna), como nas coleções.
+                    event.preventDefault()
+                    setMenuOpenId(flow.id)
                   }}
-                  onKeyDown={(event) => {
-                    // Só com foco no próprio item, não no campo de nome dentro dele.
-                    if (event.target !== event.currentTarget) return
-                    const combo = comboFromEvent(event)
-                    if (isShortcutFor(shortcutBindings, 'renameItem', combo)) {
-                      event.preventDefault()
-                      setRenamingId(flow.id)
-                    } else if (isShortcutFor(shortcutBindings, 'deleteItem', combo)) {
-                      event.preventDefault()
-                      setPendingRemoveId(flow.id)
-                    }
+                  onPointerDown={(event) => {
+                    // Com a busca ativa a lista é parcial, e renomeando o toque é do campo de nome.
+                    if (event.button !== 0 || isSearching || isRenaming) return
+                    startDrag(flow.id, 'flow', label, event)
                   }}
                 >
-                  <FlowIcon size={13} className="flows-list-item-icon" />
-                  {isRenaming ? (
-                    <InlineEditInput
-                      value={flow.name}
-                      autoFocus
-                      aria-label={t('flows.nameInputAria')}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={(event) => onRenameFlow(flow.id, event.target.value)}
-                      onBlur={() => setRenamingId(null)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') setRenamingId(null)
+                  <button
+                    type="button"
+                    className="flows-list-item"
+                    onClick={(event) => {
+                      // Foco explícito: o item focado é o alvo dos atalhos de
+                      // renomear e remover, e nem toda WebView foca um botão ao clicar.
+                      event.currentTarget.focus()
+                      onOpenFlow(flow.id)
+                    }}
+                    onKeyDown={(event) => {
+                      // Só com foco no próprio item, não no campo de nome dentro dele.
+                      if (event.target !== event.currentTarget) return
+                      const combo = comboFromEvent(event)
+                      if (isShortcutFor(shortcutBindings, 'renameItem', combo)) {
+                        event.preventDefault()
+                        setRenamingId(flow.id)
+                      } else if (isShortcutFor(shortcutBindings, 'deleteItem', combo)) {
+                        event.preventDefault()
+                        setPendingRemoveId(flow.id)
+                      }
+                    }}
+                  >
+                    <FlowIcon size={13} className="flows-list-item-icon" />
+                    {isRenaming ? (
+                      <InlineEditInput
+                        value={flow.name}
+                        autoFocus
+                        aria-label={t('flows.nameInputAria')}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => onRenameFlow(flow.id, event.target.value)}
+                        onBlur={() => setRenamingId(null)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') setRenamingId(null)
+                        }}
+                      />
+                    ) : (
+                      <span className="flows-list-item-name" data-change-kind={changeKind}>
+                        {label}
+                      </span>
+                    )}
+                  </button>
+                  {changeKind && <ChangeMarker kind={changeKind} />}
+                  <OptionsMenu
+                    label={t('flows.moreOptionsAria', { name: label })}
+                    wrapperClassName="flows-menu-wrapper"
+                    menuClassName="flows-menu"
+                    menuPlacement="auto"
+                    menuBoundarySelector=".env-sidebar"
+                    isOpen={menuOpenId === flow.id}
+                    onToggle={() => setMenuOpenId((current) => (current === flow.id ? null : flow.id))}
+                    onClose={() => setMenuOpenId(null)}
+                  >
+                    <MenuItem
+                      label={t('flows.renameMenuItem')}
+                      onSelect={() => {
+                        setRenamingId(flow.id)
+                        setMenuOpenId(null)
                       }}
                     />
-                  ) : (
-                    <span className="flows-list-item-name" data-change-kind={changeKind}>
-                      {label}
-                    </span>
-                  )}
-                </button>
-                {changeKind && <ChangeMarker kind={changeKind} />}
-                <OptionsMenu
-                  label={t('flows.moreOptionsAria', { name: label })}
-                  wrapperClassName="flows-menu-wrapper"
-                  menuClassName="flows-menu"
-                  menuPlacement="auto"
-                  menuBoundarySelector=".env-sidebar"
-                  isOpen={menuOpenId === flow.id}
-                  onToggle={() => setMenuOpenId((current) => (current === flow.id ? null : flow.id))}
-                  onClose={() => setMenuOpenId(null)}
-                >
-                  <MenuItem
-                    label={t('flows.renameMenuItem')}
-                    onSelect={() => {
-                      setRenamingId(flow.id)
-                      setMenuOpenId(null)
-                    }}
-                  />
-                  <MenuItem
-                    label={t('common.remove')}
-                    danger
-                    onSelect={() => {
-                      setPendingRemoveId(flow.id)
-                      setMenuOpenId(null)
-                    }}
-                  />
-                </OptionsMenu>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+                    <MenuItem
+                      label={t('common.remove')}
+                      danger
+                      onSelect={() => {
+                        setPendingRemoveId(flow.id)
+                        setMenuOpenId(null)
+                      }}
+                    />
+                  </OptionsMenu>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
 
       <DragPreview label={draggedLabel} position={position} />
 
@@ -218,6 +220,6 @@ export function FlowsPanel({ flows, changeMarkers, onAddFlow, onAddLoadFlow, onI
           onCancel={() => setPendingRemoveId(null)}
         />
       )}
-    </>
+    </div>
   )
 }

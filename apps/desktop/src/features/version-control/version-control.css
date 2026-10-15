@@ -236,12 +236,16 @@
   font-size: var(--font-size-xs);
 }
 
-/* Sem `min-height` próprio: o scroll é do `.env-sidebar` como um todo (como em
-   Coleções/Flows/Histórico); `min-height: 100%` aqui forçava um overflow
-   permanente do tamanho do cabeçalho + gap da sidebar, mostrando a barra de
-   rolagem mesmo sem nada para rolar. */
-.vc-sidebar-panel { padding: var(--space-2); background: var(--surface); }
+/* In the sidebar the panel uses the shared `.sidebar-panel-*` layout
+   (workbench-modules.css): the repository header stays pinned and only
+   `.vc-linked-body` scrolls. The modal keeps the plain column below. */
+.vc-sidebar-panel { background: var(--surface); }
 .vc-repository { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-subtle); }
+.vc-linked-body { display: flex; flex-direction: column; gap: var(--space-2); }
+.vc-sidebar-panel .vc-linked { flex: 1; min-height: 0; gap: 0; }
+/* Stacking context above the body, so the "more" menu overlays the changes. */
+.vc-sidebar-panel .vc-repository { z-index: var(--z-raised); flex: none; padding: 10px 12px; }
+.vc-sidebar-panel .vc-linked-body { position: relative; flex: 1; min-height: 0; padding: 10px 12px 12px; overflow-y: auto; }
 .vc-repository-name, .vc-branch { display: flex; align-items: center; min-width: 0; gap: var(--space-1); }
 .vc-repository-name span { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .vc-branch { grid-column: 1 / -1; color: var(--text-muted); font-size: var(--font-size-xs); }

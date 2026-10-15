@@ -849,3 +849,31 @@ describe('CollectionsPanel — grupos do menu de contexto', () => {
     expect(menuGroups().every((group) => group.length > 0)).toBe(true)
   })
 })
+
+describe('CollectionsPanel — pinned toolbar', () => {
+  const toolbar = () => document.querySelector('.sidebar-panel-toolbar') as HTMLElement
+  const scrollBody = () => document.querySelector('.sidebar-panel-scroll') as HTMLElement
+
+  it('keeps search, active filters and the selection bar outside the scrolling body that holds the tree', () => {
+    const collections = [node('c1', 'Customer API', [], [request('r1', 'List users')])]
+    renderPanel(collections, new Map(), new Set(['c1']), noop, noop, { favoriteIds: new Set(['c1']) })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filtrar collections' }))
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Somente favoritas' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar requisições' }))
+    fireEvent.click(screen.getByText('List users'), { ctrlKey: true })
+
+    expect(toolbar()).toContainElement(screen.getByRole('textbox', { name: 'Buscar requisições...' }))
+    expect(toolbar()).toContainElement(screen.getByRole('group', { name: 'Filtros ativos' }))
+    expect(toolbar()).toContainElement(screen.getByRole('toolbar', { name: 'Ações da seleção' }))
+    expect(toolbar()).not.toContainElement(scrollBody())
+    expect(scrollBody()).toContainElement(screen.getByText('List users'))
+  })
+
+  it('renders the empty state inside the scrolling body, below the toolbar', () => {
+    renderPanel([], new Map(), new Set())
+
+    expect(toolbar()).toContainElement(screen.getByRole('button', { name: 'Buscar requisições' }))
+    expect(scrollBody()).toContainElement(screen.getByText('Nenhuma Collection ainda.'))
+  })
+})

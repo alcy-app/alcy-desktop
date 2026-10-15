@@ -102,13 +102,21 @@ export function HistoryPanel({ entries, loaded, activeComponentKind, onRestore, 
   )
   const timeFormatter = useMemo(() => new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }), [language])
 
+  // The shell lays this module out as a pinned toolbar over a scrolling body
+  // (`.sidebar-panel-layout`), so even the toolbar-less empty state sits in the body.
   if (loaded && entries.length === 0) {
-    return <EmptyState icon={<ClockIcon size={22} />} title={t('history.emptyState')} />
+    return (
+      <div className="history-panel sidebar-panel-layout">
+        <div className="sidebar-panel-scroll">
+          <EmptyState icon={<ClockIcon size={22} />} title={t('history.emptyState')} />
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="history-panel">
-      <div className="history-toolbar">
+    <div className="history-panel sidebar-panel-layout">
+      <div className="history-toolbar sidebar-panel-toolbar">
         <OptionsMenu
           label={t('history.filter.label')}
           icon={<FilterIcon size={14} />}
@@ -131,21 +139,23 @@ export function HistoryPanel({ entries, loaded, activeComponentKind, onRestore, 
           ))}
         </OptionsMenu>
       </div>
-      {loaded && filtered.length === 0 && (
-        <EmptyState icon={<ClockIcon size={22} />} title={t('history.emptyFiltered')} />
-      )}
-    <ul className="history-list" aria-label={t('environments.historyTab')}>
-      {groups.map((group) => (
-        <li key={group.dateKey} className="history-group">
-          <h3 className="history-date-heading">{dateFormatter.format(new Date(group.entries[0].executedAtMs))}</h3>
-          <ul className="history-entries">
-            {group.entries.map((entry) => (
-              <HistoryEntryItem key={entry.id} entry={entry} timeFormatter={timeFormatter} onRestore={onRestore} />
-            ))}
-          </ul>
-        </li>
-      ))}
-    </ul>
+      <div className="sidebar-panel-scroll">
+        {loaded && filtered.length === 0 && (
+          <EmptyState icon={<ClockIcon size={22} />} title={t('history.emptyFiltered')} />
+        )}
+        <ul className="history-list" aria-label={t('environments.historyTab')}>
+          {groups.map((group) => (
+            <li key={group.dateKey} className="history-group">
+              <h3 className="history-date-heading">{dateFormatter.format(new Date(group.entries[0].executedAtMs))}</h3>
+              <ul className="history-entries">
+                {group.entries.map((entry) => (
+                  <HistoryEntryItem key={entry.id} entry={entry} timeFormatter={timeFormatter} onRestore={onRestore} />
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }
