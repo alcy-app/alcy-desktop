@@ -1,11 +1,12 @@
 import type { AuthenticationInput, ResponseHeader } from '../../../bindings/execute-graphql-request'
 import type { RawBodyLanguage } from '../../../bindings/execute-rest-request'
+import type { ExecuteGrpcRequestOutput } from '../../../bindings/execute-grpc-request'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { toAuthenticationInput } from '../authorization-state'
 import { buildSnippetRequest, type SnippetBody, type SnippetTab } from '../code-snippets/snippet-request'
 import { harRedactionContext, redactHeaders, type HarRedactionContext } from '../har-redaction'
 import { formatJsonBody, formatPartialJsonBody } from '../json-format'
-import { graphqlErrorsOf, httpResultOf, type ExecutionFailure, type ExecutionState } from '../request-workbench.types'
+import { graphqlErrorsOf, grpcResultOf, httpResultOf, type ExecutionFailure, type ExecutionState } from '../request-workbench.types'
 
 type HttpResult = NonNullable<ReturnType<typeof httpResultOf>>
 import { resolveTemplateForDisplay } from '../resolve-url'
@@ -24,9 +25,9 @@ export interface ScreenshotCodeBlock {
   label: string | null
   language: HighlightLanguage
   lines: string[]
-  /** Linhas cortadas pelo limite de linhas por corpo. */
+  /** Lines omitted by the per-body line limit. */
   omittedLines: number
-  /** Aviso sob o bloco (ex.: só a prévia de um corpo grande entrou). */
+  /** Note below the block, such as a large-body preview notice. */
   note: string | null
 }
 
@@ -40,22 +41,23 @@ export type ScreenshotBlock = ScreenshotCodeBlock | ScreenshotTableBlock
 
 export interface ScreenshotStatus {
   statusCode: number
+  grpc?: { codeName: string; message: string }
   tone: StatusTone
-  /** Resultado GraphQL (`null` em REST). */
+  /** GraphQL outcome (`null` for REST and gRPC). */
   graphql: 'success' | 'error' | null
   duration: string
   size: string
 }
 
 export type ScreenshotResponse =
-  | { kind: 'success'; status: ScreenshotStatus | null; headers: ScreenshotRow[] | null; body: ScreenshotBlock | null }
+  | { kind: 'success'; status: ScreenshotStatus | null; headers: ScreenshotRow[] | null; body: ScreenshotBlock | null; trailers?: ScreenshotRow[] | null }
   | { kind: 'error'; message: string }
 
-/** Tudo o que a imagem mostra, já resolvido, ocultado e cortado — o layout
- * (`screenshot-layout.ts`) só posiciona. `null` = seção fora da imagem. */
+/** Resolved, redacted and bounded image content. The layout only positions it.
+ * A null section is excluded from the image. */
 export interface ScreenshotContent {
   header: { title: string; environment: string | null; capturedAt: string } | null
-  endpoint: { method: string; url: string } | null
+  endpoint: { method: string; url: string; rpc?: string } | null
   request: { headers: ScreenshotRow[] | null; body: ScreenshotBlock[] | null } | null
   response: ScreenshotResponse | null
 }
@@ -63,14 +65,14 @@ export interface ScreenshotContent {
 export interface ScreenshotSource {
   tab: SnippetTab
   execution: ExecutionState
-  /** Autenticação efetiva da coleção/pasta, usada quando a aba herda (`inherit`). */
+  /** Effective collection/folder authentication for tabs using `inherit`. */
   inheritedAuthentication: AuthenticationInput | undefined
   environmentVariables: EnvironmentVariableDto[]
   requestName: string
   environmentName: string | null
 }
 
-/** Textos traduzidos que entram no conteúdo. */
+/** Translated text used in image content. */
 export interface ScreenshotContentText {
   capturedAt: string
   errorMessage: (error: ExecutionFailure) => string
@@ -95,14 +97,14 @@ function codeBlock(
   limit: number,
   note: string | null = null,
 ): ScreenshotCodeBlock {
-  // Tab no canvas não tem largura previsível; o editor indenta com 2 espaços.
+  // Canvas tabs have no predictable width; the editor uses two-space indentation.
   const all = source.replace(/\r\n?/g, '\n').replace(/\t/g, '  ').split('\n')
   if (all.length > 1 && all[all.length - 1] === '') all.pop()
   const lines = all.slice(0, limit)
   return { kind: 'code', label, language, lines, omittedLines: all.length - lines.length, note }
 }
 
-/** JSON sempre formatado: minificado, viraria uma linha só quebrada na largura do cartão. */
+/** Pretty-print JSON so minified bodies do not become a single wrapped line. */
 function formatIfJson(text: string, language: HighlightLanguage): string {
   return language === 'json' ? formatJsonBody(text) : text
 }
@@ -124,6 +126,9 @@ function requestBodyBlocks(
       blocks.push(codeBlock('Variables', 'json', formatJsonBody(resolved), limit))
     }
     return blocks.length > 0 ? blocks : null
+  }
+  if (tab.protocol === 'grpc') {
+    return snippetBody.type === 'text' ? [codeBlock('Message', 'json', formatJsonBody(snippetBody.text), limit)] : null
   }
   switch (snippetBody.type) {
     case 'none':
@@ -152,17 +157,17 @@ function requestBodyBlocks(
   }
 }
 
-function responseBodyBlock(result: HttpResult, options: ScreenshotOptions, text: ScreenshotContentText): ScreenshotBlock {
+function responseBodyBlock(result: HttpResult | ExecuteGrpcRequestOutput, options: ScreenshotOptions, text: ScreenshotContentText): ScreenshotBlock {
   const limit = lineLimitValue(options.lineLimit)
-  if (result.bodyEncoding === 'base64') return codeBlock(null, 'text', text.binaryBody(formatSize(result.sizeBytes)), limit)
+  if ('bodyEncoding' in result && result.bodyEncoding === 'base64') return codeBlock(null, 'text', text.binaryBody(formatSize(result.sizeBytes)), limit)
 
   const { body } = result
-  // Só a prévia de um corpo grande: nada volta a cruzar a IPC, e o limite de linhas já corta antes do fim dela.
+  // Use the bounded body preview without fetching more data through IPC.
   const raw = body.kind === 'inline' ? body.body : body.preview
   const partialEnd = body.kind === 'windowed' ? body.previewNextOffset : null
   if (raw === '') return codeBlock(null, 'text', text.emptyBody, limit)
 
-  const mode = detectBodyMode(result.headers, raw)
+  const mode = 'status' in result ? 'json' : detectBodyMode(result.headers, raw)
   const formatted =
     mode === 'json' ? (partialEnd === null ? formatJsonBody(raw) : formatPartialJsonBody(raw)) : raw
   const note =
@@ -186,6 +191,11 @@ function rows(headers: ResponseHeader[], direction: 'request' | 'response', reda
   return visible.length > 0 ? visible : null
 }
 
+function metadataRows(headers: ResponseHeader[], redaction: HarRedactionContext | null) {
+  const visible = redaction ? redactHeaders(headers, 'request', redaction) : headers
+  return rows(visible, 'response', redaction)
+}
+
 function buildResponse(
   execution: ExecutionState,
   options: ScreenshotOptions,
@@ -196,7 +206,21 @@ function buildResponse(
   if (!fields.status && !fields.responseHeaders && !fields.responseBody) return null
   if (execution.status === 'error') return { kind: 'error', message: text.errorMessage(execution.error) }
   if (execution.status !== 'success') return null
-  // gRPC responses are not part of the image yet (spec 0129).
+  const grpc = grpcResultOf(execution.result)
+  if (grpc) return {
+    kind: 'success',
+    status: fields.status ? {
+      statusCode: grpc.status.code,
+      grpc: { codeName: grpc.status.codeName, message: grpc.status.message },
+      tone: grpc.status.code === 0 ? 'success' : 'error',
+      graphql: null,
+      duration: `${grpc.durationMs} ms`,
+      size: formatSize(grpc.sizeBytes),
+    } : null,
+    headers: fields.responseHeaders ? metadataRows(grpc.headers, redaction) : null,
+    trailers: fields.responseHeaders ? metadataRows(grpc.trailers, redaction) : null,
+    body: fields.responseBody ? responseBodyBlock(grpc, options, text) : null,
+  }
   const result = httpResultOf(execution.result)
   if (!result) return null
   return {
@@ -207,13 +231,9 @@ function buildResponse(
   }
 }
 
-/**
- * Monta o conteúdo da imagem de compartilhamento a partir da aba e da última
- * execução. A requisição reaproveita `buildSnippetRequest` (variáveis
- * resolvidas, autenticação nos headers); com "ocultar dados sensíveis",
- * variáveis sensíveis ficam como `{{nome}}` e credenciais nos headers são
- * mascaradas com as regras do HAR. Sem essa opção, tudo aparece resolvido.
- */
+/** Builds image content from the tab and its last execution. Request data
+ * reuses the code-sharing resolver. When hiding sensitive data, sensitive
+ * variables remain as placeholders and credential headers use HAR redaction. */
 export function buildScreenshotContent(
   source: ScreenshotSource,
   options: ScreenshotOptions,
@@ -228,20 +248,25 @@ export function buildScreenshotContent(
 
   const ownAuthentication = toAuthenticationInput(tab.authorization)
   const authentication = ownAuthentication.type === 'inherit' ? source.inheritedAuthentication : ownAuthentication
-  const success = execution.status === 'success' ? httpResultOf(execution.result) : null
+  const success = execution.status === 'success' ? execution.result : null
+  const httpSuccess = success ? httpResultOf(success) : null
   const redaction = hideSensitive
     ? harRedactionContext(source.environmentVariables, (success?.environmentChanges ?? []).filter((change): change is { name: string; value: string } => change.value !== null), authentication)
     : null
 
-  // Os headers enviados de fato (com os que a autenticação injeta) valem mais como evidência que os configurados.
-  const requestHeaders = fields.requestHeaders ? rows(success ? success.requestHeaders : snippet.headers, 'request', redaction) : null
+  // Prefer actual sent HTTP headers, including injected authentication, when available.
+  const requestHeaders = fields.requestHeaders ? rows(httpSuccess ? httpSuccess.requestHeaders : snippet.headers, 'request', redaction) : null
   const requestBody = fields.requestBody ? requestBodyBlocks(source, snippet.body, variables, options, text) : null
 
   return {
     header: fields.header
       ? { title: source.requestName, environment: source.environmentName, capturedAt: text.capturedAt }
       : null,
-    endpoint: fields.url ? { method: snippet.method, url: snippet.url } : null,
+    endpoint: fields.url ? {
+      method: tab.protocol === 'grpc' ? 'gRPC' : snippet.method,
+      url: snippet.url,
+      ...(snippet.grpc ? { rpc: [snippet.grpc.service, snippet.grpc.method].filter(Boolean).join('/') } : {}),
+    } : null,
     request: requestHeaders || requestBody ? { headers: requestHeaders, body: requestBody } : null,
     response: buildResponse(execution, options, redaction, text),
   }

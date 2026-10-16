@@ -3,6 +3,9 @@ import { fireEvent, render, screen, waitFor, within } from '../../../test-utils'
 import type { ExecuteRestRequestOutput } from '../../../bindings/execute-rest-request'
 import { emptyAuthorizationState } from '../authorization-state'
 import { emptyBodyState } from '../body-state'
+import { emptyGrpcCall } from '../collection-tree'
+import type { SnippetTab } from '../code-snippets/snippet-request'
+import type { ScreenshotLayout } from '../screenshot/screenshot-layout'
 import type { ExecutionState } from '../request-workbench.types'
 import { SCREENSHOT_PALETTES } from '../screenshot/screenshot-palette'
 import { ShareScreenshotModal } from './ShareScreenshotModal'
@@ -12,10 +15,10 @@ const pickExportFile = vi.fn()
 const exportPng = vi.fn()
 const serializeCollections = vi.fn()
 
-/** PNG mínimo (assinatura + IEND), para o chunk de importação ter onde entrar. */
+/** Minimal PNG signature and IEND for embedding an import text chunk. */
 const MINIMAL_PNG = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]
 
-// O jsdom não tem canvas: o desenho e a conversão para PNG são simulados.
+// jsdom has no canvas; drawing and PNG encoding are mocked.
 vi.mock('../screenshot/screenshot-render', () => ({
   ensureScreenshotFonts: () => Promise.resolve(),
   createMeasure: () => (text: string, font: { size: number }) => text.length * font.size * 0.6,
@@ -66,10 +69,10 @@ const result: ExecuteRestRequestOutput = {
   testResults: [],
 }
 
-function renderModal(execution: ExecutionState = { status: 'success', result }) {
+function renderModal(execution: ExecutionState = { status: 'success', result }, requestTab: SnippetTab = tab) {
   return render(
     <ShareScreenshotModal
-      tab={tab}
+      tab={requestTab}
       execution={execution}
       inheritedAuthentication={undefined}
       environmentVariables={[{ name: 'baseUrl', value: 'https://api.test', sensitive: false }]}
@@ -108,6 +111,33 @@ describe('ShareScreenshotModal', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('previews and saves a gRPC image with protocol labels and a reimportable request', async () => {
+    const grpc = { ...emptyGrpcCall, service: 'test.Greeter', method: 'SayHello', message: '{"greeting":"Ada"}', deadlineMs: 2500 }
+    pickExportFile.mockResolvedValue('/tmp/grpc.png')
+    exportPng.mockResolvedValue({ ok: true })
+    renderModal({ status: 'success', result: {
+      status: { code: 0, codeName: 'OK', message: '' }, durationMs: 20, sizeBytes: 20, messageCount: 1,
+      body: { kind: 'inline', body: '{"reply":"Hello"}' }, headers: [{ name: 'x-server', value: 'test' }], trailers: [{ name: 'x-trailer', value: 'done' }],
+    } }, { ...tab, protocol: 'grpc', endpointUrl: 'grpc://localhost:50051', grpc })
+
+    expect(screen.getByRole('checkbox', { name: 'URL, serviço e método' })).toBeEnabled()
+    expect(screen.getByRole('checkbox', { name: 'Mensagem da requisição' })).toBeEnabled()
+    expect(screen.getByRole('checkbox', { name: 'Mensagens recebidas' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Metadata da resposta e trailers' }))
+    await waitFor(() => expect(drawScreenshot).toHaveBeenCalled())
+    const layout = drawScreenshot.mock.calls.at(-1)![1] as ScreenshotLayout
+    const text = layout.ops.flatMap((op) => op.kind === 'text' ? [op.text] : [])
+    expect(text).toEqual(expect.arrayContaining(['gRPC', 'test.Greeter/SayHello', 'gRPC 0 OK', 'Metadata', 'Metadata final', 'Mensagens']))
+    expect(text.some((value) => value.startsWith('HTTP '))).toBe(false)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar PNG' }))
+    expect(await screen.findByText('Imagem salva.')).toBeInTheDocument()
+    expect(serializeCollections).toHaveBeenCalledWith([expect.objectContaining({ requests: [expect.objectContaining({
+      protocol: 'grpc', body: grpc.message, grpc: { service: grpc.service, method: grpc.method, deadlineMs: 2500, schemaSource: { type: 'reflection' } },
+    })] })])
+    expect(exportPng).toHaveBeenCalledWith('/tmp/grpc.png', expect.any(Uint8Array))
   })
 
   it('desenha a prévia no tema escolhido e lembra as opções', async () => {

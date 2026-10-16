@@ -544,7 +544,7 @@ describe('RequestWorkbench', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Compartilhar requisição' }))
       expect(screen.getByRole('menuitem', { name: 'Como código' })).toBeInTheDocument()
-      expect(screen.queryByRole('menuitem', { name: 'Como imagem' })).not.toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: 'Como imagem' })).toBeInTheDocument()
       fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Como código' }), { key: 'Escape' })
 
       fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: 'localhost:50051' } })

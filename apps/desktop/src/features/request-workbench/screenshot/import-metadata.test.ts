@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { emptyAuthorizationState } from '../authorization-state'
 import { emptyBodyState } from '../body-state'
+import { emptyGrpcCall } from '../collection-tree'
+import { requestFromDto } from '../use-collections-state'
 import type { SnippetTab } from '../code-snippets/snippet-request'
 import {
   buildImportCollection,
@@ -36,6 +38,26 @@ function build(overrides: Partial<ImportMetadataInput> = {}) {
 }
 
 describe('buildImportCollection', () => {
+  it('embeds a gRPC request that can be reopened with its message, schema and deadline', () => {
+    const grpc = { ...emptyGrpcCall, service: 'test.Greeter', method: 'SayHello', message: '{"name":"{{name}}"}', deadlineMs: 2500,
+      schemaSource: { type: 'protoFiles' as const, files: ['protos/hello.proto'], importPaths: ['protos'] } }
+    const [request] = build({ tab: { ...restTab, protocol: 'grpc', query: 'stale query', grpc }, hideSensitive: true }).requests
+    expect(request).toMatchObject({ protocol: 'grpc', body: grpc.message, restBody: null, variables: '',
+      grpc: { service: grpc.service, method: grpc.method, deadlineMs: 2500, schemaSource: grpc.schemaSource }, preRequestScript: '', postResponseScript: '' })
+    expect(requestFromDto(request).content.grpc).toEqual(grpc)
+    expect(JSON.stringify(request)).not.toContain('stale query')
+  })
+
+  it('detects and clears suspected credentials in the embedded gRPC message without editing the draft', () => {
+    const tab: SnippetTab = { ...restTab, protocol: 'grpc', headers: [], authorization: emptyAuthorizationState,
+      grpc: { ...emptyGrpcCall, service: 'test.Greeter', method: 'Hello', message: '{"password":"literal","token":"{{token}}","name":"Ada"}' } }
+    const environmentVariables = [{ name: 'token', value: 'known-secret', sensitive: true }]
+    expect(hasSuspectedPasswordInImportMetadata({ tab, environmentVariables, inheritedAuthentication: undefined })).toBe(true)
+    const cleared = clearSuspectedPasswordsForImport({ tab, environmentVariables, inheritedAuthentication: undefined })
+    expect(JSON.parse(cleared.tab.grpc!.message)).toEqual({ password: '', token: '{{token}}', name: 'Ada' })
+    expect(tab.grpc!.message).toContain('literal')
+    expect(build({ ...cleared, hideSensitive: true }).requests[0].body).toBe(cleared.tab.grpc!.message)
+  })
   it('leva a requisição com variáveis, sem scripts', () => {
     const collection = build()
     const [request] = collection.requests

@@ -3,12 +3,12 @@ import type { CollectionDto, SavedRequestDto } from '../../../bindings/list-coll
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { toAuthenticationInput } from '../authorization-state'
 import { restBodyText, toRestBodyInput } from '../body-state'
+import { emptyGrpcCall } from '../collection-tree'
 import type { SnippetTab } from '../code-snippets/snippet-request'
 import { isCredentialHeader } from '../har-redaction'
 import { parseQueryParams } from '../query-params'
 
-/** Palavra-chave do chunk de texto do PNG com os dados de importação — a
- * mesma que o backend procura ao importar uma imagem (ADR 0032). */
+/** PNG text keyword recognized by the native image importer (ADR 0032). */
 export const IMPORT_PNG_KEYWORD = 'alcy.collections'
 
 const TEMPLATE_PATTERN = /\{\{\s*([^{}\s]+)\s*\}\}/g
@@ -90,8 +90,8 @@ function textHasSuspiciousField(text: string, environmentVariables: EnvironmentV
   try {
     return jsonHasSuspiciousField(JSON.parse(text), environmentVariables)
   } catch {
-    // GraphQL, XML e corpos ainda incompletos: cobre os formatos `password: valor`,
-    // `password=valor` e `<password>valor` sem exigir que o editor esteja válido.
+    // Handle GraphQL, XML and incomplete bodies without requiring valid JSON:
+    // `password: value`, `password=value` and `<password>value`.
     const normalized = text.replace(/([a-z\d])([A-Z])/g, '$1 $2')
     if (hasSensitiveVariableReference(normalized, environmentVariables)) return false
     return /(?:password|passwd|pwd|passphrase|senha|secret|token|api[-_ ]?key|credential)\s*(?:["']?\s*[:=]\s*["']?\s*[^\s,}\]&<]|>\s*[^\s<])/i.test(
@@ -124,12 +124,8 @@ function authenticationSecretValues(authentication: AuthenticationInput): string
   }
 }
 
-/**
- * Indica que a definição embutida no PNG pode conter uma senha ou outra
- * credencial. É só uma heurística para orientar a revisão da pessoa: combina
- * campos semanticamente sensíveis, nomes sugestivos e valores/referências de
- * variáveis marcadas como sensíveis.
- */
+/** Detects likely credentials in the embedded request to guide user review,
+ * using field names and sensitive variable values or references. */
 export function hasSuspectedPasswordInImportMetadata({
   tab,
   inheritedAuthentication,
@@ -175,6 +171,10 @@ export function hasSuspectedPasswordInImportMetadata({
     ...tab.routeParams.flatMap(({ name, value }) => [name, value]),
     ...authenticationSecretValues(authentication),
   ]
+  if (tab.protocol === 'grpc' && tab.grpc) {
+    authoredText.push(tab.grpc.service, tab.grpc.method, tab.grpc.message)
+    if (textHasSuspiciousField(tab.grpc.message, environmentVariables)) return true
+  }
   if (tab.protocol === 'rest') {
     if (tab.body.type === 'raw') authoredText.push(tab.body.raw)
     if (tab.body.type === 'urlencoded') authoredText.push(...tab.body.urlEncoded.flatMap(({ name, value }) => [name, value]))
@@ -291,10 +291,8 @@ function clearEndpointQuery(endpointUrl: string, environmentVariables: Environme
   return `${endpointUrl.slice(0, queryIndex)}?${query}${suffix}`
 }
 
-/**
- * Cria uma fonte só para os metadados do PNG, esvaziando campos suspeitos.
- * A aba original não é alterada e continua sendo usada para desenhar a imagem.
- */
+/** Clears suspected credentials in a copy used only for embedded metadata.
+ * The original draft remains unchanged and is still used to draw the image. */
 export function clearSuspectedPasswordsForImport({
   tab,
   inheritedAuthentication,
@@ -374,14 +372,15 @@ export function clearSuspectedPasswordsForImport({
       routeParams,
       body,
       authorization,
+      ...(tab.protocol === 'grpc' && tab.grpc
+        ? { grpc: { ...tab.grpc, message: clearSensitiveText(tab.grpc.message, environmentVariables) } } : {}),
     },
     inheritedAuthentication:
       ownAuthentication.type === 'inherit' ? clearAuthentication(inheritedAuthentication, environmentVariables) : inheritedAuthentication,
   }
 }
 
-/** O valor tem algo além de `{{variáveis}}` e do esquema (`Bearer`, `Basic`…),
- * ou seja, um segredo digitado direto no campo. */
+/** Detects literal secrets beyond variable placeholders and authentication schemes. */
 function hasLiteralSecret(value: string): boolean {
   return (
     value
@@ -410,14 +409,9 @@ function redactAuthentication(authentication: AuthenticationInput): Authenticati
   }
 }
 
-/**
- * Coleção com a requisição da aba, para embutir na imagem de
- * compartilhamento. Leva a definição da requisição (com `{{variáveis}}`,
- * resolvidas pelo ambiente de quem importa) e a autenticação efetiva.
- * Scripts ficam de fora: importar uma imagem não deve trazer código que
- * roda no envio. Com `hideSensitive`, segredos digitados direto na
- * autenticação e em headers de credencial são removidos.
- */
+/** Embeds the authored request and effective authentication as a collection.
+ * Variable references are resolved by the importing workspace. Scripts are
+ * excluded; `hideSensitive` removes literal authentication/header secrets. */
 export function buildImportCollection({
   tab,
   inheritedAuthentication,
@@ -437,13 +431,15 @@ export function buildImportCollection({
   }
 
   const restBody = tab.protocol === 'rest' ? toRestBodyInput(tab.body) : null
+  const grpc = tab.protocol === 'grpc' ? tab.grpc ?? emptyGrpcCall : null
   const request: SavedRequestDto = {
     id: 'shared-request',
     name: requestName.trim() || 'Imported Request',
     protocol: tab.protocol,
     endpoint: tab.endpointUrl,
     method: tab.method,
-    body: restBody ? restBodyText(restBody) : tab.query,
+    body: grpc ? grpc.message : restBody ? restBodyText(restBody) : tab.query,
+    ...(grpc ? { grpc: { service: grpc.service, method: grpc.method, schemaSource: grpc.schemaSource, deadlineMs: grpc.deadlineMs } } : {}),
     restBody,
     variables: tab.protocol === 'graphql' ? tab.variables : '',
     headers,

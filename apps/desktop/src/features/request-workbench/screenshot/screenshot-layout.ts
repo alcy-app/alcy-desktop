@@ -17,8 +17,8 @@ export interface FontSpec {
   italic?: boolean
 }
 
-/** Operações de desenho em pixels lógicos; `y` é o topo da caixa da linha
- * (`height`), e o renderizador centraliza o texto nela. */
+/** Drawing operations in logical pixels. `y` is the line box top;
+ * the renderer centers text inside its height. */
 export type DrawOp =
   | {
       kind: 'rect'
@@ -28,7 +28,7 @@ export type DrawOp =
       height: number
       radius: number
       fill: ColorRole | null
-      /** Opacidade do preenchimento, para fundos suaves (chips, alerta de erro). */
+      /** Fill opacity for subtle chip and error backgrounds. */
       fillAlpha?: number
       stroke: ColorRole | null
     }
@@ -39,7 +39,7 @@ export interface ScreenshotLayout {
   width: number
   height: number
   ops: DrawOp[]
-  /** A imagem passou da altura máxima e foi cortada. */
+  /** The image exceeded the maximum height and was clipped. */
   truncated: boolean
 }
 
@@ -50,6 +50,7 @@ export interface ScreenshotLayoutLabels {
   response: string
   headers: string
   body: string
+  trailers: string
   environment: (name: string) => string
   capturedAt: (date: string) => string
   moreLines: (count: number) => string
@@ -82,8 +83,7 @@ const BADGE_HEIGHT = 24
 const CHIP_HEIGHT = 22
 const MIN_CHARS = 8
 
-/** Teto de altura em pixels lógicos (16 000 px exportados em 2x), abaixo do
- * limite de canvas dos WebViews. */
+/** Maximum logical height (16,000 exported pixels at 2x), below WebView canvas limits. */
 export const MAX_SCREENSHOT_HEIGHT = 8_000
 
 const lineHeightOf = (font: FontSpec) => Math.round(font.size * 1.5)
@@ -96,7 +96,7 @@ const STATUS_COLORS: Record<ScreenshotStatus['tone'], ColorRole> = {
   neutral: 'textMuted',
 }
 
-/** Quebra um texto em pedaços de até `maxChars` caracteres (fonte monoespaçada). */
+/** Splits monospaced text into chunks of at most `maxChars` characters. */
 function chunkRanges(length: number, maxChars: number): Array<[number, number]> {
   if (length === 0) return [[0, 0]]
   const ranges: Array<[number, number]> = []
@@ -148,7 +148,7 @@ class LayoutBuilder {
     this.code(x, y, text ? [{ text, tone }] : [])
   }
 
-  /** Texto proporcional que não cabe termina em reticências. */
+  /** Ellipsizes proportional text that does not fit. */
   fit(text: string, font: FontSpec, maxWidth: number): string {
     if (this.measure(text, font) <= maxWidth) return text
     let low = 0
@@ -161,7 +161,7 @@ class LayoutBuilder {
     return `${text.slice(0, low)}…`
   }
 
-  /** Quebra texto proporcional por palavras; palavra maior que a linha é partida. */
+  /** Wraps proportional text by words, splitting words longer than a line. */
   wrap(text: string, font: FontSpec, maxWidth: number): string[] {
     const lines: string[] = []
     for (const paragraph of text.split('\n')) {
@@ -186,7 +186,7 @@ class LayoutBuilder {
     return lines
   }
 
-  /** Desenha o conteúdo e insere o cartão por trás dele, já com a altura final. */
+  /** Lays out content, then inserts its card background at the final height. */
   card(x: number, y: number, width: number, content: (x: number, y: number, width: number) => number) {
     const start = this.ops.length
     const bottom = content(x + CARD_PADDING, y + CARD_PADDING, width - CARD_PADDING * 2)
@@ -204,7 +204,7 @@ class LayoutBuilder {
     return rect
   }
 
-  /** Como `card`, para o fundo dos blocos de código/tabela. */
+  /** Like `card`, for code and table backgrounds. */
   well(x: number, y: number, width: number, content: (x: number, y: number, width: number) => number): number {
     const start = this.ops.length
     const bottom = content(x + WELL_PADDING, y + WELL_PADDING, width - WELL_PADDING * 2) + WELL_PADDING
@@ -244,13 +244,21 @@ function layoutEndpoint(b: LayoutBuilder, endpoint: NonNullable<ScreenshotConten
     const maxChars = Math.max(MIN_CHARS, Math.floor((innerX + innerWidth - urlX) / b.charWidth(URL_FONT)))
     const url = endpoint.url || '—'
     const lineHeight = lineHeightOf(URL_FONT)
-    // A primeira linha fica centralizada no badge; as seguintes seguem alinhadas a ela.
+    // Center the first line in the badge and align subsequent lines with it.
     let lineY = innerY + (BADGE_HEIGHT - lineHeight) / 2
     for (const [start, end] of chunkRanges(url.length, maxChars)) {
       b.text(urlX, lineY, url.slice(start, end), URL_FONT, 'text')
       lineY += lineHeight
     }
-    return Math.max(innerY + BADGE_HEIGHT, lineY)
+    let bottom = Math.max(innerY + BADGE_HEIGHT, lineY)
+    if (endpoint.rpc) {
+      bottom += 8
+      const rpcChars = Math.max(MIN_CHARS, Math.floor(innerWidth / b.charWidth(URL_FONT)))
+      for (const [start, end] of chunkRanges(endpoint.rpc.length, rpcChars)) {
+        bottom += b.text(innerX, bottom, endpoint.rpc.slice(start, end), URL_FONT, 'textHeading')
+      }
+    }
+    return bottom
   })
 }
 
@@ -330,9 +338,12 @@ function layoutRequest(b: LayoutBuilder, request: NonNullable<ScreenshotContent[
   })
 }
 
-/** Chips de status e métricas: à direita do título quando cabem, senão na linha de baixo. */
+/** Places status chips and metrics beside the title when they fit, or below it. */
 function layoutStatus(b: LayoutBuilder, status: ScreenshotStatus, titleX: number, titleY: number, titleWidth: number, width: number) {
-  const chips: Array<{ text: string; color: ColorRole }> = [{ text: `HTTP ${status.statusCode}`, color: STATUS_COLORS[status.tone] }]
+  const chips: Array<{ text: string; color: ColorRole }> = [{
+    text: status.grpc ? `gRPC ${status.statusCode} ${status.grpc.codeName}` : `HTTP ${status.statusCode}`,
+    color: STATUS_COLORS[status.tone],
+  }]
   if (status.graphql) {
     chips.push({ text: `GraphQL: ${status.graphql === 'error' ? 'Error' : 'Success'}`, color: status.graphql === 'error' ? 'error' : 'success' })
   }
@@ -349,8 +360,10 @@ function layoutStatus(b: LayoutBuilder, status: ScreenshotStatus, titleX: number
     b.ops.push({ kind: 'text', x: chipX + 8, y: chipY, height: CHIP_HEIGHT, text: chip.text, font: CHIP_FONT, color: chip.color })
     chipX += chipWidths[index] + 8
   })
-  b.ops.push({ kind: 'text', x: chipX + 4, y: chipY, height: CHIP_HEIGHT, text: metrics, font: METRIC_FONT, color: 'textMuted' })
-  return inline ? titleY + lineHeightOf(SECTION_FONT) + 8 : chipY + CHIP_HEIGHT + 12
+  const wrapMetrics = chipX + 4 + metricsWidth > titleX + width
+  const metricsY = wrapMetrics ? chipY + CHIP_HEIGHT + 8 : chipY
+  b.ops.push({ kind: 'text', x: wrapMetrics ? titleX : chipX + 4, y: metricsY, height: CHIP_HEIGHT, text: metrics, font: METRIC_FONT, color: 'textMuted' })
+  return inline ? titleY + lineHeightOf(SECTION_FONT) + 8 : metricsY + CHIP_HEIGHT + 12
 }
 
 function layoutResponse(b: LayoutBuilder, response: ScreenshotResponse, x: number, y: number, width: number) {
@@ -371,15 +384,22 @@ function layoutResponse(b: LayoutBuilder, response: ScreenshotResponse, x: numbe
       ? layoutStatus(b, response.status, innerX, innerY, b.measure(title, SECTION_FONT), innerWidth)
       : sectionTitle(b, title, innerX, innerY)
     if (response.status) b.text(innerX, innerY, title, SECTION_FONT, 'textMuted')
+    if (response.status?.grpc?.message) {
+      for (const line of b.wrap(response.status.grpc.message, MESSAGE_FONT, innerWidth)) {
+        blockY += b.text(innerX, blockY, line, MESSAGE_FONT, STATUS_COLORS[response.status.tone])
+      }
+      blockY += 8
+    }
     const blocks: ScreenshotBlock[] = [
       ...(response.headers ? [{ kind: 'table' as const, label: b.labels.headers, rows: response.headers }] : []),
+      ...(response.trailers ? [{ kind: 'table' as const, label: b.labels.trailers, rows: response.trailers }] : []),
       ...(response.body ? [{ ...response.body, label: response.body.label ?? b.labels.body }] : []),
     ]
     blocks.forEach((block, index) => {
       if (index > 0) blockY += BLOCK_GAP
       blockY = layoutBlock(b, block, innerX, blockY, innerWidth)
     })
-    // Só o título: tira o espaço reservado para o bloco seguinte.
+    // Remove the next-block spacing when only the title is present.
     return blocks.length > 0 ? blockY : blockY - 8
   })
 }
@@ -388,7 +408,7 @@ function opBottom(op: DrawOp): number {
   return op.y + op.height
 }
 
-/** Corta o que passa da altura máxima e avisa no rodapé. */
+/** Clips content at the maximum height and adds a footer notice. */
 function capHeight(b: LayoutBuilder, width: number): ScreenshotLayout {
   const cut = MAX_SCREENSHOT_HEIGHT - PAGE_PADDING - 24
   const ops = b.ops
@@ -398,11 +418,8 @@ function capHeight(b: LayoutBuilder, width: number): ScreenshotLayout {
   return { width, height: MAX_SCREENSHOT_HEIGHT, ops, truncated: true }
 }
 
-/**
- * Posiciona o conteúdo da imagem: cabeçalho, cartão da URL e os cartões de
- * requisição e resposta — empilhados, ou lado a lado (com a mesma altura)
- * quando os dois existem. Linhas longas quebram na largura da coluna.
- */
+/** Positions the header, endpoint, request and response cards vertically or
+ * in equal-height columns. Long lines wrap within their column. */
 export function layoutScreenshot(
   content: ScreenshotContent,
   options: Pick<ScreenshotOptions, 'layout' | 'width'>,

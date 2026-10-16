@@ -11,7 +11,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Importação de HAR**: importe como uma nova coleção as chamadas gravadas em um arquivo `.har`, como o salvo pelas ferramentas de desenvolvedor do navegador.
 - Busca nas variáveis do ambiente aberto, por nome ou valor; valores sensíveis nunca entram na busca.
 - **`require` em scripts**: scripts de pré-requisição e pós-resposta carregam bibliotecas com `require`. lodash, crypto-js, moment e uuid já vêm com o app, e `require('npm:pacote@versão')` baixa qualquer pacote do npm na primeira execução e o guarda para uso offline.
-- **Requisições gRPC**: crie requisições gRPC, escolha o serviço e o método pela reflection do servidor ou por arquivos `.proto` e envie a mensagem em JSON, com sugestões dos campos. Use streaming, scripts, runner de coleções e flows, ou importe e compartilhe chamadas como comandos `grpcurl`.
+- **Requisições gRPC**: crie requisições gRPC, escolha o serviço e o método pela reflection do servidor ou por arquivos `.proto` e envie a mensagem em JSON, com sugestões dos campos. Use streaming, scripts, runner de coleções e flows; importe e compartilhe chamadas como comandos `grpcurl` ou imagens.
 
 ### Changed
 

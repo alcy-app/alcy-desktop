@@ -1828,7 +1828,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                         )}
                         <ShareMenu
                           onShareAsCode={() => setShareModalOpen(true)}
-                          onShareAsImage={workbench.protocol === 'grpc' ? undefined : () => setScreenshotModalOpen(true)}
+                          onShareAsImage={() => setScreenshotModalOpen(true)}
                         />
                       </>
                     }

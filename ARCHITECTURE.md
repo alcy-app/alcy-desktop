@@ -230,6 +230,9 @@ JSON messages. Request edits remain read-only after sending. Interactive
 messages share the variable snapshot produced by the call's pre-request script.
 
 Code sharing generates `grpcurl` commands for gRPC instead of HTTP client code.
+PNG sharing renders gRPC methods, JSON messages, protocol status, metadata and
+trailers with bounded response previews. Embedded import data preserves the gRPC
+message and schema configuration, without scripts.
 The shell-command importer also parses pasted `grpcurl` calls in Rust, preserving
 TLS, metadata, JSON, proto paths and deadlines. Import never executes the command
 or reads referenced files; unsupported options fail before changing the request.

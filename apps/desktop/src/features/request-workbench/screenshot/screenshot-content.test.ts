@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ExecuteGraphqlRequestOutput } from '../../../bindings/execute-graphql-request'
 import type { ExecuteRestRequestOutput } from '../../../bindings/execute-rest-request'
+import type { ExecuteGrpcRequestOutput } from '../../../bindings/execute-grpc-request'
 import { SENSITIVE_MASK } from '../../environments/environments.types'
 import { emptyAuthorizationState } from '../authorization-state'
 import { emptyBodyState } from '../body-state'
+import { emptyGrpcCall } from '../collection-tree'
 import type { SnippetTab } from '../code-snippets/snippet-request'
 import type { ExecutionState } from '../request-workbench.types'
 import {
@@ -97,7 +99,7 @@ function build(
   )
 }
 
-const success = (result: ExecuteRestRequestOutput | ExecuteGraphqlRequestOutput): ExecutionState => ({ status: 'success', result })
+const success = (result: ExecuteRestRequestOutput | ExecuteGraphqlRequestOutput | ExecuteGrpcRequestOutput): ExecutionState => ({ status: 'success', result })
 
 function responseBody(content: ScreenshotContent): ScreenshotCodeBlock {
   if (content.response?.kind !== 'success' || content.response.body?.kind !== 'code') throw new Error('sem corpo de resposta')
@@ -105,6 +107,52 @@ function responseBody(content: ScreenshotContent): ScreenshotCodeBlock {
 }
 
 describe('buildScreenshotContent', () => {
+  const grpcTab: SnippetTab = {
+    ...restTab, protocol: 'grpc', endpointUrl: 'grpc://{{host}}:9000', query: 'stale GraphQL query',
+    body: { ...emptyBodyState, raw: 'stale REST body', rawLanguage: 'xml' },
+    grpc: { ...emptyGrpcCall, service: 'hello.HelloService', method: '{{rpc}}', message: '{"greeting":"{{apiKey}}"}' },
+  }
+  const grpcResult: ExecuteGrpcRequestOutput = {
+    status: { code: 0, codeName: 'OK', message: '' }, durationMs: 20, sizeBytes: 100, messageCount: 2,
+    body: { kind: 'inline', body: '[{"reply":"Hi"},{"reply":"Hello"}]' },
+    headers: [{ name: 'x-server', value: 'test' }], trailers: [{ name: 'x-token', value: 'hidden' }, { name: 'authorization', value: 'Bearer hidden' }],
+  }
+
+  it('shows the gRPC method, JSON messages, status, metadata and trailers without HTTP fields', () => {
+    const content = build(success(grpcResult), {}, { tab: grpcTab, environmentVariables: [
+      ...variables, { name: 'host', value: 'grpcb.in', sensitive: false }, { name: 'rpc', value: 'SayHello', sensitive: false },
+    ] })
+    expect(content.endpoint).toEqual({ method: 'gRPC', url: 'grpc://grpcb.in:9000', rpc: 'hello.HelloService/SayHello' })
+    expect(content.request?.body).toEqual([expect.objectContaining({ label: 'Message', language: 'json', lines: ['{', '  "greeting": "{{apiKey}}"', '}'] })])
+    expect(content.request?.headers).toContainEqual({ name: 'Authorization', value: `Bearer ${SENSITIVE_MASK}` })
+    expect(content.response).toMatchObject({ kind: 'success', status: { statusCode: 0, grpc: { codeName: 'OK' }, tone: 'success', graphql: null },
+      headers: [{ name: 'x-server', value: 'test' }], trailers: [{ name: 'x-token', value: SENSITIVE_MASK }, { name: 'authorization', value: `Bearer ${SENSITIVE_MASK}` }] })
+    expect(responseBody(content).language).toBe('json')
+    expect(responseBody(content).lines.join('\n')).toContain('"reply": "Hello"')
+    expect(JSON.stringify(content)).not.toMatch(/stale GraphQL|stale REST|s3cr3t/)
+  })
+
+  it('keeps non-OK gRPC statuses and uses only a bounded response preview', () => {
+    const content = build(success({ ...grpcResult,
+      status: { code: 13, codeName: 'INTERNAL', message: 'RPC failed after partial replies' },
+      body: { kind: 'windowed', handle: 'rpc-body', preview: '[{"reply":"Hello"},', totalBytes: 900_000, previewNextOffset: 20 },
+    }), {}, { tab: grpcTab })
+    expect(content.response).toMatchObject({ kind: 'success', status: {
+      tone: 'error', grpc: { codeName: 'INTERNAL', message: 'RPC failed after partial replies' },
+    } })
+    expect(responseBody(content).note).toBe('prévia 20 B de 900 KB')
+    const withoutMetadata = build(success(grpcResult), { fields: { ...allFields, responseHeaders: false } }, { tab: grpcTab })
+    expect(withoutMetadata.response).toMatchObject({ headers: null, trailers: null })
+  })
+
+  it('can share a gRPC request before sending or while a call is in progress', () => {
+    for (const execution of [{ status: 'idle' }, { status: 'loading', startedAt: 0 }] as const) {
+      const content = build(execution, {}, { tab: grpcTab })
+      expect(content.endpoint?.method).toBe('gRPC')
+      expect(content.request?.body).toHaveLength(1)
+      expect(content.response).toBeNull()
+    }
+  })
   it('monta cabeçalho, URL e status da execução', () => {
     const content = build(success(restResult()))
 
@@ -166,7 +214,7 @@ describe('buildScreenshotContent', () => {
 
     const body = responseBody(content)
     expect(body.lines).toHaveLength(30)
-    expect(body.omittedLines).toBe(12) // 40 itens + colchetes = 42 linhas
+    expect(body.omittedLines).toBe(12) // 40 items plus brackets produce 42 lines
   })
 
   it('usa só a prévia de um corpo grande, com aviso', () => {

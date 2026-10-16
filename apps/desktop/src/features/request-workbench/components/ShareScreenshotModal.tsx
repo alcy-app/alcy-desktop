@@ -40,7 +40,7 @@ import './share-screenshot-modal.css'
 interface ShareScreenshotModalProps {
   tab: SnippetTab
   execution: ExecutionState
-  /** Autenticação efetiva da coleção/pasta, usada quando a aba herda (`inherit`). */
+  /** Effective collection/folder authentication for tabs using `inherit`. */
   inheritedAuthentication: AuthenticationInput | undefined
   environmentVariables: EnvironmentVariableDto[]
   requestName: string
@@ -50,13 +50,13 @@ interface ShareScreenshotModalProps {
 
 const pad = (value: number) => String(value).padStart(2, '0')
 
-/** `Minha requisição-20260926-1432`: o nome identifica, a data diferencia capturas da mesma requisição. */
+/** Names and timestamps distinguish captures of the same request. */
 function suggestedFileName(requestName: string, date: Date): string {
   const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`
   return `${requestName}-${stamp}`
 }
 
-/** Falha ao gerar os dados de importação — a imagem em si está pronta. */
+/** Import metadata generation failed after the image was rendered. */
 class ImportMetadataError extends Error {}
 
 function OptionGroup({ label, children }: { label: string; children: ReactNode }) {
@@ -68,11 +68,8 @@ function OptionGroup({ label, children }: { label: string; children: ReactNode }
   )
 }
 
-/**
- * Compartilhar a requisição como imagem: um PNG organizado de URL,
- * requisição e resposta para anexar como evidência. A prévia é o próprio
- * canvas exportado, então o que aparece é o que é copiado ou salvo.
- */
+/** Shares endpoint, request and response as a PNG. The preview is the same
+ * canvas that is copied or saved. */
 export function ShareScreenshotModal({
   tab,
   execution,
@@ -125,14 +122,15 @@ export function ShareScreenshotModal({
     () => ({
       request: t('share.image.request'),
       response: t('share.image.response'),
-      headers: 'Headers',
-      body: 'Body',
+      headers: tab.protocol === 'grpc' ? t('grpc.metadata') : 'Headers',
+      body: tab.protocol === 'grpc' ? t('grpc.messages') : 'Body',
+      trailers: t('grpc.trailers'),
       environment: (name) => t('share.image.environment', { name }),
       capturedAt: (date) => t('share.image.capturedAt', { date }),
       moreLines: (count) => (count === 1 ? t('share.image.moreLine') : t('share.image.moreLines', { count })),
       truncated: t('share.image.truncated'),
     }),
-    [t],
+    [t, tab.protocol],
   )
 
   const content = useMemo(
@@ -163,7 +161,7 @@ export function ShareScreenshotModal({
     [tab, inheritedAuthentication, environmentVariables],
   )
 
-  /** PNG final: o canvas, mais a requisição embutida quando a opção está marcada. */
+  /** Final PNG: the canvas plus the embedded request when enabled. */
   const renderPng = async (canvas: HTMLCanvasElement, clearSuspectedPasswords = false): Promise<Blob> => {
     const blob = await canvasToPng(canvas)
     if (!importCollection) return blob
@@ -192,7 +190,7 @@ export function ShareScreenshotModal({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!fontsReady || empty || !canvas) return
-    // Um desenho por quadro: vários cliques seguidos nas opções não enfileiram desenhos.
+    // Render once per frame so rapid option changes do not queue drawings.
     const frame = window.requestAnimationFrame(() => {
       try {
         const layout = layoutScreenshot(content, options, createMeasure(canvas.getContext('2d')), labels)
@@ -214,7 +212,7 @@ export function ShareScreenshotModal({
     if (!canvas) return
     setBusy('copy')
     try {
-      // A Promise do blob entra direto no ClipboardItem: o WebKit exige que a escrita comece no gesto do usuário.
+      // Pass the blob promise directly to ClipboardItem so WebKit starts writing during the user gesture.
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': renderPng(canvas, clearSuspectedPasswords) })])
       showToast(t('share.image.copySuccess'))
     } catch (error) {
@@ -322,7 +320,8 @@ export function ShareScreenshotModal({
                   disabled={RESPONSE_FIELDS.has(field) && !hasResponse}
                   onChange={() => toggleField(field)}
                 />
-                <span>{t(`share.image.field.${field}`)}</span>
+                <span>{t(tab.protocol === 'grpc' && (field === 'url' || field === 'requestHeaders' || field === 'requestBody' || field === 'responseHeaders' || field === 'responseBody')
+                  ? `share.image.grpcField.${field}` : `share.image.field.${field}`)}</span>
               </label>
             ))}
             {!hasResponse && <p className="share-shot-hint">{t('share.image.noResponse')}</p>}

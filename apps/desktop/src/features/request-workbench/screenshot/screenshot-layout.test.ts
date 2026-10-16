@@ -3,7 +3,7 @@ import type { ScreenshotCodeBlock, ScreenshotContent } from './screenshot-conten
 import { MAX_SCREENSHOT_HEIGHT, layoutScreenshot, type DrawOp, type MeasureText, type ScreenshotLayoutLabels } from './screenshot-layout'
 import type { ScreenshotOptions } from './screenshot-options'
 
-/** Fonte monoespaçada fictícia: cada caractere mede 60% do tamanho da fonte. */
+/** Fake monospaced font: each character measures 60% of the font size. */
 const measure: MeasureText = (text, font) => text.length * font.size * 0.6
 
 const labels: ScreenshotLayoutLabels = {
@@ -11,6 +11,7 @@ const labels: ScreenshotLayoutLabels = {
   response: 'Resposta',
   headers: 'Headers',
   body: 'Body',
+  trailers: 'Trailers',
   environment: (name) => `Ambiente: ${name}`,
   capturedAt: (date) => `Capturado em ${date}`,
   moreLines: (count) => `… mais ${count} linhas`,
@@ -41,6 +42,24 @@ const cards = (ops: DrawOp[]) => ops.filter((op): op is Extract<DrawOp, { kind: 
 const codeText = (op: DrawOp) => (op.kind === 'code' ? op.spans.map((span) => span.text).join('') : '')
 
 describe('layoutScreenshot', () => {
+  it('wraps a long RPC method and keeps gRPC status, trailers and metrics inside compact columns', () => {
+    const rpc = `very.long.package.${'Service'.repeat(10)}/LotsOfReplies`
+    const layout = layoutScreenshot({ ...content,
+      endpoint: { method: 'gRPC', url: 'grpcs://api.test:8443', rpc },
+      response: { kind: 'success', status: { statusCode: 16, grpc: { codeName: 'UNAUTHENTICATED', message: 'Access denied' },
+        tone: 'error', graphql: null, duration: '999999 ms', size: '10.0 MB' }, headers: null,
+        trailers: [{ name: 'x-id', value: '42' }], body: codeBlock(['{}']) },
+    }, { layout: 'sideBySide', width: 'compact' }, measure, labels)
+    const output = texts(layout.ops)
+    expect(output).toContain('gRPC 16 UNAUTHENTICATED')
+    expect(output).toContain('Access denied')
+    expect(output).toContain('Trailers')
+    expect(output.some((text) => text.startsWith('HTTP '))).toBe(false)
+    expect(output.join('')).toContain(rpc)
+    for (const op of layout.ops) {
+      if (op.kind === 'text') expect(op.x + measure(op.text, op.font)).toBeLessThanOrEqual(layout.width - 32)
+    }
+  })
   it('usa a largura escolhida e mostra cabeçalho, URL e seções', () => {
     const layout = layoutScreenshot(content, vertical, measure, labels)
 
@@ -50,7 +69,7 @@ describe('layoutScreenshot', () => {
       expect.arrayContaining(['Alcy', 'Criar usuário', 'POST', 'https://api.test/users', 'REQUISIÇÃO', 'RESPOSTA', 'HTTP 201', '42 ms  ·  1.5 KB']),
     )
     expect(texts(layout.ops).some((text) => text.includes('Ambiente: Homologação'))).toBe(true)
-    // URL, requisição e resposta: três cartões empilhados.
+    // Endpoint, request and response form three stacked cards.
     const [endpoint, request, response] = cards(layout.ops)
     expect(request.y).toBeGreaterThan(endpoint.y + endpoint.height)
     expect(response.y).toBeGreaterThan(request.y + request.height)
