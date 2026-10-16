@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '../../../test-utils'
 import { emptyAuthorizationState } from '../authorization-state'
 import { emptyBodyState } from '../body-state'
+import { emptyGrpcCall } from '../collection-tree'
 import { ShareRequestModal } from './ShareRequestModal'
 
 const tab = {
@@ -74,5 +75,23 @@ describe('ShareRequestModal', () => {
   it('warns that scripts are not included', () => {
     renderModal({ preRequestScript: 'al.console.log(1)' })
     expect(screen.getByText(/não são incluídos no código gerado/)).toBeInTheDocument()
+  })
+
+  it('only offers grpcurl for gRPC even when an HTTP language was saved', async () => {
+    window.localStorage.setItem('alcy:share:language', 'python-requests')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    render(<ShareRequestModal tab={{ ...tab, protocol: 'grpc', endpointUrl: 'localhost:50051',
+      grpc: { ...emptyGrpcCall, service: 'test.Greeter', method: 'Hello' } }}
+      inheritedAuthentication={undefined} environmentVariables={[]} onClose={() => {}} />)
+    expect(screen.getByRole('combobox', { name: 'Linguagem' })).toHaveTextContent('grpcurl')
+    fireEvent.click(screen.getByRole('combobox', { name: 'Linguagem' }))
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('option', { name: 'grpcurl' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Copiar código' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    expect(writeText.mock.calls[0][0]).toContain('grpcurl -plaintext')
+    expect(writeText.mock.calls[0][0]).toContain("'test.Greeter/Hello'")
+    expect(window.localStorage.getItem('alcy:share:language')).toBe('python-requests')
   })
 })

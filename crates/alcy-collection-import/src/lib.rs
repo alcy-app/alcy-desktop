@@ -12,6 +12,7 @@ use thiserror::Error;
 
 mod docs;
 mod har;
+mod insomnia_warnings;
 mod load_test;
 mod png_text;
 mod script_translation;
@@ -89,14 +90,13 @@ impl From<EnvironmentVariableError> for CollectionImportError {
 pub struct ImportedCollectionData {
     pub collections: Vec<Collection>,
     pub environments: Vec<Environment>,
-    /// Formato detectado, independente de haver documentação descritiva.
+    /// Detected format, even when no descriptive documentation exists.
     pub source_kind: Option<ApiDocsSourceKind>,
     /// Detected format that has no documentation source kind, so the import
     /// review can still name it.
     pub format: Option<ImportFormat>,
-    /// Descrições da coleção importada (ADR 0035), quando houver alguma.
-    /// Requisições documentadas saem com `docs_ref` de `source_id` vazio,
-    /// preenchido por quem grava a fonte no workspace.
+    /// Imported descriptions (ADR 0035), when present. Documented requests
+    /// leave with an empty `docs_ref.source_id`, filled by the workspace writer.
     pub docs: Option<ApiDocsSource>,
     pub script_count: usize,
     pub warnings: Vec<ImportWarning>,
@@ -143,8 +143,7 @@ pub fn parse_collection(raw: &str) -> Result<ImportedCollectionData, CollectionI
         return map_open_collection(&root);
     }
 
-    // Coleção embrulhada em `{"collection": {...}}`, como a API da
-    // ferramenta de origem a devolve.
+    // The source tool's API wraps collections in `{"collection": {...}}`.
     let value = root
         .get("collection")
         .filter(|inner| inner.get("info").is_some())
@@ -219,8 +218,8 @@ impl Default for AuthMapping {
     }
 }
 
-/// `None` quando `value` não declara o schema de coleção aninhada; senão,
-/// se a versão declarada (v2.0 ou v2.1) é suportada.
+/// Return `None` when no nested collection schema is declared, otherwise
+/// whether the declared version (v2.0 or v2.1) is supported.
 fn check_nested_schema(value: &Value) -> Option<Result<(), CollectionImportError>> {
     let schema = value.pointer("/info/schema").and_then(Value::as_str)?;
     if !(schema.contains("postman.com") && schema.contains("collection")) {
@@ -234,8 +233,7 @@ fn check_nested_schema(value: &Value) -> Option<Result<(), CollectionImportError
     )))
 }
 
-/// Formato v1, anterior ao schema versionado: requisições numa lista plana
-/// ordenada por `order`.
+/// Legacy v1 format: a flat request list sorted by `order`.
 fn is_legacy_collection(value: &Value) -> bool {
     value.get("order").is_some_and(Value::is_array)
         && value.get("requests").is_some_and(Value::is_array)
@@ -247,10 +245,9 @@ fn legacy_collection_error() -> CollectionImportError {
     )
 }
 
-/// Backup completo de dados (`{"version": 1, "collections": [...],
-/// "environments": [...], "globals": [...]}`). O formato Alcy tem a mesma
-/// raiz, então só as chaves extras ou coleções no formato externo o
-/// identificam.
+/// Full data backup (`{"version": 1, "collections": [...],
+/// "environments": [...], "globals": [...]}`). Alcy shares the root shape,
+/// so extra keys or external-format collections identify this format.
 fn is_data_dump(value: &Value) -> bool {
     let Some(collections) = value.get("collections").and_then(Value::as_array) else {
         return false;
@@ -728,7 +725,7 @@ fn map_nested_collection(value: &Value) -> Result<ImportedCollectionData, Collec
     })
 }
 
-/// Uma coleção aninhada e, se houver, o ambiente com as variáveis dela.
+/// A nested collection and its variable environment, when present.
 fn nested_collection(
     value: &Value,
     names: &mut HashSet<String>,
@@ -958,8 +955,7 @@ fn translate_segments(
     )
 }
 
-/// URL de uma requisição — vazia quando o export não traz nenhuma (rascunho
-/// salvo sem endereço), como uma requisição recém-criada no Alcy.
+/// Request URL, empty for saved drafts without an address, as in Alcy.
 fn nested_url(value: Option<&Value>) -> String {
     let Some(value) = value else {
         return String::new();
@@ -1059,8 +1055,8 @@ fn nested_body(
     Ok((ProtocolId::Rest, text, String::new(), payload))
 }
 
-/// Linguagem "raw" do Postman (`options.raw.language`). Quando o export não
-/// guarda o campo, o Alcy usa JSON como formato padrão para o corpo raw.
+/// Postman raw body language (`options.raw.language`), defaulting to JSON
+/// when the export does not specify one.
 fn raw_language_from_postman(language: Option<&str>) -> RawBodyLanguage {
     match language {
         Some("json") => RawBodyLanguage::Json,
@@ -1072,10 +1068,8 @@ fn raw_language_from_postman(language: Option<&str>) -> RawBodyLanguage {
     }
 }
 
-/// Como `pairs_text`, mas preserva cada par estruturado (incluindo os
-/// desabilitados) em vez de achatar num único texto — usado para
-/// `BodyPayload::UrlEncoded`, que a UI precisa reabrir como linhas
-/// editáveis, cada uma com seu próprio estado de habilitado.
+/// Like `pairs_text`, but preserve structured pairs, including disabled ones,
+/// so `BodyPayload::UrlEncoded` reopens as individually editable rows.
 fn pairs_fields(value: Option<&Value>, name_key: &str) -> Vec<UrlEncodedField> {
     value
         .and_then(Value::as_array)
@@ -1103,9 +1097,8 @@ fn pairs_fields(value: Option<&Value>, name_key: &str) -> Vec<UrlEncodedField> {
         .collect()
 }
 
-/// Campos de um corpo `formdata` do Postman — cada entrada é texto ou
-/// arquivo (`type: "file"`, caminho em `src`; um array de caminhos vira só
-/// o primeiro, já que o domínio guarda um arquivo por campo).
+/// Postman form-data fields: text or files (`type: "file"`, path in `src`).
+/// Keep the first path in an array because the domain stores one file per field.
 fn form_data_fields(value: Option<&Value>) -> Vec<FormDataField> {
     value
         .and_then(Value::as_array)
@@ -1232,7 +1225,7 @@ fn map_tree_export(value: &Value) -> Result<ImportedCollectionData, CollectionIm
         source_kind: Some(ApiDocsSourceKind::Insomnia),
         format: None,
         script_count: 0,
-        warnings: Vec::new(),
+        warnings: insomnia_warnings::tree(value)?,
     })
 }
 
@@ -1251,6 +1244,9 @@ fn map_tree_items(
 
     for item in items {
         let item_auth = item.get("authentication").or(inherited_auth);
+        if insomnia_warnings::is_grpc(item) {
+            continue;
+        }
         if let Some(children) = item.get("children").and_then(Value::as_array) {
             let name = unique_name(
                 text_or(item.get("name"), FALLBACK_FOLDER_NAME),
@@ -1373,7 +1369,7 @@ fn map_flat_export(value: &Value) -> Result<ImportedCollectionData, CollectionIm
         source_kind: Some(ApiDocsSourceKind::Insomnia),
         format: None,
         script_count: 0,
-        warnings: Vec::new(),
+        warnings: insomnia_warnings::flat(resources),
     })
 }
 
@@ -1437,8 +1433,7 @@ fn map_flat_children<'a>(
     Ok((folders, requests))
 }
 
-/// Insomnia v4 guarda a descrição em `description`; o v5, em
-/// `meta.description`.
+/// Insomnia v4 stores descriptions in `description`; v5 uses `meta.description`.
 fn attach_insomnia_docs(
     docs: &mut DocsCollector,
     saved: SavedRequest,
@@ -1865,9 +1860,8 @@ fn build_request(
     SavedRequest::new(ids.next("request"), name, request).map_err(Into::into)
 }
 
-/// Requisições com método fora dos suportados (ex.: `PURGE`, `PROPFIND`)
-/// ficam de fora da importação, sem impedir o resto da coleção. Sem método
-/// declarado, vale o padrão de `build_request`.
+/// Skip unsupported methods (such as `PURGE` and `PROPFIND`) while importing
+/// the rest. Missing methods use the `build_request` default.
 fn has_supported_method(request: &Value) -> bool {
     request
         .get("method")
@@ -1920,8 +1914,7 @@ fn map_headers(
         .collect()
 }
 
-/// Headers não aceitam quebra de linha; um texto em várias linhas no export
-/// vira uma linha só, com as partes separadas por espaço.
+/// Headers cannot contain newlines; join multiline values with spaces.
 fn single_line(value: &str) -> String {
     if !value.contains(['\r', '\n']) {
         return value.to_string();
@@ -2754,8 +2747,8 @@ pub struct BrunoFile {
     pub content: String,
 }
 
-/// Importa uma árvore Bruno já lida pelo adaptador nativo. Os caminhos são
-/// relativos e validados novamente para impedir traversal.
+/// Import a Bruno tree read by the native adapter. Validate relative paths
+/// again to prevent traversal.
 pub fn parse_bruno_directory(
     root_name: &str,
     files: &[BrunoFile],
@@ -2996,7 +2989,7 @@ fn ensure_open_item_name(item: &mut Value, fallback: &str) {
     let info = object
         .entry("info")
         .or_insert_with(|| Value::Object(Default::default()));
-    // O nome declarado em `info.name` vale mais que o do arquivo/diretório.
+    // The declared `info.name` takes precedence over the file/directory name.
     let name = match info.as_object_mut() {
         Some(info) => info
             .entry("name")

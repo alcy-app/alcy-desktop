@@ -4,13 +4,19 @@ import { ShareMenu } from './ShareMenu'
 
 function openMenu() {
   const button = screen.getByRole('button', { name: 'Compartilhar requisição' })
-  // O clique real foca o botão antes de abrir o menu; o fireEvent não faz isso sozinho.
+  // A real click focuses the button before opening; fireEvent does not.
   act(() => button.focus())
   fireEvent.click(button)
   return button
 }
 
 describe('ShareMenu', () => {
+  it('only offers code when image sharing is unavailable', () => {
+    render(<ShareMenu onShareAsCode={() => {}} />)
+    openMenu()
+    expect(screen.getByRole('menuitem', { name: 'Como código' })).toHaveFocus()
+    expect(screen.queryByRole('menuitem', { name: 'Como imagem' })).not.toBeInTheDocument()
+  })
   it('abre o menu com o foco no primeiro item, sem fechá-lo pelo blur do botão', () => {
     render(<ShareMenu onShareAsCode={() => {}} onShareAsImage={() => {}} />)
     openMenu()

@@ -1,5 +1,6 @@
 import type { AuthenticationInput } from '../../../bindings/execute-graphql-request'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
+import type { GrpcCallDto } from '../../../bindings/grpc-call'
 import { toAuthenticationInput } from '../authorization-state'
 import { applyRouteParamValues } from '../query-params'
 import { resolveTemplateForDisplay } from '../resolve-url'
@@ -19,28 +20,28 @@ export type SnippetBody =
   | { type: 'formData'; fields: SnippetFormField[] }
   | { type: 'file'; path: string }
 
-/** Requisição já resolvida (variáveis, autenticação, corpo) e independente
- * de linguagem — é o que cada gerador de `generators.ts` transforma em código. */
+/** Resolved request data shared by the code generators. */
 export interface SnippetRequest {
-  /** Método em maiúsculas (`GET`, `POST`…). */
+  /** Uppercase HTTP method (`GET`, `POST`, etc.). */
   method: string
   url: string
-  /** Headers habilitados, incluindo o de autenticação quando houver. */
+  /** Enabled headers, including authentication when configured. */
   headers: SnippetField[]
   body: SnippetBody
-  /** Digest não vira header: cada gerador usa o suporte nativo do cliente ou comenta. */
+  /** Digest uses the client's native support or an explanatory comment. */
   digest: { username: string; password: string } | null
-  /** Observações gerais que viram comentários no topo do código. */
+  /** Notes rendered as comments before the code. */
   notes: string[]
+  grpc?: GrpcCallDto
 }
 
-/** Campos da aba usados para gerar o código. */
+/** Tab fields used to generate code. */
 export type SnippetTab = Pick<
   WorkbenchTab,
   'protocol' | 'method' | 'endpointUrl' | 'query' | 'variables' | 'headers' | 'body' | 'routeParams' | 'authorization'
->
+> & Partial<Pick<WorkbenchTab, 'grpc'>>
 
-/** Base64 de um texto UTF-8 (o `btoa` puro só aceita Latin-1). */
+/** Encode UTF-8 as base64; plain `btoa` only accepts Latin-1. */
 function base64Utf8(text: string): string {
   let binary = ''
   for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte)
@@ -81,7 +82,7 @@ export function buildSnippetRequest(
     .map((header) => ({ name: header.name.trim(), value: resolve(header.value) }))
   const hasHeader = (name: string) => headers.some((header) => header.name.toLowerCase() === name.toLowerCase())
   const setHeader = (name: string, value: string) => {
-    // A autenticação configurada tem precedência sobre um header manual com o mesmo nome.
+    // Configured authentication takes precedence over a manual header of the same name.
     headers = headers.filter((header) => header.name.toLowerCase() !== name.toLowerCase())
     headers.push({ name, value })
   }
@@ -90,6 +91,8 @@ export function buildSnippetRequest(
   if (tab.protocol === 'graphql') {
     body = { type: 'text', text: resolve(graphqlBody(tab.query, tab.variables)) }
     if (!hasHeader('content-type')) headers.push({ name: 'Content-Type', value: 'application/json' })
+  } else if (tab.protocol === 'grpc') {
+    body = { type: 'text', text: resolve(tab.grpc?.message ?? '{}') }
   } else {
     const source = tab.body
     switch (source.type) {
@@ -115,7 +118,7 @@ export function buildSnippetRequest(
                 : { kind: 'text', name: resolve(field.name), value: resolve(field.value) },
             ),
         }
-        // O header multipart com boundary é gerado pelo cliente; um fixo quebraria o envio.
+        // The client supplies the multipart boundary; a fixed header would break the request.
         headers = headers.filter(
           (header) =>
             header.name.toLowerCase() !== 'content-type' || !header.value.toLowerCase().startsWith('multipart/form-data'),
@@ -138,7 +141,7 @@ export function buildSnippetRequest(
       break
     case 'basic': {
       const credentials = `${resolve(authentication.username)}:${resolve(authentication.password)}`
-      // Com placeholder de variável sensível, codificar esconderia o `{{nome}}` que o leitor precisa preencher.
+      // Keep sensitive variable placeholders visible for the reader to fill in.
       const encoded = credentials.includes('{{') ? credentials : base64Utf8(credentials)
       setHeader('Authorization', `Basic ${encoded}`)
       break
@@ -170,5 +173,11 @@ export function buildSnippetRequest(
     body,
     digest,
     notes,
+    ...(tab.protocol === 'grpc' ? { grpc: {
+      service: resolve(tab.grpc?.service ?? ''),
+      method: resolve(tab.grpc?.method ?? ''),
+      schemaSource: tab.grpc?.schemaSource ?? { type: 'reflection' as const },
+      deadlineMs: tab.grpc?.deadlineMs,
+    } } : {}),
   }
 }

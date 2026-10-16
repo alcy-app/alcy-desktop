@@ -41,7 +41,7 @@ const snapshot: Snapshot = {
   },
 }
 
-/** Mesmo vetor do teste de `seal.test.ts`: decifra para um JSON que não é snapshot. */
+/** Same vector as `seal.test.ts`, decrypting to JSON that is not a snapshot. */
 const VECTOR: SealedEnvelope = {
   version: 1,
   kdf: 'PBKDF2-SHA256',
@@ -96,6 +96,19 @@ describe('webclient App', () => {
     expect(apiCalls(fetchMock)).toEqual([])
   })
 
+  it('warns about exported gRPC requests and never sends them as HTTP', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+    const grpcSnapshot: Snapshot = { ...snapshot, credentials: [], root: { ...snapshot.root,
+      requests: [{ ...snapshot.root.requests[0], name: 'Hello RPC', url: 'localhost:50051', unsupported: ['grpc'] }],
+    } }
+    render(<App initial={{ kind: 'ready', snapshot: grpcSnapshot }} />)
+    expect(screen.getByRole('note')).toHaveTextContent('gRPC requests cannot be sent by the browser; use Alcy.')
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('This request uses features the webclient does not send.')
+    expect(apiCalls(fetchMock)).toEqual([])
+  })
+
   it('unlocks a sealed payload and rejects a wrong password', async () => {
     render(<App initial={{ kind: 'sealed', envelope: VECTOR }} />)
 
@@ -105,7 +118,7 @@ describe('webclient App', () => {
 
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct horse battery' } })
     fireEvent.click(screen.getByRole('button', { name: 'Open' }))
-    // O vetor decifra para um JSON que não é um snapshot.
+    // The vector decrypts to JSON that is not a snapshot.
     await waitFor(() => expect(screen.getByText('This file does not contain a valid Alcy webclient.')).toBeInTheDocument())
   })
 })

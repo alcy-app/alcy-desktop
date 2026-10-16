@@ -229,6 +229,12 @@ Pre-request scripts can change `al.request.grpc.service`, `method`, `message`
 JSON messages. Request edits remain read-only after sending. Interactive
 messages share the variable snapshot produced by the call's pre-request script.
 
+Code sharing generates `grpcurl` commands for gRPC instead of HTTP client code.
+The external Insomnia importer reports skipped gRPC resources in both export
+formats. Load flow compilation rejects gRPC settings before execution; mock
+servers remain HTTP-only. Webclient snapshots retain gRPC entries marked as
+unsupported, and the browser refuses to prepare HTTP calls from them.
+
 ### Scripting
 
 `alcy-scripting` runs pre-request and post-response scripts in `boa_engine`

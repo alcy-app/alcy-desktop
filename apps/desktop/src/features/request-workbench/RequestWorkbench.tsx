@@ -1825,13 +1825,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                             </Button>
                           </Tooltip>
                         )}
-                        {/* Code and image sharing only describe HTTP requests (spec 0129). */}
-                        {workbench.protocol !== 'grpc' && (
-                          <ShareMenu
-                            onShareAsCode={() => setShareModalOpen(true)}
-                            onShareAsImage={() => setScreenshotModalOpen(true)}
-                          />
-                        )}
+                        <ShareMenu
+                          onShareAsCode={() => setShareModalOpen(true)}
+                          onShareAsImage={workbench.protocol === 'grpc' ? undefined : () => setScreenshotModalOpen(true)}
+                        />
                       </>
                     }
                   />

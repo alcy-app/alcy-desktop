@@ -1,8 +1,8 @@
-//! Validação e prévia de execução de flows de carga.
+//! Load flow validation and execution preview.
 //!
-//! Este módulo conhece apenas o grafo canônico e o scheduler puro de
-//! `alcy-load`. Ele não abre conexões nem depende de Tauri, para que a mesma
-//! prévia alimente a confirmação da interface e o executor posterior.
+//! This module only knows the canonical graph and the pure `alcy-load`
+//! scheduler. It opens no connections and has no Tauri dependency, so the
+//! preview can feed both UI confirmation and the subsequent executor.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -39,11 +39,11 @@ pub struct LoadFlowPreview {
     pub peak_arrival_rate_per_second: Option<f64>,
 }
 
-/// Nome legado do plano canônico, preservado para consumidores existentes.
+/// Legacy name of the canonical plan, preserved for existing consumers.
 pub type LoadFlowPlan = alcy_load::LoadPlan;
 
-/// Linhas de datasets já lidas e validadas pelo adaptador de workspace, por
-/// `assetId`. O compilador aceita esta injeção, mas nunca abre arquivos.
+/// Dataset rows read and validated by the workspace adapter, by `assetId`.
+/// The compiler accepts injected rows and never opens files.
 pub type LoadDatasetAssets = BTreeMap<String, Arc<[BTreeMap<String, String>]>>;
 
 pub use alcy_load::{
@@ -233,12 +233,12 @@ fn enabled_header() -> bool {
     true
 }
 
-/// Produz a prévia canônica, incluindo destinos de corpos e lifecycle.
+/// Produce the canonical preview, including body and lifecycle destinations.
 pub fn preview_load_flow(flow: &Flow) -> Result<LoadFlowPreview, LoadFlowError> {
     preview_load_flow_with_datasets(flow, &BTreeMap::new())
 }
 
-/// Prévia que pode receber datasets do workspace já resolvidos pelo adaptador.
+/// Preview with workspace datasets already resolved by the adapter.
 pub fn preview_load_flow_with_datasets(
     flow: &Flow,
     datasets: &LoadDatasetAssets,
@@ -300,14 +300,14 @@ pub fn preview_load_flow_with_datasets(
     })
 }
 
-/// Compila corpos delimitados; compartilhamento, ciclos e efeitos não
-/// representáveis falham antes da confirmação ou de qualquer execução.
+/// Compile delimited bodies; reject sharing, cycles and unrepresentable
+/// effects before confirmation or execution.
 pub fn plan_load_flow(flow: &Flow) -> Result<LoadFlowPlan, LoadFlowError> {
     plan_load_flow_with_datasets(flow, &BTreeMap::new())
 }
 
-/// Compila um flow com datasets previamente carregados pelo chamador. Esta é
-/// a fronteira entre o workspace e o runner: `alcy-load` recebe apenas linhas.
+/// Compile a flow with caller-loaded datasets. At this workspace/runner
+/// boundary, `alcy-load` only receives rows.
 pub fn plan_load_flow_with_datasets(
     flow: &Flow,
     datasets: &LoadDatasetAssets,
@@ -343,9 +343,9 @@ pub fn plan_load_flow_with_datasets(
     let mut compiler = BodyCompiler::new(flow, &nodes, datasets);
     let mut setup = None;
     let mut teardown = None;
-    // Imports antigos compartilham a entrada inteira entre cenários. Cada
-    // consumidor recebe seu próprio corpo/estado; caudas parciais continuam
-    // proibidas, assim como compartilhamento entre corpos aninhados.
+    // Legacy imports share the whole entry between scenarios. Each consumer
+    // receives its own body/state; partial tails and sharing between nested
+    // bodies remain forbidden.
     let mut root_bodies: HashMap<&str, Vec<LoadStep>> = HashMap::new();
     for (id, _, _) in &scenarios {
         compiler.visited.insert(id);
@@ -873,8 +873,25 @@ fn parse_request(id: &str, raw: &str) -> Result<LoadRequestPlan, LoadFlowError> 
         node_id: id.into(),
         message,
     };
-    let config: LoadRequestConfig =
+    let value: serde_json::Value =
         serde_json::from_str(raw).map_err(|error| invalid(format!("JSON inválido: {error}")))?;
+    if value.get("protocol").and_then(serde_json::Value::as_str) == Some("grpc")
+        || value.get("grpc").is_some_and(|grpc| !grpc.is_null())
+        || value
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|url| {
+                url.split_once("://").is_some_and(|(scheme, _)| {
+                    scheme.eq_ignore_ascii_case("grpc") || scheme.eq_ignore_ascii_case("grpcs")
+                })
+            })
+    {
+        return Err(invalid(
+            "gRPC não é suportado em testes de carga; use uma requisição HTTP.".into(),
+        ));
+    }
+    let config: LoadRequestConfig = serde_json::from_value(value)
+        .map_err(|error| invalid(format!("JSON inválido: {error}")))?;
     let method = parse_method(id, &config.method)?;
     let endpoint = Endpoint::new(config.url)
         .map_err(|error| invalid(format!("endpoint inválido: {error}")))?;
@@ -974,8 +991,8 @@ fn parse_script(id: &str, raw: &str) -> Result<LoadScriptPlan, LoadFlowError> {
     })
 }
 
-/// Mantém a forma pública antiga quando a cadeia tem a mesma semântica.
-/// Corpos com controladores ou efeitos finais não são achatados.
+/// Preserve the legacy public shape when the chain has the same semantics.
+/// Bodies with controllers or final effects are not flattened.
 fn legacy_requests(body: &[LoadStep]) -> Option<Vec<LoadRequestPlan>> {
     let mut requests: Vec<LoadRequestPlan> = Vec::new();
     let mut before = Vec::new();
@@ -1232,6 +1249,20 @@ mod tests {
                 },
             },
             position: FlowPosition { x: 0.0, y: 0.0 },
+        }
+    }
+
+    #[test]
+    fn rejects_grpc_load_requests_before_http_compilation() {
+        for config in [
+            json!({"protocol":"grpc"}),
+            json!({"method":"POST", "url":"https://api.test", "grpc":{"service":"test.Greeter"}}),
+            json!({"method":"POST", "url":"grpcs://api.test"}),
+            json!({"method":"POST", "url":"grpc://localhost:50051"}),
+        ] {
+            assert!(
+                matches!(parse_request("rpc", &config.to_string()), Err(LoadFlowError::InvalidRequestConfig { node_id, message }) if node_id == "rpc" && message.contains("gRPC"))
+            );
         }
     }
 

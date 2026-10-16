@@ -9,7 +9,7 @@ import './share-menu.css'
 
 interface ShareMenuProps {
   onShareAsCode: () => void
-  onShareAsImage: () => void
+  onShareAsImage?: () => void
 }
 
 interface MenuPosition {
@@ -19,9 +19,7 @@ interface MenuPosition {
 
 const MENU_GAP_PX = 4
 
-/** "Compartilhar" com as formas de compartilhar a requisição: código ou imagem.
- * O menu vai em portal, com posição fixa sob o botão: a linha do breadcrumb
- * corta o que transborda (`overflow: hidden`). */
+/** Request sharing menu, positioned in a portal outside the clipped breadcrumb. */
 export function ShareMenu({ onShareAsCode, onShareAsImage }: ShareMenuProps) {
   const { t } = useLanguage()
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -31,10 +29,9 @@ export function ShareMenu({ onShareAsCode, onShareAsImage }: ShareMenuProps) {
 
   useEffect(() => {
     if (!open) return
-    // Foco inicial aqui, e não com `autoFocus`: o React focaria o item antes de
-    // ligar `menuRef`, e o blur do botão fecharia o menu na hora.
+    // Focus after assigning menuRef so the button blur does not close the menu.
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-    // A posição é fixa na tela; redimensionar a janela deixaria o menu solto.
+    // Close on resize because the menu uses a fixed position.
     const close = () => setPosition(null)
     window.addEventListener('resize', close)
     return () => window.removeEventListener('resize', close)
@@ -55,7 +52,7 @@ export function ShareMenu({ onShareAsCode, onShareAsImage }: ShareMenuProps) {
     action()
   }
 
-  // Eventos do portal sobem pela árvore do React, mas no DOM o menu fica fora do host.
+  // Portal events bubble in React, but the DOM menu sits outside the host.
   const closeOnBlur = (event: FocusEvent<HTMLDivElement>) => {
     const next = event.relatedTarget as Node | null
     if (!event.currentTarget.contains(next) && !menuRef.current?.contains(next)) setPosition(null)
@@ -92,7 +89,7 @@ export function ShareMenu({ onShareAsCode, onShareAsImage }: ShareMenuProps) {
             }}
           >
             <MenuItem label={t('share.menu.code')} onSelect={() => select(onShareAsCode)} />
-            <MenuItem label={t('share.menu.image')} onSelect={() => select(onShareAsImage)} />
+            {onShareAsImage && <MenuItem label={t('share.menu.image')} onSelect={() => select(onShareAsImage)} />}
           </div>,
           document.body,
         )}

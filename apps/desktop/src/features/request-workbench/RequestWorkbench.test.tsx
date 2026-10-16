@@ -540,6 +540,11 @@ describe('RequestWorkbench', () => {
       expect(screen.getByRole('tab', { name: 'Metadata' })).toBeInTheDocument()
       expect(screen.getByRole('tab', { name: 'Scripts' })).toBeInTheDocument()
 
+      fireEvent.click(screen.getByRole('button', { name: 'Compartilhar requisição' }))
+      expect(screen.getByRole('menuitem', { name: 'Como código' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: 'Como imagem' })).not.toBeInTheDocument()
+      fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Como código' }), { key: 'Escape' })
+
       fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: 'localhost:50051' } })
       fireEvent.click(screen.getByRole('button', { name: 'Método gRPC' }))
       await waitFor(() => expect(loadGrpcSchema).toHaveBeenCalledTimes(1))
@@ -1076,8 +1081,9 @@ describe('RequestWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
     await findStatusText(/200/)
 
-    const responseBody = document.querySelector('.rw-code-block')
-    expect(responseBody).toHaveTextContent('"currentCustomer": { "id": "1", "active": true }')
+    await waitFor(() => {
+      expect(document.querySelector('.rw-code-block')).toHaveTextContent('"currentCustomer": { "id": "1", "active": true }')
+    })
   })
 
   it('mantém o corpo original sem formatar quando a resposta não é JSON válido', async () => {

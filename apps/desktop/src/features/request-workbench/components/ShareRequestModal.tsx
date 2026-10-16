@@ -20,6 +20,7 @@ import {
 } from '../code-snippets/generators'
 import { loadSnippetHighlight } from '../code-snippets/snippet-highlight'
 import { buildSnippetRequest, type SnippetTab } from '../code-snippets/snippet-request'
+import { generateGrpcurlSnippet } from '../code-snippets/grpcurl'
 import type { WorkbenchTab } from '../request-workbench.types'
 import { OptionSelect, type SelectOption } from './OptionSelect'
 import './share-request-modal.css'
@@ -41,7 +42,7 @@ function persistLanguage(language: SnippetLanguageId) {
   try {
     window.localStorage.setItem(SHARE_LANGUAGE_STORAGE_KEY, language)
   } catch {
-    // localStorage indisponível — a escolha só não persiste entre sessões
+    // The choice stays in memory when localStorage is unavailable.
   }
 }
 
@@ -51,7 +52,7 @@ interface SnippetPreviewProps {
   ariaLabel: string
 }
 
-/** Preview somente-leitura do código gerado, sobre CodeMirror 6. */
+/** Read-only generated code preview using CodeMirror 6. */
 function SnippetPreview({ code, highlight, ariaLabel }: SnippetPreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -107,7 +108,7 @@ function SnippetPreview({ code, highlight, ariaLabel }: SnippetPreviewProps) {
 
 interface ShareRequestModalProps {
   tab: SnippetTab & Pick<WorkbenchTab, 'preRequestScript' | 'postResponseScript'>
-  /** Autenticação efetiva da coleção/pasta, usada quando a aba herda (`inherit`). */
+  /** Effective collection/folder authentication for tabs that inherit it. */
   inheritedAuthentication: AuthenticationInput | undefined
   environmentVariables: EnvironmentVariableDto[]
   onClose: () => void
@@ -118,13 +119,14 @@ export function ShareRequestModal({ tab, inheritedAuthentication, environmentVar
   const { showToast } = useToast()
   const selectId = useId()
   const [languageId, setLanguageId] = useState<SnippetLanguageId>(loadPersistedLanguage)
+  const isGrpc = tab.protocol === 'grpc'
   const language = SNIPPET_LANGUAGES.find((candidate) => candidate.id === languageId) ?? SNIPPET_LANGUAGES[0]
 
   const request = useMemo(
     () => buildSnippetRequest(tab, inheritedAuthentication, environmentVariables),
     [tab, inheritedAuthentication, environmentVariables],
   )
-  const code = useMemo(() => generateSnippet(language.id, request), [language.id, request])
+  const code = useMemo(() => isGrpc ? generateGrpcurlSnippet(request) : generateSnippet(language.id, request), [isGrpc, language.id, request])
   const hasScripts = tab.preRequestScript.trim() !== '' || tab.postResponseScript.trim() !== ''
 
   const handleLanguageChange = (value: SnippetLanguageId) => {
@@ -153,7 +155,9 @@ export function ShareRequestModal({ tab, inheritedAuthentication, environmentVar
           {t('share.languageLabel')}
         </label>
         <div className="share-modal-language">
-          <OptionSelect id={selectId} value={language.id} options={LANGUAGE_OPTIONS} onChange={handleLanguageChange} />
+          {isGrpc
+            ? <OptionSelect id={selectId} value="grpcurl" options={[{ value: 'grpcurl', label: 'grpcurl' }]} onChange={() => {}} />
+            : <OptionSelect id={selectId} value={language.id} options={LANGUAGE_OPTIONS} onChange={handleLanguageChange} />}
         </div>
         <IconButton
           className="share-modal-copy"
@@ -163,7 +167,7 @@ export function ShareRequestModal({ tab, inheritedAuthentication, environmentVar
           onClick={() => void handleCopy()}
         />
       </div>
-      <SnippetPreview code={code} highlight={language.highlight} ariaLabel={t('share.previewLabel')} />
+      <SnippetPreview code={code} highlight={isGrpc ? 'shell' : language.highlight} ariaLabel={t('share.previewLabel')} />
       {hasScripts && <p className="share-modal-note">{t('share.scriptsNotIncluded')}</p>}
     </Modal>
   )
