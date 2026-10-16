@@ -102,11 +102,9 @@ pub fn analyze_load_test_import(
     )
 }
 
-/// Reanalisa imediatamente antes de persistir; o hash recebido impede que o
-/// preview confirme outro arquivo após uma edição no editor externo. O asset
-/// é escrito em diretório temporário e só ganha o nome final quando o flow já
-/// foi validado e salvo. Se qualquer passo falhar, a cópia temporária/final é
-/// removida e nenhum flow novo é devolvido.
+/// Reanalyze immediately before persistence; the hash prevents a preview from
+/// confirming a source changed in an external editor. Stage assets until the
+/// flow is validated and saved, and remove them if persistence fails.
 #[tauri::command]
 pub fn commit_load_test_import(
     input: CommitLoadTestImportInput,
@@ -155,8 +153,8 @@ pub fn commit_load_test_import(
                 });
             }
             if let Err(error) = fs::rename(&temporary_assets, &final_assets) {
-                // O flow já foi gravado. Restaura o snapshot anterior para que o
-                // commit não deixe referência canônica sem seus assets.
+                // Restore the previous snapshot so a saved flow never refers
+                // to assets that could not be finalized.
                 snapshot.flows.retain(|flow| flow.id != analysis.flow.id);
                 let _ = store.save(&snapshot);
                 let _ = fs::remove_dir_all(&temporary_assets);
@@ -169,8 +167,8 @@ pub fn commit_load_test_import(
     )
 }
 
-/// O preview e o commit só aceitam grafos que o runtime sabe compilar. A
-/// conversão sintática por si só não demonstra suporte de execução.
+/// Preview and commit only accept graphs the runtime can compile. Syntactic
+/// conversion alone does not establish execution support.
 fn validate_execution(analysis: &LoadImportAnalysis) -> Result<(), LoadTestImportErrorDto> {
     plan_load_flow(&analysis.flow).map(|_| ()).map_err(|error| {
         let node_id = match &error {
@@ -319,15 +317,18 @@ fn diagnostic_to_dto(diagnostic: LoadImportDiagnostic) -> LoadImportDiagnosticDt
 mod tests {
     use super::*;
     use std::future::pending;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use alcy_app::{
         FlowCancellation, LoadRunProgress, LoadRunSink, LoadRunSummary, RequestExecutor,
         execute_load_flow_report,
     };
-    use alcy_domain::{ExecutionError, HttpMethod, Request, Response, ResponseMetadata};
+    use alcy_domain::{
+        Cookie, ExecutionError, HttpMethod, Request, Response, ResponseHeader, ResponseMetadata,
+    };
 
-    use crate::commands::flows::FlowNodeKindDto;
+    use crate::commands::flows::{FlowNodeKindDto, LoadNodeKindDto};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     fn temp_file(name: &str, body: &str) -> PathBuf {
@@ -382,6 +383,54 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(config).unwrap()["timeoutMs"],
             250
         );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn preview_accepts_distinct_named_execs_without_a_default_function() {
+        let path = temp_file(
+            "named-execs.js",
+            r#"import http from 'k6/http';
+            export const options = { scenarios: {
+                reads: { executor: 'shared-iterations', exec: 'read', vus: 2, iterations: 3 },
+                writes: { executor: 'constant-vus', exec: 'write', vus: 1, duration: '10ms' }
+            } };
+            export function read() { http.get('https://api.example.test/read'); }
+            export function write() { http.post('https://api.example.test/write', 'body'); }"#,
+        );
+        let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+            source_path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        assert_eq!(
+            preview.destinations,
+            vec![
+                "https://api.example.test/read",
+                "https://api.example.test/write"
+            ]
+        );
+        let configs: Vec<serde_json::Value> = preview
+            .flow
+            .nodes
+            .iter()
+            .filter_map(|node| match &node.kind {
+                FlowNodeKindDto::Load {
+                    load_kind: LoadNodeKindDto::Scenario,
+                    config,
+                    ..
+                } => Some(serde_json::from_str(config).unwrap()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(configs.len(), 2);
+        assert!(configs.iter().any(|config| {
+            config["executor"] == "sharedIterations"
+                && config["vus"] == 2
+                && config["iterations"] == 3
+        }));
+        assert!(configs.iter().any(|config| {
+            config["executor"] == "constantVus" && config["vus"] == 1 && config["durationMs"] == 10
+        }));
         fs::remove_file(path).unwrap();
     }
 
@@ -454,6 +503,87 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct LifecycleExecutor {
+        calls: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl RequestExecutor for LifecycleExecutor {
+        async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {
+            let url = request.endpoint.url();
+            let cookie = request
+                .headers
+                .iter()
+                .find(|header| header.name().eq_ignore_ascii_case("cookie"))
+                .map(|header| header.value().to_string());
+            self.calls.lock().unwrap().push((url.to_string(), cookie));
+            let setup = url.ends_with("/setup");
+            let status = if url.ends_with("/read") { 201 } else { 200 };
+            Ok(Response::new(
+                status,
+                0,
+                "",
+                if setup {
+                    vec![ResponseHeader {
+                        name: "Set-Cookie".into(),
+                        value: "setup-session=private; Path=/".into(),
+                    }]
+                } else {
+                    Vec::new()
+                },
+                ResponseMetadata {
+                    cookies: if setup {
+                        vec![Cookie {
+                            name: "setup-session".into(),
+                            value: "private".into(),
+                            path: Some("/".into()),
+                            ..Cookie::default()
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    ..ResponseMetadata::default()
+                },
+            ))
+        }
+    }
+
+    fn body_kinds(flow: &FlowDto, label: &str) -> Vec<LoadNodeKindDto> {
+        let scenario = flow
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(&node.kind, FlowNodeKindDto::Load {
+                    load_kind: LoadNodeKindDto::Scenario, label: name, ..
+                } if name == label)
+            })
+            .unwrap();
+        let mut next = flow.edges.iter().find(|edge| {
+            edge.source_node_id == scenario.id && edge.source_handle.as_deref() == Some("iteration")
+        });
+        let mut kinds = Vec::new();
+        while let Some(edge) = next {
+            assert!(
+                kinds.len() < flow.nodes.len(),
+                "imported body contains a cycle"
+            );
+            let node = flow
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.target_node_id)
+                .unwrap();
+            let FlowNodeKindDto::Load { load_kind, .. } = &node.kind else {
+                panic!("expected a load step");
+            };
+            kinds.push(*load_kind);
+            next = flow
+                .edges
+                .iter()
+                .find(|edge| edge.source_node_id == node.id);
+        }
+        kinds
+    }
+
     struct SilentSink;
 
     impl LoadRunSink for SilentSink {
@@ -515,6 +645,197 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
+    #[tokio::test]
+    async fn lifecycle_and_distinct_execs_round_trip_without_sharing_setup_cookies_with_vus() {
+        let source = r#"import http from 'k6/http';
+            import { check, sleep } from 'k6';
+            import { Counter } from 'k6/metrics';
+            const reads = new Counter('reads');
+            const writes = new Counter('writes');
+            export const options = {
+                scenarios: {
+                    readers: { executor: 'shared-iterations', exec: 'read', vus: 1, iterations: 2 },
+                    writers: { executor: 'per-vu-iterations', exec: 'write', vus: 1, iterations: 1 }
+                },
+                thresholds: { reads: ['count==10'], writes: ['count==7'], checks: ['rate==1'] }
+            };
+            export function setup() { http.get('https://api.example.test/setup'); }
+            export function read() {
+                const response = http.get('https://api.example.test/read');
+                check(response, { 'read created': (r) => r.status === 201 });
+                reads.add(5);
+                sleep(0.001);
+                http.get('https://api.example.test/read-tail');
+                sleep(0.001);
+            }
+            export function write() {
+                const response = http.get('https://api.example.test/write');
+                check(response, { 'write ok': (r) => r.status === 200 });
+                writes.add(7);
+                sleep(0.001);
+            }
+            export function teardown() { http.get('https://api.example.test/teardown'); }"#;
+        let path = temp_file("lifecycle-round-trip.js", source);
+        let root = path.with_extension("workspace");
+        let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+            source_path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        assert_eq!(
+            body_kinds(&preview.flow, "readers"),
+            vec![
+                LoadNodeKindDto::Request,
+                LoadNodeKindDto::Check,
+                LoadNodeKindDto::Metric,
+                LoadNodeKindDto::Timer,
+                LoadNodeKindDto::Request,
+                LoadNodeKindDto::Timer,
+            ]
+        );
+        assert_eq!(
+            body_kinds(&preview.flow, "writers"),
+            vec![
+                LoadNodeKindDto::Request,
+                LoadNodeKindDto::Check,
+                LoadNodeKindDto::Metric,
+                LoadNodeKindDto::Timer,
+            ]
+        );
+        let committed = commit_load_test_import(CommitLoadTestImportInput {
+            root_path: root.to_string_lossy().into_owned(),
+            source_path: path.to_string_lossy().into_owned(),
+            analysis_hash: preview.analysis_hash,
+        })
+        .unwrap();
+        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let flow = snapshot
+            .flows
+            .iter()
+            .find(|flow| flow.id == committed.id)
+            .unwrap();
+        let executor = LifecycleExecutor::default();
+        let report = execute_load_flow_report(flow, &executor, &SilentSink, &NeverCancelled)
+            .await
+            .unwrap();
+        assert_eq!(report.summary.completed_iterations, 3);
+        assert_eq!(report.summary.requests, 7);
+        assert_eq!(report.summary.checks_passed, 3);
+        assert_eq!(report.summary.checks_failed, 0);
+        assert!(report.passed, "{report:?}");
+        for (name, expected) in [("reads", 10.0), ("writes", 7.0)] {
+            let threshold = report
+                .thresholds
+                .iter()
+                .find(|result| result.threshold.selector.name == name)
+                .unwrap();
+            assert_eq!(threshold.actual, Some(expected));
+        }
+        let calls = executor.calls.lock().unwrap();
+        assert_eq!(calls.first().unwrap().0, "https://api.example.test/setup");
+        assert_eq!(calls.last().unwrap().0, "https://api.example.test/teardown");
+        assert_eq!(calls.len(), 7);
+        let read_calls: Vec<&str> = calls
+            .iter()
+            .map(|(url, _)| url.as_str())
+            .filter(|url| url.contains("/read"))
+            .collect();
+        assert_eq!(
+            read_calls,
+            vec![
+                "https://api.example.test/read",
+                "https://api.example.test/read-tail",
+                "https://api.example.test/read",
+                "https://api.example.test/read-tail",
+            ]
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(url, _)| url.ends_with("/write"))
+                .count(),
+            1
+        );
+        assert!(
+            calls[1..calls.len() - 1]
+                .iter()
+                .all(|(_, cookie)| cookie.is_none())
+        );
+        assert!(
+            calls
+                .last()
+                .unwrap()
+                .1
+                .as_deref()
+                .unwrap()
+                .contains("setup-session=private")
+        );
+        assert_eq!(
+            fs::read_to_string(
+                root.join(ASSET_DIRECTORY)
+                    .join(&committed.id)
+                    .join("source.js")
+            )
+            .unwrap(),
+            source
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn preview_and_commit_reject_unsupported_k6_semantics_without_writes() {
+        let cases = [
+            (
+                "unreachable-helper",
+                "function unused() { http.get('https://api.example.test/unused'); } export default function () { http.get('https://api.example.test/health'); }",
+            ),
+            (
+                "called-helper",
+                "function helper() { http.get('https://api.example.test/helper'); } export default function () { helper(); }",
+            ),
+            (
+                "false-branch",
+                "export default function () { if (false) { http.get('https://api.example.test/hidden'); } http.get('https://api.example.test/health'); }",
+            ),
+            (
+                "setup-return",
+                "export function setup() { http.get('https://api.example.test/setup'); return { value: 1 }; } export default function () { http.get('https://api.example.test/health'); }",
+            ),
+            (
+                "setup-parameter",
+                "export function setup() { http.get('https://api.example.test/setup'); } export default function (data) { http.get('https://api.example.test/health'); }",
+            ),
+        ];
+        for (name, body) in cases {
+            let source = format!("import http from 'k6/http';\n{body}");
+            let path = temp_file(&format!("{name}.js"), &source);
+            let root = path.with_extension("workspace");
+            let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+                source_path: path.to_string_lossy().into_owned(),
+            })
+            .map(|_| ());
+            let commit = commit_load_test_import(CommitLoadTestImportInput {
+                root_path: root.to_string_lossy().into_owned(),
+                source_path: path.to_string_lossy().into_owned(),
+                analysis_hash: content_hash(source.as_bytes()),
+            })
+            .map(|_| ());
+            for result in [preview, commit] {
+                let Err(LoadTestImportErrorDto::Incompatible { diagnostics }) = result else {
+                    panic!("{name} should reject unsupported semantics: {result:?}");
+                };
+                assert!(!diagnostics.is_empty(), "{name} needs a diagnostic");
+                assert!(
+                    diagnostics
+                        .iter()
+                        .all(|diagnostic| diagnostic.line > 0 && diagnostic.column > 0)
+                );
+            }
+            assert!(!root.exists(), "{name} created a workspace");
+            fs::remove_file(path).unwrap();
+        }
+    }
+
     #[test]
     fn preview_and_commit_reject_non_executable_imports_without_creating_workspace_or_assets() {
         let source = "<jmeterTestPlan><hashTree><ThreadGroup testname='Smoke'><HTTPSamplerProxy><stringProp name='HTTPSampler.domain'>api.example.test</stringProp></HTTPSamplerProxy></ThreadGroup></hashTree></jmeterTestPlan>";
@@ -563,7 +884,7 @@ mod tests {
                         .iter()
                         .any(|d| d.message.contains("VUs simultâneos"))
                 ),
-                other => panic!("rejeição de budget esperada: {other:?}"),
+                other => panic!("expected a budget rejection: {other:?}"),
             }
         }
         assert!(!root.exists());
@@ -616,7 +937,7 @@ mod tests {
                 source_path: headers.to_string_lossy().to_string(),
             })
         else {
-            panic!("headers inválidos deveriam impedir a importação");
+            panic!("invalid headers should prevent import");
         };
         assert_eq!(diagnostics[0].line, 3);
         fs::remove_file(headers).unwrap();

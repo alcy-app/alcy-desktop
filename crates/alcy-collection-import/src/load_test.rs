@@ -1,8 +1,8 @@
-//! Leitura estrita de fontes de carga antes de qualquer persistência.
+//! Strict load-source analysis before any persistence.
 //!
-//! Esta camada só produz o modelo canônico de flow. Ela não abre conexões,
-//! não executa JavaScript e não grava assets: erros são acumulados e devolvidos
-//! ao chamador para que o commit seja atômico.
+//! This layer only produces the canonical flow model. It does not open
+//! connections, execute JavaScript or save assets: errors are collected and
+//! returned to the caller so the commit remains atomic.
 
 use std::collections::{BTreeMap, HashMap};
 use std::time::SystemTime;
@@ -10,13 +10,13 @@ use std::time::SystemTime;
 use alcy_domain::{
     Flow, FlowEdge, FlowExecutionKind, FlowNode, FlowNodeKind, FlowPosition, LoadNode, LoadNodeKind,
 };
-use oxc_allocator::Allocator;
-use oxc_parser::Parser;
-use oxc_span::SourceType;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use serde_json::json;
 use thiserror::Error;
+
+mod k6_syntax;
+use k6_syntax::{K6StaticCall, parse_k6_syntax};
 
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REQUESTS: usize = 10_000;
@@ -41,9 +41,8 @@ pub struct LoadImportRequest {
     pub method: String,
     pub url: String,
     pub body: Option<String>,
-    /// Propriedades HTTP de origem preservadas para execução posterior. O
-    /// importador não as descarta quando ainda não há bloco nativo para uma
-    /// delas.
+    /// Source HTTP properties preserved for later execution. The importer
+    /// retains them even when a property has no corresponding native block.
     pub source_properties: Vec<(String, String)>,
     pub line: usize,
 }
@@ -70,9 +69,9 @@ pub enum LoadTestImportError {
     InvalidFlow(String),
 }
 
-/// Analisa conteúdo em memória. A detecção não depende de extensão: `.js` e
-/// `.ts` podem ser k6; XML com `jmeterTestPlan` é JMeter. Nenhuma conversão
-/// parcial é retornada quando há uma incompatibilidade.
+/// Analyzes content in memory. Detection does not require an extension: `.js`
+/// and `.ts` can be k6; XML containing `jmeterTestPlan` is JMeter. An
+/// incompatibility never returns a partial conversion.
 pub fn analyze_load_test(
     name: &str,
     source: &str,
@@ -98,14 +97,97 @@ fn analyze_k6(
     source: &str,
     now: SystemTime,
 ) -> Result<LoadImportAnalysis, LoadTestImportError> {
-    let imports = parse_k6_syntax(name, source)?;
-    let mut diagnostics = forbidden_k6_constructs(source, &imports);
-    let requests = parse_k6_requests(source, &mut diagnostics);
-    let timers = parse_k6_timers(source, &mut diagnostics);
-    let checks = parse_k6_checks(source, &requests, &timers, &mut diagnostics);
-    let metrics = parse_k6_metrics(source, &requests, &timers, &mut diagnostics);
-    let scenarios = parse_k6_scenario_options(source, &mut diagnostics);
-    let thresholds = parse_k6_thresholds(source, &mut diagnostics);
+    let syntax = parse_k6_syntax(name, source)?;
+    let mut diagnostics = forbidden_k6_constructs(source, &syntax.imports);
+    let scenarios = parse_k6_scenario_options(source, syntax.options.as_ref(), &mut diagnostics);
+    let scenario_scopes = scenarios
+        .iter()
+        .map(|scenario| {
+            if matches!(scenario.exec.as_str(), "setup" | "teardown") {
+                diagnostics.push(diag(
+                    source,
+                    0,
+                    "exec do cenário k6 não pode usar uma função de lifecycle",
+                ));
+                return None;
+            }
+            let scope = syntax.functions.get(&scenario.exec).cloned();
+            if scope.is_none() {
+                diagnostics.push(diag(
+                    source,
+                    0,
+                    format!(
+                        "exec '{}' precisa apontar para uma função exportada",
+                        scenario.exec
+                    ),
+                ));
+            }
+            scope
+        })
+        .collect::<Vec<_>>();
+    let setup_scope = syntax.functions.get("setup");
+    let teardown_scope = syntax.functions.get("teardown");
+    for (name, scope) in &syntax.functions {
+        if !matches!(name.as_str(), "setup" | "teardown")
+            && !scenarios.iter().any(|scenario| &scenario.exec == name)
+        {
+            diagnostics.push(diag(
+                source,
+                scope.start,
+                "função auxiliar k6 sem cenário associado ainda não é traduzida",
+            ));
+        }
+    }
+    let requests = parse_k6_requests(source, &syntax.calls, &mut diagnostics);
+    let timers = parse_k6_timers(source, &syntax.calls, &mut diagnostics);
+    let checks = parse_k6_checks(source, &syntax.calls, &requests, &timers, &mut diagnostics);
+    let metrics = parse_k6_metrics(source, &syntax.calls, &syntax.metrics, &mut diagnostics);
+    validate_k6_effect_scopes(
+        source,
+        scenario_scopes
+            .iter()
+            .filter_map(Option::as_ref)
+            .chain(setup_scope)
+            .chain(teardown_scope),
+        &requests,
+        &timers,
+        &checks,
+        &metrics,
+        &mut diagnostics,
+    );
+    let scenario_effects = scenario_scopes
+        .iter()
+        .map(|scope| {
+            k6_effects_in_scope(
+                source,
+                scope.as_ref(),
+                &requests,
+                &timers,
+                &checks,
+                &metrics,
+                &mut diagnostics,
+            )
+        })
+        .collect::<Vec<_>>();
+    let setup_effects = k6_effects_in_scope(
+        source,
+        setup_scope,
+        &requests,
+        &timers,
+        &checks,
+        &metrics,
+        &mut diagnostics,
+    );
+    let teardown_effects = k6_effects_in_scope(
+        source,
+        teardown_scope,
+        &requests,
+        &timers,
+        &checks,
+        &metrics,
+        &mut diagnostics,
+    );
+    let thresholds = parse_k6_thresholds(source, syntax.options.as_ref(), &mut diagnostics);
     if requests.len() > MAX_REQUESTS {
         diagnostics.push(diag(
             source,
@@ -113,45 +195,133 @@ fn analyze_k6(
             format!("mais de {MAX_REQUESTS} requisições estáticas"),
         ));
     }
-    if requests.is_empty() && diagnostics.is_empty() {
-        diagnostics.push(diag(
-            source,
-            0,
-            "nenhuma chamada HTTP estática do k6 foi encontrada",
-        ));
-    }
-    if timers.last().is_some_and(|timer| {
-        requests
-            .last()
-            .is_none_or(|request| timer.offset > request.offset)
-    }) {
-        diagnostics.push(diag(
-            source,
-            timers.last().map_or(0, |timer| timer.offset),
-            "sleep após a última request ainda não é representável sem alterar o pacing da iteração",
-        ));
+    for (scenario, effects) in scenarios.iter().zip(&scenario_effects) {
+        if effects.requests.is_empty() && diagnostics.is_empty() {
+            diagnostics.push(diag(
+                source,
+                0,
+                format!(
+                    "nenhuma chamada HTTP estática na função '{}' do cenário '{}'",
+                    scenario.exec, scenario.name
+                ),
+            ));
+        }
     }
     if !diagnostics.is_empty() {
         return Err(LoadTestImportError::Incompatible { diagnostics });
     }
-    let imported_requests = requests
-        .iter()
-        .map(|request| request.request.clone())
-        .collect::<Vec<_>>();
     Ok(LoadImportAnalysis {
         format: LoadImportFormat::K6,
         flow: build_k6_flow(
-            &requests,
-            &timers,
-            &checks,
-            &metrics,
-            scenarios,
+            scenarios.into_iter().zip(scenario_effects).collect(),
+            (!setup_effects.is_empty()).then_some(&setup_effects),
+            (!teardown_effects.is_empty()).then_some(&teardown_effects),
             &thresholds,
             now,
         )?,
-        requests: imported_requests,
+        requests: requests
+            .iter()
+            .map(|request| request.request.clone())
+            .collect(),
         assets: vec!["source".to_string()],
     })
+}
+
+#[derive(Debug, Clone, Default)]
+struct K6Effects {
+    requests: Vec<K6Request>,
+    timers: Vec<K6Timer>,
+    checks: Vec<K6Check>,
+    metrics: Vec<K6Metric>,
+}
+
+impl K6Effects {
+    fn is_empty(&self) -> bool {
+        self.requests.is_empty()
+            && self.timers.is_empty()
+            && self.checks.is_empty()
+            && self.metrics.is_empty()
+    }
+}
+
+fn validate_k6_effect_scopes<'a>(
+    source: &str,
+    scopes: impl IntoIterator<Item = &'a std::ops::Range<usize>>,
+    requests: &[K6Request],
+    timers: &[K6Timer],
+    checks: &[K6Check],
+    metrics: &[K6Metric],
+    diagnostics: &mut Vec<LoadImportDiagnostic>,
+) {
+    let scopes = scopes.into_iter().collect::<Vec<_>>();
+    let mut outside = requests
+        .iter()
+        .map(|request| request.offset)
+        .chain(timers.iter().map(|timer| timer.offset))
+        .chain(checks.iter().map(|check| check.offset))
+        .chain(metrics.iter().map(|metric| metric.offset))
+        .filter(|offset| !scopes.iter().any(|scope| scope.contains(offset)))
+        .collect::<Vec<_>>();
+    outside.sort_unstable();
+    outside.dedup();
+    for offset in outside {
+        diagnostics.push(diag(
+            source,
+            offset,
+            "efeitos do k6 fora de uma função de cenário ou lifecycle ainda não são traduzidos; funções auxiliares exigem corpo próprio no flow",
+        ));
+    }
+}
+
+fn k6_effects_in_scope(
+    source: &str,
+    scope: Option<&std::ops::Range<usize>>,
+    requests: &[K6Request],
+    timers: &[K6Timer],
+    checks: &[K6Check],
+    metrics: &[K6Metric],
+    diagnostics: &mut Vec<LoadImportDiagnostic>,
+) -> K6Effects {
+    let Some(scope) = scope else {
+        return K6Effects::default();
+    };
+    let requests = requests
+        .iter()
+        .filter(|request| scope.contains(&request.offset))
+        .cloned()
+        .collect::<Vec<_>>();
+    let timers = timers
+        .iter()
+        .filter(|timer| scope.contains(&timer.offset))
+        .copied()
+        .collect::<Vec<_>>();
+    let metrics = metrics
+        .iter()
+        .filter(|metric| scope.contains(&metric.offset))
+        .cloned()
+        .collect::<Vec<_>>();
+    let checks = checks
+        .iter()
+        .filter(|check| scope.contains(&check.offset))
+        .filter_map(|check| {
+            if scope.contains(&check.request_offset) {
+                Some(check.clone())
+            } else {
+                diagnostics.push(diag(
+                    source,
+                    check.offset,
+                    "check do k6 não pode referenciar uma request de outra fase",
+                ));
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    K6Effects {
+        requests,
+        timers,
+        checks,
+        metrics,
+    }
 }
 
 fn default_k6_scenario_config() -> serde_json::Value {
@@ -163,115 +333,53 @@ fn default_k6_scenario_config() -> serde_json::Value {
     })
 }
 
-/// Valida a gramática do arquivo antes de aplicar o lowering estático. O AST
-/// ainda não é executado nem avaliado: a etapa seguinte continua aceitando
-/// apenas expressões que possam ser representadas sem ambiguidade no flow.
+/// Validates the file grammar before static lowering. The AST is never
+/// executed or evaluated: subsequent conversion only accepts expressions
+/// that the flow can represent unambiguously.
 ///
-/// `SourceType` deriva a sintaxe de TypeScript da extensão. Quando a análise
-/// acontece pelo conteúdo sem uma extensão conhecida, assumimos um módulo
-/// JavaScript, que é o formato de entrada padrão do k6.
+/// `SourceType` selects TypeScript syntax from the extension. Content-based
+/// analysis without a known extension assumes a JavaScript module, the
+/// default k6 input format.
 #[derive(Debug, Clone)]
 struct K6StaticImport {
     specifier: String,
     offset: usize,
 }
 
-fn parse_k6_syntax(name: &str, source: &str) -> Result<Vec<K6StaticImport>, LoadTestImportError> {
-    let source_type =
-        SourceType::from_path(name.to_ascii_lowercase()).unwrap_or_else(|_| SourceType::mjs());
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, source_type).parse();
-    let imports = parsed
-        .program
-        .body
-        .iter()
-        .filter_map(|statement| statement.as_module_declaration())
-        .filter(|declaration| declaration.is_import())
-        .filter_map(|declaration| declaration.source())
-        .map(|source| K6StaticImport {
-            specifier: source.value.to_string(),
-            offset: source.span.start as usize,
-        })
-        .collect::<Vec<_>>();
-    let mut diagnostics = parsed
-        .errors
-        .into_iter()
-        .map(|error| {
-            let offset = error
-                .labels
-                .as_ref()
-                .and_then(|labels| labels.first())
-                .map_or(0, |label| label.offset());
-            diag(
-                source,
-                offset,
-                format!("sintaxe JavaScript/TypeScript inválida: {error}"),
-            )
-        })
-        .collect::<Vec<_>>();
-    if parsed.panicked {
-        diagnostics.push(diag(
-            source,
-            0,
-            "o parser JavaScript/TypeScript não conseguiu recuperar a análise",
-        ));
-    }
-    if diagnostics.is_empty() {
-        Ok(imports)
-    } else {
-        Err(LoadTestImportError::Incompatible { diagnostics })
-    }
-}
-
 #[derive(Debug, Clone)]
 struct K6Scenario {
     name: String,
     config: serde_json::Value,
+    exec: String,
 }
 
 fn default_k6_scenarios() -> Vec<K6Scenario> {
     vec![K6Scenario {
         name: "default".to_string(),
         config: default_k6_scenario_config(),
+        exec: "default".to_string(),
     }]
 }
 
-/// Aceita uma matriz deliberadamente estática de `options`: os executores
-/// padrão e cenários nomeados. Todos os cenários aceitos usam a função padrão;
-/// objetos dinâmicos e `exec` que aponta para outra função continuam
-/// incompatíveis até que cada função possa virar uma lane independente.
+/// Accepts a deliberately static `options` matrix: default executors and
+/// named scenarios. A named scenario can select one exported function with a
+/// literal `exec`; dynamic options and expressions remain incompatible.
 fn parse_k6_scenario_options(
     source: &str,
+    options: Option<&std::ops::Range<usize>>,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Scenario> {
-    let Some(offset) = find_code(source, "export const options") else {
-        if let Some(offset) = find_code(source, "options =") {
-            diagnostics.push(diag(
-                source,
-                offset,
-                "options do k6 precisa ser export const estático",
-            ));
-        }
+    let Some(options) = options else {
         return default_k6_scenarios();
     };
-    let Some(after_export) = source.get(offset + "export const options".len()..) else {
-        diagnostics.push(diag(source, offset, "options do k6 está incompleto"));
-        return default_k6_scenarios();
-    };
-    let Some(after_equal) = after_export.trim_start().strip_prefix('=') else {
-        diagnostics.push(diag(source, offset, "options do k6 precisa usar '='"));
-        return default_k6_scenarios();
-    };
-    let Some(object_start) = after_equal.find('{') else {
-        diagnostics.push(diag(source, offset, "options do k6 precisa ser um objeto"));
-        return default_k6_scenarios();
-    };
-    let object_offset = source.len() - after_equal.len() + object_start;
+    let offset = options.start;
+    let object_offset = options.start;
+    let after_equal = &source[options.clone()];
     let Some((object, _)) = nested_js_object(source, object_offset) else {
         diagnostics.push(diag(
             source,
-            object_offset,
-            "options do k6 tem objeto inválido",
+            offset,
+            "options do k6 precisa ser um objeto estático",
         ));
         return default_k6_scenarios();
     };
@@ -325,6 +433,7 @@ fn parse_k6_scenario_options(
                 "iterations": iterations,
                 "maxDurationMs": max_duration,
             }),
+            exec: "default".to_string(),
         }],
         (Some(vus), None, Some(duration_ms), None) => vec![K6Scenario {
             name: "default".to_string(),
@@ -334,6 +443,7 @@ fn parse_k6_scenario_options(
                 "vus": vus,
                 "durationMs": duration_ms,
             }),
+            exec: "default".to_string(),
         }],
         _ => {
             diagnostics.push(diag(
@@ -391,7 +501,7 @@ fn parse_k6_named_scenario(
         return default_k6_scenarios();
     };
     let scenarios_value = scenarios_value.trim();
-    let Some((scenarios, _)) = nested_js_object(scenarios_value, 0) else {
+    let Some((scenarios, after_scenarios)) = nested_js_object(scenarios_value, 0) else {
         diagnostics.push(diag(
             source,
             offset,
@@ -399,6 +509,17 @@ fn parse_k6_named_scenario(
         ));
         return default_k6_scenarios();
     };
+    if !scenarios_value
+        .get(after_scenarios..)
+        .is_some_and(|tail| tail.trim().is_empty())
+    {
+        diagnostics.push(diag(
+            source,
+            offset,
+            "options.scenarios exige um objeto literal sem expressões adicionais",
+        ));
+        return default_k6_scenarios();
+    }
     let Some(scenarios) = static_object_fields(scenarios) else {
         diagnostics.push(diag(
             source,
@@ -436,7 +557,7 @@ fn parse_k6_named_scenario(
             ));
             continue;
         }
-        let Some(config) =
+        let Some((config, exec)) =
             parse_k6_named_scenario_config(scenario_value, source, offset, diagnostics)
         else {
             continue;
@@ -444,6 +565,7 @@ fn parse_k6_named_scenario(
         imported.push(K6Scenario {
             name: name.to_string(),
             config,
+            exec,
         });
     }
     if imported.is_empty() {
@@ -463,7 +585,7 @@ fn parse_k6_named_scenario_config(
     source: &str,
     offset: usize,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Option<serde_json::Value> {
+) -> Option<(serde_json::Value, String)> {
     let Some((scenario, after_scenario)) = nested_js_object(scenario_value.trim(), 0) else {
         diagnostics.push(diag(
             source,
@@ -485,23 +607,90 @@ fn parse_k6_named_scenario_config(
             .iter()
             .find_map(|(key, value)| (*key == name).then_some(*value))
     };
-    if let Some(exec) = field("exec")
-        && js_string_literal(exec) != Some("default")
-    {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "exec do cenário k6 precisa usar a função default nesta etapa",
-        ));
-        return None;
-    }
+    let exec = match field("exec") {
+        Some(value) => match js_string_literal(value).filter(|name| is_js_identifier(name)) {
+            Some(name) => name.to_string(),
+            None => {
+                diagnostics.push(diag(
+                    source,
+                    offset,
+                    "exec do cenário k6 precisa ser o nome literal de uma função exportada",
+                ));
+                return None;
+            }
+        },
+        None => "default".to_string(),
+    };
     let executor = field("executor").and_then(js_string_literal);
     let allows = |allowed: &[&str]| {
         fields
             .iter()
             .all(|(key, _)| *key == "exec" || allowed.contains(key))
     };
+    for (key, value) in &fields {
+        let valid = match *key {
+            "vus" | "startVUs" | "rate" | "startRate" | "preAllocatedVUs" | "maxVUs" => {
+                value.parse::<u32>().is_ok()
+            }
+            "iterations" => value.parse::<u64>().is_ok(),
+            "maxDuration" | "duration" | "timeUnit" | "gracefulRampDown" => {
+                parse_k6_duration(value).is_some()
+            }
+            _ => true,
+        };
+        if !valid {
+            diagnostics.push(diag(
+                source,
+                offset,
+                format!("opção de cenário k6 '{key}' precisa ter valor literal válido"),
+            ));
+            return None;
+        }
+    }
     match executor {
+        Some("shared-iterations") => {
+            let vus = field("vus").and_then(|value| value.trim().parse::<u32>().ok());
+            let iterations = field("iterations").and_then(|value| value.trim().parse::<u64>().ok());
+            let max_duration =
+                field("maxDuration").and_then(|value| parse_k6_duration(value.trim()));
+            if !allows(&["executor", "vus", "iterations", "maxDuration"])
+                || vus.is_none()
+                || iterations.is_none()
+                || field("maxDuration").is_some() && max_duration.is_none()
+            {
+                diagnostics.push(diag(
+                    source,
+                    offset,
+                    "shared-iterations exige vus e iterations literais e maxDuration válido",
+                ));
+                return None;
+            }
+            Some((
+                json!({
+                    "sourceFormat": "k6", "executor": "sharedIterations",
+                    "vus": vus, "iterations": iterations, "maxDurationMs": max_duration,
+                }),
+                exec,
+            ))
+        }
+        Some("constant-vus") => {
+            let vus = field("vus").and_then(|value| value.trim().parse::<u32>().ok());
+            let duration = field("duration").and_then(|value| parse_k6_duration(value.trim()));
+            if !allows(&["executor", "vus", "duration"]) || vus.is_none() || duration.is_none() {
+                diagnostics.push(diag(
+                    source,
+                    offset,
+                    "constant-vus exige vus e duration literais",
+                ));
+                return None;
+            }
+            Some((
+                json!({
+                    "sourceFormat": "k6", "executor": "constantVus", "vus": vus, "durationMs": duration,
+                }),
+                exec,
+            ))
+        }
         Some("per-vu-iterations") => {
             let vus = field("vus").and_then(|value| value.trim().parse::<u32>().ok());
             let iterations = field("iterations").and_then(|value| value.trim().parse::<u64>().ok());
@@ -516,13 +705,16 @@ fn parse_k6_named_scenario_config(
                 ));
                 return None;
             }
-            Some(json!({
-                "sourceFormat": "k6",
-                "executor": "perVuIterations",
-                "vus": vus,
-                "iterationsPerVu": iterations,
-                "maxDurationMs": max_duration,
-            }))
+            Some((
+                json!({
+                    "sourceFormat": "k6",
+                    "executor": "perVuIterations",
+                    "vus": vus,
+                    "iterationsPerVu": iterations,
+                    "maxDurationMs": max_duration,
+                }),
+                exec,
+            ))
         }
         Some("constant-arrival-rate") => {
             let rate = field("rate").and_then(|value| value.trim().parse::<u32>().ok());
@@ -552,15 +744,18 @@ fn parse_k6_named_scenario_config(
                 ));
                 return None;
             }
-            Some(json!({
-                "sourceFormat": "k6",
-                "executor": "constantArrivalRate",
-                "rate": rate,
-                "timeUnitMs": time_unit,
-                "durationMs": duration,
-                "preAllocatedVus": pre_allocated_vus,
-                "maxVus": max_vus,
-            }))
+            Some((
+                json!({
+                    "sourceFormat": "k6",
+                    "executor": "constantArrivalRate",
+                    "rate": rate,
+                    "timeUnitMs": time_unit,
+                    "durationMs": duration,
+                    "preAllocatedVus": pre_allocated_vus,
+                    "maxVus": max_vus,
+                }),
+                exec,
+            ))
         }
         Some("ramping-vus") => {
             let start_vus = field("startVUs").and_then(|value| value.trim().parse::<u32>().ok());
@@ -576,13 +771,16 @@ fn parse_k6_named_scenario_config(
                 ));
                 return None;
             }
-            Some(json!({
-                "sourceFormat": "k6",
-                "executor": "rampingVus",
-                "startVus": start_vus,
-                "stages": stages,
-                "gracefulRampDownMs": graceful_ramp_down,
-            }))
+            Some((
+                json!({
+                    "sourceFormat": "k6",
+                    "executor": "rampingVus",
+                    "startVus": start_vus,
+                    "stages": stages,
+                    "gracefulRampDownMs": graceful_ramp_down,
+                }),
+                exec,
+            ))
         }
         Some("ramping-arrival-rate") => {
             let start_rate = field("startRate").and_then(|value| value.trim().parse::<u32>().ok());
@@ -612,15 +810,18 @@ fn parse_k6_named_scenario_config(
                 ));
                 return None;
             }
-            Some(json!({
-                "sourceFormat": "k6",
-                "executor": "rampingArrivalRate",
-                "startRate": start_rate,
-                "timeUnitMs": time_unit,
-                "stages": stages,
-                "preAllocatedVus": pre_allocated_vus,
-                "maxVus": max_vus,
-            }))
+            Some((
+                json!({
+                    "sourceFormat": "k6",
+                    "executor": "rampingArrivalRate",
+                    "startRate": start_rate,
+                    "timeUnitMs": time_unit,
+                    "stages": stages,
+                    "preAllocatedVus": pre_allocated_vus,
+                    "maxVus": max_vus,
+                }),
+                exec,
+            ))
         }
         _ => {
             diagnostics.push(diag(
@@ -633,26 +834,18 @@ fn parse_k6_named_scenario_config(
     }
 }
 
-/// Traduz a forma declarativa de `options.thresholds`. Cada expressão vira um
-/// bloco Threshold independente, porque o runtime avalia todas ao término da
-/// execução, sem transportar amostras individuais pelo IPC.
+/// Converts declarative `options.thresholds`. Each expression becomes an
+/// independent Threshold block because the runtime evaluates all thresholds
+/// at the end of the run without sending individual samples over IPC.
 fn parse_k6_thresholds(
     source: &str,
+    options: Option<&std::ops::Range<usize>>,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Threshold> {
-    let Some(offset) = find_code(source, "export const options") else {
+    let Some(options) = options else {
         return Vec::new();
     };
-    let Some(after_export) = source.get(offset + "export const options".len()..) else {
-        return Vec::new();
-    };
-    let Some(after_equal) = after_export.trim_start().strip_prefix('=') else {
-        return Vec::new();
-    };
-    let Some(object_start) = after_equal.find('{') else {
-        return Vec::new();
-    };
-    let object_offset = source.len() - after_equal.len() + object_start;
+    let object_offset = options.start;
     let Some((options, _)) = nested_js_object(source, object_offset) else {
         return Vec::new();
     };
@@ -838,107 +1031,37 @@ fn parse_k6_threshold_expression(expression: &str) -> Option<(&'static str, &'st
 
 fn parse_k6_metrics(
     source: &str,
-    requests: &[K6Request],
-    timers: &[K6Timer],
+    calls: &[K6StaticCall],
+    definitions: &[K6MetricDefinition],
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Metric> {
-    let definitions = parse_k6_metric_definitions(source, diagnostics);
     let mut metrics = Vec::new();
-    for definition in definitions {
-        let needle = format!("{}.add(", definition.variable);
-        let mut start = 0;
-        while let Some(relative) = find_code(&source[start..], &needle) {
-            let offset = start + relative;
-            let argument_offset = offset + needle.len();
-            let Some((value, tags)) = parse_k6_metric_add(source, argument_offset, definition.kind)
-            else {
-                diagnostics.push(diag(
-                    source,
-                    offset,
-                    "metric.add do k6 exige valor e tags literais",
-                ));
-                start = argument_offset;
-                continue;
-            };
-            let request = requests
-                .iter()
-                .rev()
-                .find(|request| request.offset < offset);
-            if request.is_none()
-                || request.is_some_and(|request| {
-                    timers
-                        .iter()
-                        .any(|timer| timer.offset > request.offset && timer.offset < offset)
-                })
-            {
-                diagnostics.push(diag(
-                    source,
-                    offset,
-                    "metric.add precisa seguir uma request sem sleep intermediário",
-                ));
-            } else {
-                metrics.push(K6Metric {
-                    offset,
-                    name: definition.name.clone(),
-                    kind: definition.kind,
-                    value,
-                    tags,
-                });
-            }
-            start = argument_offset;
-        }
-    }
-    metrics.sort_by_key(|metric| metric.offset);
-    metrics
-}
-
-fn parse_k6_metric_definitions(
-    source: &str,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Vec<K6MetricDefinition> {
-    let kinds = [
-        ("Counter", "counter"),
-        ("Gauge", "gauge"),
-        ("Rate", "rate"),
-        ("Trend", "trend"),
-    ];
-    let mut definitions = Vec::new();
-    for (constructor, kind) in kinds {
-        let needle = format!("new {constructor}(");
-        let mut start = 0;
-        while let Some(relative) = find_code(&source[start..], &needle) {
-            let offset = start + relative;
-            let variable = response_name_before_call(source, offset);
-            let name_offset = offset + needle.len();
-            let parsed = parse_js_string(source, name_offset).and_then(|(name, after_name)| {
-                source
-                    .get(after_name..)?
-                    .trim_start()
-                    .starts_with(')')
-                    .then_some(name)
+    for call in calls {
+        let Some(definition) = definitions
+            .iter()
+            .find(|definition| call.callee == format!("{}.add", definition.variable))
+        else {
+            continue;
+        };
+        if let Some((value, tags)) =
+            parse_k6_metric_add(source, call.argument_offset, definition.kind)
+        {
+            metrics.push(K6Metric {
+                offset: call.offset,
+                name: definition.name.clone(),
+                kind: definition.kind,
+                value,
+                tags,
             });
-            match variable.zip(parsed) {
-                Some((variable, name))
-                    if !definitions
-                        .iter()
-                        .any(|definition: &K6MetricDefinition| definition.variable == variable) =>
-                {
-                    definitions.push(K6MetricDefinition {
-                        variable,
-                        name,
-                        kind,
-                    });
-                }
-                _ => diagnostics.push(diag(
-                    source,
-                    offset,
-                    "métrica k6 precisa usar const/let/var, nome literal e construtor sem opções",
-                )),
-            }
-            start = name_offset;
+        } else {
+            diagnostics.push(diag(
+                source,
+                call.offset,
+                "metric.add do k6 exige valor e tags literais",
+            ));
         }
     }
-    definitions
+    metrics
 }
 
 fn parse_k6_metric_add(
@@ -1003,9 +1126,9 @@ fn key_value_literal(raw: &str) -> Option<String> {
     .then(|| value.to_string())
 }
 
-/// Converte os estágios literais dos executores ramping. O parser deliberadamente
-/// aceita somente a forma declarativa do k6, para que uma expressão JavaScript
-/// não seja confundida com uma carga equivalente.
+/// Converts literal stages for ramping executors. The parser deliberately
+/// accepts only the declarative k6 form so a JavaScript expression cannot be
+/// mistaken for an equivalent workload.
 fn parse_k6_stages(value: &str) -> Option<Vec<serde_json::Value>> {
     let value = value.trim();
     let (array, after_array) = nested_js_array(value, 0)?;
@@ -1326,6 +1449,7 @@ struct K6Timer {
 #[derive(Debug, Clone)]
 struct K6Check {
     offset: usize,
+    request_offset: usize,
     name: String,
     expected_status: u16,
 }
@@ -1356,82 +1480,65 @@ struct K6Threshold {
     label: String,
 }
 
-fn parse_k6_requests(source: &str, diagnostics: &mut Vec<LoadImportDiagnostic>) -> Vec<K6Request> {
+fn parse_k6_requests(
+    source: &str,
+    calls: &[K6StaticCall],
+    diagnostics: &mut Vec<LoadImportDiagnostic>,
+) -> Vec<K6Request> {
     let mut requests = Vec::new();
-    let methods = [
-        ("http.get(", "GET"),
-        ("http.post(", "POST"),
-        ("http.put(", "PUT"),
-        ("http.patch(", "PATCH"),
-        ("http.del(", "DELETE"),
-        ("http.head(", "HEAD"),
-        ("http.options(", "OPTIONS"),
-    ];
-    for (needle, method) in methods {
-        let mut start = 0;
-        while let Some(relative) = find_code(&source[start..], needle) {
-            let call_offset = start + relative;
-            let offset = call_offset + needle.len();
-            match parse_k6_call(source, offset, method, diagnostics) {
-                Some((url, body, options)) => requests.push(K6Request {
-                    request: LoadImportRequest {
-                        method: method.to_string(),
-                        url,
-                        body,
-                        source_properties: Vec::new(),
-                        line: line_at(source, offset),
-                    },
-                    offset,
-                    response_name: response_name_before_call(source, call_offset),
-                    options,
-                }),
-                None => diagnostics.push(diag(
-                    source,
-                    offset,
-                    "a URL da requisição k6 precisa ser uma string literal",
-                )),
-            }
-            start = offset;
-        }
-    }
-    let mut start = 0;
-    while let Some(relative) = find_code(&source[start..], "http.request(") {
-        let call_offset = start + relative;
-        let offset = call_offset + "http.request(".len();
-        match parse_k6_generic_request(source, offset, diagnostics) {
-            Some((method, url, body, options)) => requests.push(K6Request {
+    for call in calls.iter().filter(|call| call.callee.starts_with("http.")) {
+        let method = match call.callee.as_str() {
+            "http.get" => "GET",
+            "http.post" => "POST",
+            "http.put" => "PUT",
+            "http.patch" => "PATCH",
+            "http.del" => "DELETE",
+            "http.head" => "HEAD",
+            "http.options" => "OPTIONS",
+            _ => "",
+        };
+        let result = if call.callee == "http.request" {
+            parse_k6_generic_request(source, call.argument_offset, diagnostics)
+        } else {
+            parse_k6_call(source, call.argument_offset, method, diagnostics)
+                .map(|(url, body, options)| (method.to_string(), url, body, options))
+        };
+        if let Some((method, url, body, options)) = result {
+            requests.push(K6Request {
                 request: LoadImportRequest {
                     method,
                     url,
                     body,
                     source_properties: Vec::new(),
-                    line: line_at(source, offset),
+                    line: line_at(source, call.offset),
                 },
-                offset,
-                response_name: response_name_before_call(source, call_offset),
+                offset: call.offset,
+                response_name: call.response_name.clone(),
                 options,
-            }),
-            None => diagnostics.push(diag(
+            });
+        } else {
+            diagnostics.push(diag(
                 source,
-                offset,
-                "http.request exige método, URL, corpo e opções estáticos compatíveis",
-            )),
+                call.offset,
+                "a chamada HTTP do k6 exige método, URL, corpo e opções estáticos compatíveis",
+            ));
         }
-        start = offset;
     }
-    requests.sort_by_key(|request| request.offset);
     requests
 }
 
-/// Traduz `sleep(<segundos literais>)` para o Timer fixo do runtime. Só aceita
-/// duração conversível exatamente para milissegundos, pois arredondar alteraria
-/// a cadência observável do teste importado.
-fn parse_k6_timers(source: &str, diagnostics: &mut Vec<LoadImportDiagnostic>) -> Vec<K6Timer> {
+/// Converts `sleep(<literal seconds>)` into the runtime's fixed Timer. Only
+/// durations exactly representable in milliseconds are accepted, since
+/// rounding would change the imported test's observable pacing.
+fn parse_k6_timers(
+    source: &str,
+    calls: &[K6StaticCall],
+    diagnostics: &mut Vec<LoadImportDiagnostic>,
+) -> Vec<K6Timer> {
     let mut timers = Vec::new();
-    let mut start = 0;
-    while let Some(relative) = find_code(&source[start..], "sleep(") {
-        let offset = start + relative;
-        let argument_offset = offset + "sleep(".len();
+    for call in calls.iter().filter(|call| call.callee == "sleep") {
+        let offset = call.offset;
+        let argument_offset = call.argument_offset;
         let Some(remaining) = source.get(argument_offset..) else {
             break;
         };
@@ -1444,12 +1551,10 @@ fn parse_k6_timers(source: &str, diagnostics: &mut Vec<LoadImportDiagnostic>) ->
             .count();
         let Some(raw_seconds) = trimmed.get(..length) else {
             diagnostics.push(diag(source, number_offset, "sleep exige segundos literais"));
-            start = argument_offset;
             continue;
         };
         let Some(after_argument) = trimmed.get(length..) else {
             diagnostics.push(diag(source, number_offset, "sleep tem sintaxe inválida"));
-            start = argument_offset;
             continue;
         };
         let milliseconds = literal_seconds_to_millis(raw_seconds);
@@ -1465,14 +1570,13 @@ fn parse_k6_timers(source: &str, diagnostics: &mut Vec<LoadImportDiagnostic>) ->
                 duration_ms,
             });
         }
-        start = argument_offset;
     }
     timers
 }
 
-/// Converte segundos decimais sem usar ponto flutuante. Aceita precisão maior
-/// que milissegundo somente se os dígitos extras forem zero; qualquer outra
-/// precisão exigiria arredondamento e mudaria a cadência importada.
+/// Converts decimal seconds without floating-point arithmetic. Precision
+/// beyond milliseconds is accepted only when the extra digits are zero;
+/// otherwise rounding would change the imported pacing.
 fn literal_seconds_to_millis(raw: &str) -> Option<u64> {
     let (whole, fraction) = match raw.split_once('.') {
         Some((whole, fraction)) if !fraction.contains('.') => (whole, fraction),
@@ -1508,64 +1612,39 @@ fn literal_seconds_to_millis(raw: &str) -> Option<u64> {
         .checked_add(milliseconds.checked_mul(10_u64.pow(padding))?)
 }
 
-/// Nome da resposta na forma simples `const response = http.get(...)`. O
-/// importador não tenta inferir aliases, reatribuições ou escopo dinâmico.
-fn response_name_before_call(source: &str, call_offset: usize) -> Option<String> {
-    let before_call = source.get(..call_offset)?;
-    let statement_start = before_call
-        .rfind([';', '{', '}'])
-        .map(|offset| offset + 1)
-        .unwrap_or(0);
-    let assignment = before_call.get(statement_start..)?.trim();
-    let (declaration, value) = assignment.split_once('=')?;
-    if !value.trim().is_empty() {
-        return None;
-    }
-    let mut parts = declaration.split_whitespace();
-    let keyword = parts.next()?;
-    let name = parts.next()?;
-    if !matches!(keyword, "const" | "let" | "var")
-        || parts.next().is_some()
-        || !is_js_identifier(name)
-    {
-        return None;
-    }
-    Some(name.to_string())
-}
-
 fn is_js_identifier(value: &str) -> bool {
     let mut characters = value.bytes();
     matches!(characters.next(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$')
         && characters.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$')
 }
 
-/// Aceita somente a forma canônica e sem lógica arbitrária:
-/// `check(response, { 'nome': (r) => r.status === 200 })`.
+/// Accepts only the canonical form without arbitrary logic:
+/// `check(response, { 'name': (r) => r.status === 200 })`.
 fn parse_k6_checks(
     source: &str,
+    calls: &[K6StaticCall],
     requests: &[K6Request],
     timers: &[K6Timer],
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Check> {
     let mut checks = Vec::new();
-    let mut start = 0;
-    while let Some(relative) = find_code(&source[start..], "check(") {
-        let offset = start + relative;
-        match parse_k6_status_check(source, offset) {
+    for call in calls.iter().filter(|call| call.callee == "check") {
+        let offset = call.offset;
+        match parse_k6_status_check(source, call.argument_offset) {
             Some((response_name, name, expected_status)) => {
                 let request = requests
                     .iter()
                     .rev()
                     .find(|request| request.offset < offset);
-                let valid_request = request.is_some_and(|request| {
+                if let Some(request) = request.filter(|request| {
                     request.response_name.as_deref() == Some(response_name.as_str())
                         && !timers
                             .iter()
                             .any(|timer| timer.offset > request.offset && timer.offset < offset)
-                });
-                if valid_request {
+                }) {
                     checks.push(K6Check {
                         offset,
+                        request_offset: request.offset,
                         name,
                         expected_status,
                     });
@@ -1583,13 +1662,12 @@ fn parse_k6_checks(
                 "somente check estático de status HTTP é suportado",
             )),
         }
-        start = offset + "check(".len();
     }
     checks
 }
 
 fn parse_k6_status_check(source: &str, offset: usize) -> Option<(String, String, u16)> {
-    let after_open = source.get(offset + "check(".len()..)?.trim_start();
+    let after_open = source.get(offset..)?.trim_start();
     let (response_name, after_response) = parse_js_identifier(after_open)?;
     let after_comma = after_response.trim_start().strip_prefix(',')?.trim_start();
     let after_object = after_comma.strip_prefix('{')?.trim_start();
@@ -1644,10 +1722,10 @@ fn parse_callback_argument(source: &str) -> Option<(String, &str)> {
     Some((argument, after_arrow))
 }
 
-/// Lê apenas a forma linear que o importador consegue preservar sem executar
-/// JavaScript: URL literal e, para métodos com corpo, um corpo literal. Opções
-/// de request (headers, tags, redirects etc.) aguardam o parser AST; rejeitá-
-/// las aqui evita uma conversão parcialmente silenciosa.
+/// Reads only the linear form the importer can preserve without executing
+/// JavaScript: a literal URL and, for methods with bodies, a literal body.
+/// Request options (headers, tags, redirects, etc.) need explicit AST
+/// conversion; rejecting unsupported options prevents silent partial imports.
 fn parse_k6_call(
     source: &str,
     offset: usize,
@@ -1668,7 +1746,7 @@ fn parse_k6_call(
         return None;
     }
 
-    let body_offset = after_url + remaining.find(',')? + 1;
+    let body_offset = k6_next_argument_offset(source, after_url)?;
     if matches!(method, "GET" | "DELETE" | "HEAD" | "OPTIONS") {
         let (options, after_options) = parse_k6_request_options(source, body_offset, diagnostics)?;
         if !source
@@ -1976,11 +2054,10 @@ fn analyze_jmeter(
     })
 }
 
-/// O executor `perVuIterations` preserva um Thread Group fechado quando cada
-/// thread executa uma quantidade finita de laços sem ramp-up ou scheduler.
-/// As outras combinações requerem um scheduler próprio de JMeter para não
-/// alterar o instante de início das threads ou transformar uma carga limitada
-/// em duração fixa.
+/// The `perVuIterations` executor preserves a closed Thread Group when each
+/// thread executes a finite number of loops without ramp-up or a scheduler.
+/// Other combinations require a JMeter-specific schedule to preserve thread
+/// start times and avoid turning a bounded workload into a fixed duration.
 fn jmeter_scenario_config(
     source: &str,
     group: &JmeterThreadGroup,
@@ -2068,46 +2145,27 @@ fn jmeter_scenario_config(
     }
 }
 
-/// Mantém a ordem linear entre requests e pausas do script de origem. O
-/// `Timer` é ligado à request seguinte, que é a semântica canônica do runtime
-/// para uma pausa entre duas requests na mesma iteração.
+/// Preserves linear ordering between requests and pauses in the source.
+/// `Timer` connects to the following request, matching the runtime's canonical
+/// semantics for a pause between two requests within one iteration.
 fn build_k6_flow(
-    requests: &[K6Request],
-    timers: &[K6Timer],
-    checks: &[K6Check],
-    metrics: &[K6Metric],
-    scenarios: Vec<K6Scenario>,
+    scenarios: Vec<(K6Scenario, K6Effects)>,
+    setup_effects: Option<&K6Effects>,
+    teardown_effects: Option<&K6Effects>,
     thresholds: &[K6Threshold],
     now: SystemTime,
 ) -> Result<Flow, LoadTestImportError> {
-    enum Step<'a> {
-        Request(&'a K6Request),
-        Timer(&'a K6Timer),
-        Check(&'a K6Check),
-        Metric(&'a K6Metric),
-    }
-
-    let mut steps = requests
-        .iter()
-        .map(Step::Request)
-        .chain(timers.iter().map(Step::Timer))
-        .chain(checks.iter().map(Step::Check))
-        .chain(metrics.iter().map(Step::Metric))
-        .collect::<Vec<_>>();
-    steps.sort_by_key(|step| match step {
-        Step::Request(request) => request.offset,
-        Step::Timer(timer) => timer.offset,
-        Step::Check(check) => check.offset,
-        Step::Metric(metric) => metric.offset,
-    });
-
     let mut nodes = vec![FlowNode {
         id: "start".to_string(),
         kind: FlowNodeKind::Start,
         position: FlowPosition { x: 0.0, y: 0.0 },
     }];
     let mut edges = Vec::new();
-    for (index, scenario) in scenarios.iter().enumerate() {
+    if let Some(effects) = setup_effects {
+        add_k6_lifecycle(&mut nodes, &mut edges, "setup", effects, -180.0);
+    }
+    let mut bodies: Vec<(String, K6Effects, Vec<String>, usize)> = Vec::new();
+    for (index, (scenario, effects)) in scenarios.iter().enumerate() {
         let id = format!("scenario-{}", index + 1);
         nodes.push(load_node(
             &id,
@@ -2123,7 +2181,121 @@ fn build_k6_flow(
             &id,
             None,
         ));
+        if let Some((_, _, roots, _)) = bodies
+            .iter_mut()
+            .find(|(exec, _, _, _)| *exec == scenario.exec)
+        {
+            roots.push(id);
+        } else {
+            bodies.push((scenario.exec.clone(), effects.clone(), vec![id], index));
+        }
     }
+    for (exec, effects, roots, first_index) in &bodies {
+        let prefix = if exec == "default" {
+            String::new()
+        } else {
+            format!("scenario-{}-", first_index + 1)
+        };
+        append_k6_effects(
+            &mut nodes,
+            &mut edges,
+            roots,
+            effects,
+            &prefix,
+            180.0 * *first_index as f64,
+        );
+    }
+    if let Some(effects) = teardown_effects {
+        let y = 180.0 * scenarios.len() as f64;
+        add_k6_lifecycle(&mut nodes, &mut edges, "teardown", effects, y);
+    }
+    for (index, threshold) in thresholds.iter().enumerate() {
+        nodes.push(load_node(
+            &format!("threshold-{}", index + 1),
+            LoadNodeKind::Threshold,
+            &threshold.label,
+            json!({
+                "metric": threshold.metric,
+                "tags": threshold.tags,
+                "statistic": threshold.statistic,
+                "comparison": threshold.comparison,
+                "target": threshold.target,
+            }),
+            600.0,
+            180.0 * (scenarios.len() + index) as f64,
+        ));
+    }
+    Flow::new_with_execution_kind(
+        "",
+        "Importado de k6",
+        FlowExecutionKind::Load,
+        nodes,
+        edges,
+        now,
+        now,
+    )
+    .map_err(|error| LoadTestImportError::InvalidFlow(error.to_string()))
+}
+
+enum K6FlowStep<'a> {
+    Request(&'a K6Request),
+    Timer(&'a K6Timer),
+    Check(&'a K6Check),
+    Metric(&'a K6Metric),
+}
+
+fn sorted_k6_steps(effects: &K6Effects) -> Vec<K6FlowStep<'_>> {
+    let mut steps = effects
+        .requests
+        .iter()
+        .map(K6FlowStep::Request)
+        .chain(effects.timers.iter().map(K6FlowStep::Timer))
+        .chain(effects.checks.iter().map(K6FlowStep::Check))
+        .chain(effects.metrics.iter().map(K6FlowStep::Metric))
+        .collect::<Vec<_>>();
+    steps.sort_by_key(|step| match step {
+        K6FlowStep::Request(request) => request.offset,
+        K6FlowStep::Timer(timer) => timer.offset,
+        K6FlowStep::Check(check) => check.offset,
+        K6FlowStep::Metric(metric) => metric.offset,
+    });
+    steps
+}
+
+fn add_k6_lifecycle(
+    nodes: &mut Vec<FlowNode>,
+    edges: &mut Vec<FlowEdge>,
+    phase: &str,
+    effects: &K6Effects,
+    y: f64,
+) {
+    nodes.push(load_node(
+        phase,
+        LoadNodeKind::Scenario,
+        phase,
+        json!({ "phase": phase }),
+        300.0,
+        y,
+    ));
+    edges.push(edge(&format!("start-{phase}"), "start", phase, None));
+    append_k6_effects(
+        nodes,
+        edges,
+        &[phase.to_string()],
+        effects,
+        &format!("{phase}-"),
+        y,
+    );
+}
+
+fn append_k6_effects(
+    nodes: &mut Vec<FlowNode>,
+    edges: &mut Vec<FlowEdge>,
+    roots: &[String],
+    effects: &K6Effects,
+    prefix: &str,
+    y: f64,
+) {
     let mut previous: Option<String> = None;
     let mut previous_handle = None;
     let mut request_index = 0;
@@ -2131,9 +2303,9 @@ fn build_k6_flow(
     let mut check_index = 0;
     let mut metric_index = 0;
 
-    for (position, step) in steps.into_iter().enumerate() {
+    for (position, step) in sorted_k6_steps(effects).into_iter().enumerate() {
         let (id, kind, label, config) = match step {
-            Step::Request(request) => {
+            K6FlowStep::Request(request) => {
                 request_index += 1;
                 let mut headers = request
                     .options
@@ -2164,34 +2336,34 @@ fn build_k6_flow(
                     config["timeoutMs"] = json!(timeout_ms);
                 }
                 (
-                    format!("request-{request_index}"),
+                    format!("{prefix}request-{request_index}"),
                     LoadNodeKind::Request,
                     format!("{} {}", request.request.method, request.request.url),
                     config,
                 )
             }
-            Step::Timer(timer) => {
+            K6FlowStep::Timer(timer) => {
                 timer_index += 1;
                 (
-                    format!("timer-{timer_index}"),
+                    format!("{prefix}timer-{timer_index}"),
                     LoadNodeKind::Timer,
                     format!("Pausa de {} ms", timer.duration_ms),
                     json!({ "kind": "fixed", "durationMs": timer.duration_ms }),
                 )
             }
-            Step::Check(check) => {
+            K6FlowStep::Check(check) => {
                 check_index += 1;
                 (
-                    format!("check-{check_index}"),
+                    format!("{prefix}check-{check_index}"),
                     LoadNodeKind::Check,
                     check.name.clone(),
                     json!({ "name": check.name, "status": check.expected_status }),
                 )
             }
-            Step::Metric(metric) => {
+            K6FlowStep::Metric(metric) => {
                 metric_index += 1;
                 (
-                    format!("metric-{metric_index}"),
+                    format!("{prefix}metric-{metric_index}"),
                     LoadNodeKind::Metric,
                     metric.name.clone(),
                     json!({
@@ -2210,54 +2382,23 @@ fn build_k6_flow(
             &label,
             config,
             600.0 + 280.0 * position as f64,
-            0.0,
+            y,
         ));
         if let Some(previous) = previous {
             edges.push(edge(
-                &format!("edge-{}", position + 1),
+                &format!("{prefix}edge-{}", position + 1),
                 &previous,
                 &id,
                 previous_handle,
             ));
         } else {
-            for index in 0..scenarios.len() {
-                edges.push(edge(
-                    &format!("scenario-{}-body", index + 1),
-                    &format!("scenario-{}", index + 1),
-                    &id,
-                    Some("iteration"),
-                ));
+            for root in roots {
+                edges.push(edge(&format!("{root}-body"), root, &id, Some("iteration")));
             }
         }
         previous = Some(id);
         previous_handle = next_handle;
     }
-    for (index, threshold) in thresholds.iter().enumerate() {
-        nodes.push(load_node(
-            &format!("threshold-{}", index + 1),
-            LoadNodeKind::Threshold,
-            &threshold.label,
-            json!({
-                "metric": threshold.metric,
-                "tags": threshold.tags,
-                "statistic": threshold.statistic,
-                "comparison": threshold.comparison,
-                "target": threshold.target,
-            }),
-            600.0,
-            180.0 * (scenarios.len() + index) as f64,
-        ));
-    }
-    Flow::new_with_execution_kind(
-        "",
-        "Importado de k6",
-        FlowExecutionKind::Load,
-        nodes,
-        edges,
-        now,
-        now,
-    )
-    .map_err(|error| LoadTestImportError::InvalidFlow(error.to_string()))
 }
 
 struct JmeterImportedScenario {
@@ -2459,10 +2600,9 @@ impl JmeterParseState {
     }
 }
 
-/// Faz uma única passagem pelo XML. DTD nunca é processado: `DocType` é
-/// convertido em diagnóstico antes que qualquer elemento seja interpretado.
-/// Os elementos de teste que ainda não têm equivalente no flow são recusados
-/// integralmente, em vez de serem ignorados.
+/// Reads XML in one pass. DTDs are never processed: `DocType` becomes a
+/// diagnostic before any element is interpreted. Test elements without a flow
+/// equivalent reject the entire import instead of being ignored.
 fn parse_jmeter(source: &str) -> Result<Vec<JmeterThreadGroup>, LoadTestImportError> {
     let mut reader = Reader::from_reader(source.as_bytes());
     reader.config_mut().trim_text(false);
@@ -2754,9 +2894,9 @@ fn append_jmeter_cdata(
     }
 }
 
-/// O reader separa referências de entidade do texto para evitar expandi-las
-/// implicitamente. Só as cinco entidades XML predefinidas são aceitas no
-/// valor de uma propriedade; qualquer outra continua sendo incompatível.
+/// The reader separates entity references from text to avoid implicit
+/// expansion. Property values accept only the five predefined XML entities;
+/// any other entity remains incompatible.
 fn append_jmeter_reference(
     source: &str,
     offset: usize,
@@ -2968,11 +3108,11 @@ fn requests_from_jmeter_group(
         .collect()
 }
 
-/// O JMeter usa uma lista de `HTTPArgument` tanto para parâmetros codificados
-/// quanto para um corpo bruto. Somente a segunda forma tem serialização idêntica
-/// a um `LoadRequest`: `postBodyRaw=true`, com exatamente um argumento e seu
-/// valor literal. As demais formas continuam incompatíveis para não trocar a
-/// codificação, a ordem ou o destino dos parâmetros durante a importação.
+/// JMeter uses an `HTTPArgument` list for both encoded parameters and raw
+/// bodies. Only the latter serializes identically to a `LoadRequest`:
+/// `postBodyRaw=true` with exactly one argument and its literal value. Other
+/// forms remain incompatible to preserve parameter encoding, order and
+/// destination during import.
 fn raw_jmeter_request_body(
     source: &str,
     sampler: &JmeterHttpSampler,
@@ -3042,8 +3182,8 @@ fn parse_js_string(source: &str, offset: usize) -> Option<(String, usize)> {
     None
 }
 
-/// Procura fora de aspas e comentários para não rejeitar uma palavra de uma
-/// descrição textual. Não é executor nem transformador de JavaScript.
+/// Searches outside quotes and comments so words in descriptions do not
+/// trigger rejection. This is neither a JavaScript executor nor transformer.
 fn find_code(source: &str, needle: &str) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = 0;
@@ -3083,9 +3223,9 @@ fn find_code(source: &str, needle: &str) -> Option<usize> {
         if source[index..].starts_with(needle) {
             return Some(index);
         }
-        // Fora de strings/comentários, avança por caractere UTF-8 completo;
-        // fatiar no meio de um caractere de uma descrição não pode causar
-        // panic durante uma análise que deveria apenas devolver diagnóstico.
+        // Outside strings/comments, advance by complete UTF-8 characters;
+        // slicing inside a description's character must not panic during
+        // analysis that should only return diagnostics.
         index += source[index..]
             .chars()
             .next()
@@ -3119,6 +3259,130 @@ fn diag(source: &str, offset: usize, message: impl Into<String>) -> LoadImportDi
 mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
+
+    #[test]
+    fn rejects_untranslated_statements_regardless_of_formatting() {
+        for statement in [
+            "if(false){http.get('https://api.example.test/never');}",
+            "if/*comment*/(true){http.get('https://api.example.test/conditional');}",
+            "for(let i=0;i<2;i++){http.get('https://api.example.test/repeated');}",
+            "while(false){http.get('https://api.example.test/never');}",
+            "do{http.get('https://api.example.test/repeated');}while(false);",
+            "false && http.get('https://api.example.test/never');",
+            "true ? http.get('https://api.example.test/conditional') : null;",
+            "function nested(){http.get('https://api.example.test/unused');}",
+            "return; http.get('https://api.example.test/unreachable');",
+            "const callback=()=>http.get('https://api.example.test/unused');",
+            "helper();",
+        ] {
+            let source = format!(
+                "import http from 'k6/http';\nexport default function(){{\n{statement}\nhttp.get('https://api.example.test/work');\n}}"
+            );
+            let Err(LoadTestImportError::Incompatible { diagnostics }) =
+                analyze_load_test("control.js", &source, UNIX_EPOCH)
+            else {
+                panic!("untranslated statement was accepted: {statement}");
+            };
+            assert!(
+                diagnostics.iter().any(|diagnostic| diagnostic.line == 3),
+                "missing source location for {statement}: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_shadowed_clients_metrics_and_duplicate_response_bindings() {
+        for source in [
+            "import http from 'k6/http'; export default function http(){http.get('https://api.example.test/work');}",
+            "import http from 'k6/http'; export default function(){const http=http.get('https://api.example.test/work');}",
+            "import http from 'k6/http'; import {Counter} from 'k6/metrics'; const count=new Counter('count'); export default function count(){http.get('https://api.example.test/work'); count.add(1);}",
+            "import http from 'k6/http'; export default function(){var response=http.get('https://api.example.test/first'); var response=http.get('https://api.example.test/second');}",
+            "import client from 'k6/http'; export default function(){client.get('https://api.example.test/work');}",
+        ] {
+            assert!(
+                matches!(
+                    analyze_load_test("shadow.js", source, UNIX_EPOCH),
+                    Err(LoadTestImportError::Incompatible { .. })
+                ),
+                "shadowing or alias was accepted: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn imports_ast_call_boundaries_with_whitespace_and_typescript_response_bindings() {
+        let source = "import http from 'k6/http'; import {check, sleep} from 'k6'; export default () => { const response: unknown = http . get ( 'https://api.example.test/work' ); check (response, { 'healthy': r => r.status === 200 }); http . post ('https://api.example.test/work' , '{}' , {headers: {Accept: 'application/json'}}); sleep (0.001); };";
+        let analysis = analyze_load_test("formatted.ts", source, UNIX_EPOCH).unwrap();
+        assert_eq!(analysis.requests.len(), 2);
+        assert_eq!(analysis.requests[1].body.as_deref(), Some("{}"));
+        let kinds = analysis
+            .flow
+            .nodes()
+            .iter()
+            .filter_map(|node| match &node.kind {
+                FlowNodeKind::Load { node } => Some(node.kind),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                LoadNodeKind::Scenario,
+                LoadNodeKind::Request,
+                LoadNodeKind::Check,
+                LoadNodeKind::Request,
+                LoadNodeKind::Timer
+            ]
+        );
+    }
+
+    #[test]
+    fn checks_cannot_read_a_request_from_another_function() {
+        let source = "import http from 'k6/http'; import {check} from 'k6'; export function setup(){ const response=http.get('https://api.example.test/setup'); } export default function(){ check(response, {'setup is healthy': r=>r.status===200}); http.get('https://api.example.test/work'); }";
+        assert!(
+            matches!(analyze_load_test("check-scope.js", source, UNIX_EPOCH), Err(LoadTestImportError::Incompatible { diagnostics }) if diagnostics.iter().any(|diagnostic| diagnostic.message.contains("outra fase")))
+        );
+    }
+
+    #[test]
+    fn rejects_values_that_textual_lowering_would_silently_change() {
+        for source in [
+            "import http from 'k6/http'; const id='abc'; export default function(){http.get(`https://api.example.test/${id}`);}",
+            "import http from 'k6/http'; const token='value'; export default function(){http.get('https://api.example.test/work',{headers:{'X-Test':token}});}",
+            "import http from 'k6/http'; export default function(){http.post('https://api.example.test/work','a'+'b');}",
+            "import http from 'k6/http'; export default function(){http.post('https://api.example.test/work','a\\nb');}",
+            "import http from 'k6/http'; export const options={scenarios:{a:{executor:'per-vu-iterations',vus:1,iterations:1}}&&dynamicScenarios()}; export default function(){http.get('https://api.example.test/work');}",
+            "import http from 'k6/http'; export const options={vus:1,vus:2,iterations:1}; export default function(){http.get('https://api.example.test/work');}",
+        ] {
+            assert!(
+                matches!(
+                    analyze_load_test("dynamic.js", source, UNIX_EPOCH),
+                    Err(LoadTestImportError::Incompatible { .. })
+                ),
+                "nonliteral or ambiguous value was accepted: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_exec_shares_only_the_complete_body_and_keeps_lifecycle_separate() {
+        let source = "import http from 'k6/http'; export const options={scenarios:{first:{executor:'shared-iterations',exec:'work',vus:1,iterations:1},second:{executor:'constant-vus',exec:'work',vus:2,duration:'1s'}}}; export function setup(){http.get('https://api.example.test/setup');} export function work(){http.get('https://api.example.test/work');} export function teardown(){http.get('https://api.example.test/teardown');}";
+        let analysis = analyze_load_test("shared-exec.js", source, UNIX_EPOCH).unwrap();
+        assert_eq!(analysis.requests.len(), 3);
+        let entries = analysis
+            .flow
+            .edges()
+            .iter()
+            .filter(|edge| {
+                edge.source_node_id.starts_with("scenario-")
+                    && edge.source_handle.as_deref() == Some("iteration")
+            })
+            .map(|edge| &edge.target_node_id)
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], entries[1]);
+        assert_ne!(entries[0], "setup-request-1");
+    }
 
     #[test]
     fn imports_static_k6_requests_as_a_single_load_flow() {
@@ -3529,6 +3793,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_optional_scenario_values_instead_of_defaulting_them() {
+        for scenario in [
+            "executor:'per-vu-iterations',vus:1,iterations:1,maxDuration:'invalid'",
+            "executor:'shared-iterations',vus:1,iterations:1,maxDuration:1",
+            "executor:'ramping-vus',startVUs:1,stages:[{duration:'1s',target:1}],gracefulRampDown:'invalid'",
+            "executor:'constant-arrival-rate',rate:1,timeUnit:'1s',duration:'1s',preAllocatedVUs:1,maxVUs:'invalid'",
+            "executor:'ramping-arrival-rate',startRate:1,timeUnit:'1s',stages:[{duration:'1s',target:1}],preAllocatedVUs:1,maxVUs:'invalid'",
+        ] {
+            let source = format!(
+                "import http from 'k6/http';export const options={{scenarios:{{a:{{{scenario}}}}}}};export default function(){{http.get('https://api.example.test/work');}}"
+            );
+            assert!(
+                matches!(
+                    analyze_load_test("invalid-option.js", &source, UNIX_EPOCH),
+                    Err(LoadTestImportError::Incompatible { .. })
+                ),
+                "invalid optional value was accepted: {scenario}"
+            );
+        }
+    }
+
+    #[test]
     fn preserves_only_sleep_durations_exactly_representable_in_milliseconds() {
         assert_eq!(literal_seconds_to_millis("1"), Some(1_000));
         assert_eq!(literal_seconds_to_millis(".25"), Some(250));
@@ -3538,15 +3824,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_trailing_k6_sleep_without_partial_import() {
+    fn preserves_trailing_k6_sleep_in_the_iteration_body() {
         let source = "import http from 'k6/http'; import { sleep } from 'k6'; export default function () { http.get('https://api.example.test/a'); sleep(1); }";
-        let result = analyze_load_test("paced.js", source, UNIX_EPOCH);
-
-        assert!(matches!(
-            result,
-            Err(LoadTestImportError::Incompatible { diagnostics })
-                if diagnostics.iter().any(|diagnostic| diagnostic.message.contains("pacing"))
+        let analysis = analyze_load_test("paced.js", source, UNIX_EPOCH).unwrap();
+        assert!(matches!(&analysis.flow.nodes().last().unwrap().kind,
+            FlowNodeKind::Load { node } if node.kind == LoadNodeKind::Timer
+                && serde_json::from_str::<serde_json::Value>(&node.config).unwrap()["durationMs"] == 1000
         ));
+        assert!(
+            analysis
+                .flow
+                .edges()
+                .iter()
+                .any(|edge| edge.source_node_id == "request-1"
+                    && edge.target_node_id == "timer-1"
+                    && edge.source_handle.as_deref() == Some("success"))
+        );
     }
 
     #[test]

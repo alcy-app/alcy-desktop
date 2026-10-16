@@ -146,6 +146,15 @@ and teardown waits for the scenarios to finish. Datasets are immutable data
 already resolved by the consumer, with a cursor isolated per dataset/VU; the
 core does not open workspace assets (ADR 0055).
 
+`alcy-collection-import` converts supported static k6/JMeter subsets into that
+graph without executing source code or contacting destinations. The k6 AST
+delimits exported scenario and lifecycle bodies before static conversion;
+unsupported statements reject the entire import. Syntax validation and local
+module resolution are separate concerns (ADR 0053). Imported setup/teardown
+uses existing runtime isolation: setup cookies and headers are not copied into
+VUs. Preview and commit compile the graph before success, and commit rechecks
+the source hash before saving assets.
+
 The runner checks scenarios, simultaneous VU peaks, open rate, steps and
 configured duration against the consumer's budgets before starting any
 effect. Numeric samples share a budget per run; percentiles stay exact, with

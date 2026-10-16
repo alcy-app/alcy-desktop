@@ -49,6 +49,7 @@ version = "0.1.0"
 dependencies = [
  "alcy-domain",
  "oxc_allocator",
+ "oxc_ast",
  "oxc_parser",
  "oxc_span",
  "quick-xml",
@@ -59,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "alcy-desktop"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "alcy-app",
  "alcy-collection-import",

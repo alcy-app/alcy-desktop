@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 alcy-domain = { path = "../alcy-domain" }
+oxc_ast = "=0.38.0"
 oxc_allocator = "=0.38.0"
 oxc_parser = "=0.38.0"
 oxc_span = "=0.38.0"
