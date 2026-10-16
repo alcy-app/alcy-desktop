@@ -8,7 +8,8 @@ import { DEFAULT_SHORTCUTS, isShortcutEventConsumed, type ShortcutBindings } fro
 import {
   automaticSuggestionsEnabled,
   completionShortcutsExtension,
-  toggleAutomaticSuggestions,
+  dismissSuggestions,
+  showSuggestions,
 } from './completion-shortcuts'
 import { scriptCompletionExtension } from './script-completions'
 
@@ -47,9 +48,17 @@ describe('teclas do autocompletar', () => {
     view.destroy()
   })
 
-  it('Enter quebra a linha em vez de aceitar a sugestão', async () => {
+  it('Enter accepts the selected suggestion', async () => {
     const view = scriptEditor('al.envi')
     await openSuggestions(view)
+
+    expect(press(view, 'Enter')).toBe(true)
+    expect(view.state.doc.toString()).toBe('al.environment')
+    view.destroy()
+  })
+
+  it('Enter breaks the line with no open suggestion list', () => {
+    const view = scriptEditor('al.envi')
 
     press(view, 'Enter')
     expect(view.state.doc.toString()).toBe('al.envi\n')
@@ -66,32 +75,67 @@ describe('teclas do autocompletar', () => {
     view.destroy()
   })
 
-  it('Ctrl+Espaço desliga e religa as sugestões automáticas, fechando a lista aberta', async () => {
+  it('Ctrl+Space closes the open list and pauses suggestions while typing', async () => {
     const view = scriptEditor('al.envi')
     await openSuggestions(view)
 
-    expect(automaticSuggestionsEnabled()).toBe(true)
     expect(press(view, ' ', { ctrlKey: true })).toBe(true)
+    expect(completionStatus(view.state)).toBeNull()
     expect(automaticSuggestionsEnabled()).toBe(false)
+
+    view.dispatch({ changes: { from: view.state.doc.length, insert: 'r' }, userEvent: 'input.type' })
+    await new Promise((resolve) => setTimeout(resolve, 200))
     expect(completionStatus(view.state)).toBeNull()
 
     expect(press(view, ' ', { ctrlKey: true })).toBe(true)
+    await vi.waitFor(() => expect(completionStatus(view.state)).toBe('active'))
     expect(automaticSuggestionsEnabled()).toBe(true)
     view.destroy()
   })
 
-  it('um editor já montado adota a escolha feita em outro ao ganhar foco', () => {
-    const first = scriptEditor('')
+  it('Esc closes the list and pauses suggestions until Ctrl+Space', async () => {
+    const view = scriptEditor('al.envi')
+    await openSuggestions(view)
+
+    expect(press(view, 'Escape')).toBe(true)
+    expect(completionStatus(view.state)).toBeNull()
+    expect(automaticSuggestionsEnabled()).toBe(false)
+
+    press(view, ' ', { ctrlKey: true })
+    expect(automaticSuggestionsEnabled()).toBe(true)
+    view.destroy()
+  })
+
+  it('Esc with no open list goes on to the editor', () => {
+    const view = scriptEditor('a')
+
+    expect(press(view, 'Escape')).toBe(false)
+    expect(automaticSuggestionsEnabled()).toBe(true)
+    view.destroy()
+  })
+
+  it('Ctrl+Shift+Space does nothing', () => {
+    const view = scriptEditor('al.envi')
+
+    expect(press(view, ' ', { ctrlKey: true, shiftKey: true })).toBe(false)
+    expect(automaticSuggestionsEnabled()).toBe(true)
+    expect(completionStatus(view.state)).toBeNull()
+    view.destroy()
+  })
+
+  it('an editor already mounted adopts the choice made in another on focus', async () => {
+    const first = scriptEditor('al.envi')
     const second = scriptEditor('')
     const focusEffects = () =>
       second.state.facet(EditorView.focusChangeEffect).flatMap((effect) => effect(second.state, true) ?? [])
 
-    toggleAutomaticSuggestions(first)
+    await openSuggestions(first)
+    dismissSuggestions(first)
     expect(focusEffects()).toHaveLength(1)
     second.dispatch({ effects: focusEffects() })
     expect(focusEffects()).toHaveLength(0)
 
-    toggleAutomaticSuggestions(second)
+    showSuggestions(second)
     expect(automaticSuggestionsEnabled()).toBe(true)
     first.destroy()
     second.destroy()

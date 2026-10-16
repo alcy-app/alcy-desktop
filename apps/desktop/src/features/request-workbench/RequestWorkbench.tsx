@@ -1562,8 +1562,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'renameItem':
       case 'duplicateItem':
       case 'deleteItem':
+      case 'showSuggestions':
       case 'acceptSuggestion':
-      case 'toggleSuggestions':
         // Local actions are dispatched by tabs, canvas, sidebar rows and editors (isLocalAction).
         return false
     }
@@ -1618,8 +1618,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'renameItem':
       case 'duplicateItem':
       case 'deleteItem':
+      case 'showSuggestions':
       case 'acceptSuggestion':
-      case 'toggleSuggestions':
         return
     }
   }

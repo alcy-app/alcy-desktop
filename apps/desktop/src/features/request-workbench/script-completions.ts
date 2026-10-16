@@ -3,6 +3,15 @@ import type { Completion, CompletionContext, CompletionResult } from '@codemirro
 import { javascriptLanguage } from '@codemirror/lang-javascript'
 import type { Extension } from '@codemirror/state'
 import { completionTheme, floatingTooltips } from './codemirror-shared'
+import { automaticSuggestionsEnabled } from './completion-shortcuts'
+import {
+  MODULE_NAME_COMPLETIONS,
+  destructuredModule,
+  memberChainBefore,
+  moduleChainMembers,
+  moduleMembers,
+  requiredModules,
+} from './script-modules'
 
 export type ScriptPhase = 'pre' | 'post'
 
@@ -13,10 +22,11 @@ const fn = (label: string, template: string, detail: string, info: string): Memb
 
 const prop = (label: string, detail: string, info: string): Member => ({ label, detail, info, type: 'property' })
 
-/** require is also available as al.require (spec 0128). */
+/** require is also available as al.require (spec 0128). Picking it reopens
+ * the list inside the quotes with the available modules. */
 const requireCompletion = fn(
   'require',
-  "require('${module}')",
+  "require('${}')",
   '(name) → module',
   'Carrega uma biblioteca: lodash, crypto-js, moment e uuid já vêm com o app; ' +
     "'npm:<pacote>@<versão>' baixa um pacote do npm na primeira execução e o guarda para uso offline.",
@@ -129,8 +139,38 @@ function membersOf(path: string, phase: ScriptPhase): Member[] {
   }
 }
 
+/** How far back the source looks for the member chain before the cursor. */
+const CHAIN_LOOKBEHIND = 500
+
+/** Inside the quotes of `require('…')` / `al.require('…')`. */
+const REQUIRE_ARGUMENT = /(?<![\w$.])(?:al\s*\.\s*)?require\s*\(\s*['"`]([\w@:/.-]*)$/
+
+/** Modules and their members: `require('|')`, `const { v4| } = require('uuid')`
+ * and members of a variable bound to a bundled module (`_.`, `CryptoJS.enc.`,
+ * `moment().`). `null` when the cursor is in none of these places; no
+ * options for a module whose members are unknown (`npm:` packages). */
+function moduleCompletions(context: CompletionContext): CompletionResult | null {
+  const before = context.state.sliceDoc(Math.max(0, context.pos - CHAIN_LOOKBEHIND), context.pos)
+
+  const argument = REQUIRE_ARGUMENT.exec(before)
+  if (argument) return { from: context.pos - argument[1].length, options: MODULE_NAME_COMPLETIONS, validFor: /^[\w@:/.-]*$/ }
+
+  const partial = /[\w$]*$/.exec(before)?.[0] ?? ''
+  const destructured = destructuredModule(before, context.state.sliceDoc(context.pos, context.pos + CHAIN_LOOKBEHIND))
+  if (destructured !== null) return { from: context.pos - partial.length, options: moduleMembers(destructured), validFor: /^[\w$]*$/ }
+
+  const chain = memberChainBefore(before)
+  if (!chain) return null
+  const options = moduleChainMembers(chain.segments, requiredModules(context.state.sliceDoc(0, context.pos)))
+  if (options === null) return null
+  return { from: context.pos - chain.partial.length, options, validFor: /^[\w$]*$/ }
+}
+
 export function completionSource(phase: ScriptPhase) {
   return (context: CompletionContext): CompletionResult | null => {
+    const modules = moduleCompletions(context)
+    if (modules) return modules.options.length > 0 ? modules : null
+
     const word = context.matchBefore(/[\w$.]*/)
     if (!word) return null
     const segments = word.text.split('.')
@@ -139,8 +179,9 @@ export function completionSource(phase: ScriptPhase) {
     const from = word.to - partial.length
 
     if (path === '') {
-      // No dot: offers `al` and `require` once at least one letter is typed.
-      if (partial === '') return null
+      // No dot: offers `al` and `require` once at least one letter is typed,
+      // or right away when the list is opened by the shortcut.
+      if (partial === '' && !context.explicit) return null
       return {
         from,
         options: [{ label: 'al', type: 'variable', detail: 'Alcy', info: 'Objeto com a API de scripts do Alcy.' }, requireCompletion],
@@ -155,7 +196,7 @@ export function completionSource(phase: ScriptPhase) {
 /** Add al completions alongside JavaScript suggestions; completionShortcutsExtension owns acceptance/toggling shortcuts. */
 export function scriptCompletionExtension(phase: ScriptPhase): Extension {
   return [
-    autocompletion({ icons: false }),
+    autocompletion({ icons: false, activateOnCompletion: (completion) => completion === requireCompletion && automaticSuggestionsEnabled() }),
     javascriptLanguage.data.of({ autocomplete: completionSource(phase) }),
     completionTheme,
     floatingTooltips(),

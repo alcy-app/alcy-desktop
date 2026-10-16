@@ -76,9 +76,9 @@ describe('combinações', () => {
     expect(validateCombo(combo('A'), 'acceptSuggestion')).toBe('needsModifier')
     expect(validateCombo(combo('Tab'), 'renameItem')).toBe('needsModifier')
     expect(DEFAULT_SHORTCUTS.acceptSuggestion.map(formatCombo)).toEqual(['Tab'])
-    expect(DEFAULT_SHORTCUTS.toggleSuggestions.map(formatCombo)).toEqual(['Ctrl+Space'])
+    expect(DEFAULT_SHORTCUTS.showSuggestions.map(formatCombo)).toEqual(['Ctrl+Space'])
+    expect(isLocalAction('showSuggestions')).toBe(true)
     expect(isLocalAction('acceptSuggestion')).toBe(true)
-    expect(isLocalAction('toggleSuggestions')).toBe(true)
   })
 })
 

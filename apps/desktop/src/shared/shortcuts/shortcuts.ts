@@ -13,8 +13,8 @@ export const SHORTCUT_ACTIONS = [
   'deleteItem',
   'toggleSidebar',
   'openSettings',
+  'showSuggestions',
   'acceptSuggestion',
-  'toggleSuggestions',
   'openBlockPalette',
 ] as const
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number]
@@ -23,34 +23,37 @@ export const MAX_BINDINGS_PER_ACTION = 2
 export const SHORTCUTS_STORAGE_KEY = 'alcy:shortcuts'
 const SHORTCUTS_STORAGE_VERSION = 1
 
-/** Ações disparadas por um ponto do canvas de flows — as únicas que aceitam
- * botões do mouse, e que o `FlowCanvas` despacha (não o workbench). */
+/** Actions fired at a point of the flows canvas — the only ones that accept
+ * mouse buttons, dispatched by `FlowCanvas` (not the workbench). */
 const CANVAS_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>(['openBlockPalette'])
 
 export function isCanvasAction(action: ShortcutAction): boolean {
   return CANVAS_ACTIONS.has(action)
 }
 
-/** Ações dos editores de código (autocompletar), que os próprios editores
- * despacham — as únicas que aceitam Tab sem modificador. */
-const EDITOR_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>(['acceptSuggestion', 'toggleSuggestions'])
+/** Code editor actions (autocomplete), dispatched by the editors themselves
+ * — the only ones that accept Tab without a modifier. */
+const EDITOR_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
+  'showSuggestions',
+  'acceptSuggestion',
+])
 
 export function isEditorAction(action: ShortcutAction): boolean {
   return EDITOR_ACTIONS.has(action)
 }
 
-/** Ações sobre o item focado da sidebar (linha da árvore de collections ou
- * flow), que a própria linha despacha — as únicas que aceitam Delete sem
- * modificador. */
+/** Actions on the focused sidebar item (collection tree or flow row),
+ * dispatched by the row itself — the only ones that accept Delete without a
+ * modifier. */
 const ITEM_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>(['renameItem', 'duplicateItem', 'deleteItem'])
 
 export function isItemAction(action: ShortcutAction): boolean {
   return ITEM_ACTIONS.has(action)
 }
 
-/** Ações que o workbench não despacha: o componente onde elas acontecem as
- * trata (o canvas de flows; o item focado da sidebar; o editor focado, no
- * caso do autocompletar; a barra de abas, que confirma o descarte ao fechar). */
+/** Actions the workbench does not dispatch: the component where they happen
+ * handles them (the flows canvas; the focused sidebar item; the focused
+ * editor, for autocomplete; the tab bar, which confirms discarding on close). */
 const LOCAL_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
   ...CANVAS_ACTIONS,
   ...EDITOR_ACTIONS,
@@ -62,7 +65,7 @@ export function isLocalAction(action: ShortcutAction): boolean {
   return LOCAL_ACTIONS.has(action)
 }
 
-/** Botões do mouse como "tecla" principal de uma combinação (spec 0088). */
+/** Mouse buttons as the main "key" of a combination (spec 0088). */
 export const MOUSE_KEYS = ['MouseLeft', 'MouseMiddle', 'MouseRight'] as const
 export type MouseKey = (typeof MOUSE_KEYS)[number]
 
@@ -70,8 +73,8 @@ export function isMouseKey(key: string): key is MouseKey {
   return (MOUSE_KEYS as readonly string[]).includes(key)
 }
 
-/** Uma combinação de teclas, ou de modificadores com um botão do mouse
- * (`MOUSE_KEYS`). `ctrl` vale tanto para Ctrl quanto para Cmd/Meta. */
+/** A key combination, or modifiers with a mouse button (`MOUSE_KEYS`).
+ * `ctrl` stands for both Ctrl and Cmd/Meta. */
 export interface KeyCombo {
   ctrl: boolean
   alt: boolean
@@ -91,7 +94,7 @@ const NO_MODIFIERS = { ctrl: false, alt: false, shift: false }
 const CTRL = { ...NO_MODIFIERS, ctrl: true }
 const CTRL_SHIFT = { ...CTRL, shift: true }
 
-/** Os padrões seguem as teclas mais comuns entre clientes de API. */
+/** The defaults follow the most common keys among API clients. */
 export const DEFAULT_SHORTCUTS: ShortcutBindings = {
   sendRequest: [{ ...NO_MODIFIERS, key: 'Enter' }, { ...CTRL, key: 'Enter' }],
   saveRequest: [{ ...CTRL, key: 'S' }],
@@ -107,18 +110,18 @@ export const DEFAULT_SHORTCUTS: ShortcutBindings = {
   deleteItem: [{ ...NO_MODIFIERS, key: 'Delete' }],
   toggleSidebar: [{ ...CTRL, key: '\\' }],
   openSettings: [{ ...CTRL, key: ',' }],
+  showSuggestions: [{ ...CTRL, key: 'Space' }],
   acceptSuggestion: [{ ...NO_MODIFIERS, key: 'Tab' }],
-  toggleSuggestions: [{ ...CTRL, key: 'Space' }],
   openBlockPalette: [{ ...NO_MODIFIERS, key: 'MouseRight' }],
 }
 
 const MODIFIER_KEYS = new Set(['Control', 'Alt', 'AltGraph', 'Shift', 'Meta', 'OS', 'Super', 'Hyper', 'Fn', 'CapsLock'])
 const MODIFIER_NAMES = new Set(['Ctrl', 'Alt', 'Shift'])
-/** Sem Ctrl/Alt só estas teclas viram atalho: as demais são digitação ou navegação de foco. */
+/** Without Ctrl/Alt only these keys become shortcuts: the rest are typing or focus navigation. */
 const PLAIN_KEY = /^(Enter|F([1-9]|1[0-2]))$/
-/** Nos editores o Tab já é da edição (indenta), então também pode virar atalho. */
+/** In the editors Tab already belongs to editing (indents), so it can be a shortcut too. */
 const PLAIN_EDITOR_KEY = /^(Enter|Tab|F([1-9]|1[0-2]))$/
-/** No item focado da sidebar não há texto sendo digitado: Delete também pode. */
+/** On the focused sidebar item no text is being typed: Delete is allowed too. */
 const PLAIN_ITEM_KEY = /^(Enter|Delete|F([1-9]|1[0-2]))$/
 
 function plainKeyPattern(action: ShortcutAction): RegExp {
@@ -126,7 +129,7 @@ function plainKeyPattern(action: ShortcutAction): RegExp {
   if (isItemAction(action)) return PLAIN_ITEM_KEY
   return PLAIN_KEY
 }
-/** Edição de texto: o GTK engole Ctrl+Z/Ctrl+Y no Linux e os demais pertencem aos campos. */
+/** Text editing: GTK swallows Ctrl+Z/Ctrl+Y on Linux and the others belong to the fields. */
 const RESERVED_COMBOS = new Set(['Escape', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Ctrl+A', 'Ctrl+C', 'Ctrl+V', 'Ctrl+X'])
 
 function normalizeKey(key: string): string {
@@ -134,7 +137,7 @@ function normalizeKey(key: string): string {
   return key.length === 1 ? key.toUpperCase() : key
 }
 
-/** As teclas da combinação na ordem canônica: modificadores e, por último, a tecla principal. */
+/** The keys of the combination in canonical order: modifiers, then the main key. */
 export function comboParts(combo: KeyCombo): string[] {
   return [combo.ctrl && 'Ctrl', combo.alt && 'Alt', combo.shift && 'Shift', combo.key].filter(
     (part): part is string => Boolean(part),
@@ -145,7 +148,7 @@ export function formatCombo(combo: KeyCombo): string {
   return comboParts(combo).join('+')
 }
 
-/** Lê uma combinação no formato de `formatCombo`, em qualquer ordem de modificadores. */
+/** Reads a combination in the `formatCombo` format, with modifiers in any order. */
 export function parseCombo(text: string): KeyCombo | null {
   const plusKey = text === '+' || text.endsWith('++')
   const parts = (plusKey ? text.slice(0, -1) : text).split('+')
@@ -156,7 +159,7 @@ export function parseCombo(text: string): KeyCombo | null {
   return { ctrl: parts.includes('Ctrl'), alt: parts.includes('Alt'), shift: parts.includes('Shift'), key: normalizeKey(key) }
 }
 
-/** A combinação de um `keydown`, ou `null` enquanto só um modificador está pressionado. */
+/** The combination of a `keydown`, or `null` while only a modifier is pressed. */
 export function comboFromEvent(event: KeyEventLike): KeyCombo | null {
   if (MODIFIER_KEYS.has(event.key) || event.key === 'Dead' || event.key === 'Unidentified') return null
   return { ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey, key: normalizeKey(event.key) }
@@ -164,7 +167,7 @@ export function comboFromEvent(event: KeyEventLike): KeyCombo | null {
 
 const MOUSE_BUTTON_KEYS: Record<number, MouseKey> = { 0: 'MouseLeft', 1: 'MouseMiddle', 2: 'MouseRight' }
 
-/** A combinação de um clique, ou `null` para botões além dos três principais. */
+/** The combination of a click, or `null` for buttons beyond the main three. */
 export function comboFromMouseEvent(event: MouseEventLike): KeyCombo | null {
   const key = MOUSE_BUTTON_KEYS[event.button]
   if (!key) return null
@@ -175,9 +178,9 @@ export function sameCombo(a: KeyCombo, b: KeyCombo): boolean {
   return a.ctrl === b.ctrl && a.alt === b.alt && a.shift === b.shift && a.key === b.key
 }
 
-/** Valida `combo` para `action`. Um botão do mouse vale sem modificador,
- * mas só numa ação do canvas; Tab sem modificador, só numa ação do editor;
- * Delete sem modificador, só numa ação do item focado. */
+/** Validates `combo` for `action`. A mouse button is allowed without a
+ * modifier, but only for a canvas action; Tab without a modifier, only for an
+ * editor action; Delete without a modifier, only for a focused-item action. */
 export function validateCombo(combo: KeyCombo, action: ShortcutAction): ComboValidation {
   if (isMouseKey(combo.key)) return isCanvasAction(action) ? 'ok' : 'mouseNotAllowed'
   if (RESERVED_COMBOS.has(formatCombo(combo))) return 'reserved'
@@ -191,26 +194,26 @@ export function findShortcutAction(bindings: ShortcutBindings, event: KeyEventLi
   return SHORTCUT_ACTIONS.find((action) => bindings[action].some((bound) => sameCombo(bound, combo))) ?? null
 }
 
-/** `combo` (de teclado ou de clique) é um dos atalhos de `action`. */
-/** Teclas que um editor de código tratou só para cedê-las ao atalho global
- * (o CodeMirror chama `preventDefault` em toda tecla que um keymap trata). */
+/** Keys a code editor handled only to yield them to the global shortcut
+ * (CodeMirror calls `preventDefault` on every key a keymap handles). */
 const yieldedEvents = new WeakSet<Event>()
 
-/** Marca o evento como cedido pelo editor a um atalho global. */
+/** Marks the event as yielded by the editor to a global shortcut. */
 export function yieldShortcutToWorkbench(event: Event): void {
   yieldedEvents.add(event)
 }
 
-/** Outro handler já consumiu a tecla — a menos que um editor a tenha cedido. */
+/** Another handler already consumed the key — unless an editor yielded it. */
 export function isShortcutEventConsumed(event: Event): boolean {
   return event.defaultPrevented && !yieldedEvents.has(event)
 }
 
+/** `combo` (from the keyboard or a click) is one of the shortcuts of `action`. */
 export function isShortcutFor(bindings: ShortcutBindings, action: ShortcutAction, combo: KeyCombo | null): boolean {
   return combo !== null && bindings[action].some((bound) => sameCombo(bound, combo))
 }
 
-/** A outra ação que já usa `combo`, se houver. */
+/** The other action already using `combo`, if any. */
 export function findConflict(bindings: ShortcutBindings, combo: KeyCombo, exceptAction: ShortcutAction): ShortcutAction | null {
   return (
     SHORTCUT_ACTIONS.find(
@@ -235,7 +238,7 @@ function withoutCombos(bindings: ShortcutBindings, combos: KeyCombo[], exceptAct
   return next
 }
 
-/** Grava `combo` no `slot` da ação, tirando-o de qualquer outra ação que o use. */
+/** Stores `combo` in the action's `slot`, removing it from any other action using it. */
 export function assignShortcut(
   bindings: ShortcutBindings,
   action: ShortcutAction,
@@ -255,7 +258,7 @@ export function removeShortcut(bindings: ShortcutBindings, action: ShortcutActio
   return { ...bindings, [action]: bindings[action].filter((_, index) => index !== slot) }
 }
 
-/** Volta a ação ao padrão, tirando as combinações padrão de quem as tiver pego. */
+/** Resets the action to its default, taking the default combinations from whoever took them. */
 export function resetShortcut(bindings: ShortcutBindings, action: ShortcutAction): ShortcutBindings {
   return { ...withoutCombos(bindings, DEFAULT_SHORTCUTS[action], action), [action]: DEFAULT_SHORTCUTS[action] }
 }
@@ -275,10 +278,10 @@ function parseStoredList(value: unknown, action: ShortcutAction): KeyCombo[] | n
   return combos
 }
 
-/** Atalhos salvos por cima dos padrões. JSON inválido ou versão desconhecida
- * valem os padrões; uma lista inválida vale o padrão só daquela ação. Uma
- * combinação salva vence o padrão de outra ação (p.ex. um padrão criado
- * depois que o usuário já usava aquela tecla). */
+/** Stored shortcuts over the defaults. Invalid JSON or an unknown version
+ * yields the defaults; an invalid list yields the default of that action only.
+ * A stored combination beats another action's default (e.g. a default added
+ * after the user already used that key). */
 export function readStoredShortcuts(): ShortcutBindings {
   let parsed: unknown
   try {
@@ -310,7 +313,7 @@ export function readStoredShortcuts(): ShortcutBindings {
   return bindings
 }
 
-/** Grava só as ações diferentes do padrão; tudo no padrão apaga a chave. */
+/** Stores only the actions that differ from the default; all defaults removes the key. */
 export function writeStoredShortcuts(bindings: ShortcutBindings): void {
   const changed = SHORTCUT_ACTIONS.filter((action) => !isDefaultBinding(bindings, action))
   try {
@@ -324,6 +327,6 @@ export function writeStoredShortcuts(bindings: ShortcutBindings): void {
       JSON.stringify({ version: SHORTCUTS_STORAGE_VERSION, bindings: stored }),
     )
   } catch {
-    // Sem armazenamento os atalhos valem só para esta sessão.
+    // Without storage the shortcuts last only for this session.
   }
 }
