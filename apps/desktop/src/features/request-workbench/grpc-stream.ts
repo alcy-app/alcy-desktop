@@ -2,6 +2,7 @@ import type { GrpcCallEventDto } from '../../bindings/execute-grpc-request'
 import type { GrpcCommandError } from '../../bindings/load-grpc-schema'
 
 export interface GrpcStreamState {
+  startedAt?: number
   events: GrpcCallEventDto[]
   dropped: number
   accepting: boolean

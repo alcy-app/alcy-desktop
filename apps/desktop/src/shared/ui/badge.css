@@ -36,6 +36,6 @@
 }
 
 .ui-badge--info {
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--info) 13%, transparent);
   color: var(--info);
 }

@@ -335,7 +335,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     const tab = activeTab
     releaseIfWindowed(tab.execution)
     const id = crypto.randomUUID()
-    updateTab(tabId, { pinned: true, executionId: id, lastSendId: id, execution: { status: 'loading', startedAt: Date.now() }, grpcStream: emptyGrpcStream })
+    const startedAt = Date.now()
+    updateTab(tabId, { pinned: true, executionId: id, lastSendId: id, execution: { status: 'loading', startedAt }, grpcStream: { ...emptyGrpcStream, startedAt } })
 
     const result = await executeGrpcRequest({
       executionId: id,
@@ -452,7 +453,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
         forceRefresh,
       })
 
-      updateTab(tabId, {
+      updateTab(tabId, (current) => current.schemaExecutionId !== id ? {} : {
         schemaExecutionId: null,
         grpcSchema: result.ok ? { status: 'success', schema: result.value } : { status: 'error', error: result.error },
       })
@@ -461,7 +462,10 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   )
 
   const updateGrpc = useCallback(
-    (patch: Partial<GrpcCallState>) => updateActiveTab((tab) => ({ grpc: { ...tab.grpc, ...patch } })),
+    (patch: Partial<GrpcCallState>) => updateActiveTab((tab) => ({
+      grpc: { ...tab.grpc, ...patch },
+      ...(patch.schemaSource ? { grpcSchema: { status: 'idle' }, schemaExecutionId: null } as const : {}),
+    })),
     [updateActiveTab],
   )
 
@@ -913,6 +917,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
           routeParams: next.routeParams,
           authorization: next.authorization,
           grpc: next.grpc,
+          grpcSchema: { status: 'idle' },
+          schemaExecutionId: null,
         }
       }),
     [updateTab],
@@ -922,6 +928,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     (value: string) =>
       updateActiveTab((tab) => ({
         endpointUrl: value,
+        ...(tab.protocol === 'grpc' && tab.endpointUrl !== value
+          ? { grpcSchema: { status: 'idle' }, schemaExecutionId: null } as const : {}),
         params: paramsFromUrl(value),
         routeParams: routeParamsFromUrl(value, tab.routeParams),
       })),

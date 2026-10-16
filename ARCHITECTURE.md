@@ -230,6 +230,9 @@ JSON messages. Request edits remain read-only after sending. Interactive
 messages share the variable snapshot produced by the call's pre-request script.
 
 Code sharing generates `grpcurl` commands for gRPC instead of HTTP client code.
+The shell-command importer also parses pasted `grpcurl` calls in Rust, preserving
+TLS, metadata, JSON, proto paths and deadlines. Import never executes the command
+or reads referenced files; unsupported options fail before changing the request.
 The external Insomnia importer reports skipped gRPC resources in both export
 formats. Load flow compilation rejects gRPC settings before execution; mock
 servers remain HTTP-only. Webclient snapshots retain gRPC entries marked as

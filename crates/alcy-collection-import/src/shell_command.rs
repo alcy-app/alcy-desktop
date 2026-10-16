@@ -1,8 +1,8 @@
-//! Importação de comandos `curl` e `wget` (spec 0081) — o inverso do
-//! "Compartilhar como código". Cada comando do texto vira uma requisição de
-//! uma única coleção. O texto é lido com as regras de aspas do shell POSIX
-//! (aspas simples, duplas, `$'…'` e continuação com `\`); comandos depois de
-//! um `|` e comandos que não são `curl`/`wget` são ignorados.
+//! Imports curl, wget and grpcurl commands without executing them. Each
+//! command becomes a request in one collection. POSIX shell quoting is
+//! supported; piped commands and unsupported programs are skipped.
+
+mod grpcurl;
 
 use std::collections::HashSet;
 
@@ -17,8 +17,8 @@ use super::{
     build_request, ensure_content_type, raw_language_from_mime, unique_name,
 };
 
-/// Opções longas do curl que recebem valor — as tratadas em `apply_curl` e
-/// as ignoradas, cujo valor não pode ser confundido com a URL.
+/// Long curl options that take a value, including ignored options whose
+/// values must not be mistaken for the URL.
 const CURL_LONG_WITH_VALUE: &[&str] = &[
     "request",
     "url",
@@ -109,7 +109,7 @@ const CURL_LONG_WITH_VALUE: &[&str] = &[
     "hostpubmd5",
 ];
 
-/// Letras de opção curta do curl que recebem valor.
+/// Short curl options that take a value.
 const CURL_SHORT_WITH_VALUE: &str = "XHdFuAebTomxwcEKrUyYzCQtP";
 
 const WGET_LONG_WITH_VALUE: &[&str] = &[
@@ -167,12 +167,11 @@ const WGET_LONG_WITH_VALUE: &[&str] = &[
     "max-redirect",
 ];
 
-/// Letras de opção curta do wget que recebem valor.
+/// Short wget options that take a value.
 const WGET_SHORT_WITH_VALUE: &str = "OoaUTtweiPQlARDB";
 
-/// `Ok` com a coleção importada quando o texto começa com um comando `curl`
-/// ou `wget`; `NotRecognized` caso contrário, para os demais formatos
-/// tentarem.
+/// Imports text starting with curl, wget or grpcurl. Returns `NotRecognized`
+/// for other input so the other importers can try it.
 pub fn parse_shell_commands(raw: &str) -> Result<ImportedCollectionData, CollectionImportError> {
     if !starts_with_supported_command(raw) {
         return Err(CollectionImportError::NotRecognized);
@@ -190,21 +189,19 @@ pub fn parse_shell_commands(raw: &str) -> Result<ImportedCollectionData, Collect
         let Some((program, args)) = words.split_first() else {
             continue;
         };
-        let call = match program_name(program) {
-            Some(Program::Curl) => parse_curl(args),
-            Some(Program::Wget) => parse_wget(args),
+        let request = match program_name(program) {
+            Some(Program::Curl) => parse_curl(args).into_request(&mut ids, &mut names)?,
+            Some(Program::Wget) => parse_wget(args).into_request(&mut ids, &mut names)?,
+            Some(Program::Grpcurl) => grpcurl::parse(args, &mut ids, &mut names)?,
             None => continue,
         };
-        let url = call.url.clone().ok_or_else(|| {
-            CollectionImportError::Invalid("comando sem URL para importar".to_string())
-        })?;
-        collection_name.get_or_insert_with(|| host_of(&with_scheme(&url)).to_string());
-        requests.push(call.into_request(&mut ids, &mut names)?);
+        collection_name.get_or_insert_with(|| host_of(request.request.endpoint.url()).to_string());
+        requests.push(request);
     }
 
     if requests.is_empty() {
         return Err(CollectionImportError::Invalid(
-            "nenhum comando curl ou wget encontrado".to_string(),
+            "nenhum comando curl, wget ou grpcurl encontrado".to_string(),
         ));
     }
     let name = collection_name
@@ -223,26 +220,31 @@ pub fn parse_shell_commands(raw: &str) -> Result<ImportedCollectionData, Collect
 }
 
 // ---------------------------------------------------------------------------
-// Leitura do texto como shell
+// Shell tokenization
 // ---------------------------------------------------------------------------
 
 enum Program {
     Curl,
     Wget,
+    Grpcurl,
 }
 
-/// Aceita `curl`, `wget`, caminhos (`/usr/bin/curl`) e `curl.exe`.
+/// Accepts supported names, executable paths and the Windows `.exe` suffix.
 fn program_name(word: &str) -> Option<Program> {
+    if word.contains("://") {
+        return None;
+    }
     let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
     let name = name.to_ascii_lowercase();
     match name.strip_suffix(".exe").unwrap_or(&name) {
         "curl" => Some(Program::Curl),
         "wget" => Some(Program::Wget),
+        "grpcurl" => Some(Program::Grpcurl),
         _ => None,
     }
 }
 
-/// Um `$` sozinho no início é o prompt copiado junto do comando.
+/// A standalone leading `$` is a copied shell prompt.
 fn strip_prompt(words: &[String]) -> &[String] {
     match words.split_first() {
         Some((first, rest)) if first == "$" => rest,
@@ -250,8 +252,7 @@ fn strip_prompt(words: &[String]) -> &[String] {
     }
 }
 
-/// Checagem barata antes de interpretar o texto inteiro como shell: a
-/// primeira linha que não é comentário precisa começar por `curl` ou `wget`.
+/// Check the first non-comment line before tokenizing the entire input.
 fn starts_with_supported_command(raw: &str) -> bool {
     let Some(line) = raw
         .lines()
@@ -269,8 +270,7 @@ fn starts_with_supported_command(raw: &str) -> bool {
 
 struct Command {
     words: Vec<String>,
-    /// Recebe a saída de outro comando (`curl … | jq`), portanto não é uma
-    /// requisição a importar.
+    /// Receives another command's output, so it is not an importable request.
     piped: bool,
 }
 
@@ -290,8 +290,8 @@ fn split_commands(raw: &str) -> Result<Vec<Command>, CollectionImportError> {
             ' ' | '\t' => words.extend(word.take()),
             '\n' | '\r' | ';' | '|' | '&' => {
                 let doubled = matches!(ch, '|' | '&') && chars.peek() == Some(&ch);
-                // `&` sozinho no meio de uma palavra é quase sempre uma URL
-                // colada sem aspas, não um comando em segundo plano.
+                // A single `&` inside a word is usually an unquoted URL,
+                // rather than a background command.
                 if ch == '&'
                     && !doubled
                     && word.is_some()
@@ -366,7 +366,7 @@ fn split_commands(raw: &str) -> Result<Vec<Command>, CollectionImportError> {
     Ok(commands)
 }
 
-/// Conteúdo de `$'…'` (o `$'` já foi consumido), com os escapes do bash.
+/// Reads Bash ANSI-C quoting after the opening `$'` has been consumed.
 fn read_ansi_c_quoted(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
     target: &mut String,
@@ -435,12 +435,12 @@ fn push_code_point(
 }
 
 // ---------------------------------------------------------------------------
-// Opções do curl e do wget
+// curl and wget options
 // ---------------------------------------------------------------------------
 
 enum DataPart {
     Text(String),
-    /// Valor de `--data-urlencode`, que o curl codifica antes de enviar.
+    /// A `--data-urlencode` value, encoded by curl before sending.
     UrlEncode(String),
     File(String),
 }
@@ -462,9 +462,9 @@ struct ParsedCall {
     upload: bool,
 }
 
-/// Percorre as opções no formato comum a curl e wget (`--nome valor`,
-/// `--nome=valor`, `-X valor`, `-Xvalor`, `-sSL`), entregando o nome longo
-/// (ou a letra) e o valor a `apply`; o primeiro argumento solto é a URL.
+/// Walks curl/wget options (`--name value`, `--name=value`, `-X value`,
+/// `-Xvalue`, `-sSL`), passing the name and value to `apply`. The first
+/// positional argument is the URL.
 fn walk_options(
     args: &[String],
     long_with_value: &[&str],
@@ -584,7 +584,7 @@ fn apply_curl(call: &mut ParsedCall, name: &str, value: Option<String>) {
                     .push(("Referer".to_string(), referer.to_string()));
             }
         }
-        // Sem `=` o valor é um arquivo de cookies, não o conteúdo do header.
+        // Without `=`, the value names a cookie file rather than a header.
         "cookie" if value.contains('=') => call.headers.push(("Cookie".to_string(), value)),
         "url-query" => call.query.push(encode_data_urlencode(&value)),
         "upload-file" => {
@@ -630,15 +630,14 @@ fn parse_wget(args: &[String]) -> ParsedCall {
             }
         },
     );
-    // Sem `--auth-no-challenge` o wget só manda as credenciais depois do
-    // desafio do servidor — o caso de Digest, que é também como o
-    // "Compartilhar como código" gera o wget com usuário e senha.
+    // Without `--auth-no-challenge`, wget sends credentials only after the
+    // server challenge, matching Digest and the generated wget snippets.
     call.digest = !auth_no_challenge;
     call
 }
 
-/// `curl -F`/`--form-string`: `nome=valor`, `nome=@arquivo` ou
-/// `nome=<arquivo`, com parâmetros opcionais (`;type=…`, `;filename=…`).
+/// Parses `curl -F`/`--form-string`: `name=value`, `name=@file` or
+/// `name=<file`, with optional `;type=…` and `;filename=…` parameters.
 fn form_field(value: &str, literal: bool) -> Option<FormDataField> {
     let (name, content) = value.split_once('=')?;
     if name.is_empty() {
@@ -672,8 +671,8 @@ fn strip_form_params(value: &str) -> &str {
 }
 
 impl ParsedCall {
-    /// `Nome: valor`; `Nome;` é o header vazio do curl e `Nome:` sem valor
-    /// remove o header no curl (mas é um header vazio no wget).
+    /// Parses `Name: value`. curl uses `Name;` for an empty header and
+    /// `Name:` to remove one; wget treats the latter as an empty header.
     fn push_header_line(&mut self, line: &str, keep_empty: bool) {
         if let Some((name, value)) = line.split_once(':') {
             let value = value.trim();
@@ -691,7 +690,10 @@ impl ParsedCall {
         ids: &mut IdGenerator,
         names: &mut HashSet<String>,
     ) -> Result<SavedRequest, CollectionImportError> {
-        let mut url = with_scheme(self.url.as_deref().unwrap_or_default());
+        let url = self.url.as_deref().ok_or_else(|| {
+            CollectionImportError::Invalid("comando sem URL para importar".to_string())
+        })?;
+        let mut url = with_scheme(url);
         let mut headers = self
             .headers
             .iter()
@@ -726,7 +728,7 @@ impl ParsedCall {
         };
 
         let (protocol, body, variables, payload) = if !self.form.is_empty() {
-            // O boundary é gerado no envio; um `multipart/form-data` fixo quebraria o corpo.
+            // Sending generates the boundary; a fixed content type would break it.
             headers.retain(|header| {
                 !is_content_type(header)
                     || !header
@@ -772,7 +774,7 @@ impl ParsedCall {
 }
 
 // ---------------------------------------------------------------------------
-// Corpo
+// Request body
 // ---------------------------------------------------------------------------
 
 pub(crate) type MappedBody = (ProtocolId, String, String, BodyPayload);
@@ -819,8 +821,8 @@ fn data_body(
     text_body(joined_data(parts), headers)
 }
 
-/// Todas as partes são `--data-urlencode nome=valor`: cada uma vira um
-/// campo editável. O nome já vem codificado; o valor, não.
+/// Each `--data-urlencode name=value` becomes an editable field.
+/// The name is already encoded; the value is not.
 fn urlencoded_parts(parts: &[DataPart]) -> Option<Vec<UrlEncodedField>> {
     parts
         .iter()
@@ -839,7 +841,7 @@ fn urlencoded_parts(parts: &[DataPart]) -> Option<Vec<UrlEncodedField>> {
         .collect()
 }
 
-/// Partes unidas por `&`, como o curl faz com vários `-d`.
+/// Joins parts with `&`, matching curl's repeated `-d` options.
 fn joined_data(parts: &[DataPart]) -> String {
     parts
         .iter()
@@ -852,8 +854,8 @@ fn joined_data(parts: &[DataPart]) -> String {
         .join("&")
 }
 
-/// Classifica um corpo textual pelo `Content-Type` ou, sem ele, pelo
-/// conteúdo: JSON (ou payload GraphQL), formulário `a=1&b=2` ou texto.
+/// Classifies a body by Content-Type or, when absent, its content:
+/// JSON (including GraphQL), URL-encoded fields or plain text.
 fn text_body(
     text: String,
     headers: &mut Vec<HeaderEntry>,
@@ -880,7 +882,7 @@ fn text_body(
         && let Some(Value::Object(payload)) = &json
         && let Some((query, variables)) = graphql_payload(payload)?
     {
-        // O executor GraphQL já envia `Content-Type: application/json`.
+        // The GraphQL executor already sends `Content-Type: application/json`.
         headers.retain(|header| {
             !is_content_type(header)
                 || !header
@@ -920,7 +922,7 @@ fn text_body(
     }
 }
 
-/// `{"query": "…", "variables": {…}}` — o corpo de uma requisição GraphQL.
+/// Extracts a GraphQL request from `{"query": "…", "variables": {…}}`.
 fn graphql_payload(
     payload: &serde_json::Map<String, Value>,
 ) -> Result<Option<(String, String)>, CollectionImportError> {
@@ -982,10 +984,10 @@ pub(crate) fn is_content_type(header: &HeaderEntry) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// URL e codificação
+// URL and encoding
 // ---------------------------------------------------------------------------
 
-/// O curl assume `http://` quando a URL não tem esquema.
+/// curl assumes `http://` for URLs without a scheme.
 fn with_scheme(url: &str) -> String {
     if url.contains("://") || url.starts_with("{{") {
         url.to_string()
@@ -1020,8 +1022,8 @@ fn append_raw_query(url: &mut String, query: &str) {
     url.push_str(query);
 }
 
-/// Codificação do `--data-urlencode`: `nome=valor` codifica só o valor;
-/// sem `=` (ou com `=` no início) codifica tudo depois dele.
+/// `--data-urlencode` encodes only the value in `name=value`. Without `=`
+/// (or with a leading `=`), it encodes the entire value.
 fn encode_data_urlencode(value: &str) -> String {
     match value.split_once('=') {
         Some(("", content)) => percent_encode(content),

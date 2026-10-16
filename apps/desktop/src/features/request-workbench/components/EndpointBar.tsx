@@ -9,7 +9,7 @@ import { LoadingBar } from '../../../shared/ui/LoadingBar'
 import { MenuItem } from '../../../shared/ui/Menu'
 import { ChevronDownIcon, Spinner } from '../../../shared/ui/icons'
 import { Select } from '../../../shared/ui/Select'
-import { isShellCommand } from '../curl-paste-import'
+import { isShellCommand } from '../shell-paste-import'
 import type { RouteParamEntry, WorkbenchProtocol } from '../request-workbench.types'
 import { TemplateHighlightedField } from './TemplateHighlightedField'
 import type { VariableDoc } from './VariablePreviewCard'
@@ -32,12 +32,14 @@ interface EndpointBarProps {
   onUpdateRouteParamValue?: (id: string, value: string) => void
   /** Documentation for path parameters used in the URL as variable placeholders. */
   pathParameterDocs?: Record<string, VariableDoc>
-  /** Pasted curl/wget replaces an empty or fully selected URL with an imported request. */
+  /** Pasted curl/wget/grpcurl replaces an empty or fully selected URL with an imported request. */
   onPasteCommand?: (command: string) => void
   /** Lock the field while a pasted command is being converted. */
   isImportingCommand?: boolean
   /** Service/method picker shown in place of the HTTP method for gRPC. */
   grpcMethodPicker?: ReactNode
+  /** Schema source and service refresh at the end of the gRPC URL field. */
+  grpcSchemaControls?: ReactNode
 }
 
 export function EndpointBar({
@@ -57,6 +59,7 @@ export function EndpointBar({
   onPasteCommand,
   isImportingCommand = false,
   grpcMethodPicker,
+  grpcSchemaControls,
 }: EndpointBarProps) {
   const { t } = useLanguage()
   const methodClass = protocol === 'rest' ? `rw-endpoint-method--${method}` : 'rw-endpoint-method--graphql'
@@ -119,6 +122,7 @@ export function EndpointBar({
             </div>
           )}
         </div>
+        {protocol === 'grpc' && grpcSchemaControls}
       </div>
       {isSending ? (
         <Button className="rw-endpoint-action" variant="danger" size="sm" onClick={onCancel} aria-busy>
@@ -128,8 +132,8 @@ export function EndpointBar({
           </span>
         </Button>
       ) : (
-        <div className="rw-endpoint-send-group">
-          <Button className="rw-endpoint-action rw-endpoint-action--split" variant="primary" size="sm" onClick={onSend} disabled={isImportingCommand}>
+        <div className={`rw-endpoint-send-group${protocol === 'grpc' ? ' rw-endpoint-send-group--grpc' : ''}`}>
+          <Button className={`rw-endpoint-action${protocol === 'grpc' ? '' : ' rw-endpoint-action--split'}`} variant="primary" size="sm" onClick={onSend} disabled={isImportingCommand}>
             {t('endpointBar.send')}
           </Button>
           {/* Saving the response to a file is an HTTP option. */}

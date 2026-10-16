@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use alcy_grpc::{
     ConnectionSettings, DynamicCodec, GrpcError, GrpcEvent, GrpcTarget, MetadataEntry, MethodKind,
-    compile_proto_files, connect, describe, find_method, reflect, start_call,
+    compile_proto_files, compile_workspace_proto_files, connect, describe, find_method, reflect,
+    start_call,
 };
 use prost::Message as _;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor, Value};
@@ -32,6 +33,17 @@ fn protos() -> PathBuf {
 
 fn pool() -> DescriptorPool {
     compile_proto_files(&[protos().join("greeter.proto")], &[]).unwrap()
+}
+
+#[test]
+fn compiles_imported_proto_filenames_against_workspace_import_paths() {
+    let root = protos().parent().unwrap().to_path_buf();
+    for file in ["greeter.proto", "protos/greeter.proto"] {
+        let schema =
+            compile_workspace_proto_files(&root, &[file.to_string()], &["protos".to_string()])
+                .unwrap();
+        assert!(schema.get_service_by_name("test.Greeter").is_some());
+    }
 }
 
 #[derive(Clone)]

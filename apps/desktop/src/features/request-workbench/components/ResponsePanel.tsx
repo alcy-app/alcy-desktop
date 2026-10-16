@@ -1,4 +1,4 @@
-import { GrpcTimeline } from './GrpcTimeline'
+import { GrpcResponseView } from './GrpcResponseView'
 import type { GrpcStreamState } from '../grpc-stream'
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { ResponseBodyOutput } from '../../../bindings/execute-graphql-request'
@@ -302,14 +302,8 @@ export const ResponsePanel = memo(function ResponsePanel({
         </div>
       )}
 
-      {view.kind === 'current' && grpcStream && execution.status !== 'loading' && (
-        <details className="rw-grpc-timeline-details">
-          <summary>{t('grpc.timeline')}</summary>
-          <GrpcTimeline key={viewKey} stream={grpcStream} />
-        </details>
-      )}
       {/* Remount content on view/state changes to trigger its entrance animation. */}
-      <div key={`${view.kind}-${displayed?.status ?? 'pending'}`} className="rw-response-content">
+      <div key={`${view.kind}-${grpcStream ? 'grpc' : displayed?.status ?? 'pending'}`} className="rw-response-content">
         {view.kind === 'compare' ? (
           <div className="rw-response-body">
             {comparePair && sendsSource ? (
@@ -324,8 +318,10 @@ export const ResponsePanel = memo(function ResponsePanel({
               <p className="rw-status-message">{t('responseHistory.loading')}</p>
             )}
           </div>
-        ) : view.kind === 'current' && grpcStream && displayed?.status === 'loading' ? (
-          <GrpcTimeline key={viewKey} stream={grpcStream} />
+        ) : view.kind === 'current' && grpcStream && !notStored ? (
+          <GrpcResponseView key={viewKey} stream={grpcStream} result={grpc}
+            error={displayed?.status === 'error' ? describeError(t, displayed.error) : undefined}
+            onCaptureValue={onCaptureValue} monitor={bodyMonitor} />
         ) : success ? (
         <>
           <Tabs

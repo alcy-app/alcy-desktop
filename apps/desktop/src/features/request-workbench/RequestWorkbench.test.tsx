@@ -39,9 +39,9 @@ async function createRequestFromEmptyState(protocol: 'GraphQL' | 'REST' = 'REST'
 }
 
 /** The tab bar plus opens the protocol picker and creates a standalone draft. */
-function createRequestFromTabsBar(protocol: 'GraphQL' | 'REST' = 'REST') {
+function createRequestFromTabsBar(protocol: 'GraphQL' | 'REST' | 'gRPC' = 'REST') {
   fireEvent.click(screen.getByRole('button', { name: 'Nova aba' }))
-  fireEvent.click(screen.getByRole('option', { name: protocol === 'REST' ? 'HTTP' : 'GraphQL' }))
+  fireEvent.click(screen.getByRole('option', { name: protocol === 'REST' ? 'HTTP' : protocol }))
 }
 
 /** Dragging uses pointer events. Mock elementFromPoint and dispatch pointerdown/move/up because jsdom has no native layout or HTML5 dragging. */
@@ -366,6 +366,8 @@ beforeEach(() => {
   getProxySettings.mockResolvedValue({ ok: true, value: { mode: 'disabled', pacUrl: null, error: null } })
   executeGraphqlRequest.mockReset()
   executeRestRequest.mockReset()
+  executeGrpcRequest.mockReset()
+  loadGrpcSchema.mockReset()
   cancelGraphqlRequest.mockReset()
   listEnvironments.mockReset()
   saveEnvironments.mockReset()
@@ -594,6 +596,33 @@ describe('RequestWorkbench', () => {
       value: { collections: [{ id: 'c', name: 'api.test', folders: [], requests: [request] }], environments: [] },
     })
 
+    it.each(['REST', 'gRPC'] as const)('imports grpcurl into a %s tab and uses the imported method when sending', async (protocol) => {
+      importCollectionsFromText.mockResolvedValue(importedCurl(curlRequest({
+        protocol: 'grpc', endpoint: 'grpc://grpcb.in:9000', body: '{"greeting":"Ana"}',
+        grpc: { service: 'hello.HelloService', method: 'SayHello', schemaSource: { type: 'reflection' }, deadlineMs: 2500 },
+      })))
+      executeGrpcRequest.mockResolvedValue({ ok: false, error: { kind: 'cancelled' } })
+      render()
+      await screen.findByLabelText('Ambiente')
+      createRequestFromTabsBar(protocol)
+      const endpoint = screen.getByLabelText('Endpoint') as HTMLInputElement
+      fireEvent.change(endpoint, { target: { value: 'https://old.test' } })
+      endpoint.setSelectionRange(0, endpoint.value.length)
+      const command = `grpcurl -plaintext -max-time 2.5 -H 'X-Token: abc' -d '{"greeting":"Ana"}' grpcb.in:9000 hello.HelloService/SayHello`
+      expect(pasteText(endpoint, command).defaultPrevented).toBe(true)
+      await waitFor(() => expect(endpoint).toHaveValue('grpc://grpcb.in:9000'))
+      expect(screen.getByRole('tab', { name: 'Message', selected: true })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Método gRPC' })).toHaveTextContent('SayHello')
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+      await waitFor(() => expect(executeGrpcRequest).toHaveBeenCalledTimes(1))
+      expect(executeGrpcRequest.mock.calls[0][0]).toMatchObject({
+        endpoint: 'grpc://grpcb.in:9000', service: 'hello.HelloService', method: 'SayHello',
+        message: '{"greeting":"Ana"}', deadlineMs: 2500,
+        schemaSource: { type: 'reflection' }, headers: [{ name: 'X-Token', value: 'abc', enabled: true }],
+      })
+      expect(executeRestRequest).not.toHaveBeenCalled()
+    })
+
     it('preenche a aba com o comando colado na URL vazia, mostrando o carregamento', async () => {
       importCollectionsFromText.mockResolvedValue(importedCurl(curlRequest()))
       const command = `curl -X POST 'https://api.test/users?expand=true' -H 'X-Token: abc' -d '{"name":"Ana"}'`
@@ -605,14 +634,14 @@ describe('RequestWorkbench', () => {
       const event = pasteText(screen.getByLabelText('Endpoint'), command)
 
       expect(event.defaultPrevented).toBe(true)
-      expect(screen.getByRole('status')).toHaveTextContent('Importando cURL…')
+      expect(screen.getByRole('status')).toHaveTextContent('Importando comando…')
       expect(screen.getByLabelText('Endpoint')).toHaveAttribute('readonly')
       expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled()
       expect(screen.getByRole('button', { name: 'Mais opções de envio' })).toBeDisabled()
       expect(importCollectionsFromText).toHaveBeenCalledWith(command, '/workspace')
 
       await waitFor(() => expect(screen.getByLabelText('Endpoint')).toHaveValue('https://api.test/users?expand=true'))
-      expect(screen.queryByText('Importando cURL…')).not.toBeInTheDocument()
+      expect(screen.queryByText('Importando comando…')).not.toBeInTheDocument()
       expect(screen.getByLabelText('Endpoint')).not.toHaveAttribute('readonly')
       expect(screen.getByRole('button', { name: 'Mais opções de envio' })).toBeEnabled()
       expect(screen.getByRole('combobox', { name: 'Método HTTP' })).toHaveValue('post')
@@ -684,7 +713,7 @@ describe('RequestWorkbench', () => {
       expect(pasteText(endpoint, 'https://other.test').defaultPrevented).toBe(false)
 
       expect(importCollectionsFromText).not.toHaveBeenCalled()
-      expect(screen.queryByText('Importando cURL…')).not.toBeInTheDocument()
+      expect(screen.queryByText('Importando comando…')).not.toBeInTheDocument()
     })
 
     it('avisa o erro do comando e mantém a URL vazia', async () => {

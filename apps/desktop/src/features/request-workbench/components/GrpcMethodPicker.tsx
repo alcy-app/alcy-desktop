@@ -188,14 +188,7 @@ export function GrpcMethodPicker({ schema, service, method, onSelect, onLoad }: 
                 }}
                 onKeyDown={onSearchKeyDown}
               />
-              <button
-                type="button"
-                className="rw-link-button"
-                disabled={schema.status === 'loading'}
-                onClick={() => onLoad(true)}
-              >
-                {t('grpc.reloadServices')}
-              </button>
+
             </div>
             {schema.status === 'loading' && (
               <p className="rw-grpc-popup-status" role="status">

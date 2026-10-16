@@ -110,6 +110,6 @@
 }
 
 .new-request-popover-badge--grpc {
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--info) 13%, transparent);
   color: var(--info);
 }

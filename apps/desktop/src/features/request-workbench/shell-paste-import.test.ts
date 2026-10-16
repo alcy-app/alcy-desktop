@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isShellCommand, readCurlRequest } from './curl-paste-import'
+import { isShellCommand, readShellRequest } from './shell-paste-import'
 
 const importCollectionsFromText = vi.fn()
 
@@ -30,7 +30,7 @@ const collection = (requests: unknown[]) => ({
   authentication: { type: 'none' },
 })
 
-describe('curl-paste-import', () => {
+describe('shell-paste-import', () => {
   beforeEach(() => importCollectionsFromText.mockReset())
 
   it('reconhece comandos curl e wget, com prompt, espaços e comentários antes', () => {
@@ -40,11 +40,17 @@ describe('curl-paste-import', () => {
     expect(isShellCommand('\n# buscar usuários\ncurl https://api.test')).toBe(true)
     expect(isShellCommand('wget https://api.test')).toBe(true)
     expect(isShellCommand('curl')).toBe(true)
+    expect(isShellCommand('grpcurl -plaintext grpcb.in:9000 HelloService/SayHello')).toBe(true)
+    expect(isShellCommand('# exported call\n$ grpcurl host:443 pkg.Service/Call')).toBe(true)
+    expect(isShellCommand('/usr/local/bin/grpcurl -d "{}" host:443 pkg.Service/Call')).toBe(true)
+    expect(isShellCommand('C:\\tools\\grpcurl.exe host:443 pkg.Service/Call')).toBe(true)
   })
 
   it('não trata URL nem texto comum como comando', () => {
     expect(isShellCommand('https://api.test/curl')).toBe(false)
     expect(isShellCommand('curly braces')).toBe(false)
+    expect(isShellCommand('grpcurlish host:443')).toBe(false)
+    expect(isShellCommand('grpcs://grpcurl:443')).toBe(false)
     expect(isShellCommand('{{baseUrl}}/users')).toBe(false)
     expect(isShellCommand('   ')).toBe(false)
   })
@@ -55,7 +61,7 @@ describe('curl-paste-import', () => {
       value: { collections: [collection([request('a', 'https://api.test/a'), request('b', 'https://api.test/b')])], environments: [] },
     })
 
-    const result = await readCurlRequest('curl https://api.test/a', '/ws')
+    const result = await readShellRequest('curl https://api.test/a', '/ws')
 
     expect(importCollectionsFromText).toHaveBeenCalledWith('curl https://api.test/a', '/ws')
     expect(result).toMatchObject({
@@ -72,9 +78,29 @@ describe('curl-paste-import', () => {
 
   it('repassa o erro do parser e avisa quando não há requisição', async () => {
     importCollectionsFromText.mockResolvedValueOnce({ ok: false, error: { kind: 'invalid', message: 'aspas não fechadas' } })
-    expect(await readCurlRequest("curl 'https://api.test", '/ws')).toEqual({ ok: false, message: 'aspas não fechadas' })
+    expect(await readShellRequest("curl 'https://api.test", '/ws')).toEqual({ ok: false, message: 'aspas não fechadas' })
 
     importCollectionsFromText.mockResolvedValueOnce({ ok: true, value: { collections: [collection([])], environments: [] } })
-    expect(await readCurlRequest('curl https://api.test', '/ws')).toEqual({ ok: false, message: null })
+    expect(await readShellRequest('curl https://api.test', '/ws')).toEqual({ ok: false, message: null })
+  })
+
+  it('preserves gRPC schema, deadline, JSON and metadata from the native importer', async () => {
+    importCollectionsFromText.mockResolvedValue({ ok: true, value: { collections: [collection([{
+      ...request('rpc', 'grpcs://api.test:8443'),
+      protocol: 'grpc', body: '{"name":"Ana"}',
+      headers: [{ name: 'x-id', value: '42', enabled: true }],
+      grpc: { service: 'test.Greeter', method: 'Hello', deadlineMs: 2500,
+        schemaSource: { type: 'protoFiles', files: ['hello.proto'], importPaths: ['protos'] } },
+    }])], environments: [] } })
+
+    const result = await readShellRequest('grpcurl -proto hello.proto api.test:8443 test.Greeter/Hello', '/ws')
+
+    expect(result).toMatchObject({ ok: true, content: {
+      protocol: 'grpc', endpointUrl: 'grpcs://api.test:8443',
+      query: '', variables: '',
+      headers: [{ name: 'x-id', value: '42', enabled: true }],
+      grpc: { service: 'test.Greeter', method: 'Hello', message: '{"name":"Ana"}', deadlineMs: 2500,
+        schemaSource: { type: 'protoFiles', files: ['hello.proto'], importPaths: ['protos'] } },
+    } })
   })
 })

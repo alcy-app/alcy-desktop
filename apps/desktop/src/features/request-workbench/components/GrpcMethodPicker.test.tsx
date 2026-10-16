@@ -54,6 +54,7 @@ describe('GrpcMethodPicker', () => {
     expect(list).toHaveTextContent('test.Chat')
 
     const search = screen.getByRole('textbox', { name: 'Buscar serviço ou método' })
+    expect(screen.queryByRole('button', { name: 'Recarregar serviços' })).not.toBeInTheDocument()
     expect(search).toHaveFocus()
     fireEvent.change(search, { target: { value: 'chat' } })
     expect(within(list).getAllByRole('option')).toHaveLength(1)

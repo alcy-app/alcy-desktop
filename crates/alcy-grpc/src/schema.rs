@@ -99,6 +99,32 @@ pub fn compile_proto_files(
     Ok(compiler.descriptor_pool())
 }
 
+/// Resolves saved proto paths at execution time, including grpcurl's virtual
+/// filenames relative to an import path. Importing a command does not read files.
+pub fn compile_workspace_proto_files(
+    root: &Path,
+    files: &[String],
+    import_paths: &[String],
+) -> Result<DescriptorPool, GrpcError> {
+    let import_paths = resolve_against(root, import_paths);
+    let files = files
+        .iter()
+        .map(|file| {
+            let path = Path::new(file);
+            let workspace_path = root.join(path);
+            if path.is_absolute() || workspace_path.is_file() {
+                return workspace_path;
+            }
+            import_paths
+                .iter()
+                .map(|directory| directory.join(path))
+                .find(|candidate| candidate.is_file())
+                .unwrap_or(workspace_path)
+        })
+        .collect::<Vec<_>>();
+    compile_proto_files(&files, &import_paths)
+}
+
 /// Asks the server for its services and their files (reflection v1, then
 /// v1alpha for older servers).
 pub async fn reflect(

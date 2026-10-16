@@ -57,7 +57,7 @@ import { usePseudoTab } from './use-pseudo-tab'
 import { useExtensionWorkbenchTabs } from '../../extensions/registry'
 import type { PseudoTab } from '../../extensions/types'
 import { isPngPath, readImageRequest } from './image-import'
-import { readCurlRequest } from './curl-paste-import'
+import { readShellRequest } from './shell-paste-import'
 import { Tabs } from '../../shared/ui/Tabs'
 import { QueryValidationWarnings } from './components/QueryValidationWarnings'
 import { RestBodyPanel } from './components/RestBodyPanel'
@@ -69,6 +69,7 @@ import { RestScreen } from './components/RestScreen'
 import { GrpcMessagePanel } from './components/GrpcMessagePanel'
 import { GrpcMethodPicker } from './components/GrpcMethodPicker'
 import { GrpcSchemaPanel } from './components/GrpcSchemaPanel'
+import { GrpcSchemaControls } from './components/GrpcSchemaControls'
 import { ResponsePanel } from './components/ResponsePanel'
 import type { ResponsePanelLayout } from './components/ResponsePanel'
 import { NewRequestPopover } from './components/NewRequestPopover'
@@ -595,7 +596,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [importCollectionsFromPath, closeRunLogPreview, openDraft, t, workspace.rootPath],
   )
 
-  // Pasted cURL replaces the empty endpoint tab. Keep the notice visible briefly to avoid flashing before the request changes.
+  // Pasted shell commands replace the empty or fully selected endpoint tab. Keep the notice visible briefly to avoid flashing before the request changes.
   const { replaceTabContent } = workbench
   const [commandImportTabId, setCommandImportTabId] = useState<string | null>(null)
   const [commandImportCount, setCommandImportCount] = useState(0)
@@ -605,7 +606,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       if (!tabId || commandImportTabId !== null) return
       setCommandImportTabId(tabId)
       const [result] = await Promise.all([
-        readCurlRequest(command, workspace.rootPath),
+        readShellRequest(command, workspace.rootPath),
         new Promise((resolve) => setTimeout(resolve, COMMAND_IMPORT_MIN_MS)),
       ])
       setCommandImportTabId(null)
@@ -1856,6 +1857,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       />
                     }
                     onPasteCommand={(command) => void importCommandIntoActiveTab(command)}
+                    grpcSchemaControls={
+                      <GrpcSchemaControls
+                        grpc={workbench.grpc}
+                        onChange={workbench.updateGrpc}
+                        schema={workbench.grpcSchema}
+                        onLoad={(forceRefresh) => void workbench.loadGrpcSchema(forceRefresh)}
+                        rootPath={workspace.rootPath}
+                        disabled={workbench.execution.status === 'loading' || commandImportTabId === workbench.activeTabId}
+                      />
+                    }
                     isImportingCommand={commandImportTabId !== null && commandImportTabId === workbench.activeTabId}
                   />
                 </div>
@@ -1882,7 +1893,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       id={`tabpanel-${workbench.activeSection}`}
                       role="tabpanel"
                       aria-labelledby={`tab-${workbench.activeSection}`}
-                      className={workbench.activeSection === 'query' ? 'rw-tabpanel rw-tabpanel--query ui-tabpanel-motion' : 'rw-tabpanel ui-tabpanel-motion'}
+                      className={`rw-tabpanel${workbench.activeSection === 'query' || workbench.activeSection === 'message' ? ` rw-tabpanel--${workbench.activeSection}` : ''} ui-tabpanel-motion`}
                     >
                       {workbench.activeSection === 'docs' && <DocsPanel state={requestDocs} />}
                       {workbench.activeSection === 'message' && (
@@ -1892,6 +1903,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           method={workbench.grpc.method}
                           message={workbench.grpc.message}
                           stream={workbench.grpcStream}
+                          isSending={workbench.execution.status === 'loading'}
                           onSendMessage={() => void workbench.controlGrpcStream(false)}
                           onCloseSend={() => void workbench.controlGrpcStream(true)}
                           onMessageChange={(message) => workbench.updateGrpc({ message })}

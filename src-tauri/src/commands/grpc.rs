@@ -16,8 +16,8 @@ use alcy_domain::{
 };
 use alcy_grpc::{
     CallOutcome, Channel, ClientAction, ConnectionSettings, DescriptorPool, GrpcError, GrpcEvent,
-    GrpcStatus, GrpcTarget, MetadataEntry, MethodKind, SchemaSummary, compile_proto_files, connect,
-    describe, find_method, reflect, resolve_against, start_call,
+    GrpcStatus, GrpcTarget, MetadataEntry, MethodKind, SchemaSummary,
+    compile_workspace_proto_files, connect, describe, find_method, reflect, start_call,
 };
 use alcy_storage::{CustomCaCertificateStore, GeneralSettingsStore};
 use serde::{Deserialize, Serialize};
@@ -554,13 +554,16 @@ async fn schema_for(
             files,
             import_paths,
         } => {
-            let files = resolve_against(root, files);
-            let import_paths = resolve_against(root, import_paths);
-            tauri::async_runtime::spawn_blocking(move || compile_proto_files(&files, &import_paths))
-                .await
-                .map_err(|error| GrpcCommandError::Schema {
-                    message: error.to_string(),
-                })??
+            let root = root.to_path_buf();
+            let files = files.clone();
+            let import_paths = import_paths.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                compile_workspace_proto_files(&root, &files, &import_paths)
+            })
+            .await
+            .map_err(|error| GrpcCommandError::Schema {
+                message: error.to_string(),
+            })??
         }
     };
     cache.insert(key, pool.clone());

@@ -16,6 +16,7 @@ interface GrpcMessagePanelProps {
   service: string
   method: string
   message: string
+  isSending?: boolean
   onMessageChange: (message: string) => void
   schema: GrpcSchemaLoadState
   environmentVariables: EnvironmentVariableDto[]
@@ -24,7 +25,7 @@ interface GrpcMessagePanelProps {
 /** The request message of a gRPC call, as JSON (spec 0129): completion from
  * the method's input type once the services are loaded, and a template with
  * every field to start from. */
-export function GrpcMessagePanel({ stream, onSendMessage, onCloseSend, service, method, message, onMessageChange, schema, environmentVariables }: GrpcMessagePanelProps) {
+export function GrpcMessagePanel({ stream, isSending = false, onSendMessage, onCloseSend, service, method, message, onMessageChange, schema, environmentVariables }: GrpcMessagePanelProps) {
   const { t } = useLanguage()
   const summary = schema.status === 'success' ? findGrpcMethod(schema.schema, service, method) : null
   const bodySchema = useMemo(() => (summary ? grpcMessageSchema(summary) : null), [summary])
@@ -36,26 +37,11 @@ export function GrpcMessagePanel({ stream, onSendMessage, onCloseSend, service, 
         <span className="rw-grpc-message-type">
           {summary ? summary.inputType : method ? t('grpc.loadForFields') : t('grpc.messageNeedsMethod')}
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!summary}
-          title={t('grpc.generateExampleHint')}
-          onClick={() => summary && onMessageChange(summary.inputTemplate)}
-        >
-          {t('grpc.generateExample')}
-        </Button>
       </div>
       {streamsFromClient && (
         <p className="rw-grpc-message-note" role="note">
           {t('grpc.streamMessageNote')}
         </p>
-      )}
-      {stream?.accepting && (
-        <div className="rw-grpc-message-toolbar">
-          <Button size="sm" disabled={stream.busy} onClick={onSendMessage}>{t('grpc.sendMessage')}</Button>
-          <Button size="sm" variant="ghost" disabled={stream.busy} onClick={onCloseSend}>{t('grpc.closeSend')}</Button>
-        </div>
       )}
       {stream?.error && <p role="alert" className="rw-grpc-stream-error">{describeError(t, stream.error)}</p>}
       <RequestBodyPanel
@@ -65,6 +51,23 @@ export function GrpcMessagePanel({ stream, onSendMessage, onCloseSend, service, 
         environmentVariables={environmentVariables}
         bodySchema={bodySchema}
       />
+      <div className="rw-grpc-message-footer" role="group" aria-label={t('grpc.streamControls')}>
+        <Button className="rw-grpc-generate-example" variant="ghost" size="sm" disabled={!summary}
+          title={t('grpc.generateExampleHint')} onClick={() => summary && onMessageChange(summary.inputTemplate)}>
+          {t('grpc.generateExample')}
+        </Button>
+        {(streamsFromClient || stream?.accepting) && <>
+          <span className="rw-grpc-message-state" role="status">
+            {isSending ? t(stream?.accepting ? 'grpc.sendingOpen' : 'grpc.waitingForResponse') : ''}
+          </span>
+          <Button size="sm" variant="ghost" disabled={!stream?.accepting || stream.busy} onClick={onCloseSend}>
+            {t('grpc.closeSend')}
+          </Button>
+          <Button size="sm" disabled={!stream?.accepting || stream.busy} onClick={onSendMessage}>
+            {t('grpc.sendMessage')}
+          </Button>
+        </>}
+      </div>
     </div>
   )
 }
