@@ -2242,11 +2242,11 @@ describe('RequestWorkbench', () => {
     /** Folder request creation uses the default name; rename through the tree when another name is requested. */
     const addRequestTo = (folder: string, name: string, protocol: 'GraphQL' | 'HTTP' = 'GraphQL') => {
       openMenu(folder)
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
       fireEvent.click(screen.getByRole('option', { name: protocol }))
       if (name === 'Nova requisição') return
       openMenu('Nova requisição')
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Renomear' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
       const nameInput = within(collectionsSidebar()).getByLabelText('Nome')
       fireEvent.change(nameInput, { target: { value: name } })
       fireEvent.keyDown(nameInput, { key: 'Enter' })
@@ -2290,7 +2290,7 @@ describe('RequestWorkbench', () => {
       expect(within(collectionsSidebar()).getByText('Nova Collection')).toBeInTheDocument()
 
       openMenu('Nova Collection')
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
 
       const folderNameInput = within(collectionsSidebar()).getByLabelText('Nome')
       expect(folderNameInput).toHaveValue('Nova pasta')
@@ -2301,7 +2301,7 @@ describe('RequestWorkbench', () => {
       expect(within(collectionsSidebar()).getByText('Authentication')).toBeInTheDocument()
 
       openMenu('Nova Collection')
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Renomear' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
       const collectionNameInput = within(collectionsSidebar()).getByLabelText('Nome')
       fireEvent.change(collectionNameInput, { target: { value: 'Customer API' } })
       fireEvent.keyDown(collectionNameInput, { key: 'Enter' })
@@ -2357,17 +2357,21 @@ describe('RequestWorkbench', () => {
       createCollection()
       fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
-      expect(within(collectionsSidebar()).queryByRole('menu')).not.toBeInTheDocument()
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
       openMenu('Nova Collection')
-      const menu = within(collectionsSidebar()).getByRole('menu', { name: 'Mais opções de Nova Collection' })
+      const menu = screen.getByRole('menu', { name: 'Mais opções de Nova Collection' })
+      expect(collectionsSidebar()).not.toContainElement(menu)
+      expect(menu.parentElement).toBe(document.body)
       expect(within(menu).getByRole('menuitem', { name: 'Adicionar pasta' })).toBeInTheDocument()
       expect(within(menu).getByRole('menuitem', { name: 'Renomear' })).toBeInTheDocument()
       expect(within(menu).getByRole('menuitem', { name: 'Remover' })).toBeInTheDocument()
 
+      fireEvent.pointerDown(within(menu).getByRole('menuitem', { name: 'Renomear' }))
+      expect(menu).toBeInTheDocument()
       fireEvent.keyDown(menu, { key: 'Escape' })
 
-      expect(within(collectionsSidebar()).queryByRole('menu')).not.toBeInTheDocument()
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
       expect(within(collectionsSidebar()).getByText('Nova Collection')).toBeInTheDocument()
     })
 
@@ -2395,7 +2399,7 @@ describe('RequestWorkbench', () => {
       createCollection()
       fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
       openMenu('Nova Collection')
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
       fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
       expect(within(collectionsSidebar()).getByText('Nova pasta')).toBeInTheDocument()
@@ -2416,7 +2420,7 @@ describe('RequestWorkbench', () => {
       createCollection()
       fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
       openMenu('Nova Collection')
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
       fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
       expect(within(collectionsSidebar()).getByText('Nova pasta')).toBeInTheDocument()
@@ -2526,7 +2530,7 @@ describe('RequestWorkbench', () => {
       expect(within(collectionsSidebar()).getByText('Nova Collection')).toBeInTheDocument()
 
       openMenu('Nova Collection')
-      fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Remover' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Remover' }))
 
       const dialog = screen.getByRole('dialog', { name: 'Excluir “Nova Collection”?' })
       fireEvent.change(within(dialog).getByLabelText('Digite “delete” para confirmar'), { target: { value: 'delete' } })
@@ -2626,17 +2630,17 @@ describe('RequestWorkbench', () => {
         createCollection()
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar' }))
-        expect(within(collectionsSidebar()).getByRole('menuitem', { name: 'Formato Alcy' })).toBeInTheDocument()
-        fireEvent.keyDown(within(collectionsSidebar()).getByRole('menu'), { key: 'Escape' })
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
+        expect(screen.getByRole('menuitem', { name: 'Formato Alcy' })).toBeInTheDocument()
+        fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
 
         // Folder export only offers the webclient, which requires requests.
         openMenu('Nova pasta')
-        expect(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar' })).toBeDisabled()
+        expect(screen.getByRole('menuitem', { name: 'Exportar' })).toBeDisabled()
       })
 
       it('com a flag do webclient desligada, "Exportar" exporta direto e não existe numa pasta', async () => {
@@ -2650,17 +2654,17 @@ describe('RequestWorkbench', () => {
         createCollection()
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova pasta')
-        expect(within(collectionsSidebar()).queryByRole('menuitem', { name: 'Exportar' })).toBeNull()
-        fireEvent.keyDown(within(collectionsSidebar()).getByRole('menu'), { key: 'Escape' })
+        expect(screen.queryByRole('menuitem', { name: 'Exportar' })).toBeNull()
+        fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
 
-        expect(within(collectionsSidebar()).queryByRole('menuitem', { name: 'Como webclient' })).toBeNull()
+        expect(screen.queryByRole('menuitem', { name: 'Como webclient' })).toBeNull()
         await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith('/export/customer-api.alcy.json', expect.any(Array)))
       })
 
@@ -2675,8 +2679,8 @@ describe('RequestWorkbench', () => {
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar' }))
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Formato Alcy' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Formato Alcy' }))
 
         expect(pickExportFile).toHaveBeenCalledWith('Nova Collection')
         await vi.waitFor(() =>
@@ -2698,8 +2702,8 @@ describe('RequestWorkbench', () => {
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar' }))
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Formato Alcy' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Formato Alcy' }))
 
         await vi.waitFor(() => expect(pickExportFile).toHaveBeenCalled())
         expect(exportCollections).not.toHaveBeenCalled()
@@ -3243,7 +3247,7 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
 
         const types = screen.getByRole('listbox', { name: 'Tipos de requisição' })
         expect(within(types).getAllByRole('option').map((option) => option.textContent)).toEqual(['HTTPHTTP', 'GQLGraphQL', 'gRPCgRPC'])
@@ -3270,7 +3274,7 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
         fireEvent.click(screen.getByRole('option', { name: 'HTTP' }))
 
         expect(screen.queryByRole('listbox', { name: 'Tipos de requisição' })).not.toBeInTheDocument()
@@ -3292,7 +3296,7 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
         const search = screen.getByLabelText('Buscar tipo de requisição')
         fireEvent.keyDown(search, { key: 'ArrowDown' })
         fireEvent.keyDown(search, { key: 'Enter' })
@@ -3311,12 +3315,12 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
         fireEvent.keyDown(screen.getByLabelText('Buscar tipo de requisição'), { key: 'Escape' })
         expect(screen.queryByRole('listbox', { name: 'Tipos de requisição' })).not.toBeInTheDocument()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
         fireEvent.pointerDown(document.body)
         expect(screen.queryByRole('listbox', { name: 'Tipos de requisição' })).not.toBeInTheDocument()
 
@@ -3348,7 +3352,7 @@ describe('RequestWorkbench', () => {
         addRequestTo('Nova Collection', 'Health check')
 
         openMenu('Health check')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Renomear' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
         const nameInput = within(collectionsSidebar()).getByLabelText('Nome')
         fireEvent.change(nameInput, { target: { value: 'Ping' } })
         fireEvent.keyDown(nameInput, { key: 'Enter' })
@@ -3367,7 +3371,7 @@ describe('RequestWorkbench', () => {
         addRequestTo('Nova Collection', 'Ping')
 
         openMenu('Ping')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Renomear' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
         const nameInput = within(collectionsSidebar()).getByLabelText('Nome')
         fireEvent.change(nameInput, { target: { value: 'Health check' } })
         fireEvent.keyDown(nameInput, { key: 'Enter' })
@@ -3375,7 +3379,7 @@ describe('RequestWorkbench', () => {
         expect(within(collectionsSidebar()).getByText('Health check')).toBeInTheDocument()
 
         openMenu('Health check')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Remover' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Remover' }))
 
         const dialog = screen.getByRole('dialog', { name: 'Remover requisição?' })
         fireEvent.click(within(dialog).getByRole('button', { name: 'Remover' }))
@@ -3455,7 +3459,7 @@ describe('RequestWorkbench', () => {
         addRequestNamed('Ping')
 
         openMenu('Ping')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Duplicar' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicar' }))
 
         expect(within(collectionsSidebar()).getByText('Ping')).toBeInTheDocument()
         expect(within(collectionsSidebar()).getByText('Ping cópia')).toBeInTheDocument()
@@ -3475,7 +3479,7 @@ describe('RequestWorkbench', () => {
         addRequestNamed('Ping')
 
         openMenu('Ping')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Mover para...' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Mover para...' }))
 
         const dialog = screen.getByRole('dialog', { name: 'Mover requisição' })
         expect(within(dialog).getByText('Selecione uma collection')).toBeInTheDocument()
@@ -3623,7 +3627,7 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         const folderRow = within(collectionsSidebar()).getByText('Nova pasta').closest('.collections-row')!
@@ -3645,11 +3649,11 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         const folderNames = () =>
@@ -3675,11 +3679,11 @@ describe('RequestWorkbench', () => {
         createCollection()
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         const draggedRow = within(collectionsSidebar()).getByText('Nova pasta 2').closest('.collections-row')!
@@ -4194,7 +4198,7 @@ describe('RequestWorkbench', () => {
         expect(within(openTabsBar()).getByRole('tab', { name: 'Ping' })).toBeInTheDocument()
 
         openMenu('Ping')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Renomear' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
         const nameInput = within(collectionsSidebar()).getByLabelText('Nome')
         fireEvent.change(nameInput, { target: { value: 'Health check' } })
         fireEvent.keyDown(nameInput, { key: 'Enter' })
@@ -4290,12 +4294,13 @@ describe('RequestWorkbench', () => {
         listCollections.mockImplementation(() => new Promise((resolve) => { resolveCollections = resolve }))
 
         render()
-        await screen.findByLabelText('Ambiente')
+        expect(await screen.findByRole('status')).toHaveTextContent('Carregando workspace Workspace…')
 
         expect(screen.queryByRole('button', { name: 'Nova requisição GraphQL' })).not.toBeInTheDocument()
 
-        resolveCollections(collectionsWithPing)
+        await act(async () => resolveCollections(collectionsWithPing))
 
+        await screen.findByLabelText('Ambiente')
         expect(await within(openTabsBar()).findByRole('tab', { name: 'Ping', selected: true })).toBeInTheDocument()
         expect(screen.queryByRole('button', { name: 'Nova requisição GraphQL' })).not.toBeInTheDocument()
       })
@@ -4345,6 +4350,7 @@ describe('RequestWorkbench', () => {
         })
 
         render()
+        await screen.findByLabelText('Ambiente')
         expect(await within(openTabsBar()).findByRole('tab', { name: 'Pedido', selected: true })).toBeInTheDocument()
 
         const knownTokens = [...document.querySelectorAll('.var-token--known')].map((token) => token.textContent)
@@ -4472,7 +4478,7 @@ describe('RequestWorkbench', () => {
         openCollectionsTab()
         createCollection()
         openMenu('Nova Collection')
-        fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar pasta' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar pasta' }))
         const folderNameInput = within(collectionsSidebar()).getByLabelText('Nome')
         fireEvent.change(folderNameInput, { target: { value: 'Pedidos' } })
         fireEvent.keyDown(folderNameInput, { key: 'Enter' })

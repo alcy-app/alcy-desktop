@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { registerBeforeExit } from './shared/app-lifecycle/before-exit'
 import App from './App'
 
@@ -54,6 +54,53 @@ beforeEach(() => {
 })
 
 describe('App', () => {
+  it.each(['collections', 'environments'])('shows loading while %s are pending after switching workspaces', async (pendingArea) => {
+    const environments = { ok: true, value: { environments: [], activeEnvironmentId: null, unreadableSecrets: [] } }
+    const collectionsFor = (name: string) => ({ ok: true, value: [{ id: name, name: `Collection ${name}`, folders: [], requests: [] }] })
+    let finishLoading = () => {}
+    const pending = new Promise((resolve) => {
+      finishLoading = () => resolve(pendingArea === 'collections' ? collectionsFor('B') : environments)
+    })
+    listRecentWorkspaces.mockResolvedValue({ ok: true, value: [
+      { rootPath: '/workspaces/a', name: 'A' },
+      { rootPath: '/workspaces/b', name: 'B' },
+    ] })
+    openWorkspace.mockImplementation(async ({ rootPath }: { rootPath: string }) => ({
+      ok: true,
+      value: { id: rootPath, rootPath, name: rootPath.endsWith('/a') ? 'A' : 'B' },
+    }))
+    listCollections.mockImplementation((rootPath: string) => rootPath.endsWith('/b') && pendingArea === 'collections'
+      ? pending : Promise.resolve(collectionsFor(rootPath.endsWith('/a') ? 'A' : 'B')))
+    listEnvironments.mockImplementation((rootPath: string) => rootPath.endsWith('/b') && pendingArea === 'environments'
+      ? pending : Promise.resolve(environments))
+
+    render(<App />)
+    expect(await screen.findByText('Collection A')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Workspace A,/ }))
+    fireEvent.click(within(await screen.findByRole('menu')).getByText('B'))
+
+    expect(await screen.findByText('Carregando workspace B…')).toBeInTheDocument()
+    expect(screen.queryByText('Collection A')).not.toBeInTheDocument()
+    expect(screen.queryByText('Collection B')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nenhuma Collection ainda.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Nova requisição GraphQL' })).not.toBeInTheDocument()
+
+    await act(async () => finishLoading())
+    expect(await screen.findByText('Collection B')).toBeInTheDocument()
+    expect(screen.queryByText('Carregando workspace B…')).not.toBeInTheDocument()
+  })
+
+  it('shows read errors instead of leaving the workspace loading indefinitely', async () => {
+    listRecentWorkspaces.mockResolvedValue({ ok: true, value: [{ rootPath: '/workspaces/a', name: 'A' }] })
+    openWorkspace.mockResolvedValue({ ok: true, value: { id: 'a', name: 'A', rootPath: '/workspaces/a' } })
+    listCollections.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'Could not read collections' } })
+
+    render(<App />)
+    expect(await screen.findByText(/Could not read collections/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Tentar ler de novo' })).toBeInTheDocument()
+    expect(screen.queryByText('Carregando workspace A…')).not.toBeInTheDocument()
+  })
+
   it('mostra a tela inicial quando não há nenhum workspace recente', async () => {
     render(<App />)
 

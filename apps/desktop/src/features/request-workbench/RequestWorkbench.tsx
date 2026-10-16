@@ -32,7 +32,7 @@ import { hasOpenModal } from '../../shared/ui/open-modals'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { useTooltip } from '../../shared/ui/use-tooltip'
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RunnerIcon } from '../../shared/ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RunnerIcon, Spinner } from '../../shared/ui/icons'
 import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -1531,7 +1531,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const requestTabActive =
     openTabs.activeOpenTab?.kind === 'request' && barActiveTabId === openTabs.activeOpenTab.id
+  const workspaceLoading = !collections.loaded || !environments.loaded || !flows.loaded || !history.loaded
+    || (FEATURE_FLAGS.valueMonitors && !valueMonitors.loaded) || !tabsRestored
   const shortcutAvailable = (action: ShortcutAction): boolean => {
+    if (workspaceLoading) return false
     switch (action) {
       case 'sendRequest':
         return requestTabActive && workbench.execution.status !== 'loading'
@@ -1633,6 +1636,20 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   })
+
+  if (workspaceLoading) {
+    return (
+      <div className="rw-shell" aria-busy="true">
+        <TitleBar>
+          <h1 className="app-titlebar-brand">Alcy</h1>
+        </TitleBar>
+        <div className="rw-workspace-loading" role="status" aria-live="polite">
+          <Spinner size={20} />
+          <span>{t('workbench.loadingWorkspace', { name: workspace.name })}</span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <VariableEditingContext value={variableEditing}>

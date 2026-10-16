@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type FocusEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { CheckIcon, EllipsisIcon } from './icons'
 import { useTooltip } from './use-tooltip'
 import './buttons.css'
@@ -11,18 +12,20 @@ interface OptionsMenuProps {
   onClose: () => void
   children: ReactNode
   icon?: ReactNode
-  /** Classe extra no host, para posicionamento/reveal específicos da feature. */
+  /** Extra host class for feature-specific positioning and visibility. */
   wrapperClassName?: string
   buttonClassName?: string
   buttonDataState?: string
   menuClassName?: string
-  /** Abre acima do gatilho quando o menu não cabe abaixo do limite informado. */
+  /** Open above the trigger when there is more room there. */
   menuPlacement?: 'bottom' | 'auto'
-  /** Seletor do ancestral que delimita a área visível para `menuPlacement="auto"`. */
+  /** Ancestor selector defining the visible area for inline auto placement. */
   menuBoundarySelector?: string
+  /** Render over the interface without contributing to an ancestor's scroll area. */
+  menuPortal?: boolean
 }
 
-/** Botão-ícone que abre um menu ancorado (`role="menu"`), fechando por blur ou Escape. */
+/** Icon button with an anchored menu that closes on blur or Escape. */
 export function OptionsMenu({
   label,
   isOpen,
@@ -36,14 +39,59 @@ export function OptionsMenu({
   menuClassName,
   menuPlacement = 'bottom',
   menuBoundarySelector,
+  menuPortal = false,
 }: OptionsMenuProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  // A posição absoluta participa da área rolável do ancestral. Quando não há
-  // espaço abaixo, abrir para cima mantém o menu dentro do painel rolável sem
-  // fazê-lo crescer só para acomodar as opções.
   useLayoutEffect(() => {
+    if (!isOpen || !menuPortal) return
+    const host = hostRef.current
+    const menu = menuRef.current
+    if (!host || !menu) return
+
+    const margin = 8
+    const gap = 2
+    const rect = host.getBoundingClientRect()
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth
+    const viewportHeight = document.documentElement.clientHeight || window.innerHeight
+    menu.style.maxHeight = `${Math.max(0, viewportHeight - margin * 2)}px`
+    menu.style.maxWidth = `${Math.max(0, viewportWidth - margin * 2)}px`
+    const spaceBelow = viewportHeight - margin - rect.bottom - gap
+    const spaceAbove = rect.top - margin - gap
+    const above = menuPlacement === 'auto' && menu.offsetHeight > spaceBelow && spaceAbove > spaceBelow
+    const top = above ? rect.top - gap - menu.offsetHeight : rect.bottom + gap
+    menu.style.top = `${Math.max(margin, Math.min(top, viewportHeight - margin - menu.offsetHeight))}px`
+    menu.style.left = `${Math.max(margin, Math.min(rect.right - menu.offsetWidth, viewportWidth - margin - menu.offsetWidth))}px`
+    menu.classList.toggle('ui-menu--top', above)
+
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (!host.contains(target) && !menu.contains(target)) onClose()
+    }
+    const closeOnScroll = (event: Event) => {
+      if (!menu.contains(event.target as Node | null)) onClose()
+    }
+    window.addEventListener('pointerdown', closeOutside)
+    window.addEventListener('resize', onClose)
+    window.addEventListener('scroll', closeOnScroll, true)
+    return () => {
+      window.removeEventListener('pointerdown', closeOutside)
+      window.removeEventListener('resize', onClose)
+      window.removeEventListener('scroll', closeOnScroll, true)
+    }
+  }, [isOpen, menuPortal, menuPlacement, children, onClose])
+
+  useLayoutEffect(() => {
+    if (!isOpen || !menuPortal) return
+    // Portal contents follow the app in DOM order, so move keyboard focus into the menu.
+    const menu = menuRef.current
+    const target = menu?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? menu
+    target?.focus({ preventScroll: true })
+  }, [isOpen, menuPortal])
+
+  useLayoutEffect(() => {
+    if (menuPortal) return
     if (!isOpen || menuPlacement !== 'auto') return
 
     const host = hostRef.current
@@ -54,19 +102,41 @@ export function OptionsMenu({
     const spaceBelow = boundary.getBoundingClientRect().bottom - host.getBoundingClientRect().bottom
     const spaceAbove = host.getBoundingClientRect().top - boundary.getBoundingClientRect().top
     menu.classList.toggle('ui-menu--top', menu.getBoundingClientRect().height > spaceBelow && spaceAbove > spaceBelow)
-  }, [isOpen, menuBoundarySelector, menuPlacement])
+  }, [isOpen, menuBoundarySelector, menuPlacement, menuPortal])
 
   const closeOnBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+    if (!isOpen) return
+    const next = event.relatedTarget as Node | null
+    if (!hostRef.current?.contains(next) && !menuRef.current?.contains(next)) {
       onClose()
     }
   }
 
-  // Com o menu aberto, o tooltip cobriria as opções.
+  // Hide the tooltip while it would cover the menu options.
   const { triggerProps, tooltip } = useTooltip(label, { enabled: !isOpen })
   const hostClassName = ['ui-menu-host', wrapperClassName, isOpen ? 'ui-menu-host--open' : null]
     .filter(Boolean)
     .join(' ')
+
+  const menu = isOpen ? (
+    <div
+      ref={menuRef}
+      className={['ui-menu', menuClassName, menuPortal ? 'ui-menu--portal' : null].filter(Boolean).join(' ')}
+      role="menu"
+      aria-label={label}
+      // Clicking a non-interactive area keeps focus inside the menu.
+      tabIndex={-1}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          onClose()
+          hostRef.current?.querySelector('button')?.focus({ preventScroll: true })
+        }
+      }}
+    >
+      {children}
+    </div>
+  ) : null
 
   return (
     <div ref={hostRef} className={hostClassName} onBlur={closeOnBlur}>
@@ -87,24 +157,7 @@ export function OptionsMenu({
       </button>
       {tooltip}
 
-      {isOpen && (
-        <div
-          ref={menuRef}
-          className={['ui-menu', menuClassName].filter(Boolean).join(' ')}
-          role="menu"
-          aria-label={label}
-          // Focável só pelo clique: um clique numa área sem foco próprio
-          // (título, espaçamento, texto) leva o foco ao menu em vez do
-          // <body>, e o blur do host não o confunde com um clique fora.
-          tabIndex={-1}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') onClose()
-          }}
-        >
-          {children}
-        </div>
-      )}
+      {menuPortal && menu ? createPortal(menu, document.body) : menu}
     </div>
   )
 }
@@ -114,7 +167,7 @@ interface MenuItemProps {
   danger?: boolean
   disabled?: boolean
   autoFocus?: boolean
-  /** Marca a opção escolhida em um menu de seleção única (`menuitemradio`). */
+  /** Mark the selected option in a single-selection menu. */
   selected?: boolean
   onSelect: () => void
 }
@@ -144,13 +197,13 @@ export function MenuItem({ label, danger, disabled, autoFocus, selected, onSelec
 interface MenuCheckboxItemProps {
   label: string
   checked: boolean
-  /** Marcador antes do texto (ex.: a cor de um rótulo). */
+  /** Marker before the text, such as a label color. */
   leading?: ReactNode
   autoFocus?: boolean
   onToggle: () => void
 }
 
-/** Opção que liga/desliga um filtro (`menuitemcheckbox`); o menu continua aberto ao alternar. */
+/** Toggle a filter without closing the menu. */
 export function MenuCheckboxItem({ label, checked, leading, autoFocus, onToggle }: MenuCheckboxItemProps) {
   return (
     <button
@@ -170,7 +223,7 @@ export function MenuCheckboxItem({ label, checked, leading, autoFocus, onToggle 
   )
 }
 
-/** Divisória entre grupos de opções. */
+/** Separator between groups of options. */
 export function MenuSeparator() {
   return <div className="ui-menu-separator" role="separator" />
 }

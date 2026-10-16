@@ -405,7 +405,7 @@ function RequestRow({
             wrapperClassName="collections-menu-wrapper"
             menuClassName="collections-menu"
             menuPlacement="auto"
-            menuBoundarySelector=".env-sidebar"
+            menuPortal
             isOpen={isMenuOpen}
             onToggle={() => onToggleMenu(request.id)}
             onClose={onCloseMenu}
@@ -718,7 +718,7 @@ function FolderRow({
             wrapperClassName="collections-menu-wrapper"
             menuClassName="collections-menu"
             menuPlacement="auto"
-            menuBoundarySelector=".env-sidebar"
+            menuPortal
             isOpen={isMenuOpen}
             onToggle={() => onToggleMenu(node.id)}
             onClose={onCloseMenu}
@@ -1372,13 +1372,13 @@ export function CollectionsPanel({
     onCommandHandled?.()
   }, [command, onCommandHandled])
 
-  /** Close menus on outside pointerdown, including when right-click opens another row. Use the shared ui-menu-host selector so toolbar menu item clicks also reach their handlers. */
+  /** Keep clicks inside inline and portaled menus available to their action handlers. */
   useEffect(() => {
     if (menuOpenId === null && !moreMenuOpen && !filterMenuOpen) return
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null
-      if (target?.closest('.ui-menu-host')) return
+      if (target?.closest('.ui-menu-host, .collections-menu')) return
       setMenuOpenId(null)
       setMoreMenuOpen(false)
       setFilterMenuOpen(false)

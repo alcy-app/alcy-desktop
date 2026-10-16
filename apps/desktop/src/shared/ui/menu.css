@@ -19,6 +19,23 @@
   outline: none;
 }
 
+.ui-menu.ui-menu--portal,
+.ui-menu.ui-menu--portal.ui-menu--top {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: var(--z-overlay);
+  box-sizing: border-box;
+  min-width: min(140px, calc(100vw - 16px));
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.ui-menu--portal > * {
+  flex-shrink: 0;
+}
+
 .ui-menu-item {
   display: block;
   width: 100%;
@@ -82,9 +99,7 @@
 .ui-menu-separator {
   height: 1px;
   margin: var(--space-1) 0;
-  /* Derivada do texto, não de `--border-subtle`: no tema escuro esta coincide com o fundo do menu
-     (`--surface-overlay`) e a linha sumia. A intensidade acompanha a divisória do popover de nova
-     requisição, suave nos dois temas. */
+  /* Derive from text so the separator stays visible against the overlay in both themes. */
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 

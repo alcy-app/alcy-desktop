@@ -278,6 +278,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
 
   return {
     environments,
+    loaded,
     loadError,
     unreadableSecrets,
     reload,

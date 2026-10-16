@@ -62,8 +62,15 @@
    labels, row menus) inside it, so they scroll with the rows. */
 .sidebar-panel-scroll {
   position: relative;
+  isolation: isolate;
   flex: 1;
   min-height: 0;
   padding: 8px;
-  overflow-y: auto;
+  /* Reserve the scrollbar gutter while row actions fade in and out. */
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+.sidebar-panel-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
 }

@@ -205,6 +205,7 @@ const ptBR = {
   'proxy.statusbar.tooltipError': 'Proxy configurado, mas não aplicado - requisições saem direto',
 
   // workbench shell (header, tabs, resize handles)
+  'workbench.loadingWorkspace': 'Carregando workspace {name}…',
   'workbench.resize.sidebar': 'Redimensionar painel de Collections',
   'workbench.loadErrors.title': 'Parte deste workspace não pôde ser lida.',
   'workbench.loadErrors.body': 'Para não sobrescrever os arquivos, essas áreas não serão salvas, e o que for alterado nelas será perdido. Isso costuma acontecer ao abrir o workspace numa versão mais antiga do Alcy: atualize o app ou restaure um backup de Documentos/Alcy/backups.',
