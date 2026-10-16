@@ -151,7 +151,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   const http = success ? httpResultOf(success.result) : null
   const grpc = grpcResultOf(success?.result)
   // Older restored executions may omit testResults.
-  const testResults = http ? (http.testResults ?? []) : []
+  const testResults = success ? (success.result.testResults ?? []) : []
   const hasTests = testResults.length > 0
   const failedTests = testResults.filter((test) => !test.passed).length
   const tabs = RESPONSE_TABS.filter(

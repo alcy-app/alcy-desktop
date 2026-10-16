@@ -29,21 +29,10 @@ use crate::commands::scripting::{
 use crate::commands::session_cookies::SessionCookies;
 use crate::commands::variable_scopes::{VariableScopeDto, scopes_from_dto, with_scoped_variables};
 
-/// Retenção usada por quem só lê o histórico (a poda depende de
-/// `HistoryPreferencesState`, ver `general_settings`), onde o valor não
-/// tem efeito.
+/// Read-only history retention has no pruning effect; pruning uses HistoryPreferencesState.
 pub(crate) const DEFAULT_HISTORY_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-/// Acima deste tamanho (bytes UTF-8), o corpo da resposta não atravessa o
-/// IPC por inteiro — fica em `ResponseBodyCache` e o frontend lê o restante
-/// sob demanda via `read_response_body_chunk`.
-///
-/// Alinhado com `RESPONSE_BODY_RAW_THRESHOLD` no frontend
-/// (`ResponseBody.tsx`): originalmente 5 MiB, reduzido para 1 MiB depois de
-/// uso real mostrar o editor travando em respostas de 1–5 MB — nesse
-/// intervalo o corpo "raw" ainda atravessava o IPC inteiro e era
-/// remontado do zero a cada troca de aba de resposta (ver ADR 0005, seção
-/// "Validação": "revisitar... os limiares se o uso real mostrar...").
+/// Bodies above this UTF-8 threshold stay in ResponseBodyCache and cross IPC in windows. Align frontend raw threshold, reduced from 5 MiB to 1 MiB after editor stalls and repeated tab remounting (ADR 0005).
 pub(crate) const LARGE_RESPONSE_BODY_THRESHOLD_BYTES: usize = 1024 * 1024;
 
 /// Tamanho do preview inicial devolvido junto com `ResponseBodyOutput::Windowed`.
@@ -59,24 +48,21 @@ pub struct ExecuteGraphqlRequestInput {
     pub variables: String,
     pub headers: Vec<HeaderInput>,
     pub authentication: AuthenticationInput,
-    /// Id da requisição salva de origem, usado para resolver `Inherit`.
+    /// Saved request ID resolves inherited authentication.
     #[serde(default)]
     pub request_id: Option<String>,
-    /// Aba que disparou o envio; liga o envio ao histórico de envios da
-    /// requisição mesmo antes de ela ser salva (ADR 0036).
+    /// Sending tab ID links history even before saving the request (ADR 0036).
     #[serde(default)]
     pub tab_id: Option<String>,
     pub environment_variables: Vec<EnvironmentVariableDto>,
-    /// Camadas de variáveis da coleção/pastas da requisição, da raiz ao pai
-    /// direto (ADR 0031). Vazio para aba não salva.
+    /// Collection/folder scopes from root to direct parent; empty for unsaved tabs (ADR 0031).
     #[serde(default)]
     pub variable_scopes: Vec<VariableScopeDto>,
     #[serde(default)]
     pub pre_request_script: String,
     #[serde(default)]
     pub post_response_script: String,
-    /// "Reenviar sem limite": este envio ignora o limite de tamanho de
-    /// resposta configurado. Ausente (o caso normal) mantém o limite.
+    /// One-shot resend without response size limit; absence preserves it.
     #[serde(default)]
     pub ignore_response_size_limit: bool,
 }
@@ -93,8 +79,7 @@ pub struct HeaderInput {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AuthenticationInput {
     None,
-    /// Herda de pasta/coleção ancestral; resolvida no backend a partir do
-    /// `request_id` antes da execução (ver `resolve_inherited_authentication`).
+    /// Resolve authentication from the closest defined ancestor before execution.
     Inherit,
     CustomHeader {
         name: String,
@@ -143,14 +128,7 @@ impl From<Authentication> for AuthenticationInput {
     }
 }
 
-/// Troca `Inherit` pela autenticação efetiva da requisição salva
-/// `request_id` (própria pasta/coleção ancestral mais próxima definida).
-/// Sem `request_id` (aba ainda não salva) ou sem workspace legível, não há
-/// ancestrais e o resultado é `None`. Qualquer outro tipo passa intacto.
-///
-/// Ler `alcy-collections.json` inteiro é I/O síncrono (e parse de um arquivo
-/// que pode ter vários MB): roda em `spawn_blocking`, não na task assíncrona
-/// do envio.
+/// Resolve inherited authentication from saved request/closest configured ancestor. Missing request/workspace yields None; other modes pass through. Read/parse large collections in spawn_blocking.
 pub(crate) async fn resolve_inherited_authentication(
     authentication: AuthenticationInput,
     request_id: Option<&str>,
@@ -181,32 +159,27 @@ pub struct ExecuteGraphqlRequestOutput {
     pub body: ResponseBodyOutput,
     pub body_encoding: ResponseBodyEncodingOutput,
     pub headers: Vec<ResponseHeaderOutput>,
-    /// Headers efetivamente enviados no request, incluindo os que a
-    /// autenticação injeta (ex.: `Authorization` resolvido de Bearer/
-    /// Basic/Digest/OAuth2) — ver `alcy_http_auth::AuthenticatedExchange`.
+    /// Actual sent headers including authentication-injected values (AuthenticatedExchange).
     pub request_headers: Vec<ResponseHeaderOutput>,
     pub cookies: Vec<CookieOutput>,
     pub connection: ConnectionInfoOutput,
-    /// URL final da execução, presente só quando ela foi redirecionada.
-    /// Ver ADR 0010: não expõe a cadeia completa de hops, só o destino.
+    /// Final redirected URL only, not the full hop chain (ADR 0010).
     pub final_url: Option<String>,
-    /// Tempo até os headers da resposta chegarem (TTFB) — ver ADR 0010.
+    /// Time to response headers (TTFB, ADR 0010).
     pub waiting_ms: u64,
     pub graphql_errors: Vec<GraphqlErrorOutput>,
-    /// Variáveis de ambiente gravadas pelos scripts (valor final de cada uma).
+    /// Final environment values written by scripts.
     pub environment_changes: Vec<EnvironmentChangeOutput>,
-    /// Variáveis de coleção/pasta gravadas pelos scripts (ADR 0031).
+    /// Collection/folder script writes (ADR 0031).
     pub scoped_changes: Vec<ScopedChangeOutput>,
     pub script_logs: Vec<String>,
-    /// Falha do script de pós-resposta; a resposta continua válida.
+    /// Post-response script error; retain the received response.
     pub script_error: Option<ScriptErrorOutput>,
     /// Testes registrados com `al.test` pelos scripts (spec 0072).
     pub test_results: Vec<ScriptTestOutput>,
 }
 
-/// Como o frontend deve interpretar `ResponseBodyOutput.body`: texto direto
-/// (`Text`) ou binário codificado em base64 (`Base64`, ex.: imagem — ver
-/// ADR 0009). Espelha `alcy_domain::BodyEncoding`.
+/// Frontend body encoding: text or base64 binary, matching domain BodyEncoding (ADR 0009).
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ResponseBodyEncodingOutput {
@@ -223,30 +196,20 @@ impl From<BodyEncoding> for ResponseBodyEncodingOutput {
     }
 }
 
-/// Corpo da resposta: inteiro (`Inline`) quando cabe confortavelmente no
-/// payload de IPC, ou uma janela (`Windowed`) sobre um corpo grande demais
-/// retido em `ResponseBodyCache` — o restante é lido sob demanda via
-/// `read_response_body_chunk`.
+/// Inline body when it comfortably fits IPC, otherwise an initial cached window with later chunks on demand.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ResponseBodyOutput {
     Inline {
         body: String,
     },
-    // `rename_all` no nível do enum só renomeia o `tag` de cada variante,
-    // não os campos dentro dela (mesma surpresa do serde documentada em
-    // `commands::history::HistoryOutcomeSummaryDto`): sem isto aqui, o JSON
-    // sai com `total_bytes`/`preview_next_offset` em vez de camelCase,
-    // fazendo o frontend ler `undefined` e quebrando `read_response_body_chunk`.
+    // Enum rename_all affects tags; rename_all_fields converts variant fields such as total_bytes/preview_next_offset into frontend camelCase.
     #[serde(rename_all = "camelCase")]
     Windowed {
         handle: String,
         total_bytes: usize,
         preview: String,
-        /// Offset (em bytes UTF-8) de onde `read_response_body_chunk` deve
-        /// continuar — `None` quando `preview` já cobre o corpo inteiro.
-        /// Não dá para derivar isso do tamanho de `preview` no frontend:
-        /// `String.length` em JS conta unidades UTF-16, não bytes.
+        /// Next UTF-8 byte offset; None means complete preview. JS string length counts UTF-16 units and cannot derive it.
         preview_next_offset: Option<usize>,
     },
 }
@@ -303,7 +266,7 @@ pub struct ConnectionInfoOutput {
     pub remote_address: Option<String>,
     pub http_version: String,
     pub tls_certificate_present: bool,
-    /// Conexão TLS feita com a verificação de certificado desligada.
+    /// TLS with certificate verification explicitly disabled.
     pub certificate_verification_disabled: bool,
 }
 
@@ -364,7 +327,7 @@ pub enum ExecuteGraphqlRequestError {
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<InvalidRequestCause>,
     },
-    /// Falha do script de pré-requisição; nada foi enviado.
+    /// Pre-request script failed; nothing was sent.
     Script {
         phase: String,
         message: String,
@@ -375,9 +338,7 @@ pub enum ExecuteGraphqlRequestError {
         cause: Option<NetworkCauseOutput>,
     },
     Timeout,
-    /// O corpo passou do limite de tamanho configurado e o download foi
-    /// interrompido; não há resposta parcial. A interface oferece reenviar
-    /// sem limite.
+    /// Download stopped at response size limit without partial data. UI offers unlimited resend.
     #[serde(rename_all = "camelCase")]
     ResponseTooLarge {
         limit_bytes: u64,
@@ -406,8 +367,7 @@ impl From<ExecutionError> for ExecuteGraphqlRequestError {
                 message: detail,
                 cause: Some(InvalidRequestCause::BodyFileUnreadable { path }),
             },
-            // Só o executor de flow produz isto; o comando avulso trata os
-            // scripts por conta própria (`Script { phase, message }`).
+            // Only flow executors emit this; interactive commands handle script phase/message separately.
             ExecutionError::Script(message) => Self::InvalidRequest {
                 message,
                 cause: None,
@@ -469,9 +429,7 @@ impl From<EnvironmentVariableError> for ExecuteGraphqlRequestError {
     }
 }
 
-/// Interpola `{{variavel}}` em `template` contra as variáveis do ambiente
-/// ativo. O corpo da query GraphQL não passa por aqui — só endpoint,
-/// headers, `variables` (JSON) e campos de autenticação.
+/// Interpolate environment templates in endpoint/headers/variables/authentication, never GraphQL query text.
 fn resolve(
     template: &str,
     variables: &[EnvironmentVariable],
@@ -546,12 +504,7 @@ pub(crate) async fn cancellation_signal(receiver: oneshot::Receiver<()>) {
     let _ = receiver.await;
 }
 
-/// Executa uma requisição GraphQL real via HTTP, cancelável através de
-/// `cancel_graphql_request` com o mesmo `execution_id`.
-///
-/// Reaproveita o `ReqwestGraphqlExecutor` gerenciado pelo Tauri
-/// (`src-tauri/src/lib.rs`) entre chamadas, para reaproveitar conexões
-/// HTTP em vez de pagar handshake TCP/TLS a cada requisição.
+/// Execute cancellable GraphQL HTTP requests using the managed executor and pooled TCP/TLS connections. Cancel using the same execution ID.
 #[tauri::command]
 pub async fn execute_graphql_request(
     input: ExecuteGraphqlRequestInput,
@@ -611,8 +564,9 @@ async fn execute_graphql_request_inner(
     let mut scopes = scopes_from_dto(std::mem::take(&mut input.variable_scopes))
         .map_err(|error| ExecutionFailure::new(error, ScriptEffects::default()))?;
 
-    // Em GraphQL o método é sempre POST e `al.request.body` é a query.
+    // GraphQL sends POST; al.request.body contains the query.
     let mut scripted = ScriptedRequest {
+        grpc: None,
         url: input.endpoint_url.clone(),
         method: "post".to_string(),
         body: input.query.clone(),
@@ -630,8 +584,7 @@ async fn execute_graphql_request_inner(
     input.endpoint_url = scripted.url.clone();
     input.query = scripted.body.clone();
     input.headers = scripted.headers.clone();
-    // Os scripts enxergam o ambiente e as camadas separados; a resolução de
-    // `{{var}}` usa a mescla (ADR 0031).
+    // Scripts receive environment/scopes separately; template resolution overlays them (ADR 0031).
     let environment = input.environment_variables.clone();
     input.environment_variables = with_scoped_variables(&input.environment_variables, &scopes);
     input.authentication = resolve_inherited_authentication(
@@ -657,8 +610,7 @@ async fn execute_graphql_request_inner(
     let (sender, receiver) = oneshot::channel();
     registry.register(execution_id.clone(), sender);
 
-    // Só a cópia executada recebe o `Cookie` do jar: o histórico não guarda
-    // o valor.
+    // Only execution copies receive jar cookies; history excludes their values.
     let mut executable = request.clone();
     cookies.apply_to(&mut executable);
     let outcome = execute_request(executor, &executable, cancellation_signal(receiver)).await;
@@ -669,10 +621,7 @@ async fn execute_graphql_request_inner(
         (history_outcome_from(&outcome), history_request)
         && !history.retention.is_disabled()
     {
-        // Fire-and-forget: não aguarda a escrita terminar antes de montar
-        // a resposta abaixo. `drop` explícito (em vez de `let _ =`) porque
-        // `JoinHandle` também é `Future` — clippy trata `let _ = <future>`
-        // como provável esquecimento de `.await`.
+        // Do not await history writes. Explicitly drop JoinHandle because let _ on a Future triggers forgotten-await lint.
         drop(record_history(
             &root_path,
             execution_id.clone(),
@@ -751,19 +700,7 @@ async fn execute_graphql_request_inner(
     })
 }
 
-/// Decide entre `Inline` e `Windowed` conforme `LARGE_RESPONSE_BODY_THRESHOLD_BYTES`,
-/// medido por `body.len()` — o que de fato atravessa o IPC/fica em cache,
-/// não `size_bytes` (que para um corpo base64, ver ADR 0009, é o tamanho
-/// decodificado, menor que `body.len()`). Para texto os dois sempre
-/// coincidem, então isto não muda nenhum comportamento existente.
-/// No ramo `Windowed`, `body` é movido para `body_cache` sob a chave
-/// `execution_id` — só o preview inicial atravessa o IPC; `size_bytes` só
-/// é usado para o `total_bytes` reportado (informativo, não precisa bater
-/// com `body.len()`).
-/// `pub(crate)`: também usado por `commands::history::get_history_entry`
-/// para aplicar o mesmo corte inline/janela ao corpo persistido no
-/// histórico (o `handle` não precisa ser um `execution_id` de execução ao
-/// vivo — é só a chave sob a qual o corpo fica em `body_cache`).
+/// Window by actual body string bytes crossing IPC, not decoded size_bytes. Move large bodies into cache and send only preview. History uses the same helper with arbitrary cache handles.
 pub(crate) fn response_body_output(
     execution_id: &str,
     body: String,
@@ -787,10 +724,7 @@ pub(crate) fn response_body_output(
     }
 }
 
-/// Decide se `outcome` deve virar uma entrada de histórico. Só sucesso e
-/// falhas que de fato saíram pela rede (`Network`/`Timeout`) são
-/// registrados — `Cancelled` é uma desistência deliberada do usuário e
-/// `InvalidVariables` nem chega a montar uma requisição válida.
+/// Record successful responses and actual network/timeouts. Cancellation is deliberate; invalid variables never form a valid request.
 pub(crate) fn history_outcome_from(
     outcome: &Result<Response, ExecutionError>,
 ) -> Option<HistoryOutcome> {
@@ -808,20 +742,13 @@ pub(crate) fn history_outcome_from(
         | Err(ExecutionError::InvalidRequest(_))
         | Err(ExecutionError::BodyFileUnreadable { .. })
         | Err(ExecutionError::Script(_))
-        // Interrompida pelo limite de tamanho: não há resposta para guardar;
-        // a interface oferece reenviar sem limite.
+        // Size-limited downloads have no retained response; offer unlimited resend.
         | Err(ExecutionError::ResponseTooLarge { .. })
         | Err(ExecutionError::Cancelled) => None,
     }
 }
 
-/// Requisição que vai para o histórico. O histórico nunca guarda o valor de
-/// uma variável sensível: quando o ambiente tem alguma, grava a versão
-/// montada com elas no lugar dos valores (`{{nome}}`, ver
-/// `redact_sensitive_variables`) — que também é o que volta ao reabrir a
-/// entrada. Se essa versão não puder ser montada (ex.: placeholder no host
-/// torna a URL inválida), a execução não entra no histórico. Sem variáveis
-/// sensíveis (`redacted` = `None`), é a própria requisição executada.
+/// History retains sensitive values as placeholders. Omit entries when redacted requests cannot be built; otherwise retain the executed request when no secrets exist.
 pub(crate) fn history_request<'a>(
     executed: &'a Request,
     redacted: Option<&'a Option<Request>>,
@@ -838,18 +765,7 @@ pub(crate) fn history_request<'a>(
     }
 }
 
-/// Grava uma entrada de histórico de forma best-effort e fire-and-forget:
-/// a escrita (I/O de disco síncrono) roda em `spawn_blocking` sem o
-/// chamador aguardar — a resposta volta ao frontend sem esperar o
-/// arquivo de histórico terminar de ser escrito. Uma falha ao persistir é
-/// logada e nunca impede a resposta de chegar ao usuário. Devolve o
-/// `JoinHandle` só para os testes poderem esperar a escrita terminar antes
-/// de checar o resultado; o chamador em produção descarta o retorno.
-///
-/// `source` é `(request_id, tab_id)` de origem, que liga o envio ao
-/// histórico de envios da requisição (ADR 0036). O chamador não chama com
-/// o histórico desativado; com "Salvar respostas" desligado, só o resumo da
-/// resposta é gravado.
+/// Record best effort in spawn_blocking without delaying response; log persistence failures. Return handles for tests. Source IDs link send history; preferences control writes and retained bodies.
 pub(crate) fn record_history(
     root_path: &str,
     id: String,
@@ -1286,11 +1202,7 @@ mod tests {
             .unwrap()
     }
 
-    /// `record_history` agora é fire-and-forget (roda em `spawn_blocking`
-    /// sem o chamador aguardar) — os testes que dependem dela não podem
-    /// mais assumir que a entrada já está em disco assim que
-    /// `execute_graphql_request_inner` retorna. Espera com um retry
-    /// limitado em vez disso.
+    /// History writes are asynchronous; tests retry until persistence rather than assume command return means the file exists.
     async fn wait_for_history_entries(root_path: &str, expected_len: usize) -> Vec<HistorySummary> {
         for _ in 0..50 {
             let entries = history_entries(root_path);
@@ -1495,10 +1407,7 @@ mod tests {
         );
     }
 
-    /// Regressão: comparar `ResponseBodyOutput` como valor Rust (como os
-    /// outros testes fazem) não pega uma quebra de `rename_all` de campo —
-    /// só a serialização JSON de fato revela isso, que é o que
-    /// `invoke()` manda pelo IPC de verdade.
+    /// Serialize JSON in tests: Rust equality cannot detect broken serde field casing in IPC.
     #[test]
     fn windowed_body_serializes_its_fields_as_camel_case() {
         let cache = ResponseBodyCache::default();
@@ -1524,16 +1433,12 @@ mod tests {
         assert!(json.get("preview_next_offset").is_none());
     }
 
-    /// Regressão para o ADR 0009: um corpo base64 (imagem) tem `body.len()`
-    /// maior que o `size_bytes` decodificado — a decisão `Windowed` precisa
-    /// olhar `body.len()` (o que de fato cruza o IPC/cache), não
-    /// `size_bytes` (que aqui ficaria abaixo do limiar e esconderia
-    /// incorretamente um corpo grande demais atrás de `Inline`).
+    /// Base64 body length exceeds decoded size_bytes. Window by encoded bytes crossing IPC/cache (ADR 0009).
     #[test]
     fn response_body_output_windows_by_the_bodys_length_even_when_size_bytes_is_smaller() {
         let cache = ResponseBodyCache::default();
         let large_base64_body = "x".repeat(LARGE_RESPONSE_BODY_THRESHOLD_BYTES + 1);
-        let decoded_size_bytes = large_base64_body.len() * 3 / 4; // aproxima a deflação real do base64
+        let decoded_size_bytes = large_base64_body.len() * 3 / 4; // Approximate the decoded base64 size.
 
         let body =
             response_body_output("exec-image", large_base64_body, decoded_size_bytes, &cache);

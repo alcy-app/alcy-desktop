@@ -158,11 +158,12 @@ const REST_TABS: { id: RequestTabId; label: string }[] = [
   { id: 'authorization', label: 'Authorization' },
 ]
 
-/** gRPC requests (spec 0129): no scripts yet, metadata in place of headers. */
+/** gRPC requests expose scripts and metadata alongside their message and schema. */
 const GRPC_TABS: { id: RequestTabId; label: string }[] = [
   { id: 'message', label: 'Message' },
   { id: 'headers', label: 'Metadata' },
   { id: 'authorization', label: 'Authorization' },
+  { id: 'scripts', label: 'Scripts' },
   { id: 'schema', label: 'Schema' },
 ]
 
@@ -636,11 +637,14 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     }
   }
 
-  /** gRPC has no scripts, cookies or HTTP recording yet (spec 0129): the
-   * console only notes the call, and history gets the send. */
+  /** gRPC records script effects and history without HTTP cookies or recording. */
   const handleSendGrpc = async () => {
     const endpointUrl = workbench.endpointUrl
     const result = await workbench.sendGrpc()
+    const effects = result.ok ? result.value : result
+    environments.applyScriptChanges((effects.environmentChanges ?? []).filter((change): change is { name: string; value: string } => change.value !== null))
+    collections.applyScopedChanges(effects.scopedChanges ?? [])
+    const scriptError = result.ok ? result.value.scriptError?.message : result.error.kind === 'script' ? result.error.message : null
     consoleLog.append({
       kind: 'request',
       endpointUrl,
@@ -653,6 +657,14 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       scriptMessage: null,
       detail: null,
     })
+    for (const entry of [
+      ...(effects.scriptLogs ?? []).map((message) => ({ message, failed: false })),
+      ...(scriptError ? [{ message: scriptError, failed: true }] : []),
+    ]) {
+      consoleLog.append({ kind: 'script', endpointUrl, executedAtMs: Date.now(), durationMs: null,
+        outcome: entry.failed ? 'error' : 'success', statusCode: null, hasGraphqlErrors: false,
+        errorKind: null, scriptMessage: entry.message, detail: null })
+    }
     void history.refresh()
   }
 

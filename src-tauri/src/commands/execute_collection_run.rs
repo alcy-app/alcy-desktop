@@ -1,6 +1,4 @@
-//! Runner de coleções (spec 0073, ADR 0027): executa um plano ordenado de
-//! requisições salvas e transmite o progresso por um `Channel`, como os
-//! runs de flow (ADR 0014). Cancelável por `cancel_collection_run`.
+//! Stream ordered collection-run progress through Channel; cancel through cancel_collection_run (spec 0073, ADR 0027).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -36,9 +34,7 @@ use crate::commands::general_settings::{HistoryPreferences, HistoryPreferencesSt
 use crate::commands::protocol_dispatching_executor::ProtocolDispatchingExecutor;
 use crate::commands::scripting::{EnvironmentChangeOutput, ScopedChangeOutput, ScriptTestOutput};
 
-/// Teto do total de corpos guardados por run (memória e histórico): cada
-/// corpo já é limitado a 256 KB, mas um run com muitas iterações somaria
-/// demais. Passando disso, as respostas seguintes não são guardadas.
+/// Total retained body budget per run. Individual bodies are already capped at 256 KiB; omit later bodies when iterations exhaust the total.
 pub const MAX_RUN_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -52,7 +48,7 @@ pub struct CollectionRunOptionsInput {
     pub share_cookies: bool,
     pub persist_responses: bool,
     pub save_to_history: bool,
-    /// Só apresentação: omite os logs de script dos eventos e do histórico.
+    /// Presentation only: omit script logs from events/history.
     pub disable_logs: bool,
 }
 
@@ -61,15 +57,15 @@ pub struct CollectionRunOptionsInput {
 pub struct ExecuteCollectionRunInput {
     pub run_id: String,
     pub root_path: String,
-    /// Nome da coleção/pasta, para rotular o run no histórico.
+    /// Collection/folder name labels historical runs.
     pub scope_name: String,
-    /// Requisições selecionadas, na ordem de execução.
+    /// Selected requests in execution order.
     pub request_ids: Vec<String>,
     pub options: CollectionRunOptionsInput,
     pub environment_variables: Vec<EnvironmentVariableDto>,
     #[serde(default)]
     pub data_file_path: Option<String>,
-    /// Ambiente ativo, só para rotular o run (histórico e relatórios).
+    /// Active environment name labels history/reports only.
     #[serde(default)]
     pub environment_name: Option<String>,
 }
@@ -116,7 +112,7 @@ impl From<RunStepOutcomeDto> for RecordedStepOutcome {
     }
 }
 
-/// Uma requisição terminada — igual no canal ao vivo e no histórico.
+/// Completed request shape shared by live events/history.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStepDto {
@@ -124,7 +120,7 @@ pub struct RunStepDto {
     pub position: usize,
     pub request_id: String,
     pub name: String,
-    /// `"rest"` ou `"graphql"`; `None` quando a requisição não existe mais.
+    /// rest, graphql or grpc; None for missing requests.
     pub protocol: Option<String>,
     pub method: String,
     pub resolved_url: String,
@@ -164,10 +160,9 @@ pub enum CollectionRunEventDto {
     RunFinished {
         cancelled: bool,
         stopped_on_error: bool,
-        /// Vazio quando o run não mantém os valores das variáveis.
+        /// Empty when variable writes are not retained.
         environment_changes: Vec<EnvironmentChangeOutput>,
-        /// Variáveis de coleção/pasta gravadas (ADR 0031); vazio quando o
-        /// run não mantém os valores das variáveis.
+        /// Collection/folder writes; empty when variable values are not retained (ADR 0031).
         scoped_changes: Vec<ScopedChangeOutput>,
     },
 }
@@ -189,7 +184,7 @@ pub(crate) fn protocol_label(protocol: ProtocolId) -> &'static str {
     }
 }
 
-/// Saídas do **último** run, em memória, por `(iteração, posição)`.
+/// Latest run outputs in memory by iteration/position.
 #[derive(Default)]
 pub struct CollectionRunOutputs {
     state: Mutex<OutputsState>,
@@ -200,8 +195,7 @@ struct OutputsState {
     run_id: Option<String>,
     outputs: HashMap<(u32, usize), FlowNodeOutput>,
     stored_bytes: usize,
-    /// Registro do último run terminado, sem as respostas (que ficam em
-    /// `outputs`), para gerar relatórios mesmo sem salvar no histórico.
+    /// Last completed run without bodies, retained separately for reports even with history disabled.
     record: Option<CollectionRunRecord>,
 }
 
@@ -224,7 +218,7 @@ impl CollectionRunOutputs {
         }
     }
 
-    /// Registro completo (com as respostas) do último run, se for `run_id`.
+    /// Complete latest run including responses when the run ID matches.
     pub fn record(&self, run_id: &str) -> Option<CollectionRunRecord> {
         let record = {
             let state = self.lock();
@@ -238,7 +232,7 @@ impl CollectionRunOutputs {
         Some(CollectionRunRecord { outputs, ..record })
     }
 
-    /// `false` quando a resposta não foi guardada (outro run ou teto atingido).
+    /// False when output was omitted, replaced by another run, or over budget.
     pub fn store(
         &self,
         run_id: &str,
@@ -294,7 +288,7 @@ struct ChannelSink<'a> {
     run_id: &'a str,
     options: CollectionRunOptionsInput,
     iterations: Mutex<u32>,
-    /// Requisições terminadas com o instante, gravadas no histórico ao fim.
+    /// Timestamped completed requests persisted at run end.
     steps: Mutex<Vec<RecordedRunStep>>,
 }
 
@@ -421,7 +415,7 @@ fn recorded_step(step: &RunStepDto, at_ms: u64) -> RecordedRunStep {
     }
 }
 
-/// Requisição gravada de volta ao formato do evento ao vivo.
+/// Convert stored reports back into live event shape.
 pub(crate) fn step_dto_from_recorded(step: RecordedRunStep, has_output: bool) -> RunStepDto {
     RunStepDto {
         iteration: step.iteration,
@@ -556,11 +550,11 @@ fn record_run(
     })
 }
 
-/// Executa um run de coleção. Erros antes do run começar voltam como
-/// rejeição sem nenhum evento; depois disso o run só termina com
-/// `runFinished`.
+/// Reject validation failures before any event. After startup, collection execution terminates through runFinished.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_collection_run(
+    app: tauri::AppHandle,
     input: ExecuteCollectionRunInput,
     on_event: Channel<CollectionRunEventDto>,
     registry: tauri::State<'_, FlowExecutionRegistry>,
@@ -578,6 +572,7 @@ pub async fn execute_collection_run(
         if input.data_file_path.is_some() { "sim" } else { "não" }
     );
     let result = execute_collection_run_inner(
+        Some(&app),
         input,
         &on_event,
         &registry,
@@ -602,7 +597,9 @@ pub async fn execute_collection_run(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_collection_run_inner(
+    app: Option<&tauri::AppHandle>,
     input: ExecuteCollectionRunInput,
     on_event: &Channel<CollectionRunEventDto>,
     registry: &FlowExecutionRegistry,
@@ -661,6 +658,7 @@ async fn execute_collection_run_inner(
 
     let step = CollectionRunStepExecutor {
         inner: ProtocolDispatchingExecutor {
+            app,
             graphql: graphql_executor,
             rest: rest_executor,
             workspace_root: Path::new(&input.root_path),
@@ -730,13 +728,11 @@ async fn execute_collection_run_inner(
         outputs.set_record(record);
         if options.save_to_history && !history.retention.is_disabled() {
             if let Some(mut record) = outputs.record(&input.run_id) {
-                // Sem "Salvar respostas", o run fica no histórico com o status,
-                // o tempo e o tamanho de cada passo, mas sem as respostas.
+                // With Save responses disabled, retain step status/duration/size without bodies.
                 if !history.save_responses {
                     record.outputs.clear();
                 }
-                // Aguarda a escrita para o histórico já estar em disco quando
-                // o frontend receber `runFinished` e recarregar a lista.
+                // Await persistence before runFinished triggers history reload.
                 let _ = record_run(&input.root_path, record, history.retention).await;
             }
         }
@@ -774,7 +770,7 @@ pub struct CancelCollectionRunInput {
     pub run_id: String,
 }
 
-/// Idempotente: cancelar um run que já terminou não faz nada.
+/// Idempotent: cancelling finished runs does nothing.
 #[tauri::command]
 pub fn cancel_collection_run(
     input: CancelCollectionRunInput,
@@ -792,8 +788,7 @@ pub struct GetCollectionRunOutputInput {
     pub position: usize,
 }
 
-/// Resposta guardada de uma requisição do último run, buscada sob demanda
-/// para que os corpos não trafeguem nos eventos de progresso.
+/// Fetch retained responses on demand; progress events carry no bodies.
 #[tauri::command]
 pub fn get_collection_run_output(
     input: GetCollectionRunOutputInput,
@@ -820,9 +815,9 @@ pub struct IterationDataPreviewDto {
 
 const PREVIEW_ROWS: usize = 5;
 
-/// Valida o arquivo de dados e devolve um resumo pequeno (colunas, total e
-/// algumas linhas); o conteúdo inteiro não atravessa o IPC.
+/// Validate data files and send only columns/count/sample rows across IPC.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn preview_iteration_data(
     input: PreviewIterationDataInput,
 ) -> Result<IterationDataPreviewDto, ExecuteCollectionRunError> {

@@ -21,8 +21,8 @@ use alcy_grpc::{
 };
 use alcy_storage::{CustomCaCertificateStore, GeneralSettingsStore};
 use serde::{Deserialize, Serialize};
-use tauri::State;
 use tauri::ipc::Channel as IpcChannel;
+use tauri::{Manager, State};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::commands::collections::{GrpcCallDto, GrpcSchemaSourceDto};
@@ -36,6 +36,10 @@ use crate::commands::failure_cause::InvalidRequestCause;
 use crate::commands::general_settings::HistoryPreferencesState;
 use crate::commands::proxy_settings::ProxyApplyState;
 use crate::commands::response_body_cache::ResponseBodyCache;
+use crate::commands::scripting::{
+    EnvironmentChangeOutput, ExecutionFailure, ScopedChangeOutput, ScriptEffects,
+    ScriptErrorOutput, ScriptTestOutput, ScriptedRequest, run_post_response, run_pre_request,
+};
 use crate::commands::variable_scopes::{VariableScopeDto, scopes_from_dto, with_scoped_variables};
 
 /// Schemas loaded in this session, by server and source: a request reuses
@@ -63,12 +67,23 @@ const MAX_EVENT_JSON_BYTES: usize = 256 * 1024;
 /// bidirectional streaming calls take more messages until the person ends
 /// the stream.
 #[derive(Default)]
-pub struct GrpcCalls(Mutex<HashMap<String, mpsc::Sender<ClientAction>>>);
+pub struct GrpcCalls(Mutex<HashMap<String, LiveGrpcCall>>);
+
+#[derive(Clone)]
+struct LiveGrpcCall {
+    sender: mpsc::Sender<ClientAction>,
+    variables: Vec<EnvironmentVariableDto>,
+}
 
 impl GrpcCalls {
-    fn insert(&self, id: &str, sender: mpsc::Sender<ClientAction>) {
+    fn insert(
+        &self,
+        id: &str,
+        sender: mpsc::Sender<ClientAction>,
+        variables: Vec<EnvironmentVariableDto>,
+    ) {
         if let Ok(mut calls) = self.0.lock() {
-            calls.insert(id.to_string(), sender);
+            calls.insert(id.to_string(), LiveGrpcCall { sender, variables });
         }
     }
 
@@ -78,7 +93,7 @@ impl GrpcCalls {
         }
     }
 
-    fn get(&self, id: &str) -> Option<mpsc::Sender<ClientAction>> {
+    fn get(&self, id: &str) -> Option<LiveGrpcCall> {
         self.0.lock().ok()?.get(id).cloned()
     }
 }
@@ -216,6 +231,10 @@ pub struct LoadGrpcSchemaInput {
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteGrpcRequestInput {
     pub execution_id: String,
+    #[serde(default)]
+    pub pre_request_script: String,
+    #[serde(default)]
+    pub post_response_script: String,
     #[serde(flatten)]
     pub connection: GrpcConnectionInput,
     pub service: String,
@@ -231,6 +250,11 @@ pub struct ExecuteGrpcRequestInput {
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteGrpcRequestOutput {
+    pub environment_changes: Vec<EnvironmentChangeOutput>,
+    pub scoped_changes: Vec<ScopedChangeOutput>,
+    pub script_logs: Vec<String>,
+    pub script_error: Option<ScriptErrorOutput>,
+    pub test_results: Vec<ScriptTestOutput>,
     pub status: GrpcStatus,
     pub duration_ms: u64,
     /// Received messages, in bytes on the wire.
@@ -245,6 +269,10 @@ pub struct ExecuteGrpcRequestOutput {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum GrpcCommandError {
+    Script {
+        phase: String,
+        message: String,
+    },
     InvalidRequest {
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,6 +287,15 @@ pub enum GrpcCommandError {
         message: String,
     },
     Cancelled,
+}
+
+impl From<ScriptErrorOutput> for GrpcCommandError {
+    fn from(error: ScriptErrorOutput) -> Self {
+        Self::Script {
+            phase: error.phase,
+            message: error.message,
+        }
+    }
 }
 
 impl From<GrpcError> for GrpcCommandError {
@@ -530,6 +567,76 @@ async fn schema_for(
     Ok(pool)
 }
 
+/// Collected execution for runners and flows. There is no interactive sender:
+/// client/bidirectional calls send their saved message and half-close.
+pub(crate) async fn execute_saved_request(
+    request: &Request,
+    root: &Path,
+    app: Option<&tauri::AppHandle>,
+) -> Result<Response, alcy_domain::ExecutionError> {
+    async fn execute(
+        request: &Request,
+        root: &Path,
+        app: Option<&tauri::AppHandle>,
+    ) -> Result<Response, GrpcCommandError> {
+        let target = GrpcTarget::parse(request.endpoint.url())?;
+        let metadata = metadata_of(request);
+        let fallback_cache = GrpcSchemaCache::default();
+        let cache_state = app.map(|app| app.state::<GrpcSchemaCache>());
+        let cache = cache_state.as_deref().unwrap_or(&fallback_cache);
+        let settings = match app {
+            Some(app) => {
+                connection_settings(
+                    &target,
+                    &app.state::<CustomCaCertificateStore>(),
+                    &app.state::<ProxyApplyState>(),
+                )
+                .await
+            }
+            None => ConnectionSettings::default(),
+        };
+        let channel = connect(&target, &settings).await?;
+        let pool = schema_for(
+            &request.grpc.schema_source,
+            &target,
+            root,
+            Some(&channel),
+            &settings,
+            &metadata,
+            cache,
+            false,
+        )
+        .await?;
+        let method = find_method(&pool, &request.grpc.service, &request.grpc.method)?;
+        let default_timeout = app
+            .and_then(|app| app.state::<GeneralSettingsStore>().load().ok())
+            .and_then(|settings| settings.request_timeout.duration());
+        let deadline = request
+            .grpc
+            .deadline_ms
+            .map(Duration::from_millis)
+            .or(default_timeout);
+        let mut call = start_call(channel, &method, &metadata, deadline)?;
+        call.send_json(&request.document.body).await?;
+        Ok(response_of(&call.run(|_| {}, None).await))
+    }
+    execute(request, root, app)
+        .await
+        .map_err(|error| match error {
+            GrpcCommandError::Connection { message } => {
+                alcy_domain::ExecutionError::network(message)
+            }
+            GrpcCommandError::Cancelled => alcy_domain::ExecutionError::Cancelled,
+            GrpcCommandError::InvalidRequest { message, .. }
+            | GrpcCommandError::Schema { message } => {
+                alcy_domain::ExecutionError::InvalidRequest(message)
+            }
+            GrpcCommandError::Script { phase, message } => {
+                alcy_domain::ExecutionError::Script(format!("{phase}: {message}"))
+            }
+        })
+}
+
 /// Runs `work` until it ends or the execution is cancelled.
 async fn cancellable<T>(
     registry: &ExecutionRegistry,
@@ -595,121 +702,182 @@ pub async fn execute_grpc_request(
     general_settings: State<'_, GeneralSettingsStore>,
     body_cache: State<'_, ResponseBodyCache>,
     history: State<'_, HistoryPreferencesState>,
-) -> Result<ExecuteGrpcRequestOutput, GrpcCommandError> {
-    let execution_id = input.execution_id.clone();
-    log::info!(
-        target: "alcy::request",
-        "grpc {execution_id}: chamando {}/{} em {}",
-        input.service,
-        input.method,
-        crate::logging::url_for_log(&input.connection.endpoint)
-    );
-    let root_path = input.connection.root_path.clone();
-    let history_source = (input.connection.request_id.clone(), input.tab_id.clone());
-    let source = schema_source(&input.connection.schema_source);
-    let call = GrpcCall {
-        service: input.service.clone(),
-        method: input.method.clone(),
-        schema_source: source.clone(),
-        deadline_ms: input.deadline_ms,
-    };
-    let resolved = resolve_connection(input.connection, call.clone(), &input.message).await?;
-    let request = resolved.request;
-    let history_request = history_request(&request, resolved.redacted.as_ref()).cloned();
-    let default_timeout = general_settings
-        .load()
-        .ok()
-        .and_then(|settings| settings.request_timeout.duration());
-    let send_event = |event: GrpcCallEventDto| {
-        let _ = on_event.send(event);
-    };
-
-    let outcome = cancellable(&registry, &execution_id, async {
-        let target = GrpcTarget::parse(request.endpoint.url())?;
-        let metadata = metadata_of(&request);
-        let settings = connection_settings(&target, &ca_store, &proxy).await;
-        let channel = connect(&target, &settings).await?;
-        let pool = schema_for(
-            &source,
-            &target,
-            Path::new(&root_path),
-            Some(&channel),
-            &settings,
-            &metadata,
-            &cache,
-            false,
+) -> Result<ExecuteGrpcRequestOutput, ExecutionFailure<GrpcCommandError>> {
+    let mut effects = ScriptEffects::default();
+    let result: Result<ExecuteGrpcRequestOutput, GrpcCommandError> = async {
+        let execution_id = input.execution_id.clone();
+        log::info!(
+            target: "alcy::request",
+            "grpc {execution_id}: chamando {}/{} em {}",
+            input.service,
+            input.method,
+            crate::logging::url_for_log(&input.connection.endpoint)
+        );
+        let root_path = input.connection.root_path.clone();
+        let history_source = (input.connection.request_id.clone(), input.tab_id.clone());
+        let mut connection = input.connection;
+        let mut scopes = scopes_from_dto(std::mem::take(&mut connection.variable_scopes))?;
+        let mut scripted = ScriptedRequest {
+            url: connection.endpoint.clone(),
+            method: "post".to_string(),
+            body: input.message,
+            headers: connection.headers.clone(),
+            grpc: Some(alcy_scripting::ScriptGrpcRequest {
+                service: input.service,
+                method: input.method,
+            }),
+        };
+        run_pre_request(
+            &input.pre_request_script,
+            &mut scripted,
+            &mut connection.environment_variables,
+            &mut scopes,
+            &mut effects,
         )
         .await?;
-        let method = find_method(&pool, &call.service, &call.method)?;
-        let kind = MethodKind::of(&method);
-        // The configured timeout fits a request and its reply; a stream may
-        // rightly stay open longer, so it only ends at an explicit deadline.
-        let deadline = call
-            .deadline_ms
-            .map(Duration::from_millis)
-            .or(default_timeout.filter(|_| kind == MethodKind::Unary));
-        let mut handle = start_call(channel, &method, &metadata, deadline)?;
-        handle.send_json(&request.document.body).await?;
-        let interactive = matches!(
-            kind,
-            MethodKind::ClientStreaming | MethodKind::BidiStreaming
-        );
-        let actions = interactive.then(|| {
-            let (sender, receiver) = mpsc::channel(8);
-            calls.insert(&execution_id, sender);
-            receiver
-        });
-        send_event(GrpcCallEventDto::Started { kind });
-        let outcome = handle
-            .run(|event| send_event(GrpcCallEventDto::from(event)), actions)
-            .await;
+        connection.endpoint = scripted.url.clone();
+        connection.headers = scripted.headers.clone();
+        let environment = connection.environment_variables.clone();
+        connection.environment_variables = with_scoped_variables(&environment, &scopes);
+        let source = schema_source(&connection.schema_source);
+        let grpc = scripted
+            .grpc
+            .as_ref()
+            .ok_or_else(|| invalid("missing gRPC call"))?;
+        let call = GrpcCall {
+            service: grpc.service.clone(),
+            method: grpc.method.clone(),
+            schema_source: source.clone(),
+            deadline_ms: input.deadline_ms,
+        };
+        let resolved = resolve_connection(connection, call.clone(), &scripted.body).await?;
+        let request = resolved.request;
+        let history_request = history_request(&request, resolved.redacted.as_ref()).cloned();
+        let default_timeout = general_settings
+            .load()
+            .ok()
+            .and_then(|settings| settings.request_timeout.duration());
+        let send_event = |event: GrpcCallEventDto| {
+            let _ = on_event.send(event);
+        };
+
+        let outcome = cancellable(&registry, &execution_id, async {
+            let target = GrpcTarget::parse(request.endpoint.url())?;
+            let metadata = metadata_of(&request);
+            let settings = connection_settings(&target, &ca_store, &proxy).await;
+            let channel = connect(&target, &settings).await?;
+            let pool = schema_for(
+                &source,
+                &target,
+                Path::new(&root_path),
+                Some(&channel),
+                &settings,
+                &metadata,
+                &cache,
+                false,
+            )
+            .await?;
+            let method = find_method(&pool, &call.service, &call.method)?;
+            let kind = MethodKind::of(&method);
+            // The configured timeout fits a request and its reply; a stream may
+            // rightly stay open longer, so it only ends at an explicit deadline.
+            let deadline = call
+                .deadline_ms
+                .map(Duration::from_millis)
+                .or(default_timeout.filter(|_| kind == MethodKind::Unary));
+            let mut handle = start_call(channel, &method, &metadata, deadline)?;
+            handle.send_json(&request.document.body).await?;
+            let interactive = matches!(
+                kind,
+                MethodKind::ClientStreaming | MethodKind::BidiStreaming
+            );
+            let actions = interactive.then(|| {
+                let (sender, receiver) = mpsc::channel(8);
+                calls.insert(
+                    &execution_id,
+                    sender,
+                    with_scoped_variables(&environment, &scopes),
+                );
+                receiver
+            });
+            send_event(GrpcCallEventDto::Started { kind });
+            let outcome = handle
+                .run(|event| send_event(GrpcCallEventDto::from(event)), actions)
+                .await;
+            calls.remove(&execution_id);
+            Ok(outcome)
+        })
+        .await;
         calls.remove(&execution_id);
-        Ok(outcome)
-    })
-    .await;
-    calls.remove(&execution_id);
 
-    let history_outcome = match &outcome {
-        Ok(outcome) => Some(HistoryOutcome::Success(response_of(outcome))),
-        Err(GrpcCommandError::Connection { message }) => Some(HistoryOutcome::Failed {
-            kind: HistoryFailureKind::Network,
-            message: message.clone(),
-        }),
-        Err(_) => None,
-    };
-    if let (Some(history_outcome), Some(history_request)) = (history_outcome, history_request) {
-        let preferences = history.get();
-        if !preferences.retention.is_disabled() {
-            drop(record_history(
-                &root_path,
-                execution_id.clone(),
-                &history_request,
-                history_outcome,
-                history_source,
-                preferences,
-            ));
+        let mut script_error = None;
+        let history_outcome = match &outcome {
+            Ok(outcome) => {
+                let response = response_of(outcome);
+                script_error = run_post_response(
+                    &input.post_response_script,
+                    &scripted,
+                    &response,
+                    &environment,
+                    &scopes,
+                    &mut effects,
+                )
+                .await
+                .err();
+                Some(HistoryOutcome::Success(response))
+            }
+            Err(GrpcCommandError::Connection { message }) => Some(HistoryOutcome::Failed {
+                kind: HistoryFailureKind::Network,
+                message: message.clone(),
+            }),
+            Err(_) => None,
+        };
+        if let (Some(history_outcome), Some(history_request)) = (history_outcome, history_request) {
+            let preferences = history.get();
+            if !preferences.retention.is_disabled() {
+                drop(record_history(
+                    &root_path,
+                    execution_id.clone(),
+                    &history_request,
+                    history_outcome,
+                    history_source,
+                    preferences,
+                ));
+            }
         }
-    }
 
-    let outcome = outcome.inspect_err(|error| {
-        log::warn!(target: "alcy::request", "grpc {execution_id}: falhou ({error:?})");
-    })?;
-    let summary = summarize(&outcome);
-    log::info!(
-        target: "alcy::request",
-        "grpc {execution_id}: {} em {} ms",
-        summary.status.code_name,
-        summary.duration_ms
-    );
-    Ok(ExecuteGrpcRequestOutput {
-        body: response_body_output(&execution_id, summary.body, summary.size_bytes, &body_cache),
-        status: summary.status,
-        duration_ms: summary.duration_ms,
-        size_bytes: summary.size_bytes,
-        message_count: summary.message_count,
-        headers: summary.headers,
-        trailers: summary.trailers,
-    })
+        let outcome = outcome.inspect_err(|error| {
+            log::warn!(target: "alcy::request", "grpc {execution_id}: falhou ({error:?})");
+        })?;
+        let summary = summarize(&outcome);
+        log::info!(
+            target: "alcy::request",
+            "grpc {execution_id}: {} em {} ms",
+            summary.status.code_name,
+            summary.duration_ms
+        );
+        Ok(ExecuteGrpcRequestOutput {
+            scoped_changes: effects.scoped_output(),
+            environment_changes: std::mem::take(&mut effects.environment_changes),
+            script_logs: std::mem::take(&mut effects.logs),
+            test_results: std::mem::take(&mut effects.tests),
+            script_error,
+            body: response_body_output(
+                &execution_id,
+                summary.body,
+                summary.size_bytes,
+                &body_cache,
+            ),
+            status: summary.status,
+            duration_ms: summary.duration_ms,
+            size_bytes: summary.size_bytes,
+            message_count: summary.message_count,
+            headers: summary.headers,
+            trailers: summary.trailers,
+        })
+    }
+    .await;
+    result.map_err(|error| ExecutionFailure::new(error, effects))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -736,15 +904,18 @@ fn resolve_stream_message(input: &SendGrpcMessageInput) -> Result<String, GrpcCo
 /// Sends one more message on a client-streaming call in progress.
 #[tauri::command]
 pub async fn send_grpc_message(
-    input: SendGrpcMessageInput,
+    mut input: SendGrpcMessageInput,
     calls: State<'_, GrpcCalls>,
 ) -> Result<(), GrpcCommandError> {
     let sender = calls
         .get(&input.execution_id)
         .ok_or_else(|| invalid("a chamada não aceita mais mensagens"))?;
+    input.environment_variables = sender.variables;
+    input.variable_scopes.clear();
     let message = resolve_stream_message(&input)?;
     let (reply, result) = oneshot::channel();
     sender
+        .sender
         .send(ClientAction::Send(message, reply))
         .await
         .map_err(|_| invalid("a chamada não aceita mais mensagens"))?;
@@ -762,7 +933,7 @@ pub async fn close_grpc_send(
     calls: State<'_, GrpcCalls>,
 ) -> Result<(), GrpcCommandError> {
     if let Some(sender) = calls.get(&execution_id) {
-        let _ = sender.send(ClientAction::Close).await;
+        let _ = sender.sender.send(ClientAction::Close).await;
     }
     Ok(())
 }
@@ -831,6 +1002,10 @@ fn response_of(outcome: &CallOutcome) -> Response {
         .headers
         .iter()
         .chain(summary.trailers.iter())
+        .filter(|entry| {
+            !entry.name.eq_ignore_ascii_case("grpc-status")
+                && !entry.name.eq_ignore_ascii_case("grpc-message")
+        })
         .map(|entry| ResponseHeader {
             name: entry.name.clone(),
             value: entry.value.clone(),
@@ -853,6 +1028,19 @@ fn response_of(outcome: &CallOutcome) -> Response {
         headers,
         ResponseMetadata::default(),
     );
+    response.grpc = Some(Box::new(alcy_domain::GrpcResponseStatus {
+        code: summary.status.code,
+        code_name: summary.status.code_name,
+        message: summary.status.message,
+        trailers: summary
+            .trailers
+            .into_iter()
+            .map(|entry| ResponseHeader {
+                name: entry.name,
+                value: entry.value,
+            })
+            .collect(),
+    }));
     response.size_bytes = summary.size_bytes;
     response
 }

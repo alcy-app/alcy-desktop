@@ -207,11 +207,27 @@ client and bidirectional streams accept additional messages and an explicit
 half-close through an execution-scoped action queue. The protocol crate
 consumes actions while draining response events, so transport backpressure
 cannot prevent deadline handling. Closing a tab cancels its active gRPC call.
-Only unary calls inherit the general request timeout; streams use an explicit
+Only unary editor calls inherit the general request timeout; streams use an explicit
 deadline when configured. The live UI retains up to 500 events and 1 MiB of
 JSON text, with virtual rows; the native call stops with `RESOURCE_EXHAUSTED`
 if its retained transcript exceeds 50 MiB or 10,000 events. Final response
 bodies still use the existing windowed body cache across IPC.
+
+The composition-root dispatcher also runs gRPC from collection runners and
+standard flows, using the app's schema cache, custom CAs, proxy and timeout.
+These calls collect responses and half-close after the saved request message;
+the editor remains the interactive sender. `Response` carries optional gRPC
+status and trailers in memory; existing history formats retain the wire status
+headers and JSON body, so their persisted contracts stay unchanged. Runners
+always fail non-OK protocol statuses, independently of their HTTP-error option.
+Flows take the failure branch while retaining the received response for
+inspection and references through `response.grpcStatus` and `response.messages`.
+
+Pre-request scripts can change `al.request.grpc.service`, `method`, `message`
+(JSON) and `metadata` (the request header API). Post-response scripts receive
+`al.response.grpc` with code, code name, status message, trailers and received
+JSON messages. Request edits remain read-only after sending. Interactive
+messages share the variable snapshot produced by the call's pre-request script.
 
 ### Scripting
 

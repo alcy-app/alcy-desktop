@@ -1,4 +1,4 @@
-//! Execução observável de planos de carga, independente de sua fonte.
+//! Observable load-plan execution independent of its source.
 
 use std::collections::BTreeMap;
 use std::future::pending;
@@ -29,18 +29,14 @@ use crate::{
     LoadScriptPlan, LoadStep, LoadThresholdResult, LoadTimerKind, LoadTimerPlan, LoadVuState,
 };
 
-/// Intervalo mínimo entre snapshots de um cenário. Evita transformar cada
-/// request em um evento de IPC quando o sink for conectado ao adapter Tauri.
+/// Minimum scenario snapshot interval; avoid per-request progress IPC.
 pub const LOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
-/// Granularidade do relógio real usada pelos executores fechados. O formato
-/// de agendamento permanece em `alcy-load`; este pulso só acorda o runtime
-/// para refletir um novo alvo de VUs sem criar IPC por request.
+/// Clock pulse for closed executors. Scheduling stays in alcy-load; update VU targets without per-request IPC.
 const CLOSED_SCHEDULER_TICK: Duration = Duration::from_millis(10);
 const MAX_EXTRACT_RESPONSE_BYTES: usize = 1024 * 1024;
 
-/// Snapshot agregado e limitado emitido periodicamente pelo executor. Nunca
-/// contém corpos de resposta nem um evento por request.
+/// Periodic bounded aggregate snapshot without bodies or per-request events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LoadRunProgress {
     pub active_vus: u32,
@@ -65,8 +61,7 @@ pub struct LoadRunSummary {
     pub checks_failed: u64,
 }
 
-/// Resultado completo para consumidores que precisam mostrar métricas e a
-/// decisão final, mantendo o resumo legado pequeno para o IPC existente.
+/// Complete metrics/report result keeping legacy IPC summaries small.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadRunReport {
     pub summary: LoadRunSummary,
@@ -75,9 +70,7 @@ pub struct LoadRunReport {
     pub passed: bool,
 }
 
-/// Uma amostra compacta de uma request concluída. Não contém headers, corpo,
-/// cookies ou erro de transporte; consumidores que a retêm devem aplicar seu
-/// próprio limite. Ela nunca é emitida pelo channel de progresso.
+/// Compact completed-request sample without headers/body/cookies/transport errors. Retaining consumers enforce limits; progress channels never carry samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadRequestSample {
     pub scenario_id: String,
@@ -114,18 +107,13 @@ pub enum LoadExecutionError {
     },
 }
 
-/// Adaptador de progresso para IPC, histórico ou testes. Implementações
-/// recebem snapshots; o runtime controla a frequência para proteger IPC.
+/// Progress port for IPC/history/tests. Runtime controls snapshot frequency.
 pub trait LoadRunSink: Sync {
     fn progress(&self, snapshot: LoadRunProgress);
     fn scenario_finished(&self, scenario_id: &str, summary: LoadRunSummary);
-    /// Recebe uma request concluída no mesmo processo do runner. O adapter
-    /// Tauri não a encaminha por IPC; ele só preserva uma amostra limitada
-    /// para histórico e paginação posterior.
+    /// Receive completed requests in-process; Tauri retains bounded history samples and pages them instead of per-request IPC.
     fn request_finished(&self, _sample: LoadRequestSample) {}
-    /// Snapshot agregado de métricas, emitido ao concluir a execução. O
-    /// adapter pode persistir ou encaminhar esse dado sem receber eventos por
-    /// request; implementações existentes podem ignorá-lo.
+    /// Final aggregate metrics for persistence/IPC; existing consumers may ignore them.
     fn metrics(&self, _metrics: &[LoadMetricSnapshot]) {}
 }
 
@@ -296,10 +284,7 @@ impl LoadRunAccumulator {
     }
 }
 
-/// Executa um plano de carga canônico sem depender de Tauri, armazenamento ou
-/// `Flow`. Cada cenário mantém workers concorrentes, e todos os cenários são
-/// iniciados simultaneamente. Este é o ponto de entrada para futuros binários
-/// Rust que exponham o runner fora do desktop.
+/// Run canonical load plans without Tauri/storage/Flow. Scenarios start together with concurrent workers; also usable outside desktop.
 pub async fn execute_load_plan<E, S, C>(
     plan: &LoadPlan,
     executor: &E,
@@ -316,8 +301,7 @@ where
         .summary)
 }
 
-/// Executa um plano e preserva o relatório agregado para CLI, histórico ou
-/// UI. Nenhuma amostra de resposta cruza esta fronteira.
+/// Retain aggregate reports for CLI/history/UI. No response samples cross this boundary.
 pub async fn execute_load_plan_report<E, S, C>(
     plan: &LoadPlan,
     executor: &E,
@@ -339,8 +323,7 @@ where
     .await
 }
 
-/// Mesma execução, com orçamentos explícitos do consumidor. Um limite não
-/// altera o plano: a validação falha antes de qualquer request ou alocação de VU.
+/// Explicit consumer budgets reject invalid plans before requests or VU allocation instead of silently reducing load.
 pub async fn execute_load_plan_report_with_limits<E, S, C>(
     plan: &LoadPlan,
     executor: &E,
@@ -530,9 +513,7 @@ fn executor_name(executor: &LoadExecutor) -> &'static str {
     }
 }
 
-/// `al.iteration.count` só é conhecido por VU no executor per-VU. Os demais
-/// podem distribuir ou manter iterações indefinidamente; neles zero sinaliza
-/// contagem não delimitada, sem inventar um valor para o script.
+/// Iteration count is known only per-VU. Zero denotes unbounded execution for other executors rather than an invented count.
 fn script_iteration_count(executor: &LoadExecutor) -> u32 {
     match executor {
         LoadExecutor::PerVuIterations {
@@ -968,8 +949,7 @@ where
     ))
 }
 
-/// Requests são contabilizadas ao concluir, inclusive quando a iteração é
-/// interrompida durante um efeito posterior. Nenhuma lista por iteração é retida.
+/// Count requests at completion, including iterations interrupted during later effects. Retain no per-iteration list.
 struct LoadRequestAccounting {
     counters: Mutex<LoadRunAccumulator>,
     metrics: Metrics,
@@ -1018,10 +998,7 @@ impl LoadRequestAccounting {
     }
 }
 
-/// Limita os interpretadores Boa em uma execução, em vez de delegar toda a
-/// contenção ao pool bloqueante global do Tokio. A espera cede o runtime e
-/// observa cancelamento; um interpretador que já começou termina sob os
-/// limites do Boa antes de liberar a permissão.
+/// Limit Boa concurrency per run. Waiting yields and observes cancellation; active interpreters finish under Boa limits before releasing permits.
 #[derive(Debug)]
 struct ScriptWorkerGate {
     available: AtomicUsize,
@@ -1208,7 +1185,7 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
     ) -> futures_util::future::BoxFuture<'a, Result<(), LoadExecutionError>> {
         async move {
             for step in body {
-                // Corpos sem I/O também cedem o runtime para cancelamento/deadlines.
+                // Bodies without I/O also yield for cancellation/deadlines.
                 yield_execution().await;
                 self.guard_cancellation().await;
                 match step {
@@ -1522,6 +1499,7 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
                 let status = exchange.response.status_code;
                 lock_vu_state(&self.state).remember_cookies(&requested_url, &exchange.response);
                 let script_response = ScriptResponse {
+                    grpc: None,
                     status,
                     status_text: String::new(),
                     time_ms: exchange.response.duration_ms,
@@ -1658,6 +1636,7 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
             })
             .collect();
         let request = ScriptRequest {
+            grpc: None,
             url: String::new(),
             method: "GET".into(),
             body: String::new(),
@@ -1748,16 +1727,14 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
 
     async fn guard_cancellation(&self) {
         if self.cancellation.is_cancelled() {
-            // O coordenador observa o sinal e descarta esta iteração: não
-            // marque como completa nem inicie efeitos após o cancelamento.
+            // Coordinator drops cancelled iterations: neither mark complete nor start later effects.
             pending::<()>().await;
         }
     }
 }
 
 fn unit_interval(value: u64) -> f64 {
-    // Os 53 bits altos são exatamente representáveis em f64. O resultado está
-    // em [0, 1), adequado para as distribuições sem produzir o limite superior.
+    // Upper 53 bits are exactly representable in f64, yielding [0, 1) without reaching its upper bound.
     (value >> 11) as f64 / (1_u64 << 53) as f64
 }
 
@@ -1784,7 +1761,7 @@ fn sample_timer_duration(
                 (mean.as_secs_f64() + z * standard_deviation.as_secs_f64()).max(0.0),
             )
         }
-        // Uma chegada de processo de Poisson é exponencialmente distribuída.
+        // Poisson arrival intervals are exponentially distributed.
         LoadTimerKind::Poisson { mean } => {
             Duration::from_secs_f64((-random().max(f64::MIN_POSITIVE).ln()) * mean.as_secs_f64())
         }

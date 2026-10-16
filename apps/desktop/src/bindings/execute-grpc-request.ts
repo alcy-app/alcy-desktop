@@ -1,4 +1,4 @@
-import type { VariableScopeInput } from './execute-graphql-request'
+import { splitExecutionFailure, type ScriptEffectsOnFailure, type ScriptErrorOutput, type ScriptTestResult, type VariableScopeInput, type EnvironmentChange, type ScopedVariableChange } from './execute-graphql-request'
 import type { EnvironmentVariableDto } from './list-environments'
 import { Channel } from '@tauri-apps/api/core'
 import type { ResponseBodyOutput } from './execute-graphql-request'
@@ -19,6 +19,8 @@ export interface GrpcMetadataEntry {
 
 export interface ExecuteGrpcRequestInput extends GrpcConnectionInput {
   executionId: string
+  preRequestScript: string
+  postResponseScript: string
   service: string
   method: string
   deadlineMs: number | null
@@ -28,6 +30,11 @@ export interface ExecuteGrpcRequestInput extends GrpcConnectionInput {
 }
 
 export interface ExecuteGrpcRequestOutput {
+  environmentChanges?: EnvironmentChange[]
+  scopedChanges?: ScopedVariableChange[]
+  scriptLogs?: string[]
+  scriptError?: ScriptErrorOutput | null
+  testResults?: ScriptTestResult[]
   /** Tells a gRPC result apart from the HTTP ones in a union. */
   status: GrpcStatusOutput
   durationMs: number
@@ -51,13 +58,18 @@ export type GrpcCallEventDto =
 /** Calls a gRPC method, reporting each event to `onEvent` as it happens; the
  * promise resolves when the call ends. Cancellable with
  * `cancel_graphql_request` and the same `executionId`. */
-export function executeGrpcRequest(
+export type ExecuteGrpcRequestResult =
+  | { ok: true; value: ExecuteGrpcRequestOutput }
+  | ({ ok: false; error: GrpcCommandError } & ScriptEffectsOnFailure)
+
+export async function executeGrpcRequest(
   input: ExecuteGrpcRequestInput,
   onEvent: (event: GrpcCallEventDto) => void = () => {},
-): Promise<CommandResult<ExecuteGrpcRequestOutput, GrpcCommandError>> {
+): Promise<ExecuteGrpcRequestResult> {
   const channel = new Channel<GrpcCallEventDto>()
   channel.onmessage = onEvent
-  return invokeResult('execute_grpc_request', { input, onEvent: channel })
+  const result = await invokeResult<ExecuteGrpcRequestOutput, unknown>('execute_grpc_request', { input, onEvent: channel })
+  return result.ok ? result : { ok: false, ...splitExecutionFailure<GrpcCommandError>(result.error) }
 }
 
 /** Sends one more message on a client-streaming call in progress. */

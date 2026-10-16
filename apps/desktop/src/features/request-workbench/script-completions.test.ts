@@ -42,8 +42,15 @@ describe('completionSource', () => {
   })
 
   it('oferece os métodos de al.response apenas no pós-resposta', () => {
-    expect(labels(complete('al.response.', 'post'))).toEqual(['status', 'time', 'statusText', 'size', 'url', 'body', 'headers', 'text', 'json'])
+    expect(labels(complete('al.response.', 'post'))).toEqual(['grpc', 'status', 'time', 'statusText', 'size', 'url', 'body', 'headers', 'text', 'json'])
     expect(complete('al.response.', 'pre')).toBeNull()
+  })
+
+  it('completes gRPC message, metadata and status fields', () => {
+    expect(labels(complete('al.request.grpc.', 'pre'))).toEqual(['service', 'method', 'message', 'metadata'])
+    expect(labels(complete('al.request.grpc.metadata.', 'pre'))).toContain('set')
+    expect(labels(complete('al.response.grpc.', 'post'))).toEqual(['code', 'codeName', 'message', 'trailers', 'messages'])
+    expect(complete('al.response.grpc.', 'pre')).toBeNull()
   })
 
   it('não sugere nada para um caminho desconhecido', () => {

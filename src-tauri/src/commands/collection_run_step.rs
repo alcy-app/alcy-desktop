@@ -1,7 +1,4 @@
-//! Passo do runner de coleções (spec 0073): implementa a porta
-//! `CollectionRunStep` com a mesma ordem da execução avulsa — pré-script
-//! sobre o template, resolução de `{{var}}` com o ambiente já alterado pelo
-//! script, cookies do run, envio e pós-script.
+//! Match interactive ordering: pre-script on templates, resolution with updated variables, run cookies, transport and post-script (spec 0073).
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -25,9 +22,9 @@ use crate::commands::scripting::{
 
 pub(crate) struct CollectionRunStepExecutor<'a> {
     pub(crate) inner: ProtocolDispatchingExecutor<'a>,
-    /// `Some` quando o run compartilha cookies entre requisições.
+    /// Some when cookies are shared between run requests.
     pub(crate) cookies: Option<CookieJar>,
-    /// Valores efêmeros compartilhados somente durante este runner.
+    /// Ephemeral values shared only within this runner.
     pub(crate) runtime_variables: Mutex<Vec<ScriptVariable>>,
 }
 
@@ -107,8 +104,7 @@ impl CollectionRunStep for CollectionRunStepExecutor<'_> {
                 return failed(scripted.method, String::new(), error, effects);
             }
         };
-        // Dados da iteração vencem as variáveis locais, exceto os nomes que o
-        // próprio pré-script acabou de gravar no ambiente.
+        // Iteration data overrides locals except names just written to environment by the current pre-script.
         let data: Vec<(String, String)> = iteration
             .data
             .iter()
@@ -141,7 +137,9 @@ impl CollectionRunStep for CollectionRunStepExecutor<'_> {
             }
         };
 
-        if let Some(jar) = &self.cookies {
+        if request.document.protocol != alcy_domain::ProtocolId::Grpc
+            && let Some(jar) = &self.cookies
+        {
             jar.apply_to(&mut resolved);
         }
 
@@ -152,7 +150,9 @@ impl CollectionRunStep for CollectionRunStepExecutor<'_> {
                 return failed(scripted.method, resolved_url, error, effects);
             }
         };
-        if let Some(jar) = &self.cookies {
+        if request.document.protocol != alcy_domain::ProtocolId::Grpc
+            && let Some(jar) = &self.cookies
+        {
             jar.remember(resolved.endpoint.url(), &response);
         }
 
@@ -231,8 +231,7 @@ fn split_effects(effects: ScriptEffects) -> SplitEffects {
     )
 }
 
-/// Variáveis de ambiente de domínio; nomes inválidos gravados por script
-/// ficam de fora (não teriam como ser usados em `{{var}}`).
+/// Convert environment values to domain variables; exclude invalid names that cannot be referenced in templates.
 fn domain_variables(environment: &[EnvironmentVariableDto]) -> Vec<EnvironmentVariable> {
     environment
         .iter()

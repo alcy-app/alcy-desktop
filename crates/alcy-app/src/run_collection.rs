@@ -1,9 +1,4 @@
-//! Runner de coleções (spec 0073): roda um plano ordenado de requisições
-//! salvas, por N iterações, com delay e parada no primeiro erro.
-//!
-//! O use case orquestra (ordem, iterações, ambiente acumulado, classificação
-//! e parada); o que acontece dentro de um passo — scripts, resolução de
-//! `{{var}}`, cookies e HTTP — fica atrás da porta `CollectionRunStep`.
+//! Ordered collection execution over iterations with delay and optional stop-on-failure. Step adapters own scripts, templates, cookies and transport (spec 0073).
 
 use std::future::Future;
 use std::time::Duration;
@@ -18,41 +13,35 @@ use alcy_domain::{
 use crate::FlowCancellation;
 use crate::iteration_data::IterationData;
 
-/// Iteração em que um passo roda.
+/// Iteration in which a step executes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunIteration {
     /// A partir de 0.
     pub index: u32,
     pub count: u32,
-    /// Linha do arquivo de dados desta iteração (vazia sem arquivo).
+    /// Current data-file row; empty without a file.
     pub data: Vec<(String, String)>,
 }
 
 /// O que um passo produziu, do ponto de vista do adaptador que o executou.
 #[derive(Debug)]
 pub struct StepResult {
-    /// Método efetivamente enviado (o pré-script pode trocá-lo).
+    /// Actual sent method after pre-request edits.
     pub method: String,
-    /// URL enviada, com variáveis resolvidas (vazia quando nem chegou a
-    /// ser resolvida).
+    /// Resolved sent URL; empty if resolution never completed.
     pub resolved_url: String,
     pub response: Result<Response, ExecutionError>,
-    /// Variáveis gravadas pelos scripts, na ordem em que foram gravadas.
+    /// Environment writes in script execution order.
     pub environment_changes: Vec<(String, Option<String>)>,
-    /// Variáveis de coleção/pasta gravadas pelos scripts (ADR 0031).
+    /// Collection/folder variable writes (ADR 0031).
     pub scoped_changes: Vec<ScopedVariableChange>,
     pub logs: Vec<String>,
     pub tests: Vec<RunTestResult>,
-    /// Falha do pós-script (a resposta continua válida).
+    /// Post-response script failure; retain the response.
     pub post_script_error: Option<String>,
 }
 
-/// Porta de execução de um passo: recebe a requisição salva (com a
-/// autenticação herdada já aplicada, `{{var}}` ainda sem resolver), o
-/// ambiente vigente (acumulado, sobreposto pelos dados da iteração) e as
-/// camadas de variáveis da coleção/pastas da requisição, já com o que os
-/// passos anteriores gravaram. A resolução de `{{var}}` usa
-/// `step_variables`.
+/// Step port receiving a request with inherited authentication resolved but templates intact, accumulated environment, and scopes including prior writes. Resolve through step_variables.
 pub trait CollectionRunStep: Sync {
     fn run(
         &self,
@@ -63,8 +52,7 @@ pub trait CollectionRunStep: Sync {
     ) -> impl Future<Output = StepResult> + Send;
 }
 
-/// Variáveis para resolver `{{var}}` num passo: ambiente < coleção < pastas
-/// < dados da iteração (`data`).
+/// Precedence: environment < collection < folders < iteration data.
 pub fn step_variables(
     environment: &[EnvironmentVariable],
     scopes: &[VariableScope],
@@ -73,7 +61,7 @@ pub fn step_variables(
     with_iteration_data(&merge_variables(environment, scopes), data)
 }
 
-/// Relatório de uma requisição terminada.
+/// Report of a finished request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunStepReport {
     pub iteration: u32,
@@ -97,7 +85,7 @@ pub trait CollectionRunSink: Sync {
     fn run_started(&self, iterations: u32, requests_per_iteration: usize);
     fn iteration_started(&self, iteration: u32);
     fn request_started(&self, iteration: u32, position: usize, request_id: &str);
-    /// `response` vem junto quando houve resposta, para quem guarda a saída.
+    /// Include received responses for consumers retaining outputs.
     fn request_finished(&self, report: &RunStepReport, response: Option<&Response>);
 }
 
@@ -105,14 +93,13 @@ pub trait CollectionRunSink: Sync {
 pub struct CollectionRunSummary {
     pub cancelled: bool,
     pub stopped_on_error: bool,
-    /// Valor final de cada variável gravada pelos scripts durante o run.
+    /// Final environment values written during the run.
     pub environment_changes: Vec<(String, Option<String>)>,
-    /// Valor final de cada variável de coleção/pasta gravada pelos scripts.
+    /// Final collection/folder values written during the run.
     pub scoped_changes: Vec<ScopedVariableChange>,
 }
 
-/// O que um run executa: requisições salvas na ordem de execução, as
-/// coleções onde estão, a configuração, o ambiente inicial e os dados.
+/// Ordered request IDs, collections, options, initial environment and data.
 #[derive(Debug, Clone, Copy)]
 pub struct CollectionRunPlan<'a> {
     pub request_ids: &'a [String],
@@ -122,12 +109,7 @@ pub struct CollectionRunPlan<'a> {
     pub data: &'a IterationData,
 }
 
-/// Executa o plano.
-///
-/// Com arquivo de dados, o número de iterações é o número de linhas.
-/// Mudanças de ambiente feitas por um passo valem para a resolução de
-/// `{{var}}` dos passos seguintes, inclusive nas iterações seguintes; os
-/// dados da iteração têm precedência sobre o ambiente.
+/// Execute the plan. Data rows determine iteration count. Script writes feed subsequent steps/iterations; iteration data overrides environment.
 pub async fn run_collection<S, K, C>(
     plan: &CollectionRunPlan<'_>,
     step: &S,
@@ -236,10 +218,10 @@ struct StepEffects {
     scoped_changes: Vec<ScopedVariableChange>,
 }
 
-/// Estado acumulado das variáveis no momento de um passo.
+/// Accumulated variable state at the current step.
 struct RunVariables<'v> {
     environment: &'v [EnvironmentVariable],
-    /// Gravações de script em variáveis de coleção/pasta até aqui.
+    /// Collection/folder writes accumulated so far.
     scoped_changes: &'v [ScopedVariableChange],
 }
 
@@ -339,12 +321,17 @@ where
     report.size_bytes = Some(response.size_bytes);
     let failed_test = report.tests.iter().any(|test| !test.passed);
     let http_error = plan.options.http_errors_fail && response.status_code >= 400;
-    report.outcome = if result.post_script_error.is_some() || failed_test || http_error {
+    let protocol_error = response.protocol_failure();
+    report.outcome = if result.post_script_error.is_some()
+        || failed_test
+        || http_error
+        || protocol_error.is_some()
+    {
         RunStepOutcome::Failed
     } else {
         RunStepOutcome::Passed
     };
-    report.error_message = result.post_script_error;
+    report.error_message = result.post_script_error.or(protocol_error);
 
     (
         report,
@@ -356,8 +343,7 @@ where
     )
 }
 
-/// Ambiente sobreposto pelos dados da iteração: uma coluna com o mesmo nome
-/// de uma variável substitui o valor dela (mantendo `sensitive`).
+/// Overlay iteration data while preserving existing sensitive flags.
 fn with_iteration_data(
     environment: &[EnvironmentVariable],
     data: &[(String, String)],
@@ -378,7 +364,7 @@ fn apply_change(variables: &mut Vec<EnvironmentVariable>, name: &str, value: Opt
         .iter()
         .find(|variable| variable.name() == name)
         .is_some_and(|variable| variable.sensitive);
-    // Nomes inválidos (vazios, com chaves) não entram no ambiente.
+    // Empty names or names containing braces cannot enter the environment.
     let Ok(updated) = EnvironmentVariable::new(name, value, sensitive) else {
         return;
     };
@@ -695,8 +681,7 @@ mod tests {
         );
     }
 
-    /// Pasta `f` (id=folder) com `first` e `second` numa coleção `c`
-    /// (id=collection).
+    /// Folder f (ID folder) contains first/second inside collection c (ID collection).
     fn scoped_collections() -> Vec<Collection> {
         let folder = Folder::new(
             "f",

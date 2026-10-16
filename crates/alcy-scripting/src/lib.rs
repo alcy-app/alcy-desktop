@@ -1,8 +1,4 @@
-//! Execução de scripts de pré-requisição e pós-resposta (spec 0054, ADR 0018).
-//!
-//! O script enxerga um objeto global `al`. Toda a comunicação com o host é
-//! feita por valores simples: entra um `ScriptInput`, sai um `ScriptOutput`
-//! com o que o script alterou.
+//! Pre-request/post-response scripting using global al and plain host input/output values (spec 0054, ADR 0018).
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -49,7 +45,22 @@ pub struct ScriptHeader {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptGrpcRequest {
+    pub service: String,
+    pub method: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptGrpcResponse {
+    pub code: i32,
+    pub code_name: String,
+    pub message: String,
+    pub trailers: Vec<ScriptHeader>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptRequest {
+    pub grpc: Option<ScriptGrpcRequest>,
     pub url: String,
     pub method: String,
     pub body: String,
@@ -58,13 +69,14 @@ pub struct ScriptRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptResponse {
+    pub grpc: Option<ScriptGrpcResponse>,
     pub status: u16,
     pub status_text: String,
     pub time_ms: u64,
     pub size_bytes: usize,
     pub url: String,
     pub headers: Vec<ScriptHeader>,
-    /// Corpo em texto; `None` quando a resposta é binária.
+    /// Text body; None for binary responses.
     pub body: Option<String>,
 }
 
@@ -74,13 +86,12 @@ pub struct ScriptVariable {
     pub value: String,
 }
 
-/// Iteração atual quando o script roda dentro do runner de coleções
-/// (spec 0073). Fora do runner o script enxerga a iteração 0 de 1, sem dados.
+/// Runner iteration (spec 0073). Outside runner: index zero, count one, no data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptIteration {
     pub index: u32,
     pub count: u32,
-    /// Valores da linha do arquivo de dados desta iteração.
+    /// Values from this iteration data-file row.
     pub data: Vec<ScriptVariable>,
 }
 
@@ -100,15 +111,13 @@ pub struct ScriptInput {
     pub response: Option<ScriptResponse>,
     /// Ambiente ativo (escopo global), exposto como `al.environment`.
     pub environment: Vec<ScriptVariable>,
-    /// Variáveis da coleção da requisição (`al.collection`); `None` quando a
-    /// requisição não está salva numa coleção.
+    /// Request collection variables; None without a containing saved collection.
     pub collection: Option<Vec<ScriptVariable>>,
-    /// Variáveis da pasta pai direta (`al.folder`); `None` quando a
-    /// requisição não está numa pasta.
+    /// Direct parent folder variables; None outside a folder.
     pub folder: Option<Vec<ScriptVariable>>,
-    /// Variáveis locais à requisição (sobrevivem do pré ao pós).
+    /// Request-local variables preserved between phases.
     pub local: Vec<ScriptVariable>,
-    /// Variáveis compartilhadas pelo runner/flow atual, sem persistência.
+    /// Ephemeral variables shared by the current runner/flow.
     pub runtime: Vec<ScriptVariable>,
     pub iteration: ScriptIteration,
     /// npm packages the host downloaded for this script's `require('npm:…')`
@@ -116,7 +125,7 @@ pub struct ScriptInput {
     pub packages: Arc<ScriptPackages>,
 }
 
-/// Resultado de um `al.test(name, fn)`: passou quando `fn` não lançou.
+/// Named script tests pass when callbacks do not throw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptTestResult {
     pub name: String,
@@ -127,19 +136,19 @@ pub struct ScriptTestResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptOutput {
-    /// Requisição depois do script (igual à de entrada no pós-script).
+    /// Request after execution; unchanged by post-response scripts.
     pub request: ScriptRequest,
     /// Ambiente completo depois do script.
     pub environment: Vec<ScriptVariable>,
-    /// Nomes de variáveis gravadas por `al.environment.set`, em ordem.
+    /// Names written by al.environment.set, in order.
     pub changed_variables: Vec<String>,
     pub removed_variables: Vec<String>,
-    /// Variáveis da coleção depois do script (`None` se não havia coleção).
+    /// Collection values after execution; None without a collection.
     pub collection: Option<Vec<ScriptVariable>>,
     /// Nomes gravados por `al.collection.set`, em ordem.
     pub changed_collection: Vec<String>,
     pub removed_collection: Vec<String>,
-    /// Variáveis da pasta depois do script (`None` se não havia pasta).
+    /// Folder values after execution; None without a folder.
     pub folder: Option<Vec<ScriptVariable>>,
     /// Nomes gravados por `al.folder.set`, em ordem.
     pub changed_folder: Vec<String>,
@@ -199,8 +208,7 @@ var require = (function () {
 })();
 "#;
 
-/// Prelúdio que monta o `al` sobre um único objeto `__host` (JSON) injetado
-/// pelo host. Só lógica JS pura: nada de I/O.
+/// Pure JavaScript prelude constructing al over injected JSON host values; no I/O.
 const PRELUDE: &str = r#"
 var al = (function (host) {
   var logs = [];
@@ -260,6 +268,17 @@ var al = (function (host) {
     json: function () { return JSON.parse(request.body); },
     setJson: function (v) { requestApi.body = JSON.stringify(v); }
   };
+  if (request.grpc) {
+    requestApi.grpc = {
+      get service() { return request.grpc.service; },
+      set service(v) { guard(); request.grpc.service = String(v); },
+      get method() { return request.grpc.method; },
+      set method(v) { guard(); request.grpc.method = String(v); },
+      get message() { return JSON.parse(request.body); },
+      set message(v) { guard(); request.body = JSON.stringify(v); },
+      metadata: requestApi.headers
+    };
+  }
   var responseApi;
   if (host.response) {
     var res = host.response;
@@ -285,13 +304,12 @@ var al = (function (host) {
         if (res.body === null) throw new Error('a resposta é binária e não pode ser lida como texto');
         return res.body;
       },
-      // Uma interpretação nova a cada chamada: scripts (inclusive os
-      // importados de outras ferramentas) contam com um objeto próprio, que
-      // podem alterar (ex.: `sort()`) sem afetar a próxima chamada.
+      // Parse anew on each call so scripts can mutate their copy without affecting later json() results.
       json: function () { return JSON.parse(this.text()); }
     };
   }
-  // `vars` nulo = escopo ausente: `get` devolve undefined e `set` lança.
+  if (responseApi && host.response.grpc) responseApi.grpc = host.response.grpc;
+  // Null vars means missing scope: get returns undefined, set throws.
   var makeScope = function (vars, changedNames, missing) {
     return {
       get: function (name) {
@@ -604,10 +622,7 @@ fn execute(
         .runtime_limits_mut()
         .set_stack_size_limit(STACK_SIZE_LIMIT);
 
-    // Os corpos entram no contexto no mínimo com o próprio tamanho (o JSON
-    // só acrescenta escapes): passando do limite, falha antes de montar o
-    // contexto, que chegava a ocupar algumas vezes o tamanho do corpo só para
-    // ser recusado logo depois.
+    // Body bytes bound context JSON from below. Reject oversized bodies before constructing a context that multiplies memory use only to reject it afterward.
     let raw_bodies_len = input.request.body.len()
         + input
             .response
@@ -641,8 +656,7 @@ fn execute(
         .eval(Source::from_bytes(PRELUDE))
         .map_err(|error| fail(describe(&error, &mut context), None))?;
 
-    // O script do usuário roda em uma avaliação própria, separada do
-    // prelúdio, para que mensagens de erro se refiram só ao código dele.
+    // Evaluate user source separately from prelude so errors refer to user code.
     context.eval(Source::from_bytes(source)).map_err(|error| {
         let message = describe(&error, &mut context);
         fail(message, None)
@@ -706,6 +720,15 @@ fn host_json(phase: ScriptPhase, input: &ScriptInput) -> String {
             "url": r.url,
             "headers": headers(&r.headers),
             "body": r.body,
+            "grpc": r.grpc.as_ref().map(|grpc| {
+                let messages = match r.body.as_deref().and_then(|body| serde_json::from_str::<Value>(body).ok()) {
+                    Some(Value::Array(messages)) => messages,
+                    Some(message) => vec![message],
+                    None => vec![],
+                };
+                json!({ "code": grpc.code, "codeName": grpc.code_name,
+                    "message": grpc.message, "trailers": headers(&grpc.trailers), "messages": messages })
+            }),
         })
     });
     let mut iteration_data = Map::new();
@@ -715,6 +738,7 @@ fn host_json(phase: ScriptPhase, input: &ScriptInput) -> String {
     json!({
         "phase": phase.as_str(),
         "request": {
+            "grpc": input.request.grpc.as_ref().map(|grpc| json!({ "service": grpc.service, "method": grpc.method })),
             "url": input.request.url,
             "method": input.request.method,
             "body": input.request.body,
@@ -797,6 +821,13 @@ fn parse_state(json: &str) -> Option<ScriptOutput> {
         .collect::<Option<Vec<_>>>()?;
     Some(ScriptOutput {
         request: ScriptRequest {
+            grpc: match request.get("grpc")? {
+                serde_json::Value::Null => None,
+                grpc => Some(ScriptGrpcRequest {
+                    service: grpc.get("service")?.as_str()?.to_string(),
+                    method: grpc.get("method")?.as_str()?.to_string(),
+                }),
+            },
             url: request.get("url")?.as_str()?.to_string(),
             method: request.get("method")?.as_str()?.to_string(),
             body: request.get("body")?.as_str()?.to_string(),
@@ -842,6 +873,7 @@ mod tests {
     fn input() -> ScriptInput {
         ScriptInput {
             request: ScriptRequest {
+                grpc: None,
                 url: "https://api.example.com/users".to_string(),
                 method: "get".to_string(),
                 body: String::new(),
@@ -930,6 +962,7 @@ mod tests {
     fn with_response(body: Option<&str>) -> ScriptInput {
         let mut input = input();
         input.response = Some(ScriptResponse {
+            grpc: None,
             status: 201,
             status_text: "Created".to_string(),
             time_ms: 42,
@@ -942,6 +975,54 @@ mod tests {
             body: body.map(str::to_string),
         });
         input
+    }
+
+    #[test]
+    fn grpc_request_aliases_share_body_and_metadata_and_guard_post_response_edits() {
+        let mut input = with_response(Some(r#"[{"message":"one"},{"message":"two"}]"#));
+        input.request.grpc = Some(ScriptGrpcRequest {
+            service: "test.Greeter".to_string(),
+            method: "SayHello".to_string(),
+        });
+        input.response.as_mut().unwrap().grpc = Some(ScriptGrpcResponse {
+            code: 5,
+            code_name: "NOT_FOUND".to_string(),
+            message: "missing".to_string(),
+            trailers: vec![ScriptHeader {
+                name: "x-final".to_string(),
+                value: "yes".to_string(),
+            }],
+        });
+        let output = run_script(ScriptPhase::PreRequest,
+            "al.request.grpc.method = 'LotsOfReplies'; al.request.grpc.message = {name:'Ana'}; al.request.grpc.metadata.set('x-rpc', 'yes'); al.expect(al.request.json().name).toBe('Ana');", &input).unwrap();
+        assert_eq!(output.request.grpc.unwrap().method, "LotsOfReplies");
+        assert_eq!(output.request.body, r#"{"name":"Ana"}"#);
+        assert!(
+            output
+                .request
+                .headers
+                .iter()
+                .any(|header| header.name == "x-rpc" && header.value == "yes")
+        );
+        let output = run_script(ScriptPhase::PostResponse,
+            "al.expect(al.response.grpc.code).toBe(5); al.environment.set('last', al.response.grpc.messages[1].message); al.expect(al.response.grpc.trailers[0].value).toBe('yes');", &input).unwrap();
+        assert!(output.environment.contains(&ScriptVariable {
+            name: "last".to_string(),
+            value: "two".to_string()
+        }));
+        for source in [
+            "al.request.grpc.service = 'changed'",
+            "al.request.grpc.method = 'changed'",
+            "al.request.grpc.message = {}",
+            "al.request.grpc.metadata.set('x', 'y')",
+        ] {
+            assert!(
+                run_script(ScriptPhase::PostResponse, source, &input)
+                    .unwrap_err()
+                    .message
+                    .contains("somente leitura")
+            );
+        }
     }
 
     #[test]

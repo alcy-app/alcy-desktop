@@ -14,6 +14,12 @@ const output = (overrides: Partial<FlowNodeOutputDto> = {}): FlowNodeOutputDto =
 })
 
 describe('outputRoots', () => {
+  it('exposes gRPC status and message references from live and restored outputs', () => {
+    const roots = outputRoots(output({ body: '{"message":"hello"}', headers: [{ name: 'grpc-status', value: '5' }, { name: 'grpc-message', value: 'missing' }] }))
+    expect(roots.find((root) => root.key === 'grpcStatus')).toEqual({ key: 'grpcStatus', path: 'grpcStatus', value: { code: 5, codeName: 'NOT_FOUND', message: 'missing' } })
+    expect(roots.find((root) => root.key === 'messages')).toEqual({ key: 'messages', path: 'messages', value: [{ message: 'hello' }] })
+  })
+
   it('exposes status, headers and the parsed body', () => {
     const roots = outputRoots(output())
     expect(roots.map((root) => root.key)).toEqual(['status', 'headers', 'body'])

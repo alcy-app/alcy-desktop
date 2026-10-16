@@ -34,7 +34,7 @@ use crate::mock_runtime::{FlowMockControl, MockServerRuntime};
 pub struct ExecuteFlowInput {
     pub flow_execution_id: String,
     pub root_path: String,
-    /// Nome do flow, só para rotular o run no histórico.
+    /// Flow name labels historical runs only.
     #[serde(default)]
     pub flow_name: Option<String>,
     pub nodes: Vec<FlowNodeDto>,
@@ -76,8 +76,7 @@ impl From<FlowNodeSkipReason> for FlowNodeSkipReasonDto {
     }
 }
 
-/// `rename_all_fields`: sem ele os campos saem em snake_case (`node_id`) e o
-/// frontend, que lê `nodeId`/`statusCode`/`durationMs`, nunca os encontra.
+/// rename_all_fields converts variant fields into frontend camelCase.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CallVariableDto {
@@ -96,8 +95,7 @@ pub enum FlowRunEventDto {
     NodeStarted {
         node_id: String,
     },
-    /// URL chamada por um node de requisição (template, resolvida e variáveis
-    /// usadas), emitido logo após `NodeStarted`.
+    /// Request template, resolved URL and variables, emitted after NodeStarted.
     NodeCallResolved {
         node_id: String,
         request_url: String,
@@ -109,9 +107,7 @@ pub enum FlowRunEventDto {
         status_code: u16,
         duration_ms: u64,
     },
-    /// Resultado da condição de um node `If`, ou dos nodes de mock com
-    /// saídas `true`/`false` (spec 0121), que explicam o resultado em
-    /// `message`.
+    /// If/mock condition result; mock true/false blocks may include a message.
     NodeBranched {
         node_id: String,
         result: bool,
@@ -129,28 +125,25 @@ pub enum FlowRunEventDto {
         node_id: String,
         reason: FlowNodeSkipReasonDto,
     },
-    /// Conclusão de um node sem resposta HTTP (`Log`, `Display`,
-    /// `SetVariables`, `Sleep` — spec 0083), com o texto já mascarado.
+    /// Completed Log/Display/SetVariables/Sleep with redacted text.
     NodeCompleted {
         node_id: String,
         message: Option<String>,
     },
-    /// Um `While` começou a iteração `iteration` (spec 0084); emitido uma vez
-    /// por iteração.
+    /// While iteration started; emitted once per iteration (spec 0084).
     NodeLoopIteration {
         node_id: String,
         iteration: u32,
     },
-    /// Um `While` saiu pela saída `done` depois de `iterations` iterações.
+    /// While took done after the given iteration count.
     NodeLoopFinished {
         node_id: String,
         iterations: u32,
     },
-    /// Efeitos dos scripts do run (variáveis de ambiente gravadas e logs),
-    /// emitido uma vez antes de `RunFinished` e só quando houve algum.
+    /// Accumulated script effects emitted once before RunFinished when present.
     ScriptsFinished {
         environment_changes: Vec<EnvironmentChangeOutput>,
-        /// Variáveis de coleção/pasta gravadas (ADR 0031).
+        /// Collection/folder script writes (ADR 0031).
         scoped_changes: Vec<ScopedChangeOutput>,
         logs: Vec<String>,
     },
@@ -196,7 +189,7 @@ struct ChannelSink<'a> {
     channel: &'a Channel<FlowRunEventDto>,
     outputs: &'a FlowRunOutputs,
     flow_execution_id: &'a str,
-    /// Eventos do run com o instante de chegada, gravados no histórico ao fim.
+    /// Timestamped events persisted at run completion.
     recorded: Mutex<Vec<RecordedFlowEvent>>,
 }
 
@@ -263,7 +256,7 @@ impl FlowRunSink for ChannelSink<'_> {
                 sensitive: variable.sensitive,
             })
             .collect();
-        // O valor de uma variável sensível nunca vai para o disco.
+        // Never persist sensitive variable values.
         let recorded_variables = variables
             .iter()
             .map(|variable| RecordedCallVariable {
@@ -384,8 +377,7 @@ impl FlowRunSink for ChannelSink<'_> {
     }
 }
 
-/// Evento gravado de volta ao formato do canal ao vivo, para o frontend
-/// reexecutá-lo pelos mesmos redutores do run em andamento.
+/// Restore live-channel event shape so frontend reducers also replay history.
 pub(crate) fn event_dto_from_recorded(event: &RecordedFlowEvent) -> FlowRunEventDto {
     let node_id = event.node_id.clone();
     match &event.kind {
@@ -465,8 +457,7 @@ fn recorded_output(node_id: String, output: FlowNodeOutput) -> RecordedNodeOutpu
     }
 }
 
-/// Grava o run como um único evento de histórico, best-effort e
-/// fire-and-forget (o disco não atrasa o `runFinished`): uma falha é só logada.
+/// Persist a run as one history entry in background; log failures without delaying runFinished.
 fn record_flow_run(
     root_path: &str,
     record: FlowRunRecord,
@@ -480,15 +471,11 @@ fn record_flow_run(
     })
 }
 
-/// Executa um flow: monta um `Flow` transiente (nunca persistido — só o
-/// canvas visual persiste, via `save_flows`) a partir do grafo enviado pelo
-/// frontend, carrega as coleções do workspace para resolver nodes de
-/// requisição, e transmite o progresso por `on_event` conforme cada node
-/// termina (ver ADR 0014). Cancelável via `cancel_flow` com o mesmo
-/// `flow_execution_id`.
-#[allow(clippy::too_many_arguments)]
+/// Build a transient Flow, load collections, and stream progress. Only the visual canvas is canonical. Cancel using the execution ID (ADR 0014).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_flow(
+    app: tauri::AppHandle,
     input: ExecuteFlowInput,
     on_event: Channel<FlowRunEventDto>,
     flow_registry: tauri::State<'_, FlowExecutionRegistry>,
@@ -507,6 +494,7 @@ pub async fn execute_flow(
         input.edges.len()
     );
     let result = execute_flow_inner(
+        Some(&app),
         input,
         &on_event,
         &flow_registry,
@@ -534,6 +522,7 @@ pub async fn execute_flow(
 
 #[allow(clippy::too_many_arguments)]
 async fn execute_flow_inner(
+    app: Option<&tauri::AppHandle>,
     input: ExecuteFlowInput,
     on_event: &Channel<FlowRunEventDto>,
     flow_registry: &FlowExecutionRegistry,
@@ -578,8 +567,7 @@ async fn execute_flow_inner(
         message: error.to_string(),
     })?;
 
-    // Arquivo inteiro de coleções: lido em `spawn_blocking`, fora da task
-    // assíncrona (mesmo motivo de `execute_collection_run`).
+    // Read/parse collections through spawn_blocking outside async workers.
     let collections_root = PathBuf::from(&input.root_path);
     let collections = tauri::async_runtime::spawn_blocking(move || {
         CollectionsStore::new(collections_root).load()
@@ -598,6 +586,7 @@ async fn execute_flow_inner(
 
     let executor = ScriptingExecutor::new(
         ProtocolDispatchingExecutor {
+            app,
             graphql: graphql_executor,
             rest: rest_executor,
             workspace_root: Path::new(&input.root_path),
@@ -635,8 +624,7 @@ async fn execute_flow_inner(
 
     let summary = result?;
 
-    // Um run vira um único evento de histórico. Sem eventos (grafo inválido
-    // já foi devolvido acima) não há o que gravar.
+    // A run becomes one history entry; invalid graphs without events have nothing to record.
     let events = sink.take_recorded();
     if !events.is_empty() && !history.retention.is_disabled() {
         let record = FlowRunRecord {
@@ -646,8 +634,7 @@ async fn execute_flow_inner(
             finished_at: SystemTime::now(),
             cancelled: summary.cancelled,
             events,
-            // Com "Salvar respostas" desligado, o run guarda só os eventos
-            // (status e tempo de cada node), sem corpo nem headers.
+            // With Save responses disabled, retain events/status/duration without bodies/headers.
             outputs: if history.save_responses {
                 flow_outputs
                     .all(&input.flow_execution_id)
@@ -658,8 +645,7 @@ async fn execute_flow_inner(
                 Vec::new()
             },
         };
-        // Aguarda a escrita (é rápida) para o histórico já estar em disco
-        // quando o frontend receber `runFinished` e recarregar a lista.
+        // Await persistence before runFinished triggers history reload.
         let _ = record_flow_run(&input.root_path, record, history.retention).await;
     }
 
@@ -706,10 +692,7 @@ mod tests {
         std::env::temp_dir().join(format!("alcy-execute-flow-test-{nanos}-{count}"))
     }
 
-    /// Canal de teste: em vez de um `Channel` real do Tauri (que precisa de
-    /// um `AppHandle`), captura os eventos emitidos por `ChannelSink`
-    /// diretamente, testando a orquestração sem depender do runtime do
-    /// Tauri.
+    /// Capture ChannelSink test events directly without a Tauri runtime/AppHandle.
     #[derive(Default, Clone)]
     struct RecordingSink {
         events: Arc<Mutex<Vec<FlowRunEventDto>>>,
@@ -856,6 +839,7 @@ mod tests {
         registry.register(flow_execution_id.to_string(), sender);
         let cancellation = WatchCancellation(receiver);
         let executor = ProtocolDispatchingExecutor {
+            app: None,
             graphql: &graphql_executor,
             rest: &rest_executor,
             workspace_root: Path::new(""),
@@ -1001,6 +985,7 @@ mod tests {
         registry.register("flow-exec-cancel".to_string(), sender);
         let cancellation = WatchCancellation(receiver);
         let executor = ProtocolDispatchingExecutor {
+            app: None,
             graphql: &graphql_executor,
             rest: &rest_executor,
             workspace_root: Path::new(""),

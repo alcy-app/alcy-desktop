@@ -27,6 +27,8 @@ pub mod general_settings;
 pub mod get_load_run_history;
 pub mod gitlab;
 pub mod grpc;
+#[cfg(test)]
+pub(crate) mod grpc_test_server;
 pub mod history;
 pub mod import_fetcher;
 pub mod load_dataset_assets;

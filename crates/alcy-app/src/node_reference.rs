@@ -6,17 +6,7 @@ use thiserror::Error;
 use crate::json_path::{JsonPathError, evaluate_json_path};
 use crate::mock_control::CapturedRequest;
 
-/// Respostas de nodes de requisição já concluídos com sucesso durante um
-/// run de flow. Uma referência `{{nodes.<id>...}}` só resolve para um node
-/// que seja de fato uma dependência real (direta ou transitiva via edge) de
-/// quem está referenciando — validado explicitamente por
-/// `resolve_node_reference` contra o conjunto de ancestrais (`ancestors`,
-/// calculado uma vez a partir da forma do grafo em `flow_graph.rs`), não
-/// como efeito colateral de quando essa resposta foi gravada aqui.
-///
-/// Nodes de mock (spec 0120) gravam aqui também: a chamada recebida por um
-/// `MockWaitRequest` (`nodes.<id>.request...`) e a URL do mock ligado por um
-/// `MockStart` (`nodes.<id>.server.url`).
+/// Completed flow responses. References require real direct/transitive ancestry independently of timing. Mock nodes also record captured requests and server URLs.
 #[derive(Debug, Default)]
 pub struct NodeRunHistory {
     responses: HashMap<String, Response>,
@@ -57,7 +47,7 @@ pub enum NodeReferenceError {
     )]
     ResponseUnavailable(String),
     #[error(
-        "campo de resposta desconhecido em '{1}' para o node '{0}' (esperado status, body ou headers)"
+        "campo de resposta desconhecido em '{1}' para o node '{0}' (esperado status, body, headers, grpcStatus ou messages)"
     )]
     UnknownField(String, String),
     #[error("'response.status' não aceita caminho adicional ('{1}')")]
@@ -84,20 +74,12 @@ pub enum NodeReferenceError {
     ServerUnavailable(String),
 }
 
-/// `true` se `name` (conteúdo já `trim()`ado de um placeholder `{{...}}`)
-/// deve ser resolvido como referência de node em vez de variável de
-/// ambiente. `nodes.` é um prefixo reservado no namespace de templates.
+/// The reserved nodes. prefix distinguishes node references from environment variables.
 pub fn is_node_reference(name: &str) -> bool {
     name.starts_with("nodes.")
 }
 
-/// Resolve `name` (já confirmado por `is_node_reference`) contra `history`,
-/// só aceitando o valor se `node_id` estiver em `ancestors` (dependência
-/// real, direta ou transitiva via edge, de quem está referenciando).
-/// Gramática: `nodes.<node_id>.response.<campo>[.<resto>]`, campo em
-/// `status` | `body` | `headers.<nome>`; `nodes.<node_id>.request.<campo>`,
-/// campo em `method` | `path` | `body[.<caminho>]` | `headers.<nome>` |
-/// `query.<nome>` | `params.<nome>`; ou `nodes.<node_id>.server.url`.
+/// Resolve ancestor response fields (status/body/headers/grpcStatus/messages), captured request fields, or server.url. Require actual ancestry.
 pub fn resolve_node_reference(
     name: &str,
     history: &NodeRunHistory,
@@ -144,6 +126,29 @@ pub fn resolve_node_reference(
                 ));
             }
             Ok(response.status_code.to_string())
+        }
+        "grpcStatus" | "messages" => {
+            let grpc = response.grpc.as_ref().ok_or_else(|| {
+                NodeReferenceError::UnknownField(node_id.to_string(), field.to_string())
+            })?;
+            let value = if field == "grpcStatus" {
+                serde_json::json!({"code": grpc.code, "codeName": grpc.code_name, "message": grpc.message})
+            } else {
+                let body: serde_json::Value = if response.body.is_empty() {
+                    serde_json::json!([])
+                } else {
+                    serde_json::from_str(&response.body).map_err(|error| {
+                        NodeReferenceError::InvalidJsonBody(node_id.to_string(), error.to_string())
+                    })?
+                };
+                match body {
+                    serde_json::Value::Array(_) => body,
+                    message => serde_json::json!([message]),
+                }
+            };
+            let extracted = evaluate_json_path(&value, path_rest.unwrap_or(""))
+                .map_err(|error| NodeReferenceError::JsonPathFailed(node_id.to_string(), error))?;
+            Ok(stringify_extracted(extracted))
         }
         "body" => {
             let path = path_rest.unwrap_or("");
@@ -247,9 +252,7 @@ fn resolve_request_reference(
     })
 }
 
-/// Um `Value::String` extraído insere seu conteúdo cru (sem aspas);
-/// qualquer outro tipo (número, bool, null, objeto, array) insere sua
-/// representação JSON compacta.
+/// Extracted strings insert raw contents; other types insert compact JSON.
 fn stringify_extracted(value: serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text,
@@ -451,10 +454,7 @@ mod tests {
     #[test]
     fn fails_when_the_referenced_node_is_not_a_real_predecessor_even_though_its_response_is_recorded()
      {
-        // req-a já terminou e está no histórico, mas não é ancestral de
-        // quem está resolvendo esta variável (sem edge de dependência
-        // real) — a validação de ancestralidade deve falhar mesmo assim,
-        // sem depender de nenhum timing de execução.
+        // An available response without a real ancestor edge must fail regardless of timing.
         let history = history_with("req-a", response_with_body(200, "{\"token\":\"abc\"}"));
         let ancestors = HashSet::new();
 

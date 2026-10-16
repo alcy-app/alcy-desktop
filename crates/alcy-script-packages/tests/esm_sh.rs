@@ -27,6 +27,7 @@ async fn runs_real_esm_sh_packages() {
     .unwrap();
     let input = ScriptInput {
         request: ScriptRequest {
+            grpc: None,
             url: "https://example.com".to_string(),
             method: "get".to_string(),
             body: String::new(),

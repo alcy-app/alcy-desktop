@@ -5,7 +5,7 @@ import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { RequestWorkbench } from './RequestWorkbench'
 import type { ExtensionSidebarModule, PseudoTab } from '../../extensions/types'
 
-// Novidades fixas: o conteúdo real depende da seção da versão no CHANGELOG.md.
+// Fixed release notes; real content depends on the current CHANGELOG section.
 vi.mock('../updates/release-notes', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../updates/release-notes')>()),
   CURRENT_RELEASE_NOTES: {
@@ -22,16 +22,7 @@ const sidebar = () => screen.getByRole('complementary', { name: 'Ambientes' })
 const environmentList = () => within(sidebar()).getByRole('list')
 const openEnvironmentsTab = () => fireEvent.click(screen.getByRole('tab', { name: 'Ambientes' }))
 
-/** Espera o status aparecer no resumo do topo do painel de resposta —
- * restrito a `.rw-response-summary` (não um `screen.findByText` sem escopo)
- * porque a aba Raw também mostra o código de status como texto
- * (`HTTP {status}`) e todas as abas ficam montadas (só ocultas via
- * `hidden`), então uma busca sem escopo encontraria as duas ocorrências.
- * `selector` reconsulta o documento a cada poll do `findByText` — ao
- * contrário de capturar o container com `within(document.querySelector(...))`
- * uma única vez, o que ficaria apontando para o `<span>` antigo quando o
- * resumo troca de ramo condicional (loading → success são elementos
- * diferentes, não o mesmo nó atualizado). */
+/** Wait for status in the response summary, since Raw also renders it and stays mounted while hidden. Requery each time: loading and success use different elements. */
 const findStatusText = (pattern: RegExp) =>
   screen.findByText(pattern, { selector: '.rw-response-summary, .rw-response-status' })
 
@@ -42,27 +33,19 @@ const render = (
   ),
 ) => renderUi(ui)
 
-/** A tela vazia só aparece depois que as Collections carregam e a restauração das abas roda. */
+/** The empty screen appears after collections load and tabs are restored. */
 async function createRequestFromEmptyState(protocol: 'GraphQL' | 'REST' = 'REST') {
   fireEvent.click(await screen.findByRole('button', { name: `Nova requisição ${protocol}` }))
 }
 
-/** O "+" da barra de abas abre o popover de tipos e cria um rascunho avulso chamado "Nova requisição". */
+/** The tab bar plus opens the protocol picker and creates a standalone draft. */
 function createRequestFromTabsBar(protocol: 'GraphQL' | 'REST' = 'REST') {
   fireEvent.click(screen.getByRole('button', { name: 'Nova aba' }))
   fireEvent.click(screen.getByRole('option', { name: protocol === 'REST' ? 'HTTP' : 'GraphQL' }))
 }
 
-/** O arraste é implementado com pointer events (não o HTML5 Drag and Drop
- * nativo — ver `collections-panel.css`), então o teste simula um arraste
- * disparando pointerdown/pointermove/pointerup e substituindo
- * `document.elementFromPoint` (o jsdom não implementa o método) para
- * apontar para o alvo. */
-/**
- * Simula soltar `source` sobre `target`. `edge` controla em que metade do alvo o cursor
- * "está" (via `getBoundingClientRect` mockado) — jsdom não faz layout real, então sem isso o
- * retângulo do alvo é sempre zero e a borda calculada seria sempre `'after'`.
- */
+/** Dragging uses pointer events. Mock elementFromPoint and dispatch pointerdown/move/up because jsdom has no native layout or HTML5 dragging. */
+/** Mock the target rectangle to select the intended drop half; jsdom otherwise returns zero dimensions and always chooses after. */
 function dragOnto(source: Element, target: Element, edge: 'before' | 'after' = 'before') {
   const original = document.elementFromPoint
   document.elementFromPoint = () => target as Element
@@ -77,24 +60,7 @@ function dragOnto(source: Element, target: Element, edge: 'before' | 'after' = '
   target.getBoundingClientRect = originalRect
 }
 
-/**
- * O corpo da requisição e a query GraphQL rodam sobre CodeMirror 6
- * (contentEditable), não um `<textarea>` — sem valor de formulário nem
- * evento `change` nativo. jsdom também não aplica de fato uma edição de
- * texto num contentEditable a partir de eventos de teclado/input
- * sintéticos, então a forma confiável de simular "substituir todo o
- * conteúdo" (o que `fireEvent.change` fazia de graça num `<textarea>`) é
- * selecionar tudo — atalho Mod-a, tratado pelo keymap real do CodeMirror,
- * então funciona mesmo sem edição nativa — e colar por cima: o CodeMirror lê
- * o texto colado direto de `clipboardData`, sem depender do navegador já ter
- * inserido nada no DOM (que o jsdom não faz). O evento é disparado via
- * `fireEvent` (não `editor.dispatchEvent` cru) para ficar dentro do `act()`
- * do React — o `onChange` que a mudança de documento dispara roda fora de um
- * handler de evento do React, e sem o `act()` do `fireEvent` a re-renderização
- * (ex.: o estado disabled do botão "Organizar query", calculado a partir do
- * valor atualizado) pode não ter sido aplicada ainda quando a asserção seguinte
- * lê o DOM.
- */
+/** CodeMirror uses contentEditable rather than a textarea. Select all through its real Mod-a keymap, then paste clipboardData. fireEvent wraps document updates in React act before assertions read dependent UI state. */
 function replaceEditorContent(labelText: string, text: string) {
   const editor = screen.getByLabelText(labelText)
   editor.focus()
@@ -108,7 +74,7 @@ function replaceEditorContent(labelText: string, text: string) {
   fireEvent(editor, event)
 }
 
-/** Dispara um `paste` com `text` no elemento — o jsdom não insere o texto sozinho. */
+/** Dispatch paste with text; jsdom does not insert it itself. */
 function pasteText(element: HTMLElement, text: string) {
   const clipboardData = { getData: (type: string) => (type === 'text/plain' ? text : ''), types: ['text/plain'] }
   const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
@@ -117,7 +83,7 @@ function pasteText(element: HTMLElement, text: string) {
   return event
 }
 
-/** Lê o texto atual de um editor CodeMirror pelo rótulo acessível — sem `.value` (não é um `<textarea>`), então lê o texto renderizado de cada linha. */
+/** Read rendered CodeMirror lines by accessible label; it has no textarea value. */
 function editorText(labelText: string): string {
   const editor = screen.getByLabelText(labelText)
   return Array.from(editor.querySelectorAll('.cm-line'))
@@ -218,9 +184,7 @@ vi.mock('../../extensions/registry', () => ({
   useExtensionWorkbenchTabs: () => (extensionState.readTabs ? extensionState.readTabs() : []),
 }))
 
-// Conta as renderizações da sidebar. O invólucro é `memo` com a mesma
-// comparação rasa do componente real, então só conta quando as props mudam
-// de fato — é o que denuncia uma prop recriada a cada render do workbench.
+// Count sidebar renders through the real memo shallow comparison to detect recreated workbench props.
 const sidebarRenders = vi.hoisted(() => ({ count: 0 }))
 vi.mock('./components/WorkbenchSidebar', async (importOriginal) => {
   const original = await importOriginal<typeof import('./components/WorkbenchSidebar')>()
@@ -434,11 +398,7 @@ beforeEach(() => {
   saveEnvironments.mockResolvedValue({ ok: true })
   listCollections.mockResolvedValue({ ok: true, value: [] })
   listHistory.mockResolvedValue({ ok: true, value: [] })
-  // Abrir uma requisição GraphQL já salva carrega o schema sozinha (ver
-  // `use-workbench-state.ts`); a maioria dos testes não mexe com o
-  // `QueryExplorer`/aba Schema, então um resultado neutro aqui evita que
-  // essas chamadas fiquem sem mock (promise nunca resolvida) — cada teste
-  // que exercita o schema de fato sobrescreve com `loadSchema.mockResolvedValue(...)`.
+  // Saved GraphQL tabs automatically load schemas. Most tests use a neutral response; schema tests override it.
   loadSchema.mockResolvedValue({
     ok: true,
     value: { queryType: null, mutationType: null, subscriptionType: null, types: [], directives: [] },
@@ -568,6 +528,8 @@ describe('RequestWorkbench', () => {
           body: { kind: 'inline', body: '{"message": "hi"}' },
           headers: [{ name: 'x-server', value: 'test' }],
           trailers: [],
+          scriptLogs: ['grpc script ran'],
+          testResults: [{ name: 'RPC status', passed: true, message: null }],
         },
       })
       render()
@@ -576,7 +538,7 @@ describe('RequestWorkbench', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'Nova requisição gRPC' }))
       expect(screen.getByRole('tab', { name: 'Message' })).toHaveAttribute('aria-selected', 'true')
       expect(screen.getByRole('tab', { name: 'Metadata' })).toBeInTheDocument()
-      expect(screen.queryByRole('tab', { name: 'Scripts' })).not.toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: 'Scripts' })).toBeInTheDocument()
 
       fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: 'localhost:50051' } })
       fireEvent.click(screen.getByRole('button', { name: 'Método gRPC' }))
@@ -599,6 +561,8 @@ describe('RequestWorkbench', () => {
       expect(executeRestRequest).not.toHaveBeenCalled()
       expect(await screen.findByText('gRPC OK')).toBeInTheDocument()
       expect(screen.getByText('1 mensagem(ns)')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('tab', { name: /Tests/ }))
+      expect(screen.getByText('RPC status')).toBeInTheDocument()
       // The request's metadata tab and the response's (headers and trailers).
       expect(screen.getAllByRole('tab', { name: 'Metadata' })).toHaveLength(2)
     })
@@ -1067,7 +1031,7 @@ describe('RequestWorkbench', () => {
   })
 
   it('abre a modal de compartilhar como imagem com as opções de campos', async () => {
-    // O jsdom não tem canvas; a prévia cai no estado de erro, mas as opções aparecem.
+    // jsdom has no canvas: preview fails, but options remain available.
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
     onTestFinished(() => getContext.mockRestore())
     render()
@@ -1374,7 +1338,7 @@ describe('RequestWorkbench', () => {
         encoding: 'text',
         source: { kind: 'inline', body: '{"data":{}}' },
       })
-      // A resposta continua visível no painel, como num envio normal.
+      // The response stays visible as after an ordinary send.
       await findStatusText(/200/)
     })
 
@@ -1915,7 +1879,7 @@ describe('RequestWorkbench', () => {
     const openTabs = () => within(screen.getByRole('tablist', { name: 'Requisições abertas' })).queryAllByRole('tab')
     expect(openTabs()).toHaveLength(2)
 
-    // Um rascunho nunca salvo conta como alteração: fechar pede confirmação.
+    // A never-saved draft is dirty and asks for confirmation when closed.
     fireEvent.keyDown(document.body, { key: 'w', ctrlKey: true })
     const dialog = screen.getByRole('dialog', { name: 'Descartar alterações não salvas?' })
     expect(openTabs()).toHaveLength(2)
@@ -2093,7 +2057,7 @@ describe('RequestWorkbench', () => {
     await screen.findByLabelText('Ambiente')
     await createRequestFromEmptyState()
 
-    // Espera passar do debounce de autosave (500ms) sem nenhuma edição — carregar não é editar.
+    // Wait beyond the 500 ms autosave debounce without edits: loading is not editing.
     await new Promise((resolve) => setTimeout(resolve, 600))
 
     expect(saveEnvironments).not.toHaveBeenCalled()
@@ -2176,7 +2140,7 @@ describe('RequestWorkbench', () => {
     const previewValue = await screen.findByLabelText('Valor da variável baseUrl')
     expect(previewValue).toHaveValue('https://api.example.com')
 
-    // Editar pela pré-visualização grava no ambiente ativo.
+    // Editing the variable preview writes to the active environment.
     fireEvent.change(previewValue, { target: { value: 'https://staging.example.com' } })
     expect(screen.getByPlaceholderText('valor')).toHaveValue('https://staging.example.com')
   })
@@ -2240,8 +2204,7 @@ describe('RequestWorkbench', () => {
     const openMenu = (name: string) =>
       fireEvent.click(within(collectionsSidebar()).getByRole('button', { name: `Mais opções de ${name}` }))
     const addRequestButton = () => within(collectionsSidebar()).getByRole('button', { name: 'Adicionar requisição' })
-    /** "Adicionar requisição" no menu de uma pasta abre o popover de tipos e cria a requisição já salva
-     * como "Nova requisição"; um `name` diferente renomeia pela árvore em seguida. */
+    /** Folder request creation uses the default name; rename through the tree when another name is requested. */
     const addRequestTo = (folder: string, name: string, protocol: 'GraphQL' | 'HTTP' = 'GraphQL') => {
       openMenu(folder)
       fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Adicionar requisição' }))
@@ -2321,8 +2284,7 @@ describe('RequestWorkbench', () => {
       createCollection()
       fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
-      // Ainda dentro da janela de debounce (500ms) — o autosave normal não
-      // deveria ter disparado ainda.
+      // Still within the 500 ms debounce; ordinary autosave should not have fired.
       expect(saveCollections).not.toHaveBeenCalled()
 
       view.unmount()
@@ -2567,7 +2529,7 @@ describe('RequestWorkbench', () => {
 
       expect(await within(collectionsSidebar()).findByText('Customer API')).toBeInTheDocument()
 
-      // Espera passar do debounce de autosave (500ms) sem nenhuma edição — carregar não é editar.
+      // Wait beyond the 500 ms autosave debounce without edits: loading is not editing.
       await new Promise((resolve) => setTimeout(resolve, 600))
 
       expect(saveCollections).not.toHaveBeenCalled()
@@ -2637,7 +2599,7 @@ describe('RequestWorkbench', () => {
         expect(within(collectionsSidebar()).getByRole('menuitem', { name: 'Formato Alcy' })).toBeInTheDocument()
         fireEvent.keyDown(within(collectionsSidebar()).getByRole('menu'), { key: 'Escape' })
 
-        // Numa pasta, "Exportar" só leva ao webclient, que precisa de requisições.
+        // Folder export only offers the webclient, which requires requests.
         openMenu('Nova pasta')
         expect(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar' })).toBeDisabled()
       })
@@ -3418,8 +3380,7 @@ describe('RequestWorkbench', () => {
 
         openMoreMenu()
         const menuItem = within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar tudo' })
-        // um clique real dispara pointerdown antes de click — diferente do `fireEvent.click` isolado
-        // usado nos outros testes, que não reproduz o listener global de pointerdown que fecha o menu.
+        // Real clicks dispatch pointerdown first, invoking the outside-menu listener unlike an isolated fireEvent.click.
         fireEvent.pointerDown(menuItem)
         fireEvent.click(menuItem)
 
@@ -4631,8 +4592,7 @@ describe('RequestWorkbench', () => {
         fireEvent.contextMenu(requestATab)
         expect(screen.getByRole('menuitem', { name: 'Salvar' })).toBeDisabled()
 
-        // regressão: com "Salvar" desabilitado o foco automático precisa cair em outro item do
-        // menu, senão nada dentro dele fica focado e o Escape/clique-fora nunca fecha o menu.
+        // Disabled Save must not receive autofocus; another menu item preserves Escape/outside-click handling.
         expect(screen.getByRole('menu').contains(document.activeElement)).toBe(true)
         fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
         expect(screen.queryByRole('menu')).not.toBeInTheDocument()
@@ -4902,7 +4862,7 @@ describe('RequestWorkbench', () => {
 
     fireEvent.click(sidebar.getByRole('button', { name: 'Recolher tudo' }))
     expect(sidebar.queryByText('Ping')).not.toBeInTheDocument()
-    // Com tudo recolhido, o mesmo botão passa a expandir a árvore.
+    // Once collapsed, the same button expands the whole tree.
     expect(sidebar.getByRole('button', { name: 'Expandir tudo' })).toBeEnabled()
 
     fireEvent.click(sidebar.getByRole('button', { name: 'Localizar requisição aberta' }))
@@ -4976,8 +4936,7 @@ describe('RequestWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Carregar schema' }))
     await screen.findByLabelText('Tipos e diretivas do schema')
 
-    // "name" só bate com o campo "name" do tipo Customer — o tipo Query
-    // tem um campo "currentCustomer", que conteria "customer" mas não "name".
+    // name matches Customer.name; Query.currentCustomer matches customer but not name.
     fireEvent.change(screen.getByPlaceholderText('Buscar tipo, diretiva ou campo…'), { target: { value: 'name' } })
 
     const typeList = screen.getByLabelText('Tipos e diretivas do schema')
@@ -5051,7 +5010,7 @@ describe('RequestWorkbench', () => {
     await screen.findByLabelText('Ambiente')
     createRequestFromTabsBar('GraphQL')
 
-    // já começa na aba Query — o painel lateral carrega o schema sozinho
+    // Query starts active and its sidebar loads the schema automatically.
     pasteIntoQueryEditor('')
     fireEvent.click(screen.getByRole('button', { name: 'Carregar schema' }))
 
@@ -5116,7 +5075,7 @@ describe('RequestWorkbench', () => {
     pasteIntoQueryEditor('')
     fireEvent.click(screen.getByRole('button', { name: 'Carregar schema' }))
 
-    // clicar no nome do campo só expande — não marca nem toca a query
+    // Clicking a field name expands it without selecting it or editing the query.
     fireEvent.click(await screen.findByRole('button', { name: 'currentCustomer' }))
 
     const idCheckbox = await screen.findByRole('checkbox', { name: 'Adicionar campo currentCustomer > id à query' })
@@ -5465,8 +5424,7 @@ describe('RequestWorkbench', () => {
       fireEvent.click(within(collectionsSidebar).getByText('List pets'))
     }
 
-    /** Abre a aba Docs, espera a documentação (do binding ou do cache de
-     * sessão de `use-request-docs`) e volta para Params. */
+    /** Open Docs, await binding/session-cached documentation, then return to Params. */
     const waitForDocs = async () => {
       fireEvent.click(screen.getByRole('tab', { name: 'Docs' }))
       expect(await screen.findByRole('heading', { name: 'Lista os pets' })).toBeInTheDocument()
@@ -5511,7 +5469,7 @@ describe('RequestWorkbench', () => {
       window.localStorage.setItem('alcy:schema-autocomplete', 'false')
       onTestFinished(() => window.localStorage.removeItem('alcy:schema-autocomplete'))
       await openDocumentedRequest()
-      // A aba Docs continua funcionando com as sugestões desligadas.
+      // Docs still works when suggestions are disabled.
       await waitForDocs()
 
       fireEvent.click(screen.getByRole('button', { name: 'Adicionar parâmetro' }))
@@ -5669,7 +5627,7 @@ describe('RequestWorkbench — renderizações', () => {
     createRequestFromTabsBar('REST')
     const endpoint = screen.getByLabelText('Endpoint')
     fireEvent.change(endpoint, { target: { value: 'https://api.test/a' } })
-    // Deixa assentar o que reage à primeira edição (sessão de abas etc.).
+    // Allow effects of the first edit, including tab-session persistence, to settle.
     await act(async () => {})
     const before = sidebarRenders.count
 

@@ -1,27 +1,18 @@
-/// Um header HTTP recebido numa resposta.
-///
-/// Diferente de `HeaderEntry` (headers editáveis pelo usuário na
-/// requisição), este é somente leitura e não é uma chave única: HTTP
-/// permite repetir o mesmo nome (ex.: múltiplos `Set-Cookie`).
+/// Read-only received header. Names may repeat, including multiple Set-Cookie values, unlike editable HeaderEntry keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseHeader {
     pub name: String,
     pub value: String,
 }
 
-/// Como interpretar `Response.body`. `Text` é o caso comum (JSON, XML,
-/// HTML, texto puro); `Base64` marca um corpo binário (ex.: imagem)
-/// codificado em base64 para atravessar o mesmo contrato `String` usado
-/// por todo o resto do pipeline (cache, janelamento, IPC) — ver ADR 0009.
+/// Interpret response body as text or base64 binary while preserving the shared string contract for cache/windowing/IPC (ADR 0009).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyEncoding {
     Text,
     Base64,
 }
 
-/// Um cookie recebido via `Set-Cookie`. Campos de atributo (`domain`,
-/// `path`, `expires`, `max_age_seconds`, `same_site`) são `Option` porque
-/// nem todo `Set-Cookie` os declara.
+/// Received cookie with optional attributes absent unless Set-Cookie declares them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Cookie {
     pub name: String,
@@ -35,11 +26,7 @@ pub struct Cookie {
     pub same_site: Option<String>,
 }
 
-/// Informação de conexão/transporte de uma execução. `remote_address` e
-/// `tls_certificate_present` ficam `None`/`false` quando o dado não está
-/// disponível (ex.: endpoint HTTP puro não tem certificado de peer).
-/// `certificate_verification_disabled` só fica `true` numa conexão TLS feita
-/// com a verificação de certificado desligada pelo usuário (ADR 0058).
+/// Missing peer/address data stays None/false. Certificate verification is disabled only by explicit user configuration (ADR 0058).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ConnectionInfo {
     pub remote_address: Option<String>,
@@ -48,14 +35,7 @@ pub struct ConnectionInfo {
     pub certificate_verification_disabled: bool,
 }
 
-/// Dados de transporte de uma execução, coletados à parte do corpo/headers
-/// de resposta: headers efetivamente enviados (incluindo os que a
-/// autenticação injeta), cookies recebidos, informação de conexão, URL
-/// final (presente só quando a execução foi redirecionada) e o tempo até
-/// os headers da resposta chegarem (TTFB, "waiting").
-///
-/// Agrupado numa struct à parte para não fazer `Response::new`/`new_binary`
-/// crescerem em parâmetros posicionais a cada novo dado de transporte.
+/// Transport data grouped separately from body/headers: actual sent headers, cookies, connection, redirected final URL and time to response headers. Keep constructors stable.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResponseMetadata {
     pub request_headers: Vec<ResponseHeader>,
@@ -65,14 +45,20 @@ pub struct ResponseMetadata {
     pub waiting_ms: u64,
 }
 
-/// Resposta recebida de uma execução, em qualquer status HTTP.
-///
-/// Um status HTTP não-2xx ainda é uma `Response` — o usuário precisa ver o
-/// corpo de um 404/500, como em qualquer cliente de API. Diferenciar
-/// "erro HTTP" na interface é uma leitura de `status_code`, não um caminho
-/// de erro separado.
+/// Status and trailing metadata of a gRPC call. Message JSON stays in the
+/// response body; wire status headers also preserve it in existing history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrpcResponseStatus {
+    pub code: i32,
+    pub code_name: String,
+    pub message: String,
+    pub trailers: Vec<ResponseHeader>,
+}
+
+/// Received response including non-success HTTP/protocol statuses. Transport failures use ExecutionError instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
+    pub grpc: Option<Box<GrpcResponseStatus>>,
     pub status_code: u16,
     pub duration_ms: u64,
     pub size_bytes: usize,
@@ -87,6 +73,24 @@ pub struct Response {
 }
 
 impl Response {
+    /// A protocol-level failure independent of the transport's HTTP status.
+    pub fn protocol_failure(&self) -> Option<String> {
+        self.grpc
+            .as_ref()
+            .filter(|status| status.code != 0)
+            .map(|status| {
+                format!(
+                    "gRPC {}{}",
+                    status.code_name,
+                    if status.message.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", status.message)
+                    }
+                )
+            })
+    }
+
     pub fn new(
         status_code: u16,
         duration_ms: u64,
@@ -97,6 +101,7 @@ impl Response {
         let body = body.into();
         let size_bytes = body.len();
         Self {
+            grpc: None,
             status_code,
             duration_ms,
             size_bytes,
@@ -111,10 +116,7 @@ impl Response {
         }
     }
 
-    /// Corpo binário (ex.: imagem) já codificado em base64 por quem chama.
-    /// Diferente de `new`, `size_bytes` é recebido explicitamente — o
-    /// tamanho real do binário original, não `body.len()` (que mede o
-    /// texto base64, ~33% maior por causa da própria codificação).
+    /// Binary body already base64-encoded. size_bytes is original binary size, not encoded string length.
     pub fn new_binary(
         status_code: u16,
         duration_ms: u64,
@@ -124,6 +126,7 @@ impl Response {
         metadata: ResponseMetadata,
     ) -> Self {
         Self {
+            grpc: None,
             status_code,
             duration_ms,
             size_bytes,
@@ -149,7 +152,7 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(response.duration_ms, 42);
-        assert_eq!(response.size_bytes, 5); // "café" tem 5 bytes em UTF-8
+        assert_eq!(response.size_bytes, 5); // Five UTF-8 bytes.
         assert_eq!(response.body, "café");
         assert_eq!(response.encoding, BodyEncoding::Text);
         assert_eq!(response.headers, vec![]);

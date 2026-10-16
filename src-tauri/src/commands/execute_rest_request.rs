@@ -97,9 +97,7 @@ impl From<HttpMethod> for HttpMethodInput {
     }
 }
 
-/// Sublinguagem de um corpo "raw" (não interpretada pela execução — só
-/// carregada de volta em `BodyPayload::Raw` para round-trip com a UI e o
-/// `Content-Type` sincronizado no frontend).
+/// Raw language is retained for UI round trips and Content-Type synchronization, not execution parsing.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RawBodyLanguageInput {
@@ -142,12 +140,9 @@ pub struct UrlEncodedFieldInput {
     pub enabled: bool,
 }
 
-/// Campo de um corpo form-data — `kind` distingue texto de arquivo dentro do
-/// mesmo objeto plano (não uma tag externa), espelhando o formato que o
-/// frontend já usa (ver `RestBodyInput` em `execute-rest-request.ts`).
+/// Flat form-data DTO uses kind for text/file, matching frontend RestBodyInput.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-// `rename_all` no enum só renomeia a tag; `rename_all_fields` é o que põe os
-// campos das variantes (`file_path`) em camelCase, como o frontend envia.
+// rename_all renames tags; rename_all_fields converts variant fields such as file_path into camelCase.
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -166,11 +161,7 @@ pub enum FormDataFieldInput {
     },
 }
 
-/// Corpo de uma requisição REST — paralelo ao seletor de tipo de body da UI
-/// (spec 0062). `None`/`Raw`/`Urlencoded` viram texto em `document.body`;
-/// `FormData`/`Binary` exigem montar o corpo em `alcy-rest` (multipart ou
-/// bytes de um arquivo), então carregam dados estruturados em
-/// `Request::body_payload`.
+/// REST body matches the UI selector: none/raw/urlencoded yield text; form-data/binary keep structured payloads for asynchronous encoding.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(
     tag = "type",
@@ -214,24 +205,21 @@ pub struct ExecuteRestRequestInput {
     pub body: BodyInput,
     pub headers: Vec<HeaderInput>,
     pub authentication: AuthenticationInput,
-    /// Id da requisição salva de origem, usado para resolver `Inherit`.
+    /// Saved request ID resolves inherited authentication.
     #[serde(default)]
     pub request_id: Option<String>,
-    /// Aba que disparou o envio; liga o envio ao histórico de envios da
-    /// requisição mesmo antes de ela ser salva (ADR 0036).
+    /// Sending tab ID links history before request saving (ADR 0036).
     #[serde(default)]
     pub tab_id: Option<String>,
     pub environment_variables: Vec<EnvironmentVariableDto>,
-    /// Camadas de variáveis da coleção/pastas da requisição, da raiz ao pai
-    /// direto (ADR 0031). Vazio para aba não salva.
+    /// Scopes run from collection root to direct parent; empty for unsaved tabs (ADR 0031).
     #[serde(default)]
     pub variable_scopes: Vec<VariableScopeDto>,
     #[serde(default)]
     pub pre_request_script: String,
     #[serde(default)]
     pub post_response_script: String,
-    /// "Reenviar sem limite": este envio ignora o limite de tamanho de
-    /// resposta configurado. Ausente (o caso normal) mantém o limite.
+    /// One-shot unlimited resend; absence preserves response size limits.
     #[serde(default)]
     pub ignore_response_size_limit: bool,
 }
@@ -250,12 +238,12 @@ pub struct ExecuteRestRequestOutput {
     pub connection: ConnectionInfoOutput,
     pub final_url: Option<String>,
     pub waiting_ms: u64,
-    /// Variáveis de ambiente gravadas pelos scripts (valor final de cada uma).
+    /// Final environment values written by scripts.
     pub environment_changes: Vec<EnvironmentChangeOutput>,
-    /// Variáveis de coleção/pasta gravadas pelos scripts (ADR 0031).
+    /// Collection/folder script writes (ADR 0031).
     pub scoped_changes: Vec<ScopedChangeOutput>,
     pub script_logs: Vec<String>,
-    /// Falha do script de pós-resposta; a resposta continua válida.
+    /// Post-response script failure; retain the response.
     pub script_error: Option<ScriptErrorOutput>,
     /// Testes registrados com `al.test` pelos scripts (spec 0072).
     pub test_results: Vec<ScriptTestOutput>,
@@ -269,7 +257,7 @@ pub enum ExecuteRestRequestError {
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<InvalidRequestCause>,
     },
-    /// Falha do script de pré-requisição; nada foi enviado.
+    /// Pre-request script failed; nothing was sent.
     Script {
         phase: String,
         message: String,
@@ -280,9 +268,7 @@ pub enum ExecuteRestRequestError {
         cause: Option<NetworkCauseOutput>,
     },
     Timeout,
-    /// O corpo passou do limite de tamanho configurado e o download foi
-    /// interrompido; não há resposta parcial. A interface oferece reenviar
-    /// sem limite.
+    /// Stop oversized downloads without partial data; UI offers unlimited resend.
     #[serde(rename_all = "camelCase")]
     ResponseTooLarge {
         limit_bytes: u64,
@@ -299,9 +285,7 @@ impl From<ExecutionError> for ExecuteRestRequestError {
                 message: failure.detail,
             },
             ExecutionError::Timeout => Self::Timeout,
-            // O executor REST nunca produz isso (não há `variables` em REST) —
-            // mapeado para manter o `match` exaustivo contra o erro
-            // compartilhado do domínio.
+            // REST never emits InvalidVariables; keep shared domain matches exhaustive.
             ExecutionError::InvalidVariables(message) => Self::InvalidRequest {
                 message,
                 cause: None,
@@ -314,8 +298,7 @@ impl From<ExecutionError> for ExecuteRestRequestError {
                 message: detail,
                 cause: Some(InvalidRequestCause::BodyFileUnreadable { path }),
             },
-            // Só o executor de flow produz isto; o comando avulso trata os
-            // scripts por conta própria (`Script { phase, message }`).
+            // Only flow executors emit this; interactive commands handle script phase/message separately.
             ExecutionError::Script(message) => Self::InvalidRequest {
                 message,
                 cause: None,
@@ -377,8 +360,7 @@ impl From<EnvironmentVariableError> for ExecuteRestRequestError {
     }
 }
 
-/// Interpola `{{variavel}}` em `template` contra as variáveis do ambiente
-/// ativo.
+/// Interpolate templates against active environment variables.
 fn resolve(
     template: &str,
     variables: &[EnvironmentVariable],
@@ -410,11 +392,7 @@ fn build_request(input: ExecuteRestRequestInput) -> Result<Request, ExecuteRestR
     );
     let endpoint = Endpoint::new(endpoint_url)?;
 
-    // Diferente do corpo de uma query GraphQL (que nunca é interpolado —
-    // ver `execute_graphql_request::build_request`), o corpo de uma
-    // requisição REST é o payload que o próprio usuário escreve, então
-    // `{{var}}` funciona nele como em URL/headers/autenticação — em
-    // qualquer tipo de corpo, não só "raw".
+    // Every REST body format supports templates, unlike GraphQL query text.
     let (body_text, body_payload) = resolve_body(input.body, &environment_variables)?;
     let document = RequestDocument::new(ProtocolId::Rest, body_text);
 
@@ -467,12 +445,7 @@ fn build_request(input: ExecuteRestRequestInput) -> Result<Request, ExecuteRestR
     )
 }
 
-/// Texto que um script de pré-requisição enxerga como `al.request.body` —
-/// só o corpo "raw" tem uma representação de texto editável de forma
-/// natural (os demais tipos são estruturados: pares de campos ou um
-/// caminho de arquivo). Para os outros tipos, o script ainda pode ler/gravar
-/// `al.request.body`, mas a mudança não tem efeito — ver
-/// `apply_scripted_body`.
+/// Scripts edit raw body text. Other formats contain structured fields/file paths, so text edits have no transport effect.
 fn script_body_text(body: &BodyInput) -> String {
     match body {
         BodyInput::Raw { content, .. } => content.clone(),
@@ -480,19 +453,14 @@ fn script_body_text(body: &BodyInput) -> String {
     }
 }
 
-/// Aplica de volta o que um script de pré-requisição escreveu em
-/// `al.request.body` — só quando o corpo é "raw" (ver `script_body_text`).
+/// Apply script body text only to raw requests.
 fn apply_scripted_body(body: &mut BodyInput, scripted_text: String) {
     if let BodyInput::Raw { content, .. } = body {
         *content = scripted_text;
     }
 }
 
-/// Resolve `{{var}}` no corpo e devolve tanto o texto que vai em
-/// `document.body` (usado direto por none/raw/urlencoded) quanto o
-/// `BodyPayload` estruturado — para form-data/binary, `document.body` fica
-/// vazio e a montagem real (multipart, leitura do arquivo) acontece em
-/// `alcy-rest`, de forma assíncrona.
+/// Resolve body templates into text and structured payload. Form-data/binary leave document text empty; alcy-rest encodes/reads asynchronously.
 fn resolve_body(
     body: BodyInput,
     variables: &[EnvironmentVariable],
@@ -500,10 +468,7 @@ fn resolve_body(
     body_to_domain(body, |text| resolve(text, variables))
 }
 
-/// Converte o DTO de corpo no par (texto de `document.body`, `BodyPayload`),
-/// passando todo texto do usuário por `map_text` — interpolação na execução,
-/// identidade ao salvar numa coleção. Urlencoded vira o texto codificado só
-/// dos campos habilitados; os desabilitados continuam no `BodyPayload`.
+/// Convert body DTO through map_text: interpolate during execution, preserve while saving. Encode only enabled urlencoded fields while retaining disabled fields in structured payload.
 pub(crate) fn body_to_domain<E>(
     body: BodyInput,
     map_text: impl Fn(&str) -> Result<String, E>,
@@ -575,8 +540,7 @@ pub(crate) fn body_to_domain<E>(
     }
 }
 
-/// Inverso de `body_to_domain` (sem interpolação): reconstrói o DTO que a UI
-/// reabre a partir do que foi salvo/registrado no histórico.
+/// Reverse body_to_domain without interpolation for saved/history reopening.
 pub(crate) fn body_input_from_domain(text: &str, payload: &BodyPayload) -> BodyInput {
     match payload {
         BodyPayload::None => BodyInput::None,
@@ -617,9 +581,7 @@ pub(crate) fn body_input_from_domain(text: &str, payload: &BodyPayload) -> BodyI
     }
 }
 
-/// Executa uma requisição REST real via HTTP, cancelável através do mesmo
-/// `cancel_graphql_request` usado pelo GraphQL (mesmo `ExecutionRegistry`
-/// gerenciado, sem nada específico de protocolo).
+/// Execute cancellable REST through the same protocol-neutral registry and cancel command as GraphQL.
 #[tauri::command]
 pub async fn execute_rest_request(
     input: ExecuteRestRequestInput,
@@ -680,6 +642,7 @@ async fn execute_rest_request_inner(
         .map_err(|error| ExecutionFailure::new(error, ScriptEffects::default()))?;
 
     let mut scripted = ScriptedRequest {
+        grpc: None,
         url: input.endpoint_url.clone(),
         method: input.method.as_str().to_string(),
         body: script_body_text(&input.body),
@@ -700,8 +663,7 @@ async fn execute_rest_request_inner(
     if let Some(method) = HttpMethodInput::parse(&scripted.method) {
         input.method = method;
     }
-    // Os scripts enxergam o ambiente e as camadas separados; a resolução de
-    // `{{var}}` usa a mescla (ADR 0031).
+    // Scripts receive environment/scopes separately; interpolation overlays them (ADR 0031).
     let environment = input.environment_variables.clone();
     input.environment_variables = with_scoped_variables(&input.environment_variables, &scopes);
     input.authentication = resolve_inherited_authentication(
@@ -723,14 +685,12 @@ async fn execute_rest_request_inner(
     };
     let redacted_request = redacted_input.map(|input| build_request(input).ok());
     let history_request = history_request(&request, redacted_request.as_ref());
-    // O histórico guarda o caminho como salvo (relativo ao workspace, quando
-    // for o caso); só a execução recebe o caminho absoluto.
+    // History retains saved workspace-relative paths; execution resolves absolute paths.
     let mut executable = request.clone();
     executable.body_payload = request
         .body_payload
         .with_files_resolved_against(Path::new(&root_path));
-    // Só a cópia executada recebe o `Cookie` do jar: o histórico não guarda
-    // o valor.
+    // Only execution copies receive jar cookies; history excludes them.
     cookies.apply_to(&mut executable);
 
     let (sender, receiver) = oneshot::channel();
@@ -1937,8 +1897,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        // Com o histórico desativado, nenhuma gravação é disparada: não há
-        // escrita em segundo plano a esperar.
+        // Disabled history schedules no background writes.
         assert!(history_entries(&root_path).is_empty());
 
         fs_cleanup(&root_path);

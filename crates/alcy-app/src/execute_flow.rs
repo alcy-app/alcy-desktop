@@ -29,29 +29,22 @@ pub enum FlowRunError {
     MissingStartNode,
     #[error("flow contém um ciclo alcançável a partir do Start")]
     CyclicGraph,
-    /// O corpo de um `While` não é fechado: uma edge sai dele, ou entra nele
-    /// por outro caminho que não a saída `"loop"` (ADR 0033).
+    /// A While body must be closed: no exiting edges or entries outside its loop output (ADR 0033).
     #[error("o corpo do While '{while_node_id}' precisa ser fechado")]
     InvalidLoopBody { while_node_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowNodeSkipReason {
-    /// Node genérico (`Block`) sem comportamento de execução nesta etapa.
+    /// Generic Block without executable behavior.
     NotRunnable,
-    /// Sem caminho a partir do Start — nunca é disparado.
+    /// No path from Start; never dispatched.
     Unreachable,
-    /// O run foi cancelado antes deste node começar.
+    /// Cancelled before this node started.
     Cancelled,
-    /// Alcançável só por uma saída não tomada de um node com múltiplas
-    /// saídas (`If`: `true`/`false`; `Request`: `success`/`failure`) — não
-    /// fica pendente esperando um grau de entrada que nunca chega a zero por
-    /// esse caminho (specs 0047/0048): o grau de entrada dos sucessores da
-    /// saída não escolhida ainda é decrementado normalmente, só o resultado
-    /// reportado é este em vez de rodar de verdade.
+    /// Reachable only through an untaken branch. Successor degrees still decrement so they cannot remain pending forever (specs 0047/0048).
     BranchNotTaken,
-    /// Um `Break`/`Continue` encerrou a iteração do `While` antes de este
-    /// node do corpo começar (spec 0085).
+    /// Break/Continue ended the enclosing iteration before this node started (spec 0085).
     LoopInterrupted,
 }
 
@@ -61,10 +54,7 @@ pub enum FlowNodeOutcome {
         status_code: u16,
         duration_ms: u64,
     },
-    /// Resultado da condição de um node `If` — `true` segue pelas edges com
-    /// `source_handle: Some("true")`, `false` pelas com `Some("false")`.
-    /// `MockWaitRequest`/`MockAssertCalls` (spec 0120) usam as mesmas saídas e
-    /// explicam o resultado em `message`; `If` não traz mensagem.
+    /// If follows the matching true/false output. Mock wait/assert blocks also provide a message; If does not.
     Branched {
         result: bool,
         message: Option<String>,
@@ -72,19 +62,15 @@ pub enum FlowNodeOutcome {
     Failed {
         message: String,
     },
-    /// Node sem resposta HTTP que concluiu (spec 0083): `Log`/`Display`
-    /// trazem o texto resolvido (segredos mascarados), `SetVariables` o
-    /// resumo das atribuições, `Sleep` nada.
+    /// Completed non-request node: Log/Display carry redacted text, SetVariables an assignment summary, Sleep no message.
     Completed {
         message: Option<String>,
     },
-    /// Um `While` começou a iteração `iteration` (a partir de 1) — o corpo
-    /// roda e a condição é reavaliada quando ele inteiro terminar. Um
-    /// `While` reporta este resultado uma vez por iteração, antes do final.
+    /// One-based While iteration. Finish its complete body before reevaluating the condition.
     LoopIteration {
         iteration: u32,
     },
-    /// Um `While` saiu pela saída `"done"` depois de `iterations` iterações.
+    /// While took done after this number of iterations.
     LoopFinished {
         iterations: u32,
     },
@@ -95,12 +81,10 @@ pub enum FlowNodeOutcome {
 /// Maior espera aceita por um node `Sleep` (10 minutos).
 pub const MAX_SLEEP_MS: u64 = 10 * 60 * 1000;
 
-/// Maior limite de iterações aceito por um node `While` (ADR 0033).
+/// Maximum accepted While iteration limit (ADR 0033).
 pub const MAX_WHILE_ITERATIONS: u32 = 10_000;
 
-/// O que um node de requisição de fato chamou: a URL como escrita na
-/// requisição salva, a URL enviada (variáveis substituídas; segredos
-/// mascarados) e as variáveis usadas na URL — registro histórico do run.
+/// Recorded call: saved URL template, actual URL with secrets redacted, and URL variables used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestCallDetails {
     pub request_url: String,
@@ -108,31 +92,20 @@ pub struct RequestCallDetails {
     pub variables: Vec<Substitution>,
 }
 
-/// Porta pela qual `execute_flow` reporta o progresso de cada node — quem
-/// implementa decide o que fazer com isso (ex.: emitir por um
-/// `tauri::ipc::Channel`, em `src-tauri`). Mantém `alcy-app` livre de
-/// qualquer tipo concreto de IPC (invariante 5 de `ARCHITECTURE.md`).
+/// Progress port keeping application use cases independent of concrete IPC implementations.
 pub trait FlowRunSink: Sync {
     fn node_started(&self, node_id: &str);
     fn node_finished(&self, node_id: &str, outcome: FlowNodeOutcome);
-    /// Resposta recebida por um node de requisição, entregue antes de
-    /// `node_finished`. Opcional: quem não precisa da saída (ex.: testes)
-    /// ignora. Existe para o frontend poder mostrar o output de um node sem
-    /// que a resposta inteira trafegue no evento de progresso.
+    /// Deliver responses before node_finished, separately from small progress events; optional for consumers that need no output.
     fn node_output(&self, _node_id: &str, _response: &Response) {}
-    /// URL chamada por um node de requisição, entregue logo após
-    /// `node_started`. Opcional, como `node_output`.
+    /// Deliver request URL details after node_started; optional like node_output.
     fn node_call(&self, _node_id: &str, _details: &RequestCallDetails) {}
     /// Chamada recebida por um node `MockWaitRequest`, entregue antes de
     /// `node_finished`. Opcional, como `node_output`.
     fn node_request(&self, _node_id: &str, _request: &CapturedRequest) {}
 }
 
-/// Porta de cancelamento de um flow inteiro — mesma filosofia de
-/// `RequestExecutor`/`execute_request` (spec 0005): um método que produz uma
-/// future nova a cada chamada, para permitir N corridas de cancelamento
-/// simultâneas (uma por node em voo) a partir de um único sinal de flow. A
-/// implementação concreta (ex.: `tokio::sync::watch`) fica em `src-tauri`.
+/// Cancellation creates a fresh future per call so concurrent nodes can race against one run signal.
 pub trait FlowCancellation: Sync {
     fn is_cancelled(&self) -> bool;
     fn cancelled(&self) -> impl Future<Output = ()> + Send;
@@ -143,17 +116,7 @@ pub struct FlowRunSummary {
     pub cancelled: bool,
 }
 
-/// Executa um flow com um scheduler dinâmico: cada node fica pronto para
-/// rodar assim que suas dependências reais terminam (grau de entrada
-/// zerado), sem esperar uma "onda"/camada inteira terminar — decisão
-/// tomada node a node, a cada conclusão, em vez de um plano calculado uma
-/// única vez a partir só da forma do grafo. `While` reentra no próprio corpo
-/// sem ciclos no grafo (ADR 0033). Nodes
-/// genéricos (`Block`) e nodes fora do alcance do Start resolvem
-/// instantaneamente sem executar nada; anotações (`Note`) nem entram no
-/// grafo. Variáveis locais (`SetVariables`, spec 0083) valem só durante o
-/// run e vencem ambiente/coleção/pastas. Mocks ligados pelo run (spec 0120)
-/// são desligados no fim, inclusive quando o run é cancelado.
+/// Dispatch each node when its actual dependencies finish, without whole-layer barriers. While reenters closed bodies without graph cycles. Blocks/unreachable nodes resolve immediately; notes are excluded. Run variables override environment/scopes. Stop owned mocks on every exit.
 pub async fn execute_flow<E, S, C, M>(
     flow: &Flow,
     collections: &[Collection],
@@ -186,9 +149,7 @@ where
     };
 
     let mut history = NodeRunHistory::new();
-    // Variáveis locais do run (spec 0083). Lidas e escritas só no despacho,
-    // que é síncrono — sem corrida entre ramos paralelos; vale a ordem de
-    // despacho.
+    // Run variables are accessed only during synchronous dispatch; dispatch order resolves writes without parallel-branch races.
     let mut run_variables: Vec<EnvironmentVariable> = Vec::new();
     let mut scheduler = Scheduler::new(&graph);
     let mut in_flight = FuturesUnordered::new();
@@ -200,8 +161,7 @@ where
             let node_id = match work {
                 Work::Node(node_id) => node_id,
                 Work::LoopCheck(while_id) => {
-                    // Um `Break`/`Continue` de um `While` de fora encerra
-                    // também este, que ainda estava iterando.
+                    // Break/Continue from an outer While also ends this active inner loop.
                     if scheduler.is_interrupted(&while_id) {
                         sink.node_finished(
                             &while_id,
@@ -310,10 +270,7 @@ where
                                     message: error.to_string(),
                                 },
                             );
-                            // Condição não avaliou — nenhum ramo é
-                            // considerado tomado a partir daqui (não dá pra
-                            // adivinhar); um sucessor só roda se outro
-                            // caminho também o alcançar.
+                            // An unevaluated condition takes no branch; successors need another incoming path.
                             scheduler.complete(&node_id, true, None);
                         }
                     }
@@ -334,8 +291,7 @@ where
                     let mut request_to_run = saved_request.request.clone();
                     request_to_run.authentication =
                         effective_authentication(collections, request_id);
-                    // Ambiente sobreposto pelas variáveis da coleção/pastas
-                    // da requisição (ADR 0031).
+                    // Overlay environment with this request collection/folder variables (ADR 0031).
                     let variables = with_run_variables(
                         &merge_variables(
                             environment_variables,
@@ -368,7 +324,7 @@ where
                 Some(FlowNodeKind::InlineRequest { request: inline }) => {
                     let ancestors = graph.ancestors.get(&node_id).unwrap_or(&no_ancestors);
                     let mut request_to_run = inline.request.clone();
-                    // Sem coleção de onde herdar: "herdar" vira "sem autenticação".
+                    // Inline requests have no collection ancestor; inherited authentication becomes None.
                     if matches!(request_to_run.authentication, Authentication::Inherit) {
                         request_to_run.authentication = Authentication::None;
                     }
@@ -462,8 +418,7 @@ where
                 }
                 Some(FlowNodeKind::MockStart { source }) => {
                     let started = match mock_session.handles.get(&node_id) {
-                        // Dentro de um `While`: o mock continua ligado entre
-                        // iterações.
+                        // A mock inside While stays running between iterations.
                         Some(handle) => Ok(handle.clone()),
                         None => mocks.start(&node_id, source),
                     };
@@ -666,47 +621,37 @@ where
     })
 }
 
-/// Próximo trabalho síncrono do scheduler.
+/// Next synchronous scheduler action.
 enum Work {
     /// Node pronto para despachar (grau de entrada zerado).
     Node(String),
-    /// `While` cuja iteração terminou — reavaliar a condição.
+    /// While whose body completed; reevaluate its condition.
     LoopCheck(String),
 }
 
-/// Pedido de saída da iteração atual de um `While`, feito por um node
-/// `Break`/`Continue` do corpo dele.
+/// Break/Continue request to leave the current While iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoopExit {
     Break,
     Continue,
 }
 
-/// Estado mutável de um run sobre a forma fixa do grafo: grau de entrada e
-/// "alcançado por um caminho tomado" de cada node, a fila de prontos e, por
-/// `While`, as iterações feitas e quantos nodes do corpo ainda faltam na
-/// iteração atual (ADR 0033).
+/// Mutable state over a fixed graph: incoming degrees, reached flags, ready queue, and per-While iteration/body counters (ADR 0033).
 struct Scheduler<'g> {
     graph: &'g FlowGraph,
     in_degree: HashMap<String, usize>,
-    // Nodes com grau de entrada inicial 0 (ligados direto ao Start ou
-    // entradas de um corpo) sempre "fluem" — o resto começa `false` e só vira
-    // `true` quando alcançado por uma edge de fato tomada (ver
-    // `advance_after_completion`). Um node só roda de verdade quando chega a
-    // este estado E seu grau de entrada zera; caso contrário é reportado como
-    // `BranchNotTaken` em vez de pendente.
+    // Zero-degree entries always flow. Others become reached only through taken edges. Dispatch needs both reached state and zero degree; otherwise report BranchNotTaken.
     flowed_in: HashMap<String, bool>,
     ready: VecDeque<String>,
     pending_in_loop: HashMap<String, usize>,
     iterations: HashMap<String, u32>,
     loops_to_check: VecDeque<String>,
-    /// `While -> Break/Continue` pedido na iteração atual.
+    /// While-to-Break/Continue requests for this iteration.
     loop_exits: HashMap<String, LoopExit>,
 }
 
 impl<'g> Scheduler<'g> {
-    /// Prontos de início: nodes do nível de cima (fora de qualquer corpo)
-    /// com grau de entrada 0.
+    /// Initially ready top-level nodes outside loop bodies with zero incoming degree.
     fn new(graph: &'g FlowGraph) -> Self {
         let in_degree = graph.initial_in_degree.clone();
         let mut flowed_in: HashMap<String, bool> = in_degree
@@ -748,7 +693,7 @@ impl<'g> Scheduler<'g> {
         self.iterations.get(while_id).copied().unwrap_or(0)
     }
 
-    /// `Break` vence `Continue` quando os dois chegam na mesma iteração.
+    /// Break wins over Continue when both arrive in one iteration.
     fn request_exit(&mut self, while_id: &str, exit: LoopExit) {
         let entry = self.loop_exits.entry(while_id.to_string()).or_insert(exit);
         if exit == LoopExit::Break {
@@ -760,8 +705,7 @@ impl<'g> Scheduler<'g> {
         self.loop_exits.remove(while_id)
     }
 
-    /// Algum `While` que contém `node_id` (não o próprio) recebeu
-    /// `Break`/`Continue` nesta iteração — o node não deve mais começar.
+    /// An enclosing While received Break/Continue; do not start this node.
     fn is_interrupted(&self, node_id: &str) -> bool {
         let mut current = self.graph.loop_owners.get(node_id);
         while let Some(owner) = current {
@@ -773,9 +717,7 @@ impl<'g> Scheduler<'g> {
         false
     }
 
-    /// `node_id` concluiu (rodou, falhou ou foi pulado): propaga para os
-    /// sucessores e, se ele pertence a um corpo, desconta da iteração do
-    /// `While` dono — que é reavaliado quando o corpo inteiro terminou.
+    /// Propagate completion/failure/skip to successors. Body nodes decrement the owning While count; reevaluate after the entire body finishes.
     fn complete(&mut self, node_id: &str, flowed_in: bool, taken_handle: Option<&str>) {
         advance_after_completion(
             node_id,
@@ -796,9 +738,7 @@ impl<'g> Scheduler<'g> {
         }
     }
 
-    /// Começa uma iteração de `while_id`: o corpo inteiro (inclusive corpos
-    /// aninhados) volta ao estado inicial e as entradas do corpo ficam
-    /// prontas. Devolve o número da iteração (a partir de 1).
+    /// Reset the complete body, including nested bodies, and enqueue its entries. Return the one-based iteration number.
     fn start_iteration(&mut self, while_id: &str) -> u32 {
         let iteration = self.iterations(while_id) + 1;
         self.iterations.insert(while_id.to_string(), iteration);
@@ -813,7 +753,7 @@ impl<'g> Scheduler<'g> {
             self.in_degree.insert(node_id.clone(), initial);
             self.flowed_in.insert(node_id.clone(), false);
         }
-        // `While`s aninhados recomeçam do zero a cada iteração de fora.
+        // Nested While counters restart for every outer iteration.
         for (node_id, owner) in &self.graph.loop_owners {
             if owner == while_id && self.graph.loop_bodies.contains_key(node_id) {
                 self.iterations.remove(node_id);
@@ -845,8 +785,7 @@ impl<'g> Scheduler<'g> {
 
 const LOOP_DONE_HANDLE: &str = "done";
 
-/// Avalia a condição de um `While` — na chegada dele e a cada fim de
-/// iteração — e decide entre iterar de novo, sair por `"done"` ou falhar.
+/// Evaluate While on arrival and after body completion, then iterate, take done or fail.
 #[allow(clippy::too_many_arguments)]
 fn step_loop<S: FlowRunSink, C: FlowCancellation>(
     while_id: &str,
@@ -860,7 +799,7 @@ fn step_loop<S: FlowRunSink, C: FlowCancellation>(
 ) {
     let graph = scheduler.graph;
     let done_iterations = scheduler.iterations(while_id);
-    // O corpo ainda não foi reportado se o loop sai antes da 1ª iteração.
+    // Report the body even when the loop exits before its first iteration.
     let finish = |scheduler: &mut Scheduler, outcome: FlowNodeOutcome, handle: Option<&str>| {
         sink.node_finished(while_id, outcome);
         if done_iterations == 0 {
@@ -869,8 +808,7 @@ fn step_loop<S: FlowRunSink, C: FlowCancellation>(
         scheduler.complete(while_id, true, handle);
     };
 
-    // Na chegada, o cancelamento já foi tratado antes do despacho; aqui só
-    // entre iterações (o corpo já foi todo reportado como cancelado).
+    // Initial cancellation is handled before dispatch; here only between-iteration cancellation remains.
     if cancellation.is_cancelled() {
         sink.node_finished(while_id, FlowNodeOutcome::Cancelled);
         scheduler.complete(while_id, true, None);
@@ -885,8 +823,7 @@ fn step_loop<S: FlowRunSink, C: FlowCancellation>(
         return;
     }
 
-    // Só ancestrais do `While`: na primeira avaliação o corpo ainda não
-    // rodou, então valores do corpo chegam à condição por variáveis locais.
+    // Use only While ancestors. Initially the body has not run; body results reach conditions through run variables.
     let ancestors = graph.ancestors.get(while_id).cloned().unwrap_or_default();
 
     match evaluate_condition(condition, variables, history, &ancestors) {
@@ -923,9 +860,7 @@ fn step_loop<S: FlowRunSink, C: FlowCancellation>(
     }
 }
 
-/// Reporta todo o corpo de `node_id` (se for um `While`) como pulado —
-/// quando o próprio `While` foi pulado ou saiu sem iterar. Ordenado para um
-/// log estável.
+/// Report skipped/unentered While bodies as skipped in stable order.
 fn skip_loop_body<S: FlowRunSink>(
     graph: &FlowGraph,
     node_id: &str,
@@ -942,21 +877,7 @@ fn skip_loop_body<S: FlowRunSink>(
     }
 }
 
-/// Decrementa o grau de entrada de cada sucessor de `node_id` e enfileira
-/// quem chegar a zero — chamada tanto para nodes resolvidos de forma
-/// síncrona (Start/Block/If/NotRunnable/Failed antes de disparar) quanto
-/// para nodes que terminaram de forma assíncrona, para que uma falha de node
-/// nunca interrompa a propagação estrutural para seus sucessores.
-///
-/// `predecessor_flowed_in` é se `node_id` foi de fato alcançado por um
-/// caminho tomado (não uma saída descartada de `If`/`Request`) — propaga para
-/// cada sucessor por uma edge sem handle (saída única: Start/Block/If com
-/// condição que falhou) incondicionalmente, e para uma edge com handle
-/// (saindo de um `If` que avaliou ou de um `Request` que concluiu) só quando
-/// `taken_handle` bate com o handle da edge. Um sucessor só fica marcado como "fluído" quando pelo
-/// menos uma de suas edges de entrada propaga isso — nunca desmarcado
-/// depois, então múltiplos predecessores (reconvergência depois de um
-/// `If`) fazem OR entre si.
+/// Decrement successor degrees for synchronous/asynchronous completions, including failures. Unnamed edges always propagate reached state; named edges require the taken handle. Run a successor after all predecessors finish if at least one taken path reaches it; otherwise report BranchNotTaken.
 fn advance_after_completion(
     node_id: &str,
     predecessor_flowed_in: bool,
@@ -990,12 +911,7 @@ fn advance_after_completion(
 const REQUEST_SUCCESS_HANDLE: &str = "success";
 const REQUEST_FAILURE_HANDLE: &str = "failure";
 
-/// Qual saída de um node `Request` foi tomada (spec 0048): sucesso é uma
-/// resposta com status < 400; erro de transporte, cancelamento e resposta com
-/// status >= 400 tomam a saída de falha. `FlowNodeOutcome::Success` continua
-/// sendo reportado para qualquer resposta recebida (a UI segue mostrando
-/// status e duração) — só a derivação do handle interpreta o status. Regra
-/// espelhada no frontend em `flow-run-trail.ts` (`takenHandleForEvent`).
+/// Choose request outputs: protocol/transport failures and cancellation take failure; ordinary HTTP uses the 400 boundary. HTTP responses still report status/duration through Success. Keep frontend flow-run-trail decisions aligned.
 fn request_taken_handle(outcome: &FlowNodeOutcome) -> Option<&'static str> {
     match outcome {
         FlowNodeOutcome::Success { status_code, .. } if *status_code < 400 => {
@@ -1012,10 +928,9 @@ fn request_taken_handle(outcome: &FlowNodeOutcome) -> Option<&'static str> {
     }
 }
 
-/// Trabalho assíncrono de um node — o único que entra em `in_flight`, para
-/// rodar concorrente com outros ramos e disputar com o cancelamento.
+/// Asynchronous work raced against cancellation while independent branches run concurrently.
 enum InFlightWork {
-    /// `request_id` é `None` para uma requisição avulsa (sem coleção).
+    /// Inline requests have no request_id.
     Request {
         request_id: Option<String>,
         request: Box<Request>,
@@ -1031,8 +946,7 @@ enum InFlightWork {
     },
 }
 
-/// Conclusão de um node em voo, já com a saída tomada (`None` para nodes de
-/// saída única).
+/// In-flight completion with its taken output; None for a single-output node.
 struct NodeCompletion {
     node_id: String,
     outcome: FlowNodeOutcome,
@@ -1145,8 +1059,7 @@ where
     }
 }
 
-/// Mocks ligados pelo run (spec 0120), indexados pelo node `MockStart`, e o
-/// cursor de cada rota já consumida por um `MockWaitRequest`.
+/// Run-owned mocks keyed by MockStart, with consumed-call cursors per route.
 #[derive(Default)]
 struct MockSession {
     handles: HashMap<String, MockRunHandle>,
@@ -1215,8 +1128,7 @@ impl MockSession {
         self.cursors.retain(|(owner, _), _| owner != start_node_id);
     }
 
-    /// Fim do run: desliga o que o run ligou e desfaz as respostas forçadas
-    /// nos mocks que já estavam ligados antes.
+    /// Stop mocks this run started and undo overrides on previously running mocks.
     fn cleanup<M: MockServerControl>(self, mocks: &M) {
         for handle in self.handles.values() {
             if handle.owned {
@@ -1292,9 +1204,7 @@ fn assert_mock_calls<M: MockServerControl>(
     ))
 }
 
-/// Resolve as variáveis da requisição de um node (salva ou avulsa) e
-/// reporta o início e a URL chamada. `None` quando a resolução falha — já
-/// reportada como `Failed`; quem chama segue pela saída de falha.
+/// Resolve saved/inline request variables and report the call. Resolution errors are already Failed; callers follow failure.
 fn prepare_request<S: FlowRunSink>(
     node_id: &str,
     request_to_run: &Request,
@@ -1317,8 +1227,7 @@ fn prepare_request<S: FlowRunSink>(
     };
 
     sink.node_started(node_id);
-    // Já resolveu acima sem erro, então a resolução para exibição também
-    // resolve; se não, o run só fica sem o detalhe.
+    // Execution resolution already succeeded; display resolution should too, otherwise omit only optional details.
     let template = request_to_run.endpoint.url();
     if let Ok(display) = resolve_for_display(template, variables, history, ancestors) {
         sink.node_call(
@@ -1356,9 +1265,12 @@ where
     };
     match outcome {
         Ok(response) => {
-            let flow_outcome = FlowNodeOutcome::Success {
-                status_code: response.status_code,
-                duration_ms: response.duration_ms,
+            let flow_outcome = match response.protocol_failure() {
+                Some(message) => FlowNodeOutcome::Failed { message },
+                None => FlowNodeOutcome::Success {
+                    status_code: response.status_code,
+                    duration_ms: response.duration_ms,
+                },
             };
             (node_id, flow_outcome, Some(response))
         }
@@ -1441,9 +1353,7 @@ mod tests {
         async fn cancelled(&self) {}
     }
 
-    /// Executor de teste: responde após `delay`, registrando em `concurrent`
-    /// quantas execuções estavam em voo ao mesmo tempo — usado para provar
-    /// que nodes independentes rodam concorrentemente.
+    /// Delayed test executor recording peak in-flight concurrency to verify independent nodes overlap.
     struct DelayedExecutor {
         delay: Duration,
         in_flight: std::sync::atomic::AtomicUsize,
@@ -1959,10 +1869,7 @@ mod tests {
         assert_eq!(calls[0].1.resolved_url, "https://collection.test/folder");
     }
 
-    /// Executor de teste que registra cada requisição recebida e devolve
-    /// uma resposta diferente por endpoint — usado para provar que um node
-    /// dependente recebe de fato o valor extraído da resposta de um node
-    /// anterior, não só que ambos tiveram sucesso.
+    /// Record requests and return endpoint-specific responses to verify actual predecessor value propagation.
     struct ChainRecordingExecutor {
         received: Mutex<Vec<Request>>,
     }
@@ -2201,11 +2108,7 @@ mod tests {
         );
     }
 
-    /// Executor de teste que atribui um delay e um corpo de resposta por
-    /// URL (delay zero e corpo `{}` quando a URL não está mapeada) — usado
-    /// para provar comportamentos que dependem de timing real: uma corrida
-    /// entre nodes sem edge de dependência, e concorrência entre subgrafos
-    /// desconectados de profundidades diferentes.
+    /// Endpoint-specific test delays/bodies verify timing-sensitive ancestry and disconnected-subgraph concurrency.
     struct ScriptedExecutor {
         entries: HashMap<String, (Duration, &'static str)>,
     }
@@ -2255,11 +2158,7 @@ mod tests {
     #[tokio::test]
     async fn referencing_a_node_that_already_finished_via_an_unrelated_path_still_fails_without_an_edge()
      {
-        // req-a (sem edge para req-b) termina rápido e já está no
-        // histórico bem antes de req-b ficar pronto (que depende de
-        // req-x, mais lento) — prova que a validação de ancestralidade
-        // não depende de timing: mesmo com a resposta de req-a já
-        // disponível, referenciá-la sem edge real continua falhando.
+        // req-a finishes before slower req-x releases req-b. Its available response must still be rejected without an ancestor edge.
         let flow = build_flow(
             vec![
                 node("start", FlowNodeKind::Start),
@@ -2350,11 +2249,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_short_chain_does_not_wait_for_an_unrelated_longer_chain_to_finish() {
-        // start -> a (lento, sem sucessores) e start -> x -> y (rápido),
-        // sem nenhuma relação estrutural entre as duas cadeias — prova que
-        // o scheduler dinâmico não sincroniza artificialmente subgrafos
-        // desconectados de profundidades diferentes (mudança de
-        // comportamento deliberada em relação ao modelo de ondas).
+        // A slow leaf and fast deeper chain are independent; do not synchronize them into artificial waves.
         let flow = build_flow(
             vec![
                 node("start", FlowNodeKind::Start),
@@ -2614,10 +2509,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_node_reachable_from_both_branches_still_runs_when_fed_by_the_taken_branch() {
-        // if-1 -(true)-> a -> join
-        // if-1 -(false)-> b -> join
-        // condição verdadeira: `a` roda, `b` é pulado, mas `join` ainda
-        // precisa rodar — alimentado só pelo ramo verdadeiro.
+        // True runs, false is skipped, and their join still runs after structural completion of both.
         let flow = build_flow(
             vec![
                 node("start", FlowNodeKind::Start),
@@ -3475,7 +3367,7 @@ mod tests {
         );
     }
 
-    /// Responde com os status de `statuses`, um por chamada, repetindo o último.
+    /// Return configured statuses in order, repeating the last.
     struct SequenceExecutor {
         statuses: Vec<u16>,
         calls: std::sync::atomic::AtomicUsize,
@@ -3535,8 +3427,7 @@ mod tests {
 
         let events = run(&flow, &collections_with_request("request-1"), &executor).await;
 
-        // 503 toma a saída de falha: `save` fica como ramo não seguido e o
-        // loop repete até o 200.
+        // 503 takes failure, leaving save untaken; repeat until 200.
         assert_eq!(
             outcome_of(&events, "save"),
             vec![
@@ -3676,7 +3567,7 @@ mod tests {
                 "Completed { message: Some(\"3\") }",
             ]
         );
-        // O sleep da 2ª iteração já estava em voo e termina normalmente.
+        // The second-iteration sleep is already in flight and finishes normally.
         assert_eq!(
             outcome_of(&events, "sleep")
                 .iter()
@@ -3758,8 +3649,7 @@ mod tests {
         )
     }
 
-    /// Requisição avulsa recém-criada, ainda sem URL (spec 0089): o node falha
-    /// na resolução, sem chegar ao executor, e segue pela saída `failure`.
+    /// A new inline request without a URL fails resolution, never reaches transport and takes failure (spec 0089).
     #[tokio::test]
     async fn an_inline_request_without_url_fails_without_calling_the_network() {
         let flow = build_flow(
@@ -3808,7 +3698,7 @@ mod tests {
 
         let received = executor.received.lock().unwrap();
         assert_eq!(received[0].endpoint.url(), "https://api.example.com/a");
-        // "Herdar" sem coleção vira sem autenticação.
+        // Inheritance without a collection means no authentication.
         assert_eq!(received[0].authentication, Authentication::None);
         assert_eq!(
             outcome_of(&events, "log"),
@@ -3844,8 +3734,7 @@ mod tests {
         );
     }
 
-    /// Controle de mock de teste: chamadas pré-gravadas, contagens fixas e o
-    /// registro do que o motor pediu.
+    /// Mock control fixture with recorded calls, fixed counts and an operation log.
     struct FakeMocks {
         already_running: bool,
         baseline: u64,
@@ -4004,7 +3893,7 @@ mod tests {
                 handled_edge("e4", "wait-2", "log", "true"),
             ],
         );
-        // A primeira chamada chegou antes de qualquer espera começar.
+        // The first call arrived before any wait began.
         let mocks = FakeMocks::new()
             .with_capture(1, r#"{"n":1}"#)
             .with_capture(2, r#"{"n":2}"#);

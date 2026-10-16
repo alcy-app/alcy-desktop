@@ -1,4 +1,4 @@
-//! Tipos e regras de domínio do Alcy.
+//! Alcy domain types and rules.
 
 mod api_docs;
 mod authentication;
@@ -76,7 +76,8 @@ pub use mock_server::{
 pub use proxy_settings::{ProxySettings, ProxySettingsError};
 pub use request::{RedirectPolicy, Request, RouteParameter};
 pub use response::{
-    BodyEncoding, ConnectionInfo, Cookie, Response, ResponseHeader, ResponseMetadata,
+    BodyEncoding, ConnectionInfo, Cookie, GrpcResponseStatus, Response, ResponseHeader,
+    ResponseMetadata,
 };
 pub use security_settings::SecuritySettings;
 pub use update::{

@@ -37,6 +37,7 @@ export interface GrpcConnectionInput {
 }
 
 export type GrpcCommandError =
+  | { kind: 'script'; phase: 'preRequest' | 'postResponse'; message: string }
   | { kind: 'invalidRequest'; message: string; cause?: InvalidRequestCause }
   | { kind: 'connection'; message: string }
   | { kind: 'schema'; message: string }

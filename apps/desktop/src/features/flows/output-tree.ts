@@ -1,10 +1,7 @@
+import { grpcCodeName } from '../request-workbench/grpc-status'
 import type { FlowNodeOutputDto } from '../../bindings/get-flow-node-output'
 
-/** Um campo navegável do output de um node. `path` é o caminho depois de
- * `response.` na gramática de referência (`status`, `headers.<nome>`,
- * `body.a.b.0`); `null` quando o campo não pode ser referenciado (a chave
- * tem `.`, que o resolvedor usa como separador, ou o pai já não é
- * referenciável). */
+/** A navigable output field. path follows response in a reference; null means its key or ancestor cannot be referenced because it contains a dot. */
 export interface OutputEntry {
   key: string
   path: string | null
@@ -27,7 +24,7 @@ export function isContainer(value: unknown): boolean {
   return kind === 'object' || kind === 'array'
 }
 
-/** Filhos de um objeto/array, cada um com seu caminho de referência. */
+/** Object/array children with reference paths. */
 export function childEntries(value: unknown, path: string | null): OutputEntry[] {
   const pairs: [string, unknown][] = Array.isArray(value)
     ? value.map((item, index): [string, unknown] => [String(index), item])
@@ -41,8 +38,7 @@ export function childEntries(value: unknown, path: string | null): OutputEntry[]
   }))
 }
 
-/** Corpo como JSON quando é completo e válido; `undefined` caso contrário
- * (texto puro ou corpo truncado). */
+/** Parse complete valid JSON; return undefined for plain text, binary or truncated bodies. */
 export function parseBody(output: FlowNodeOutputDto): unknown | undefined {
   if (output.truncated || output.bodyEncoding === 'base64') return undefined
   try {
@@ -52,10 +48,7 @@ export function parseBody(output: FlowNodeOutputDto): unknown | undefined {
   }
 }
 
-/** Raízes da árvore: `status`, `headers` e `body`, como na gramática de
- * referência de nodes — ou `method`/`path` no lugar de `status` para a chamada
- * recebida por um bloco "Aguardar chamada" (spec 0121). `headers` não é
- * referenciável sozinho (a gramática pede o nome), só cada header. */
+/** Reference roots: status, headers, body and gRPC fields. Captured calls use method/path instead of status. Only individual headers can be referenced. */
 export function outputRoots(output: FlowNodeOutputDto): OutputEntry[] {
   const headers: Record<string, string> = {}
   for (const header of output.headers) headers[header.name] = header.value
@@ -67,27 +60,33 @@ export function outputRoots(output: FlowNodeOutputDto): OutputEntry[] {
         { key: 'path', path: 'path', value: output.request.path },
       ]
     : [{ key: 'status', path: 'status', value: output.statusCode }]
+  const grpcCode = output.headers.find((header) => header.name.toLowerCase() === 'grpc-status')?.value
+  const grpc = grpcCode !== undefined && /^\d+$/.test(grpcCode)
+    ? { code: Number(grpcCode), codeName: grpcCodeName(Number(grpcCode)), message: output.headers.find((header) => header.name.toLowerCase() === 'grpc-message')?.value ?? '' }
+    : null
   return [
     ...head,
+    ...(grpc ? [{ key: 'grpcStatus', path: 'grpcStatus', value: grpc },
+      ...(parsed === undefined ? [] : [{ key: 'messages', path: 'messages', value: Array.isArray(parsed) ? parsed : [parsed] }])] : []),
     { key: 'headers', path: null, value: headers },
     { key: 'body', path: 'body', value: parsed === undefined ? output.body : parsed },
   ]
 }
 
-/** Filhos de `headers` usam `headers.<nome>` mesmo com a raiz não referenciável. */
+/** Header children use headers.<name> even when their root has no reference path. */
 export function childrenOfRoot(root: OutputEntry): OutputEntry[] {
   if (root.key !== 'headers') return childEntries(root.value, root.path)
   return childEntries(root.value, 'headers')
 }
 
-/** `scope` é `request` para a chamada recebida por um bloco "Aguardar chamada". */
+/** Captured calls from Wait for call blocks use request scope. */
 export function referenceFor(nodeId: string, path: string, scope: 'response' | 'request' = 'response'): string {
   return `{{nodes.${nodeId}.${scope}.${path}}}`
 }
 
 const PREVIEW_LIMIT = 80
 
-/** Texto curto que resume um valor na linha da árvore. */
+/** Short value preview for a tree row. */
 export function summarize(value: unknown): string {
   const kind = kindOf(value)
   if (kind === 'array') return `${(value as unknown[]).length} items`

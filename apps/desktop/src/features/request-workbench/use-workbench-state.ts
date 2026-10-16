@@ -339,6 +339,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
 
     const result = await executeGrpcRequest({
       executionId: id,
+      preRequestScript: tab.preRequestScript,
+      postResponseScript: tab.postResponseScript,
       rootPath,
       endpoint: tab.endpointUrl,
       schemaSource: tab.grpc.schemaSource,

@@ -1,6 +1,4 @@
-//! Cola entre os comandos de execução e o crate `alcy-scripting` (spec 0054):
-//! converte entre os DTOs de entrada e os valores simples do script, roda o
-//! script fora do worker assíncrono e acumula os efeitos (ambiente e logs).
+//! Adapt commands to plain script values, run off async workers, and accumulate environment/scoped writes, logs and tests (spec 0054).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -15,8 +13,9 @@ use alcy_script_packages::{
     PackageCache, PackageError, esm_sh_client, fetch_from_esm_sh, resolve_packages,
 };
 use alcy_scripting::{
-    ScriptError, ScriptHeader, ScriptInput, ScriptIteration, ScriptOutput, ScriptPackages,
-    ScriptPhase, ScriptRequest, ScriptResponse, ScriptVariable, npm_requests, run_script,
+    ScriptError, ScriptGrpcRequest, ScriptGrpcResponse, ScriptHeader, ScriptInput, ScriptIteration,
+    ScriptOutput, ScriptPackages, ScriptPhase, ScriptRequest, ScriptResponse, ScriptVariable,
+    npm_requests, run_script,
 };
 use serde::Serialize;
 
@@ -29,18 +28,17 @@ use crate::commands::protocol_dispatching_executor::ProtocolDispatchingExecutor;
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentChangeOutput {
     pub name: String,
-    /// `Some` grava; `None` remove.
+    /// Some writes a value; None removes it.
     pub value: Option<String>,
 }
 
-/// Variável de coleção/pasta gravada por `al.collection.set`/`al.folder.set`
-/// (ADR 0031); `node_id` é o id da coleção/pasta.
+/// Collection/folder write from the script API; node_id identifies scope (ADR 0031).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ScopedChangeOutput {
     pub node_id: String,
     pub name: String,
-    /// `Some` grava; `None` remove.
+    /// Some writes a value; None removes it.
     pub value: Option<String>,
 }
 
@@ -79,11 +77,7 @@ impl From<ScriptError> for ScriptErrorOutput {
     }
 }
 
-/// Erro de uma execução avulsa acompanhado dos efeitos que os scripts já
-/// produziram antes da falha (ex.: o pré-script rodou e gravou um token, mas
-/// o envio falhou por rede). Serializa como o próprio erro (`kind`, ...)
-/// mais `environmentChanges` e `scriptLogs`, para a UI aplicar e mostrar os
-/// efeitos mesmo sem resposta.
+/// Flatten execution errors with effects already produced by completed scripts so the UI applies writes/logs/tests even without a response.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionFailure<E> {
@@ -107,9 +101,9 @@ impl<E> ExecutionFailure<E> {
     }
 }
 
-/// Campos da requisição que um script enxerga e pode alterar, ainda com
-/// `{{var}}` sem interpolar.
+/// Editable script fields before template interpolation.
 pub(crate) struct ScriptedRequest {
+    pub grpc: Option<ScriptGrpcRequest>,
     pub url: String,
     pub method: String,
     pub body: String,
@@ -117,9 +111,15 @@ pub(crate) struct ScriptedRequest {
 }
 
 impl ScriptedRequest {
-    /// Campos de uma requisição salva que o script enxerga.
+    /// Build script-visible fields from saved requests.
     pub(crate) fn from_request(request: &Request) -> Self {
         Self {
+            grpc: (request.document.protocol == alcy_domain::ProtocolId::Grpc).then(|| {
+                ScriptGrpcRequest {
+                    service: request.grpc.service.clone(),
+                    method: request.grpc.method.clone(),
+                }
+            }),
             url: request.endpoint.url().to_string(),
             method: HttpMethodInput::from(request.method).as_str().to_string(),
             body: request.document.body.clone(),
@@ -135,12 +135,16 @@ impl ScriptedRequest {
         }
     }
 
-    /// `request` com o que o pré-script alterou (url, corpo, headers, método).
+    /// Apply pre-request URL/body/header/method edits, including gRPC service/method.
     pub(crate) fn apply_to(&self, request: &Request) -> Result<Request, ExecutionError> {
         let mut effective = request.clone();
         effective.endpoint = Endpoint::new(self.url.clone())
             .map_err(|error| ExecutionError::Script(error.to_string()))?;
         effective.document.body = self.body.clone();
+        if let Some(grpc) = &self.grpc {
+            effective.grpc.service = grpc.service.clone();
+            effective.grpc.method = grpc.method.clone();
+        }
         effective.headers = self
             .headers
             .iter()
@@ -154,15 +158,15 @@ impl ScriptedRequest {
     }
 }
 
-/// Efeitos acumulados pelos scripts de uma execução.
+/// Accumulated execution script effects.
 #[derive(Default)]
 pub(crate) struct ScriptEffects {
     pub environment_changes: Vec<EnvironmentChangeOutput>,
-    /// Valor final de cada variável de coleção/pasta gravada.
+    /// Final value of each collection/folder write.
     pub scoped_changes: Vec<ScopedVariableChange>,
     pub logs: Vec<String>,
     pub tests: Vec<ScriptTestOutput>,
-    /// Estado efêmero entre pré/pós e entre requests do mesmo run.
+    /// Ephemeral state between phases/requests in one run.
     pub(crate) local_variables: Vec<ScriptVariable>,
     pub(crate) runtime_variables: Vec<ScriptVariable>,
 }
@@ -230,14 +234,14 @@ fn script_headers(headers: &[HeaderInput]) -> Vec<ScriptHeader> {
         .collect()
 }
 
-/// Camada exposta como `al.collection`: a primeira, se for a coleção.
+/// al.collection exposes the first scope if it is a collection.
 fn collection_scope(scopes: &[VariableScope]) -> Option<&VariableScope> {
     scopes
         .first()
         .filter(|scope| scope.kind == VariableScopeKind::Collection)
 }
 
-/// Camada exposta como `al.folder`: a última, se for uma pasta (a pai direta).
+/// al.folder exposes the last scope if it is the direct parent folder.
 fn folder_scope(scopes: &[VariableScope]) -> Option<&VariableScope> {
     scopes
         .last()
@@ -377,9 +381,7 @@ async fn run_blocking(
         })
 }
 
-/// Roda o script de pré-requisição. Aplica o resultado em `request`,
-/// `environment` e `scopes` (camadas da coleção/pastas, ADR 0031) e acumula
-/// os efeitos.
+/// Run pre-request scripts, apply request/environment/scope edits, and accumulate effects.
 pub(crate) async fn run_pre_request(
     source: &str,
     request: &mut ScriptedRequest,
@@ -398,7 +400,7 @@ pub(crate) async fn run_pre_request(
     .await
 }
 
-/// Igual a `run_pre_request`, dentro de uma iteração do runner de coleções.
+/// Run pre-request logic within a runner iteration.
 pub(crate) async fn run_pre_request_in(
     source: &str,
     request: &mut ScriptedRequest,
@@ -413,6 +415,7 @@ pub(crate) async fn run_pre_request_in(
     }
     let input = ScriptInput {
         request: ScriptRequest {
+            grpc: request.grpc.clone(),
             url: request.url.clone(),
             method: request.method.clone(),
             body: request.body.clone(),
@@ -429,10 +432,11 @@ pub(crate) async fn run_pre_request_in(
     };
     let output = run_blocking(ScriptPhase::PreRequest, source.to_string(), input).await?;
 
+    request.grpc = output.request.grpc.clone();
     request.url = output.request.url.clone();
     request.method = output.request.method.clone();
     request.body = output.request.body.clone();
-    // Headers desabilitados não são vistos pelo script e são preservados.
+    // Scripts do not see disabled headers; preserve them unchanged.
     let mut headers: Vec<HeaderInput> = request
         .headers
         .iter()
@@ -490,8 +494,7 @@ fn status_text(status: u16) -> &'static str {
     }
 }
 
-/// Roda o script de pós-resposta. A requisição é somente leitura; só o
-/// ambiente e os logs são aproveitados.
+/// Run post-response logic with read-only requests and accumulate effects.
 pub(crate) async fn run_post_response(
     source: &str,
     request: &ScriptedRequest,
@@ -512,8 +515,7 @@ pub(crate) async fn run_post_response(
     .await
 }
 
-/// Igual a `run_post_response`, dentro de uma iteração do runner de
-/// coleções. Devolve o ambiente depois do script.
+/// Run post-response logic within a runner iteration.
 pub(crate) async fn run_post_response_in(
     source: &str,
     request: &ScriptedRequest,
@@ -528,12 +530,26 @@ pub(crate) async fn run_post_response_in(
     }
     let input = ScriptInput {
         request: ScriptRequest {
+            grpc: request.grpc.clone(),
             url: request.url.clone(),
             method: request.method.clone(),
             body: request.body.clone(),
             headers: script_headers(&request.headers),
         },
         response: Some(ScriptResponse {
+            grpc: response.grpc.as_ref().map(|grpc| ScriptGrpcResponse {
+                code: grpc.code,
+                code_name: grpc.code_name.clone(),
+                message: grpc.message.clone(),
+                trailers: grpc
+                    .trailers
+                    .iter()
+                    .map(|entry| ScriptHeader {
+                        name: entry.name.clone(),
+                        value: entry.value.clone(),
+                    })
+                    .collect(),
+            }),
             status: response.status_code,
             status_text: status_text(response.status_code).to_string(),
             time_ms: response.duration_ms,
@@ -570,16 +586,10 @@ pub(crate) async fn run_post_response_in(
     Ok(())
 }
 
-/// Executor de flow com scripts: roda o pré-script antes e o pós-script
-/// depois de cada requisição, sobre a requisição já com `{{var}}`
-/// resolvidas. Os efeitos no ambiente ficam acumulados e são devolvidos ao
-/// fim do run; nodes seguintes enxergam as mudanças só nos scripts
-/// (`al.environment.get`, `al.collection.get`, `al.folder.get`), não na
-/// interpolação de `{{var}}`.
+/// Flow scripts wrap already-resolved requests. Accumulate writes for later scripts and return effects at run end; template interpolation retains existing flow environment semantics.
 pub(crate) struct ScriptingExecutor<'a> {
     inner: ProtocolDispatchingExecutor<'a>,
-    /// Coleções do workspace, para montar `al.collection`/`al.folder` de
-    /// cada requisição salva.
+    /// Collections provide saved-request collection/folder script scopes.
     collections: &'a [Collection],
     environment: Mutex<Vec<EnvironmentVariableDto>>,
     effects: Mutex<ScriptEffects>,
@@ -599,8 +609,7 @@ impl<'a> ScriptingExecutor<'a> {
         }
     }
 
-    /// Camadas da requisição salva `request_id`, com o que os scripts já
-    /// gravaram neste run.
+    /// Snapshot saved-request scopes with writes already accumulated in this run.
     fn scopes_snapshot(&self, request_id: Option<&str>) -> Vec<VariableScope> {
         let Some(request_id) = request_id else {
             return Vec::new();
@@ -665,9 +674,7 @@ impl<'a> ScriptingExecutor<'a> {
             }
             effects.logs.extend(local.logs);
             effects.tests.extend(local.tests);
-            // `runtime` pertence somente a este executor/run. Ao contrário
-            // das variáveis locais, que são reiniciadas pelo próximo pré,
-            // ele precisa chegar à próxima requisição executada no flow.
+            // Runtime variables survive between requests; request-local variables reset before the next pre-script.
             effects.runtime_variables = local.runtime_variables;
         }
     }
@@ -702,8 +709,7 @@ impl<'a> ScriptingExecutor<'a> {
 
         let effective = scripted.apply_to(request)?;
 
-        // Mesmo com o envio falhando, o pré-script já rodou: seus efeitos
-        // valem para o resto do run.
+        // Completed pre-scripts retain effects even when sending fails.
         let response = match self.inner.execute(&effective).await {
             Ok(response) => response,
             Err(error) => {
@@ -780,6 +786,7 @@ mod tests {
         let rest = ReqwestRestExecutor::new();
         let executor = ScriptingExecutor::new(
             ProtocolDispatchingExecutor {
+                app: None,
                 graphql: &graphql,
                 rest: &rest,
                 workspace_root: std::path::Path::new(""),
@@ -819,6 +826,7 @@ mod tests {
         let rest = ReqwestRestExecutor::new();
         let executor = ScriptingExecutor::new(
             ProtocolDispatchingExecutor {
+                app: None,
                 graphql: &graphql,
                 rest: &rest,
                 workspace_root: std::path::Path::new(""),
@@ -879,6 +887,7 @@ mod tests {
         let rest = ReqwestRestExecutor::new();
         let executor = ScriptingExecutor::new(
             ProtocolDispatchingExecutor {
+                app: None,
                 graphql: &graphql,
                 rest: &rest,
                 workspace_root: std::path::Path::new(""),
@@ -906,6 +915,7 @@ mod tests {
         let rest = ReqwestRestExecutor::new();
         let executor = ScriptingExecutor::new(
             ProtocolDispatchingExecutor {
+                app: None,
                 graphql: &graphql,
                 rest: &rest,
                 workspace_root: std::path::Path::new(""),
@@ -939,6 +949,7 @@ mod tests {
         let rest = ReqwestRestExecutor::new();
         let executor = ScriptingExecutor::new(
             ProtocolDispatchingExecutor {
+                app: None,
                 graphql: &graphql,
                 rest: &rest,
                 workspace_root: std::path::Path::new(""),

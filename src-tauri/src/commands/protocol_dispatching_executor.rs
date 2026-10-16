@@ -5,17 +5,12 @@ use alcy_domain::{ExecutionError, ProtocolId, Request, Response};
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_rest::ReqwestRestExecutor;
 
-/// Composição pura: despacha uma requisição para o executor do protocolo
-/// certo. Existe porque `alcy_app::execute_flow` é genérico sobre um único
-/// `E: RequestExecutor`, mas um flow pode ter nodes GraphQL e REST
-/// misturados — o núcleo (`alcy-app`) não pode conhecer "protocolo" além do
-/// identificador opaco já presente em `Request.document.protocol`
-/// (invariante 6 de `ARCHITECTURE.md`), então esse despacho vive aqui.
+/// Composition-root dispatch for mixed protocols. Application use cases depend on RequestExecutor; concrete GraphQL/REST/gRPC adapters stay here.
 pub(crate) struct ProtocolDispatchingExecutor<'a> {
+    pub(crate) app: Option<&'a tauri::AppHandle>,
     pub(crate) graphql: &'a ReqwestGraphqlExecutor,
     pub(crate) rest: &'a ReqwestRestExecutor,
-    /// Raiz do workspace: arquivos de corpo salvos com caminho relativo são
-    /// resolvidos contra ela antes de enviar (ADR 0024).
+    /// Resolve workspace-relative body file paths against this root (ADR 0024).
     pub(crate) workspace_root: &'a Path,
 }
 
@@ -30,10 +25,9 @@ impl RequestExecutor for ProtocolDispatchingExecutor<'_> {
                 self.rest.execute(&request).await
             }
             ProtocolId::GraphQl => self.graphql.execute(request).await,
-            // The gRPC executor arrives in a later slice of spec 0129.
-            ProtocolId::Grpc => Err(ExecutionError::InvalidRequest(
-                "requisições gRPC ainda não podem ser enviadas nesta versão".to_string(),
-            )),
+            ProtocolId::Grpc => {
+                super::grpc::execute_saved_request(request, self.workspace_root, self.app).await
+            }
         }
     }
 }
@@ -44,17 +38,18 @@ mod tests {
     use alcy_domain::{Authentication, Endpoint, RequestDocument};
 
     #[tokio::test]
-    async fn a_grpc_request_is_never_sent_by_an_http_executor() {
+    async fn a_grpc_request_uses_its_own_transport() {
         let graphql = ReqwestGraphqlExecutor::new();
         let rest = ReqwestRestExecutor::new();
         let dispatcher = ProtocolDispatchingExecutor {
+            app: None,
             graphql: &graphql,
             rest: &rest,
             workspace_root: Path::new("."),
         };
         let request = Request::new(
-            // Unreachable on purpose: an HTTP executor would fail with a
-            // network error, not with `InvalidRequest`.
+            // An unreachable gRPC endpoint must produce a transport error,
+            // rather than the previous unsupported-protocol refusal.
             Endpoint::new("http://127.0.0.1:9").unwrap(),
             RequestDocument::new(ProtocolId::Grpc, "{}"),
             "",
@@ -64,8 +59,6 @@ mod tests {
 
         let error = dispatcher.execute(&request).await.unwrap_err();
 
-        assert!(
-            matches!(error, ExecutionError::InvalidRequest(ref message) if message.contains("gRPC"))
-        );
+        assert!(matches!(error, ExecutionError::Network(_)));
     }
 }
