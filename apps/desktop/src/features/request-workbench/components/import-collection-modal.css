@@ -238,3 +238,128 @@
 .import-modal-error {
   white-space: pre-line;
 }
+
+.import-modal-variables {
+  margin-top: var(--space-3);
+}
+
+.import-modal-variables-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.import-modal-variables-toggle:hover {
+  color: var(--text-heading);
+}
+
+.import-modal-variables-invalid {
+  margin-left: var(--space-2);
+  color: var(--error);
+  font-size: var(--font-size-xs);
+}
+
+.import-variables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.import-variables-header,
+.import-variables-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.import-variables-header {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.import-variables-list {
+  max-height: 280px;
+}
+
+.import-variables-list .virtual-list-spacer {
+  position: relative;
+  min-width: 100%;
+}
+
+.import-variables-list .virtual-list-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.import-variables-list.virtual-list {
+  overflow: auto;
+}
+
+.import-variables-row {
+  padding: 2px 0;
+}
+
+.import-variables-row--excluded {
+  opacity: 0.6;
+}
+
+.import-variables-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.import-variables-name .ui-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.import-variables-badge {
+  flex-shrink: 0;
+}
+
+.import-variables-sensitive {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.import-variables-hint {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.import-variables-hint--error {
+  color: var(--error);
+}
+
+@media (max-width: 560px) {
+  .import-variables-header {
+    display: none;
+  }
+
+  .import-variables-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .import-variables-row > :nth-child(n + 3) {
+    grid-column: 2;
+  }
+}

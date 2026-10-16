@@ -105,4 +105,26 @@ describe('useEnvironmentsState', () => {
 
     expect(saveEnvironments).not.toHaveBeenCalled()
   })
+
+  it('merges imported variables into an existing environment by name and appends new environments', async () => {
+    const { result } = renderHook(() => useEnvironmentsState('/workspace'), { wrapper })
+    await waitFor(() => expect(result.current.activeEnvironment?.variables).toHaveLength(1))
+    const existingRowId = result.current.environments[0].variables[0].id
+
+    act(() =>
+      result.current.importEnvironments(
+        [{ id: 'imported-environment-1', name: 'Prod', variables: [{ name: 'host', value: 'p', sensitive: false }] }],
+        [{ environmentId: 'dev', variables: [{ name: 'baseUrl', value: 'https://new.test', sensitive: false }, { name: 'token', value: 't', sensitive: true }] }],
+      ),
+    )
+
+    const [dev, prod] = result.current.environments
+    expect(dev.variables.map(({ name, value, sensitive }) => ({ name, value, sensitive }))).toEqual([
+      { name: 'baseUrl', value: 'https://new.test', sensitive: false },
+      { name: 'token', value: 't', sensitive: true },
+    ])
+    expect(dev.variables[0].id).toBe(existingRowId)
+    expect(prod.name).toBe('Prod')
+    expect(prod.id).not.toBe('imported-environment-1')
+  })
 })

@@ -17,6 +17,7 @@ mod load_test;
 mod png_text;
 mod script_translation;
 mod shell_command;
+mod variable_review;
 
 use docs::{DocsCollector, ParameterFields};
 
@@ -27,6 +28,10 @@ pub use load_test::{
 pub use png_text::{IMPORT_PNG_KEYWORD, is_png, png_text};
 use script_translation::{ScriptDialect, isolate, translate};
 pub use shell_command::parse_shell_commands;
+pub use variable_review::{
+    EnvironmentMerge, ImportVariableCandidate, MAX_REVIEW_VALUE_BYTES, VariableOrigin,
+    VariableSelection, VariableTarget, apply_variable_selection, variable_candidates,
+};
 
 const FALLBACK_COLLECTION_NAME: &str = "Imported Collection";
 const FALLBACK_FOLDER_NAME: &str = "Imported Folder";
@@ -524,9 +529,7 @@ fn open_variables(
             EnvironmentVariable::new(
                 name,
                 normalize_templates(&value),
-                sensitive
-                    || entry.get("secret").and_then(Value::as_bool) == Some(true)
-                    || looks_sensitive(name),
+                sensitive || entry.get("secret").and_then(Value::as_bool) == Some(true),
             )?,
         );
     }
@@ -1604,9 +1607,8 @@ fn environment_from_pairs(
         let Some(variable_name) = non_empty(pair.get(name_key).and_then(Value::as_str)) else {
             continue;
         };
-        let variable_private = private
-            || pair.get("type").and_then(Value::as_str) == Some("secret")
-            || looks_sensitive(variable_name);
+        let variable_private =
+            private || pair.get("type").and_then(Value::as_str) == Some("secret");
         let variable = EnvironmentVariable::new(
             variable_name,
             normalize_templates(&pair.get("value").map(value_text).unwrap_or_default()),
@@ -1651,11 +1653,8 @@ fn flatten_variables(
             flatten_variables(child, &full_name, private, variables)?;
             continue;
         }
-        let variable = EnvironmentVariable::new(
-            &full_name,
-            normalize_templates(&value_text(value)),
-            private || looks_sensitive(&full_name),
-        )?;
+        let variable =
+            EnvironmentVariable::new(&full_name, normalize_templates(&value_text(value)), private)?;
         upsert_variable(variables, variable);
     }
     Ok(())
@@ -1680,24 +1679,6 @@ fn upsert_variable(variables: &mut Vec<EnvironmentVariable>, variable: Environme
     } else {
         variables.push(variable);
     }
-}
-
-fn looks_sensitive(name: &str) -> bool {
-    let normalized = name.to_ascii_lowercase();
-    [
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "apikey",
-        "api_key",
-        "authorization",
-        "credential",
-        "private_key",
-        "client_secret",
-    ]
-    .iter()
-    .any(|marker| normalized.contains(marker))
 }
 
 fn direct_body(
@@ -3429,6 +3410,7 @@ variables:
     value: https://environment.test
   - name: apiToken
     value: secret
+    secret: true
 "#
                 .into(),
             },

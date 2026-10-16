@@ -6,7 +6,7 @@ import { pickImportFiles, pickImportFolder } from '../../../bindings/pick-import
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
 import { Field } from '../../../shared/ui/Field'
-import { ImportIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
+import { ChevronDownIcon, ChevronRightIcon, ImportIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
 import { IconButton } from '../../../shared/ui/IconButton'
 import { InlineAlert } from '../../../shared/ui/InlineAlert'
 import { Input } from '../../../shared/ui/Input'
@@ -14,6 +14,13 @@ import { LoadingBar } from '../../../shared/ui/LoadingBar'
 import { Modal } from '../../../shared/ui/Modal'
 import { Tabs } from '../../../shared/ui/Tabs'
 import { Textarea } from '../../../shared/ui/Textarea'
+import {
+  importVariablesValid,
+  initialImportVariables,
+  type ExistingEnvironmentTarget,
+  type ImportVariablesState,
+} from '../import-variables'
+import { ImportVariablesReview } from './ImportVariablesReview'
 import './import-collection-modal.css'
 
 type ImportTab = 'file' | 'url' | 'code'
@@ -22,6 +29,8 @@ export interface PreparedImportSelection {
   source: string
   summary: PreparedImportDto
   includeDocumentation: boolean
+  /** Variable choices of the review (spec 0130). */
+  variables: ImportVariablesState
 }
 
 interface ImportCollectionModalProps {
@@ -30,6 +39,12 @@ interface ImportCollectionModalProps {
   onPrepareFromUrl: (url: string) => Promise<PrepareImportResult>
   onPrepareFromText: (content: string) => Promise<PrepareImportResult>
   onImportPrepared: (items: PreparedImportSelection[]) => void
+  /** Workspace environments a variable can be merged into. */
+  existingEnvironments: ExistingEnvironmentTarget[]
+}
+
+function selection(source: string, summary: PreparedImportDto): PreparedImportSelection {
+  return { source, summary, includeDocumentation: summary.supportsDocumentation, variables: initialImportVariables(summary) }
 }
 
 function sourceName(path: string) {
@@ -42,6 +57,7 @@ export function ImportCollectionModal({
   onPrepareFromUrl,
   onPrepareFromText,
   onImportPrepared,
+  existingEnvironments,
 }: ImportCollectionModalProps) {
   const { t } = useLanguage()
   const fieldId = useId()
@@ -53,6 +69,7 @@ export function ImportCollectionModal({
   const [dragOver, setDragOver] = useState(false)
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null)
   const [items, setItems] = useState<PreparedImportSelection[]>([])
+  const [expandedVariables, setExpandedVariables] = useState<ReadonlySet<string>>(() => new Set())
   const [reviewing, setReviewing] = useState(false)
   const [url, setUrl] = useState('')
   const [code, setCode] = useState('')
@@ -98,7 +115,7 @@ export function ImportCollectionModal({
         setProgress({ current: index + 1, total: expanded.value.length })
         const result = await onPrepareFromPath(path)
         if (result.ok) {
-          prepared.push({ source: sourceName(path), summary: result.value, includeDocumentation: result.value.supportsDocumentation })
+          prepared.push(selection(sourceName(path), result.value))
         } else {
           failures.push(`${sourceName(path)}: ${result.error.message}`)
         }
@@ -136,12 +153,27 @@ export function ImportCollectionModal({
       setError(result.error.message)
       return
     }
-    replaceItems([{ source, summary: result.value, includeDocumentation: result.value.supportsDocumentation }])
+    replaceItems([selection(source, result.value)])
   }
 
   const updateDocumentation = (id: string, includeDocumentation: boolean) => {
     setItems((current) => current.map((item) => item.summary.id === id ? { ...item, includeDocumentation } : item))
   }
+
+  const updateVariables = (id: string, variables: ImportVariablesState) => {
+    setItems((current) => current.map((item) => item.summary.id === id ? { ...item, variables } : item))
+  }
+
+  const toggleVariables = (id: string) => {
+    setExpandedVariables((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const variablesValid = items.every((item) => importVariablesValid(item.variables))
 
   const removeItem = (id: string) => {
     const item = items.find((candidate) => candidate.summary.id === id)
@@ -249,13 +281,31 @@ export function ImportCollectionModal({
                       </label>
                     </div>
                   )}
+                  {item.variables.rows.length > 0 && (
+                    <div className="import-modal-variables">
+                      <button type="button" className="import-modal-variables-toggle" aria-expanded={expandedVariables.has(item.summary.id)} onClick={() => toggleVariables(item.summary.id)}>
+                        {expandedVariables.has(item.summary.id) ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+                        <span>{t('collections.importVariablesToggle', { selected: item.variables.rows.filter((row) => row.include).length, total: item.variables.rows.length })}</span>
+                        {!importVariablesValid(item.variables) && <span className="import-modal-variables-invalid">{t('collections.importVariablesNeedsAttention')}</span>}
+                      </button>
+                      {expandedVariables.has(item.summary.id) && (
+                        <ImportVariablesReview
+                          state={item.variables}
+                          environmentNames={item.summary.environmentNames ?? []}
+                          collectionNames={item.summary.collectionNames ?? []}
+                          existingEnvironments={existingEnvironments}
+                          onChange={(variables) => updateVariables(item.summary.id, variables)}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               </article>
             ))}
           </div>
           <div className="ui-modal-actions import-modal-review-actions">
             <Button variant="ghost" onClick={() => setReviewing(false)}>{t('common.back')}</Button>
-            <Button disabled={items.length === 0} onClick={() => { transferred.current = true; onImportPrepared(items); onClose() }}>{t('collections.importAction')}</Button>
+            <Button disabled={items.length === 0 || !variablesValid} onClick={() => { transferred.current = true; onImportPrepared(items); onClose() }}>{t('collections.importAction')}</Button>
           </div>
         </div>
       )}

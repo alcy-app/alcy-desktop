@@ -71,7 +71,8 @@ import {
   sortFavoritesFirst,
   type CollectionFilters,
 } from '../collection-labels'
-import { discardPreparedImport, type PrepareImportResult } from '../../../bindings/prepared-import'
+import { discardPreparedImport, type ImportVariableSelectionDto, type PrepareImportResult } from '../../../bindings/prepared-import'
+import { importVariableSelections, type ExistingEnvironmentTarget } from '../import-variables'
 import type { PreparedImportSelection } from './ImportCollectionModal'
 import { CollectionLabelsModal, LabelDot } from './CollectionLabelsModal'
 import { MoveRequestModal } from './MoveRequestModal'
@@ -174,7 +175,9 @@ interface CollectionsPanelProps {
   onPrepareImportFromPath: (path: string) => Promise<PrepareImportResult>
   onPrepareImportFromUrl: (url: string) => Promise<PrepareImportResult>
   onPrepareImportFromText: (content: string) => Promise<PrepareImportResult>
-  onCommitPreparedImport: (id: string, includeDocumentation: boolean) => Promise<ImportOutcome>
+  onCommitPreparedImport: (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[]) => Promise<ImportOutcome>
+  /** Workspace environments the import review can merge variables into (spec 0130). */
+  importEnvironmentTargets: ExistingEnvironmentTarget[]
   /** Active environment variables used by the folder or collection authentication modal. */
   environmentVariables: EnvironmentVariableDto[]
   /** Execute a pending shortcut command and acknowledge it through onCommandHandled. */
@@ -978,6 +981,7 @@ export function CollectionsPanel({
   onPrepareImportFromUrl,
   onPrepareImportFromText,
   onCommitPreparedImport,
+  importEnvironmentTargets,
   environmentVariables,
   command = null,
   onCommandHandled,
@@ -992,7 +996,7 @@ export function CollectionsPanel({
   const [settingsNodeId, setSettingsNodeId] = useState<string | null>(null)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const [importJobs, setImportJobs] = useState<Array<PreparedImportSelection & { status: 'pending' | 'running' | 'success' | 'error' | 'cancelled'; message?: string }>>([])
-  const [importProgressOpen, setImportProgressOpen] = useState(true)
+  const [importProgressOpen, setImportProgressOpen] = useState(false)
   const importCancelledRef = useRef(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -1089,7 +1093,7 @@ export function CollectionsPanel({
 
   const runPreparedImports = async (items: PreparedImportSelection[]) => {
     importCancelledRef.current = false
-    setImportProgressOpen(true)
+    // The status bar shows progress; the detail panel opens only on click.
     setImportJobs(items.map((item) => ({ ...item, status: 'pending' })))
     for (const item of items) {
       if (importCancelledRef.current) {
@@ -1098,7 +1102,7 @@ export function CollectionsPanel({
         continue
       }
       setImportJobs((current) => current.map((job) => job.summary.id === item.summary.id ? { ...job, status: 'running', message: undefined } : job))
-      const result = await onCommitPreparedImport(item.summary.id, item.includeDocumentation)
+      const result = await onCommitPreparedImport(item.summary.id, item.includeDocumentation, importVariableSelections(item.variables))
       setImportJobs((current) => current.map((job) => job.summary.id === item.summary.id
         ? result.ok
           ? { ...job, status: 'success', message: undefined }
@@ -1817,6 +1821,7 @@ export function CollectionsPanel({
             onPrepareFromUrl={onPrepareImportFromUrl}
             onPrepareFromText={onPrepareImportFromText}
             onImportPrepared={(items) => { discardFailedImports(); void runPreparedImports(items) }}
+            existingEnvironments={importEnvironmentTargets}
           />
         </Suspense>
       )}

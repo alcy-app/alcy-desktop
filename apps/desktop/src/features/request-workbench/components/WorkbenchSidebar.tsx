@@ -23,7 +23,8 @@ import type { ActiveComponentKind } from '../history'
 import type { SiblingEdge } from '../../../shared/use-pointer-drag'
 import type { FlowState } from '../../flows/flows.types'
 import type { ImportOutcome } from '../use-collections-state'
-import type { PrepareImportResult } from '../../../bindings/prepared-import'
+import type { ImportVariableSelectionDto, PrepareImportResult } from '../../../bindings/prepared-import'
+import type { ExistingEnvironmentTarget } from '../import-variables'
 import { CollectionsPanel, type CollectionsCommand } from './CollectionsPanel'
 import { ComponentKindSelect } from './ComponentKindSelect'
 import type { ComponentKind } from './ComponentKindSelect'
@@ -111,7 +112,8 @@ interface CollectionsPanelSlice {
   onPrepareImportFromPath: (path: string) => Promise<PrepareImportResult>
   onPrepareImportFromUrl: (url: string) => Promise<PrepareImportResult>
   onPrepareImportFromText: (content: string) => Promise<PrepareImportResult>
-  onCommitPreparedImport: (id: string, includeDocumentation: boolean) => Promise<ImportOutcome>
+  onCommitPreparedImport: (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[]) => Promise<ImportOutcome>
+  importEnvironmentTargets: ExistingEnvironmentTarget[]
   environmentVariables: EnvironmentVariableDto[]
   command: CollectionsCommand | null
   onCommandHandled: () => void

@@ -85,6 +85,7 @@ function panelProps(
     onPrepareImportFromUrl: vi.fn(),
     onPrepareImportFromText: vi.fn(),
     onCommitPreparedImport: vi.fn(),
+    importEnvironmentTargets: [],
     environmentVariables: [],
     ...overrides,
   }

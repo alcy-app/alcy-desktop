@@ -13,7 +13,7 @@ use alcy_domain::{
 use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, StorageError};
 use serde::{Deserialize, Serialize};
 
-use crate::commands::environments::{EnvironmentDto, environment_to_dto};
+use crate::commands::environments::{EnvironmentDto, EnvironmentVariableDto, environment_to_dto};
 use crate::commands::execute_rest_request::{
     BodyInput, HttpMethodInput, body_input_from_domain, body_to_domain,
 };
@@ -685,6 +685,114 @@ pub struct PreparedImportOutput {
     pub supports_documentation: bool,
     pub script_count: usize,
     pub warning_count: usize,
+    /// Variables the review offers (spec 0130).
+    pub variables: Vec<ImportVariableCandidateDto>,
+    /// Names of the imported environments and collections, by index, for
+    /// the review's destinations.
+    pub environment_names: Vec<String>,
+    pub collection_names: Vec<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportVariableCandidateDto {
+    pub key: String,
+    pub name: String,
+    pub value: String,
+    pub value_truncated: bool,
+    pub sensitive: bool,
+    pub origin: VariableOriginDto,
+    pub included: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum VariableOriginDto {
+    Environment { index: usize },
+    Collection { index: usize },
+    Referenced,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum VariableTargetDto {
+    ImportedEnvironment { index: usize },
+    NewEnvironment { name: String },
+    ExistingEnvironment { id: String },
+    Collection { index: usize },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariableSelectionDto {
+    pub key: String,
+    pub include: bool,
+    pub name: String,
+    pub value: Option<String>,
+    pub sensitive: bool,
+    pub target: VariableTargetDto,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentMergeDto {
+    pub environment_id: String,
+    pub variables: Vec<EnvironmentVariableDto>,
+}
+
+fn candidate_to_dto(
+    candidate: alcy_collection_import::ImportVariableCandidate,
+) -> ImportVariableCandidateDto {
+    use alcy_collection_import::VariableOrigin;
+    ImportVariableCandidateDto {
+        key: candidate.key,
+        name: candidate.name,
+        value: candidate.value,
+        value_truncated: candidate.value_truncated,
+        sensitive: candidate.sensitive,
+        origin: match candidate.origin {
+            VariableOrigin::Environment(index) => VariableOriginDto::Environment { index },
+            VariableOrigin::Collection(index) => VariableOriginDto::Collection { index },
+            VariableOrigin::Referenced => VariableOriginDto::Referenced,
+        },
+        included: candidate.included,
+    }
+}
+
+fn selection_from_dto(dto: VariableSelectionDto) -> alcy_collection_import::VariableSelection {
+    use alcy_collection_import::VariableTarget;
+    alcy_collection_import::VariableSelection {
+        key: dto.key,
+        include: dto.include,
+        name: dto.name,
+        value: dto.value,
+        sensitive: dto.sensitive,
+        target: match dto.target {
+            VariableTargetDto::ImportedEnvironment { index } => {
+                VariableTarget::ImportedEnvironment(index)
+            }
+            VariableTargetDto::NewEnvironment { name } => VariableTarget::NewEnvironment(name),
+            VariableTargetDto::ExistingEnvironment { id } => {
+                VariableTarget::ExistingEnvironment(id)
+            }
+            VariableTargetDto::Collection { index } => VariableTarget::Collection(index),
+        },
+    }
+}
+
+fn merge_to_dto(merge: alcy_collection_import::EnvironmentMerge) -> EnvironmentMergeDto {
+    EnvironmentMergeDto {
+        environment_id: merge.environment_id,
+        variables: merge
+            .variables
+            .iter()
+            .map(|variable| EnvironmentVariableDto {
+                name: variable.name().to_string(),
+                value: variable.value().to_string(),
+                sensitive: variable.sensitive,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -707,6 +815,9 @@ pub struct CommitPreparedImportInput {
     pub id: String,
     pub root_path: String,
     pub include_documentation: bool,
+    /// The review's variable choices; absent keeps the import as parsed.
+    #[serde(default)]
+    pub variables: Option<Vec<VariableSelectionDto>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -791,6 +902,20 @@ fn store_prepared_import(
         supports_documentation: imported.docs.is_some(),
         script_count: imported.script_count,
         warning_count: imported.warnings.len(),
+        variables: alcy_collection_import::variable_candidates(&imported)
+            .into_iter()
+            .map(candidate_to_dto)
+            .collect(),
+        environment_names: imported
+            .environments
+            .iter()
+            .map(|environment| environment.name().to_string())
+            .collect(),
+        collection_names: imported
+            .collections
+            .iter()
+            .map(|collection| collection.name().to_string())
+            .collect(),
     };
 
     let mut entries =
@@ -824,6 +949,8 @@ fn store_prepared_import(
 pub struct ImportCollectionsOutput {
     pub collections: Vec<CollectionDto>,
     pub environments: Vec<EnvironmentDto>,
+    /// Variables for environments the workspace already has (spec 0130).
+    pub environment_merges: Vec<EnvironmentMergeDto>,
     pub script_count: usize,
     pub warnings: Vec<ImportWarningDto>,
 }
@@ -935,6 +1062,7 @@ pub async fn commit_prepared_import(
         id,
         root_path,
         include_documentation,
+        variables,
     } = input;
     let entry = prepared
         .entries
@@ -951,7 +1079,7 @@ pub async fn commit_prepared_import(
 
     let target = DocsTarget::new(&docs, root_path);
     let output = run_blocking(move || {
-        import_collections_from_imported(entry.imported, &target, include_documentation)
+        commit_with_variables(entry.imported, &target, include_documentation, variables)
     })
     .await?;
     prepared
@@ -977,6 +1105,24 @@ pub fn discard_prepared_import(
         })?
         .remove(&input.id);
     Ok(())
+}
+
+fn commit_with_variables(
+    imported: alcy_collection_import::ImportedCollectionData,
+    target: &DocsTarget,
+    include_documentation: bool,
+    variables: Option<Vec<VariableSelectionDto>>,
+) -> Result<ImportCollectionsOutput, CollectionsCommandError> {
+    let Some(variables) = variables else {
+        return import_collections_from_imported(imported, target, include_documentation);
+    };
+    let selections: Vec<_> = variables.into_iter().map(selection_from_dto).collect();
+    let (imported, merges) =
+        alcy_collection_import::apply_variable_selection(imported, &selections)
+            .map_err(|error| invalid(error.to_string()))?;
+    let mut output = import_collections_from_imported(imported, target, include_documentation)?;
+    output.environment_merges = merges.into_iter().map(merge_to_dto).collect();
+    Ok(output)
 }
 
 fn import_collections_inner(
@@ -1352,6 +1498,7 @@ fn import_collections_from_imported(
             .iter()
             .map(environment_to_dto)
             .collect(),
+        environment_merges: Vec::new(),
         script_count,
         warnings,
     })
@@ -1969,6 +2116,61 @@ collection:
         assert_eq!(summary.request_count, 1);
         assert!(summary.supports_documentation);
         assert!(!root.join("alcy-api-docs.json").exists());
+        assert_eq!(summary.collection_names, ["Pet Store"]);
+        assert_eq!(
+            summary.variables,
+            [ImportVariableCandidateDto {
+                key: "ref:baseUrl".to_string(),
+                name: "baseUrl".to_string(),
+                value: String::new(),
+                value_truncated: false,
+                sensitive: false,
+                origin: VariableOriginDto::Referenced,
+                included: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn committing_with_variable_choices_renames_and_merges() {
+        let imported = parse_import_content(
+            r#"{
+                "info": {"name": "Customer API", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+                "variable": [{"key": "baseUrl", "value": "https://api.example.com"}],
+                "item": [{"name": "List", "request": {"method": "GET", "url": "{{baseUrl}}/customers?key={{apiKey}}"}}]
+            }"#,
+        )
+        .unwrap();
+        let selections: Vec<VariableSelectionDto> = serde_json::from_str(
+            r#"[
+                {"key": "collection:0:baseUrl", "include": true, "name": "host", "value": null,
+                 "sensitive": false, "target": {"kind": "collection", "index": 0}},
+                {"key": "ref:apiKey", "include": true, "name": "apiKey", "value": "k",
+                 "sensitive": true, "target": {"kind": "existingEnvironment", "id": "env-1"}}
+            ]"#,
+        )
+        .unwrap();
+
+        let output =
+            commit_with_variables(imported, &docs_target(), false, Some(selections)).unwrap();
+
+        let collection = &output.collections[0];
+        assert_eq!(collection.variables[0].name, "host");
+        assert_eq!(
+            collection.requests[0].endpoint,
+            "{{host}}/customers?key={{apiKey}}"
+        );
+        assert_eq!(
+            output.environment_merges,
+            [EnvironmentMergeDto {
+                environment_id: "env-1".to_string(),
+                variables: vec![EnvironmentVariableDto {
+                    name: "apiKey".to_string(),
+                    value: "k".to_string(),
+                    sensitive: true,
+                }],
+            }]
+        );
     }
 
     #[test]

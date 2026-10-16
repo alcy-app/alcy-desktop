@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { EnvironmentDto } from './list-environments'
+import type { EnvironmentDto, EnvironmentVariableDto } from './list-environments'
 import type { CollectionDto, CollectionsError } from './list-collections'
 
 export interface ImportWarningDto {
@@ -10,9 +10,16 @@ export interface ImportWarningDto {
   reason: 'unsupported' | 'partialSemantics' | 'skippedProtocol' | 'unsupportedMethod' | 'invalidEntry' | 'skippedFile' | string
 }
 
+/** Variables to upsert, by name, into an environment the workspace already has (spec 0130). */
+export interface EnvironmentMergeDto {
+  environmentId: string
+  variables: EnvironmentVariableDto[]
+}
+
 export interface ImportedCollectionDataDto {
   collections: CollectionDto[]
   environments: EnvironmentDto[]
+  environmentMerges?: EnvironmentMergeDto[]
   scriptCount: number
   warnings: ImportWarningDto[]
 }

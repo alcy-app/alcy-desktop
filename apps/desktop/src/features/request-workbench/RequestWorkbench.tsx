@@ -307,6 +307,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const activeEnvironmentRows = environments.activeEnvironment?.variables ?? NO_ENVIRONMENT_VARIABLES
   const activeEnvironmentVariables = useMemo(() => definedVariables(activeEnvironmentRows), [activeEnvironmentRows])
   const collections = useCollectionsState(workspace.rootPath, environments.importEnvironments, notifyLocalChange)
+  const importEnvironmentTargets = useMemo(
+    () => environments.environments.map((environment) => ({ id: environment.id, name: environment.name, variableNames: environment.variables.map((variable) => variable.name) })),
+    [environments.environments],
+  )
   const collectionFavorites = useCollectionFavorites(workspace.rootPath)
   // Variable preview edits target the defining collection/folder (ADR 0031), or the active environment, creating the variable if needed.
   const { activeEnvironmentId, applyScriptChanges } = environments
@@ -1266,6 +1270,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       onPrepareImportFromUrl: collections.prepareCollectionsFromUrl,
       onPrepareImportFromText: collections.prepareCollectionsFromText,
       onCommitPreparedImport: collections.commitPreparedCollection,
+      importEnvironmentTargets,
       environmentVariables: activeEnvironmentVariables,
       command: collectionsCommand,
       onCommandHandled: clearCollectionsCommand,
@@ -1314,6 +1319,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       collections.prepareCollectionsFromUrl,
       collections.prepareCollectionsFromText,
       collections.commitPreparedCollection,
+      importEnvironmentTargets,
       activeEnvironmentVariables,
       collectionsCommand,
       clearCollectionsCommand,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listEnvironments } from '../../bindings/list-environments'
 import type { EnvironmentDto } from '../../bindings/list-environments'
+import type { EnvironmentMergeDto } from '../../bindings/import-collections'
 import { saveEnvironments } from '../../bindings/save-environments'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { matchExistingRows, type BulkRow } from '../../shared/bulk-edit'
@@ -17,6 +18,22 @@ const nextVariableId = () => `variable-${++variableIdSequence}`
 
 function createEnvironment(name: string): EnvironmentState {
   return { id: crypto.randomUUID(), name, variables: [] }
+}
+
+/** Upserts imported variables by name into existing environments (spec 0130), keeping the ids of rows already there. */
+export function mergeImportedVariables(environments: EnvironmentState[], merges: EnvironmentMergeDto[]): EnvironmentState[] {
+  if (merges.length === 0) return environments
+  return environments.map((environment) => {
+    const incoming = merges.filter((merge) => merge.environmentId === environment.id).flatMap((merge) => merge.variables)
+    if (incoming.length === 0) return environment
+    const variables = [...environment.variables]
+    for (const variable of incoming) {
+      const index = variables.findIndex((row) => row.name === variable.name)
+      if (index >= 0) variables[index] = { ...variables[index], value: variable.value, sensitive: variable.sensitive }
+      else variables.push({ id: nextVariableId(), ...variable })
+    }
+    return { ...environment, variables }
+  })
 }
 
 export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => void) {
@@ -228,9 +245,9 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
    * variável são regenerados no cliente, já que os ids que o backend atribui durante a
    * importação (`imported-environment-0`, ...) se repetem a cada chamada e colidiriam entre
    * importações sucessivas ou com ambientes já existentes. */
-  const importEnvironments = useCallback((dtos: EnvironmentDto[]) => {
+  const importEnvironments = useCallback((dtos: EnvironmentDto[], merges: EnvironmentMergeDto[] = []) => {
     setEnvironments((current) => [
-      ...current,
+      ...mergeImportedVariables(current, merges),
       ...dtos.map((dto) => ({
         id: crypto.randomUUID(),
         name: dto.name,

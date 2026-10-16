@@ -13,6 +13,43 @@ export interface PreparedImportDto {
   supportsDocumentation: boolean
   scriptCount: number
   warningCount: number
+  /** Variables the review offers (spec 0130). */
+  variables: ImportVariableCandidateDto[]
+  /** Imported environment and collection names, by index. */
+  environmentNames: string[]
+  collectionNames: string[]
+}
+
+export type ImportVariableOriginDto =
+  | { kind: 'environment'; index: number }
+  | { kind: 'collection'; index: number }
+  | { kind: 'referenced' }
+
+export interface ImportVariableCandidateDto {
+  key: string
+  name: string
+  value: string
+  /** Long values arrive cut and stay read-only; the commit keeps the original. */
+  valueTruncated: boolean
+  sensitive: boolean
+  origin: ImportVariableOriginDto
+  included: boolean
+}
+
+export type ImportVariableTargetDto =
+  | { kind: 'importedEnvironment'; index: number }
+  | { kind: 'newEnvironment'; name: string }
+  | { kind: 'existingEnvironment'; id: string }
+  | { kind: 'collection'; index: number }
+
+export interface ImportVariableSelectionDto {
+  key: string
+  include: boolean
+  name: string
+  /** `null` keeps the imported value. */
+  value: string | null
+  sensitive: boolean
+  target: ImportVariableTargetDto
 }
 
 export type PrepareImportResult =
@@ -48,10 +85,11 @@ export async function commitPreparedImport(
   id: string,
   rootPath: string,
   includeDocumentation: boolean,
+  variables?: ImportVariableSelectionDto[],
 ): Promise<CommitPreparedImportResult> {
   try {
     const value = await invoke<ImportedCollectionDataDto>('commit_prepared_import', {
-      input: { id, rootPath, includeDocumentation },
+      input: { id, rootPath, includeDocumentation, variables: variables ?? null },
     })
     return { ok: true, value }
   } catch (error) {

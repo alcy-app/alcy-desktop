@@ -148,6 +148,9 @@ async function preparedResult(result: { ok: true; value: PreparedTestValue } | {
       supportsDocumentation: false,
       scriptCount: result.value.scriptCount ?? 0,
       warningCount: result.value.warnings?.length ?? 0,
+      variables: [],
+      environmentNames: [],
+      collectionNames: collections.map((collection) => collection.name),
     },
   }
 }
@@ -2882,8 +2885,14 @@ describe('RequestWorkbench', () => {
         await confirmImportReview()
 
         expect(await within(collectionsSidebar()).findByText('API c')).toBeInTheDocument()
-        expect(await screen.findByText('3 de 3 concluídos')).toBeInTheDocument()
+        // The detail panel stays closed until the status bar entry is clicked.
         const importStatus = screen.getByText('Importação')
+        expect(importStatus.closest('button')).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.queryByText('3 de 3 concluídos')).not.toBeInTheDocument()
+        fireEvent.click(importStatus)
+        expect(await screen.findByText('3 de 3 concluídos')).toBeInTheDocument()
+        fireEvent.click(importStatus)
+        expect(screen.queryByText('3 de 3 concluídos')).not.toBeInTheDocument()
         const importSlot = importStatus.closest('#rw-import-statusbar-slot')
         expect(importSlot).not.toBeNull()
         expect(importSlot?.previousElementSibling).toHaveTextContent('Console')

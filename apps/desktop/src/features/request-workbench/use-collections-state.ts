@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AuthenticationInput, ScopedVariableChange } from '../../bindings/execute-graphql-request'
 import { exportCollections } from '../../bindings/export-collections'
 import { importCollections } from '../../bindings/import-collections'
-import type { ImportedCollectionDataDto } from '../../bindings/import-collections'
+import type { EnvironmentMergeDto, ImportedCollectionDataDto } from '../../bindings/import-collections'
 import { importCollectionsFromText } from '../../bindings/import-collections-from-text'
 import { importCollectionsFromUrl } from '../../bindings/import-collections-from-url'
 import { listCollections } from '../../bindings/list-collections'
@@ -11,6 +11,7 @@ import {
   prepareImportFromPath,
   prepareImportFromText,
   prepareImportFromUrl,
+  type ImportVariableSelectionDto,
 } from '../../bindings/prepared-import'
 import type {
   CollectionDto,
@@ -214,7 +215,7 @@ function importScriptStats(data: ImportedCollectionDataDto): ImportScriptStats |
 
 export function useCollectionsState(
   workspaceRootPath: string,
-  onImportEnvironments: (dtos: EnvironmentDto[]) => void,
+  onImportEnvironments: (dtos: EnvironmentDto[], merges: EnvironmentMergeDto[]) => void,
   onSaved?: () => void,
 ) {
   const { t } = useLanguage()
@@ -590,7 +591,9 @@ export function useCollectionsState(
         }
         return next
       })
-      if ((data.environments ?? []).length > 0) onImportEnvironments(data.environments)
+      const environments = data.environments ?? []
+      const merges = data.environmentMerges ?? []
+      if (environments.length > 0 || merges.length > 0) onImportEnvironments(environments, merges)
       if (notify) showToast(t('toasts.collectionsImported'))
     },
     [t, showToast, onImportEnvironments],
@@ -642,8 +645,8 @@ export function useCollectionsState(
   )
 
   const commitPreparedCollection = useCallback(
-    async (id: string, includeDocumentation: boolean): Promise<ImportOutcome> => {
-      const result = await commitPreparedImport(id, workspaceRootPath, includeDocumentation)
+    async (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[]): Promise<ImportOutcome> => {
+      const result = await commitPreparedImport(id, workspaceRootPath, includeDocumentation, variables)
       if (!result.ok) return { ok: false, message: result.error.message }
       applyImportedCollections(result.value, false)
       return { ok: true, scripts: importScriptStats(result.value) }
