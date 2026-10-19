@@ -20,7 +20,7 @@ import { VirtualizedList } from './VirtualizedList'
 export interface HarRecorderControls {
   recording: boolean
   exporting: boolean
-  /** Se a visualização e o `.har` estão sem dados sensíveis (preferência em Configurações → Segurança). */
+  /** Whether the view and the `.har` hide sensitive data (preference in Settings → Security). */
   redactingSensitive: boolean
   entries: ConsoleEntry[]
   onStart: () => void
@@ -269,7 +269,7 @@ function HarInspector({ entry }: { entry: ConsoleEntry | null }) {
               <h4>{t('devConsole.cookiesSectionLabel')}</h4>
               <CookiesList cookies={detail.cookies} />
               <h4>{t('devConsole.responseBodySectionLabel')}</h4>
-              {detail.body.kind === 'windowed' && <Badge tone="warning">{t('devConsole.previewOnly')}</Badge>}
+              {(detail.body.kind === 'windowed' || detail.truncated) && <Badge tone="warning">{t('devConsole.previewOnly')}</Badge>}
               <ResponseBody body={detail.body} bodyEncoding={detail.bodyEncoding} headers={detail.responseHeaders} />
             </div>
           ) : (

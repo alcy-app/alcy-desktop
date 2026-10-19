@@ -90,6 +90,9 @@ pub struct RequestCallDetails {
     pub request_url: String,
     pub resolved_url: String,
     pub variables: Vec<Substitution>,
+    /// URL actually sent, route parameters applied and secrets revealed. Only for
+    /// live consumers such as the HAR recorder: never persist it.
+    pub sent_url: String,
 }
 
 /// Progress port keeping application use cases independent of concrete IPC implementations.
@@ -1236,6 +1239,7 @@ fn prepare_request<S: FlowRunSink>(
                 request_url: template.to_string(),
                 resolved_url: display.text,
                 variables: display.substitutions,
+                sent_url: resolved.endpoint.url().to_string(),
             },
         );
     }
@@ -1808,6 +1812,7 @@ mod tests {
         );
         assert_eq!(details.variables.len(), 2);
         assert!(details.variables[1].sensitive);
+        assert_eq!(details.sent_url, "https://api.example.com/users?key=secret");
     }
 
     #[tokio::test]

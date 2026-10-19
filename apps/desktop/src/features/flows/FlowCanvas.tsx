@@ -21,6 +21,7 @@ import { comboFromEvent, comboFromMouseEvent, isShortcutFor } from '../../shared
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { findRequest, requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
+import type { ConsoleEntryInput } from '../request-workbench/use-console-state'
 import { BlockPalette } from './BlockPalette'
 import type { PaletteKind } from './BlockPalette'
 import type { FlowEdgeType } from './flow-edge-types'
@@ -38,6 +39,8 @@ import { isVisitedStatus } from './flow-run-trail'
 import { whilesWithOpenBody } from './loop-body'
 import { configOfSimpleNode, defaultSimpleNodeConfig, newInlineRequest, simpleFlowNode, simpleNodeLogInfo } from './simple-node-types'
 import { useFlowRun } from './use-flow-run'
+import { consoleEntryFromFlowCall } from './flow-call-recording'
+import type { FlowRecordedCall } from './flow-call-recording'
 import { LoadRunResults } from './LoadRunResults'
 import { useLoadFlowRun } from './use-load-flow-run'
 import { EXECUTABLE_LOAD_NODE_KINDS, defaultLoadNodeConfig, defaultLoadNodeLabel } from './load-node-config'
@@ -230,6 +233,9 @@ interface FlowCanvasProps {
    * com o ponto de soltura em coordenadas de tela — aplicadas quando
    * `revision` muda. */
   externalRequestChain?: { requestIds: string[]; clientPoint: { x: number; y: number }; revision: number }
+  /** HAR recorder on: runs started now report each request node call to `onCallRecorded`. */
+  recordingCalls?: boolean
+  onCallRecorded?: (entry: ConsoleEntryInput) => void
 }
 
 /** Canvas de um flow (ADR 0013 para a lib de canvas; motor de execução na
@@ -255,6 +261,8 @@ export function FlowCanvas({
   onEditInlineMockServer,
   externalInlineMockServer,
   externalRequestChain,
+  recordingCalls = false,
+  onCallRecorded,
 }: FlowCanvasProps) {
   const { t } = useLanguage()
   const { bindings: shortcutBindings } = useShortcuts()
@@ -284,12 +292,26 @@ export function FlowCanvas({
     [simpleConfigs, flowMockServers.savedServers],
   )
 
+  // Runs on event delivery, after `latestGraphRef` below holds the current graph.
+  const recordCall = (call: FlowRecordedCall) => {
+    if (!onCallRecorded) return
+    const node = latestGraphRef.current.nodes.find((candidate) => candidate.id === call.nodeId)
+    const request =
+      node?.type === 'request'
+        ? node.data.requestId ? findRequest(collections, node.data.requestId) : null
+        : node && isSimpleFlowNode(node) && node.data.config.kind === 'inlineRequest'
+          ? node.data.config.request
+          : null
+    onCallRecorded(consoleEntryFromFlowCall(call, request))
+  }
   const standardRun = useFlowRun({
     rootPath,
     flowName: flow.name,
     onRunFinished,
     onEnvironmentChanges,
     onScopedChanges,
+    recordExchanges: recordingCalls && onCallRecorded !== undefined,
+    onCall: recordCall,
     nodes: fromFlowNodes(nodes),
     edges: fromFlowEdges(edges),
     environmentVariables,

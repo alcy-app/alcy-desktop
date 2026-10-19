@@ -230,7 +230,7 @@ impl From<ResponseHeader> for ResponseHeaderOutput {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CookieOutput {
     pub name: String,
@@ -260,7 +260,7 @@ impl From<Cookie> for CookieOutput {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInfoOutput {
     pub remote_address: Option<String>,

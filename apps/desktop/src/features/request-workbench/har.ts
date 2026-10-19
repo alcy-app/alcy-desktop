@@ -23,19 +23,19 @@ function headerValue(headers: ResponseHeader[], name: string): string | undefine
   return headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value
 }
 
-/** `remoteAddress` vem como `ip:porta`; HAR espera só o IP. */
+/** `remoteAddress` comes as `ip:port`; HAR expects the IP only. */
 function ipOf(address: string): string {
   const bracketed = address.match(/^\[(.+)\]:\d+$/)
   if (bracketed) return bracketed[1]
   return /^[^:]+:\d+$/.test(address) ? address.slice(0, address.lastIndexOf(':')) : address
 }
 
-/** `httpVersion` é obrigatório no HAR; o backend pode devolvê-lo vazio. */
+/** `httpVersion` is required by HAR; the backend may return it empty. */
 function httpVersionOf(detail: ConsoleEntry['detail']): string {
   return detail?.connection.httpVersion || 'HTTP/1.1'
 }
 
-/** HAR mede `size`/`bodySize` em bytes, não em caracteres. */
+/** HAR measures `size`/`bodySize` in bytes, not characters. */
 function byteLength(text: string): number {
   return new TextEncoder().encode(text).length
 }
@@ -83,6 +83,8 @@ function harEntry(entry: ConsoleEntry) {
         mimeType,
         text: detail.body.body,
         ...(detail.bodyEncoding === 'base64' ? { encoding: 'base64' } : {}),
+        // Flow calls arrive with only the start of large bodies.
+        ...(detail.truncated ? { comment: 'Body truncated: only the start was recorded.' } : {}),
       }
     } else {
       content = {
@@ -125,7 +127,7 @@ function harEntry(entry: ConsoleEntry) {
   }
 }
 
-/** Serializa as entradas gravadas como HAR 1.2. Espera ordem cronológica. */
+/** Serialize recorded entries as HAR 1.2. Expects chronological order. */
 export function buildHar(entries: ConsoleEntry[]): string {
   return JSON.stringify(
     { log: { version: '1.2', creator: HAR_CREATOR, entries: entries.map(harEntry) } },

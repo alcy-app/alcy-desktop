@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -7,7 +8,7 @@ use alcy_app::{
     RequestCallDetails, execute_flow as run_flow,
 };
 use alcy_domain::{
-    EnvironmentVariable, EnvironmentVariableError, Flow, HistoryRetention, Response,
+    BodyEncoding, EnvironmentVariable, EnvironmentVariableError, Flow, HistoryRetention, Response,
 };
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_rest::ReqwestRestExecutor;
@@ -20,12 +21,15 @@ use tauri::ipc::Channel;
 use tokio::sync::watch;
 
 use crate::commands::environments::EnvironmentVariableDto;
-use crate::commands::execute_graphql_request::ResponseBodyEncodingOutput;
+use crate::commands::execute_graphql_request::{
+    ConnectionInfoOutput, CookieOutput, ResponseBodyEncodingOutput, ResponseHeaderOutput,
+};
 use crate::commands::flow_execution_registry::{FlowExecutionRegistry, WatchCancellation};
-use crate::commands::flow_run_outputs::{FlowNodeOutput, FlowRunOutputs};
+use crate::commands::flow_run_outputs::{FlowNodeOutput, FlowRunOutputs, MAX_STORED_BODY_BYTES};
 use crate::commands::flows::{FlowEdgeDto, FlowNodeDto, edges_from_dto, nodes_from_dto};
 use crate::commands::general_settings::{HistoryPreferences, HistoryPreferencesState};
 use crate::commands::protocol_dispatching_executor::ProtocolDispatchingExecutor;
+use crate::commands::response_body_cache::char_boundary_window;
 use crate::commands::scripting::{EnvironmentChangeOutput, ScopedChangeOutput, ScriptingExecutor};
 use crate::mock_runtime::{FlowMockControl, MockServerRuntime};
 
@@ -40,6 +44,9 @@ pub struct ExecuteFlowInput {
     pub nodes: Vec<FlowNodeDto>,
     pub edges: Vec<FlowEdgeDto>,
     pub environment_variables: Vec<EnvironmentVariableDto>,
+    /// Emit `NodeExchange` for each response, only while the HAR recorder is on.
+    #[serde(default)]
+    pub record_exchanges: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -140,6 +147,12 @@ pub enum FlowRunEventDto {
         node_id: String,
         iterations: u32,
     },
+    /// Full exchange of a request node for the HAR recorder, before its NodeSucceeded/NodeFailed.
+    /// Only sent when the input asks for it, never recorded in history; `url` carries real values.
+    NodeExchange {
+        node_id: String,
+        exchange: Box<FlowExchangeDto>,
+    },
     /// Accumulated script effects emitted once before RunFinished when present.
     ScriptsFinished {
         environment_changes: Vec<EnvironmentChangeOutput>,
@@ -150,6 +163,71 @@ pub enum FlowRunEventDto {
     RunFinished {
         cancelled: bool,
     },
+}
+
+/// Request/response of one request node execution. The response body keeps only
+/// its first `MAX_STORED_BODY_BYTES` (binary bodies above that are dropped), so a
+/// loop of large responses never floods the channel.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowExchangeDto {
+    /// URL actually sent; None when the call details could not be resolved.
+    pub url: Option<String>,
+    pub status_code: u16,
+    pub duration_ms: u64,
+    pub size_bytes: usize,
+    pub body: String,
+    pub body_encoding: ResponseBodyEncodingOutput,
+    pub truncated: bool,
+    pub headers: Vec<ResponseHeaderOutput>,
+    pub request_headers: Vec<ResponseHeaderOutput>,
+    pub cookies: Vec<CookieOutput>,
+    pub connection: ConnectionInfoOutput,
+    pub final_url: Option<String>,
+    pub waiting_ms: u64,
+}
+
+impl FlowExchangeDto {
+    fn from_response(url: Option<String>, response: &Response) -> Self {
+        let (body, truncated) = match response.encoding {
+            // Cut base64 decodes to nothing: keep it whole or drop it.
+            BodyEncoding::Base64 if response.body.len() > MAX_STORED_BODY_BYTES => {
+                (String::new(), true)
+            }
+            BodyEncoding::Base64 => (response.body.clone(), false),
+            BodyEncoding::Text => {
+                let (window, next) = char_boundary_window(&response.body, 0, MAX_STORED_BODY_BYTES);
+                (window.to_string(), next.is_some())
+            }
+        };
+        let headers = |headers: &[alcy_domain::ResponseHeader]| {
+            headers
+                .iter()
+                .cloned()
+                .map(ResponseHeaderOutput::from)
+                .collect()
+        };
+        Self {
+            url,
+            status_code: response.status_code,
+            duration_ms: response.duration_ms,
+            size_bytes: response.size_bytes,
+            body,
+            body_encoding: response.encoding.into(),
+            truncated,
+            headers: headers(&response.headers),
+            request_headers: headers(&response.request_headers),
+            cookies: response
+                .cookies
+                .iter()
+                .cloned()
+                .map(CookieOutput::from)
+                .collect(),
+            connection: response.connection.clone().into(),
+            final_url: response.final_url.clone(),
+            waiting_ms: response.waiting_ms,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -191,6 +269,9 @@ struct ChannelSink<'a> {
     flow_execution_id: &'a str,
     /// Timestamped events persisted at run completion.
     recorded: Mutex<Vec<RecordedFlowEvent>>,
+    record_exchanges: bool,
+    /// Sent URL of each node's current call, kept until its response arrives.
+    sent_urls: Mutex<HashMap<String, String>>,
 }
 
 impl ChannelSink<'_> {
@@ -239,6 +320,17 @@ impl FlowRunSink for ChannelSink<'_> {
     fn node_output(&self, node_id: &str, response: &Response) {
         self.outputs
             .store(self.flow_execution_id, node_id, response);
+        if self.record_exchanges {
+            let url = self
+                .sent_urls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(node_id);
+            let _ = self.channel.send(FlowRunEventDto::NodeExchange {
+                node_id: node_id.to_string(),
+                exchange: Box::new(FlowExchangeDto::from_response(url, response)),
+            });
+        }
     }
 
     fn node_request(&self, node_id: &str, request: &CapturedRequest) {
@@ -247,6 +339,12 @@ impl FlowRunSink for ChannelSink<'_> {
     }
 
     fn node_call(&self, node_id: &str, details: &RequestCallDetails) {
+        if self.record_exchanges {
+            self.sent_urls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(node_id.to_string(), details.sent_url.clone());
+        }
         let variables: Vec<CallVariableDto> = details
             .variables
             .iter()
@@ -600,6 +698,8 @@ async fn execute_flow_inner(
         outputs: flow_outputs,
         flow_execution_id: &input.flow_execution_id,
         recorded: Mutex::new(Vec::new()),
+        record_exchanges: input.record_exchanges,
+        sent_urls: Mutex::new(HashMap::new()),
     };
 
     let mocks = FlowMockControl::new(
@@ -1271,5 +1371,59 @@ mod tests {
             skipped,
             serde_json::json!({"type": "nodeSkipped", "nodeId": "n", "reason": "branchNotTaken"})
         );
+    }
+
+    fn exchange_response(body: String) -> Response {
+        Response::new(
+            201,
+            12,
+            body,
+            vec![alcy_domain::ResponseHeader {
+                name: "content-type".to_string(),
+                value: "application/json".to_string(),
+            }],
+            alcy_domain::ResponseMetadata {
+                request_headers: vec![alcy_domain::ResponseHeader {
+                    name: "authorization".to_string(),
+                    value: "Bearer secret".to_string(),
+                }],
+                waiting_ms: 5,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn a_node_exchange_serializes_the_sent_url_and_both_sides_of_the_call() {
+        let event = serde_json::to_value(FlowRunEventDto::NodeExchange {
+            node_id: "req".to_string(),
+            exchange: Box::new(FlowExchangeDto::from_response(
+                Some("https://api.example.com/users?key=secret".to_string()),
+                &exchange_response("{\"ok\":true}".to_string()),
+            )),
+        })
+        .unwrap();
+
+        assert_eq!(event["type"], "nodeExchange");
+        assert_eq!(event["nodeId"], "req");
+        let exchange = &event["exchange"];
+        assert_eq!(exchange["url"], "https://api.example.com/users?key=secret");
+        assert_eq!(exchange["statusCode"], 201);
+        assert_eq!(exchange["body"], "{\"ok\":true}");
+        assert_eq!(exchange["bodyEncoding"], "text");
+        assert_eq!(exchange["truncated"], false);
+        assert_eq!(exchange["requestHeaders"][0]["value"], "Bearer secret");
+        assert_eq!(exchange["headers"][0]["name"], "content-type");
+        assert_eq!(exchange["waitingMs"], 5);
+    }
+
+    #[test]
+    fn a_node_exchange_keeps_only_the_start_of_a_large_body() {
+        let body = "a".repeat(MAX_STORED_BODY_BYTES + 10);
+        let exchange = FlowExchangeDto::from_response(None, &exchange_response(body));
+
+        assert_eq!(exchange.body.len(), MAX_STORED_BODY_BYTES);
+        assert!(exchange.truncated);
+        assert_eq!(exchange.size_bytes, MAX_STORED_BODY_BYTES + 10);
     }
 }

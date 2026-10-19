@@ -975,6 +975,15 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [appendConsoleMany],
   )
 
+  // Flow calls hide the active environment's sensitive values, which the run resolved from.
+  const { append: appendRecorded } = recorder
+  const recordFlowCall = useCallback(
+    (entry: ConsoleEntryInput) => {
+      appendRecorded({ ...entry, redaction: harRedactionContext(activeEnvironmentVariables, [], undefined) })
+    },
+    [activeEnvironmentVariables, appendRecorded],
+  )
+
   // Inline flow requests (spec 0086) save to their node; removed nodes leave a normal draft.
   const saveFlowNodeTab = (tabId: string, flowId: string, nodeId: string) => {
     const node = flows.flows.find((flow) => flow.id === flowId)?.nodes.find((candidate) => candidate.id === nodeId)
@@ -1819,6 +1828,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                 onEditInlineMockServer={(nodeId, server) => openTabs.openInlineMockServer(activeFlow.id, nodeId, server.name)}
                 externalInlineMockServer={savedInlineMockServer?.flowId === activeFlow.id ? savedInlineMockServer : undefined}
                 externalRequestChain={droppedRequestChain?.flowId === activeFlow.id ? droppedRequestChain : undefined}
+                recordingCalls={recorder.recording}
+                onCallRecorded={recordFlowCall}
               />
             ) : (
               <>

@@ -69,6 +69,12 @@ describe('buildHar', () => {
     expect(entry.response.content.comment).toBeTruthy()
   })
 
+  it('records a comment for inline bodies kept only in part', () => {
+    const [entry] = parse([successEntry({ body: { kind: 'inline', body: 'abc' }, truncated: true })]).entries
+    expect(entry.response.content).toMatchObject({ text: 'abc' })
+    expect(entry.response.content.comment).toBeTruthy()
+  })
+
   it('records failed calls with status 0 and the error kind', () => {
     const [entry] = parse([
       { ...successEntry(), outcome: 'error', statusCode: null, errorKind: 'network', durationMs: null, detail: null },
