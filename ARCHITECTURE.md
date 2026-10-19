@@ -155,6 +155,15 @@ uses existing runtime isolation: setup cookies and headers are not copied into
 VUs. Preview and commit compile the graph before success, and commit rechecks
 the source hash before saving assets.
 
+JMeter import builds a bounded format-specific XML hierarchy from streaming
+events (2 MiB source, depth 128 and 50,000 nodes), then interprets each test
+element with its following sibling `hashTree`. This keeps logical ownership
+separate from XML nesting. Disabled elements skip their entire logical
+subtrees only after the complete XML passes syntax, DTD and resource checks;
+active unsupported elements reject the import atomically. The initial JMeter
+schedule remains finite per-VU iterations without ramp-up or scheduler, using
+the existing graph and persistence contracts.
+
 The runner checks scenarios, simultaneous VU peaks, open rate, steps and
 configured duration against the consumer's budgets before starting any
 effect. Numeric samples share a budget per run; percentiles stay exact, with

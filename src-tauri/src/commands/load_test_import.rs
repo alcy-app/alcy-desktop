@@ -331,6 +331,8 @@ mod tests {
     use crate::commands::flows::{FlowNodeKindDto, LoadNodeKindDto};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+    const FINITE_JMETER: &str =
+        include_str!("../../../crates/alcy-collection-import/tests/fixtures/load/finite-http.jmx");
     fn temp_file(name: &str, body: &str) -> PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::SeqCst);
         let path = std::env::temp_dir().join(format!(
@@ -438,16 +440,21 @@ mod tests {
     fn preview_accepts_a_finite_jmeter_thread_group_that_the_runner_can_compile() {
         let path = temp_file(
             "finite-thread-group.jmx",
-            r#"<jmeterTestPlan><hashTree><ThreadGroup testname="Smoke">
+            r#"<jmeterTestPlan><hashTree><TestPlan testname="Smoke plan"/><hashTree>
+            <ThreadGroup testname="Smoke">
                 <stringProp name="ThreadGroup.num_threads">2</stringProp>
                 <stringProp name="ThreadGroup.ramp_time">0</stringProp>
-                <intProp name="LoopController.loops">3</intProp>
+                <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+                    <boolProp name="LoopController.continue_forever">false</boolProp>
+                    <intProp name="LoopController.loops">3</intProp>
+                </elementProp>
+            </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="health">
                     <stringProp name="HTTPSampler.protocol">https</stringProp>
                     <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                     <stringProp name="HTTPSampler.path">health</stringProp>
-                </HTTPSamplerProxy>
-            </ThreadGroup></hashTree></jmeterTestPlan>"#,
+                </HTTPSamplerProxy><hashTree/>
+            </hashTree></hashTree></hashTree></jmeterTestPlan>"#,
         );
 
         let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
@@ -478,6 +485,7 @@ mod tests {
                 "sourceProperties": {
                     "ThreadGroup.num_threads": "2",
                     "ThreadGroup.ramp_time": "0",
+                    "LoopController.continue_forever": "false",
                     "LoopController.loops": "3",
                 },
             })
@@ -586,6 +594,71 @@ mod tests {
 
     struct SilentSink;
 
+    #[derive(Default)]
+    struct JmeterExecutor {
+        calls: Mutex<Vec<(HttpMethod, String, String)>>,
+    }
+
+    impl RequestExecutor for JmeterExecutor {
+        async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {
+            self.calls.lock().unwrap().push((
+                request.method,
+                request.endpoint.url().to_string(),
+                request.document.body.clone(),
+            ));
+            // This transport returns locally; imported destinations are never contacted.
+            Ok(Response::new(
+                200,
+                0,
+                "",
+                Vec::new(),
+                ResponseMetadata::default(),
+            ))
+        }
+    }
+
+    fn body_urls(flow: &FlowDto, label: &str) -> Vec<String> {
+        let scenario = flow
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(&node.kind, FlowNodeKindDto::Load {
+                    load_kind: LoadNodeKindDto::Scenario, label: name, ..
+                } if name == label)
+            })
+            .unwrap();
+        let mut next = flow.edges.iter().find(|edge| {
+            edge.source_node_id == scenario.id && edge.source_handle.as_deref() == Some("iteration")
+        });
+        let mut urls = Vec::new();
+        while let Some(edge) = next {
+            assert!(
+                urls.len() < flow.nodes.len(),
+                "imported body contains a cycle"
+            );
+            let node = flow
+                .nodes
+                .iter()
+                .find(|node| node.id == edge.target_node_id)
+                .unwrap();
+            let FlowNodeKindDto::Load {
+                load_kind: LoadNodeKindDto::Request,
+                config,
+                ..
+            } = &node.kind
+            else {
+                panic!("expected an HTTP sampler");
+            };
+            let config: serde_json::Value = serde_json::from_str(config).unwrap();
+            urls.push(config["url"].as_str().unwrap().to_string());
+            next = flow
+                .edges
+                .iter()
+                .find(|edge| edge.source_node_id == node.id);
+        }
+        urls
+    }
+
     impl LoadRunSink for SilentSink {
         fn progress(&self, _snapshot: LoadRunProgress) {}
         fn scenario_finished(&self, _scenario_id: &str, _summary: LoadRunSummary) {}
@@ -600,6 +673,175 @@ mod tests {
         async fn cancelled(&self) {
             pending().await
         }
+    }
+
+    #[tokio::test]
+    async fn jmeter_hash_tree_round_trips_and_executes_finite_groups_without_network() {
+        let path = temp_file("finite-groups.jmx", FINITE_JMETER);
+        let root = path.with_extension("workspace");
+        let executor = JmeterExecutor::default();
+        let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+            source_path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        assert_eq!(preview.format, "jmeter");
+        assert_eq!(
+            preview.analysis_hash,
+            content_hash(FINITE_JMETER.as_bytes())
+        );
+        assert_eq!(
+            preview.destinations,
+            vec![
+                "https://catalog.example.test/items",
+                "https://catalog.example.test/items/body",
+                "https://checkout.example.test/cart",
+            ]
+        );
+        assert_eq!(
+            body_urls(&preview.flow, "Catalog"),
+            vec![
+                "https://catalog.example.test/items",
+                "https://catalog.example.test/items/body",
+            ]
+        );
+        assert_eq!(
+            body_urls(&preview.flow, "Checkout"),
+            vec!["https://checkout.example.test/cart"]
+        );
+        assert!(!root.exists(), "preview must not create workspace assets");
+        let committed = commit_load_test_import(CommitLoadTestImportInput {
+            root_path: root.to_string_lossy().into_owned(),
+            source_path: path.to_string_lossy().into_owned(),
+            analysis_hash: preview.analysis_hash,
+        })
+        .unwrap();
+        assert!(executor.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            body_urls(&committed, "Catalog"),
+            body_urls(&preview.flow, "Catalog")
+        );
+        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let flow = snapshot
+            .flows
+            .iter()
+            .find(|flow| flow.id == committed.id)
+            .unwrap();
+        let reopened = flow_to_dto(flow);
+        assert_eq!(
+            body_urls(&reopened, "Catalog"),
+            body_urls(&preview.flow, "Catalog")
+        );
+        assert_eq!(
+            body_urls(&reopened, "Checkout"),
+            body_urls(&preview.flow, "Checkout")
+        );
+        let report = execute_load_flow_report(flow, &executor, &SilentSink, &NeverCancelled)
+            .await
+            .unwrap();
+        assert!(report.passed, "{report:?}");
+        assert_eq!(report.summary.completed_iterations, 8);
+        assert_eq!(report.summary.requests, 14);
+        let calls = executor.calls.lock().unwrap();
+        assert_eq!(calls.len(), 14);
+        for (url, method, count, body) in [
+            ("https://catalog.example.test/items", HttpMethod::Get, 6, ""),
+            (
+                "https://catalog.example.test/items/body",
+                HttpMethod::Post,
+                6,
+                r#"{"name":"coffee"}"#,
+            ),
+            ("https://checkout.example.test/cart", HttpMethod::Get, 2, ""),
+        ] {
+            let matching: Vec<_> = calls
+                .iter()
+                .filter(|(_, actual, _)| actual == url)
+                .collect();
+            assert_eq!(
+                matching.len(),
+                count,
+                "unexpected execution count for {url}"
+            );
+            assert!(matching.iter().all(|(actual_method, _, actual_body)| {
+                *actual_method == method && actual_body == body
+            }));
+        }
+        assert_eq!(
+            fs::read_to_string(
+                root.join(ASSET_DIRECTORY)
+                    .join(&committed.id)
+                    .join("source.jmx")
+            )
+            .unwrap(),
+            FINITE_JMETER
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn jmeter_late_unsupported_elements_reject_preview_and_commit_without_writes() {
+        for element in ["JSR223Sampler", "HeaderManager", "IfController"] {
+            // Insert after both valid groups to catch partial-import persistence.
+            let marker = "</hashTree>\n  </hashTree>\n</jmeterTestPlan>";
+            assert!(FINITE_JMETER.contains(marker));
+            let source = FINITE_JMETER.replacen(
+                marker,
+                &format!(
+                    "<{element} testname=\"Late unsupported\" enabled=\"true\"/><hashTree/>\n    {marker}"
+                ),
+                1,
+            );
+            let path = temp_file(&format!("late-{element}.jmx"), &source);
+            let root = path.with_extension("workspace");
+            for result in [
+                analyze_load_test_import(AnalyzeLoadTestImportInput {
+                    source_path: path.to_string_lossy().into_owned(),
+                })
+                .map(|_| ()),
+                commit_load_test_import(CommitLoadTestImportInput {
+                    root_path: root.to_string_lossy().into_owned(),
+                    source_path: path.to_string_lossy().into_owned(),
+                    analysis_hash: content_hash(source.as_bytes()),
+                })
+                .map(|_| ()),
+            ] {
+                let Err(LoadTestImportErrorDto::Incompatible { diagnostics }) = result else {
+                    panic!("{element} must reject the whole import: {result:?}");
+                };
+                assert!(
+                    diagnostics
+                        .iter()
+                        .any(|diagnostic| { diagnostic.line > 1 && diagnostic.column > 0 })
+                );
+            }
+            assert!(
+                !root.exists(),
+                "{element} created workspace files or assets"
+            );
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn jmeter_commit_rejects_changed_source_before_creating_workspace() {
+        let path = temp_file("changed-jmeter.jmx", FINITE_JMETER);
+        let root = path.with_extension("workspace");
+        let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+            source_path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        fs::write(&path, FINITE_JMETER.replace("coffee", "tea")).unwrap();
+        assert!(matches!(
+            commit_load_test_import(CommitLoadTestImportInput {
+                root_path: root.to_string_lossy().into_owned(),
+                source_path: path.to_string_lossy().into_owned(),
+                analysis_hash: preview.analysis_hash,
+            }),
+            Err(LoadTestImportErrorDto::StaleAnalysis)
+        ));
+        assert!(!root.exists());
+        fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]
@@ -838,7 +1080,19 @@ mod tests {
 
     #[test]
     fn preview_and_commit_reject_non_executable_imports_without_creating_workspace_or_assets() {
-        let source = "<jmeterTestPlan><hashTree><ThreadGroup testname='Smoke'><HTTPSamplerProxy><stringProp name='HTTPSampler.domain'>api.example.test</stringProp></HTTPSamplerProxy></ThreadGroup></hashTree></jmeterTestPlan>";
+        let source = r#"<jmeterTestPlan><hashTree>
+            <TestPlan testname="Smoke plan"/><hashTree>
+                <ThreadGroup testname="Smoke">
+                    <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+                        <intProp name="LoopController.loops">3</intProp>
+                    </elementProp>
+                </ThreadGroup><hashTree>
+                    <HTTPSamplerProxy>
+                        <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
+                    </HTTPSamplerProxy><hashTree/>
+                </hashTree>
+            </hashTree>
+        </hashTree></jmeterTestPlan>"#;
         let path = temp_file("unsupported-runtime.jmx", source);
         let root = path.with_extension("workspace");
         let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {

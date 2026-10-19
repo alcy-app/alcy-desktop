@@ -4,18 +4,18 @@
 //! connections, execute JavaScript or save assets: errors are collected and
 //! returned to the caller so the commit remains atomic.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use alcy_domain::{
     Flow, FlowEdge, FlowExecutionKind, FlowNode, FlowNodeKind, FlowPosition, LoadNode, LoadNodeKind,
 };
-use quick_xml::Reader;
-use quick_xml::events::{BytesStart, Event};
 use serde_json::json;
 use thiserror::Error;
 
+mod jmeter_syntax;
 mod k6_syntax;
+use jmeter_syntax::{JmeterHttpSampler, JmeterThreadGroup, JmeterThreadGroupKind, parse_jmeter};
 use k6_syntax::{K6StaticCall, parse_k6_syntax};
 
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
@@ -2095,6 +2095,45 @@ fn jmeter_scenario_config(
         },
         None => 1,
     };
+    for key in ["ThreadGroup.scheduler", "LoopController.continue_forever"] {
+        if group.properties.get(key).is_some_and(|value| {
+            !value.eq_ignore_ascii_case("true") && !value.eq_ignore_ascii_case("false")
+        }) {
+            diagnostics.push(diag(
+                source,
+                group.offset,
+                format!("{key} precisa ser true ou false"),
+            ));
+        }
+    }
+    for key in [
+        "ThreadGroup.ramp_time",
+        "ThreadGroup.duration",
+        "ThreadGroup.delay",
+    ] {
+        if group
+            .properties
+            .get(key)
+            .is_some_and(|value| !value.is_empty() && value.parse::<u64>().is_err())
+        {
+            diagnostics.push(diag(
+                source,
+                group.offset,
+                format!("{key} precisa ser inteiro não negativo"),
+            ));
+        }
+    }
+    if group
+        .properties
+        .get("ThreadGroup.on_sample_error")
+        .is_some_and(|value| value != "continue")
+    {
+        diagnostics.push(diag(
+            source,
+            group.offset,
+            "política de erro do Thread Group ainda não é traduzida",
+        ));
+    }
     let is_true = |key: &str| {
         group
             .properties
@@ -2506,520 +2545,6 @@ fn edge(id: &str, source: &str, target: &str, source_handle: Option<&str>) -> Fl
         target_node_id: target.to_string(),
         source_handle: source_handle.map(str::to_string),
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum JmeterThreadGroupKind {
-    Standard,
-    Setup,
-    Teardown,
-}
-
-#[derive(Debug)]
-struct JmeterThreadGroup {
-    kind: JmeterThreadGroupKind,
-    name: String,
-    offset: usize,
-    properties: HashMap<String, String>,
-    samplers: Vec<JmeterHttpSampler>,
-}
-
-#[derive(Debug)]
-struct JmeterHttpSampler {
-    name: String,
-    offset: usize,
-    properties: HashMap<String, String>,
-    arguments: Vec<JmeterHttpArgument>,
-}
-
-#[derive(Debug)]
-struct JmeterHttpArgument {
-    properties: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum JmeterPropertyTarget {
-    Group(usize),
-    Sampler {
-        group: usize,
-        sampler: usize,
-    },
-    Argument {
-        group: usize,
-        sampler: usize,
-        argument: usize,
-    },
-}
-
-#[derive(Debug)]
-struct JmeterProperty {
-    target: JmeterPropertyTarget,
-    name: String,
-    value: String,
-}
-
-#[derive(Default)]
-struct JmeterParseState {
-    groups: Vec<JmeterThreadGroup>,
-    active_group: Option<usize>,
-    active_sampler: Option<usize>,
-    active_argument: Option<usize>,
-    active_property: Option<JmeterProperty>,
-    xml_depth: usize,
-    xml_nodes: usize,
-    diagnostics: Vec<LoadImportDiagnostic>,
-}
-
-impl JmeterParseState {
-    fn enter_xml_element(&mut self, source: &str, offset: usize, increases_depth: bool) -> bool {
-        self.xml_nodes = self.xml_nodes.saturating_add(1);
-        if self.xml_nodes > MAX_JMETER_XML_NODES {
-            self.diagnostics.push(diag(
-                source,
-                offset,
-                format!("XML JMeter excede o limite de {MAX_JMETER_XML_NODES} elementos"),
-            ));
-            return false;
-        }
-        if increases_depth {
-            self.xml_depth = self.xml_depth.saturating_add(1);
-            if self.xml_depth > MAX_JMETER_XML_DEPTH {
-                self.diagnostics.push(diag(
-                    source,
-                    offset,
-                    format!("XML JMeter excede o limite de profundidade {MAX_JMETER_XML_DEPTH}"),
-                ));
-                return false;
-            }
-        }
-        true
-    }
-
-    fn leave_xml_element(&mut self) {
-        self.xml_depth = self.xml_depth.saturating_sub(1);
-    }
-}
-
-/// Reads XML in one pass. DTDs are never processed: `DocType` becomes a
-/// diagnostic before any element is interpreted. Test elements without a flow
-/// equivalent reject the entire import instead of being ignored.
-fn parse_jmeter(source: &str) -> Result<Vec<JmeterThreadGroup>, LoadTestImportError> {
-    let mut reader = Reader::from_reader(source.as_bytes());
-    reader.config_mut().trim_text(false);
-
-    let mut buffer = Vec::new();
-    let mut state = JmeterParseState::default();
-
-    loop {
-        let offset = reader.buffer_position() as usize;
-        match reader.read_event_into(&mut buffer) {
-            Ok(Event::Eof) => break,
-            Ok(Event::DocType(_)) => state.diagnostics.push(diag(
-                source,
-                offset,
-                "DTD e entidades XML externas não são permitidas",
-            )),
-            Ok(Event::Start(element)) => {
-                if !state.enter_xml_element(source, offset, true) {
-                    break;
-                }
-                handle_jmeter_start(source, offset, &element, &mut state);
-            }
-            Ok(Event::Empty(element)) => {
-                if !state.enter_xml_element(source, offset, false) {
-                    break;
-                }
-                handle_jmeter_empty(source, offset, &element, &mut state);
-            }
-            Ok(Event::Text(text)) => {
-                append_jmeter_text(
-                    source,
-                    offset,
-                    text.as_ref(),
-                    &mut state.active_property,
-                    &mut state.diagnostics,
-                );
-            }
-            Ok(Event::GeneralRef(reference)) => {
-                append_jmeter_reference(
-                    source,
-                    offset,
-                    reference.as_ref(),
-                    &mut state.active_property,
-                    &mut state.diagnostics,
-                );
-            }
-            Ok(Event::CData(text)) => {
-                append_jmeter_cdata(
-                    source,
-                    offset,
-                    text.as_ref(),
-                    &mut state.active_property,
-                    &mut state.diagnostics,
-                );
-            }
-            Ok(Event::End(element)) => {
-                handle_jmeter_end(element.name().as_ref(), &mut state);
-                state.leave_xml_element();
-            }
-            Ok(_) => {}
-            Err(error) => {
-                state.diagnostics.push(diag(
-                    source,
-                    offset,
-                    format!("XML JMeter inválido: {error}"),
-                ));
-                break;
-            }
-        }
-        buffer.clear();
-    }
-
-    if state.diagnostics.is_empty() {
-        Ok(state.groups)
-    } else {
-        Err(LoadTestImportError::Incompatible {
-            diagnostics: state.diagnostics,
-        })
-    }
-}
-
-fn handle_jmeter_start(
-    source: &str,
-    offset: usize,
-    element: &BytesStart<'_>,
-    state: &mut JmeterParseState,
-) {
-    let tag = element_name(element);
-    let attributes = match element_attributes(element) {
-        Ok(attributes) => attributes,
-        Err(message) => {
-            state.diagnostics.push(diag(source, offset, message));
-            return;
-        }
-    };
-    let test_class = attributes.get("testclass").map(String::as_str);
-    match tag.as_str() {
-        "ThreadGroup" | "SetupThreadGroup" | "PostThreadGroup" => {
-            let kind = match tag.as_str() {
-                "ThreadGroup" => JmeterThreadGroupKind::Standard,
-                "SetupThreadGroup" => JmeterThreadGroupKind::Setup,
-                _ => JmeterThreadGroupKind::Teardown,
-            };
-            state.groups.push(JmeterThreadGroup {
-                kind,
-                name: attributes
-                    .get("testname")
-                    .cloned()
-                    .unwrap_or_else(|| tag.clone()),
-                offset,
-                properties: HashMap::new(),
-                samplers: Vec::new(),
-            });
-            state.active_group = Some(state.groups.len() - 1);
-            state.active_sampler = None;
-            state.active_argument = None;
-        }
-        "HTTPSamplerProxy" => match state.active_group {
-            Some(group) => {
-                state.groups[group].samplers.push(JmeterHttpSampler {
-                    name: attributes
-                        .get("testname")
-                        .cloned()
-                        .unwrap_or_else(|| "HTTP Request".to_string()),
-                    offset,
-                    properties: HashMap::new(),
-                    arguments: Vec::new(),
-                });
-                state.active_sampler = Some(state.groups[group].samplers.len() - 1);
-                state.active_argument = None;
-            }
-            None => state.diagnostics.push(diag(
-                source,
-                offset,
-                "HTTP Sampler precisa estar dentro de um Thread Group",
-            )),
-        },
-        "elementProp"
-            if attributes
-                .get("elementType")
-                .is_some_and(|element_type| element_type == "HTTPArgument") =>
-        {
-            match (state.active_group, state.active_sampler) {
-                (Some(group), Some(sampler)) => {
-                    state.groups[group].samplers[sampler]
-                        .arguments
-                        .push(JmeterHttpArgument {
-                            properties: HashMap::new(),
-                        });
-                    state.active_argument =
-                        Some(state.groups[group].samplers[sampler].arguments.len() - 1);
-                }
-                _ => state.diagnostics.push(diag(
-                    source,
-                    offset,
-                    "argumento HTTP do JMeter precisa estar dentro de um HTTP Sampler",
-                )),
-            }
-        }
-        "HTTPArgument" => state.diagnostics.push(diag(
-            source,
-            offset,
-            "argumentos HTTP do JMeter precisam usar elementProp dentro de um HTTP Sampler",
-        )),
-        "stringProp" | "boolProp" | "intProp" | "longProp" => {
-            let Some(name) = attributes.get("name").cloned() else {
-                state
-                    .diagnostics
-                    .push(diag(source, offset, "propriedade JMeter sem nome"));
-                return;
-            };
-            let target = match (
-                state.active_group,
-                state.active_sampler,
-                state.active_argument,
-            ) {
-                (Some(group), Some(sampler), Some(argument)) => JmeterPropertyTarget::Argument {
-                    group,
-                    sampler,
-                    argument,
-                },
-                (Some(group), Some(sampler), None) => {
-                    JmeterPropertyTarget::Sampler { group, sampler }
-                }
-                (Some(group), None, None) => JmeterPropertyTarget::Group(group),
-                (Some(_), None, Some(_)) => {
-                    state.diagnostics.push(diag(
-                        source,
-                        offset,
-                        "argumento HTTP do JMeter fora de um HTTP Sampler",
-                    ));
-                    return;
-                }
-                (None, _, _) => {
-                    state.diagnostics.push(diag(
-                        source,
-                        offset,
-                        "propriedade JMeter fora de um Thread Group",
-                    ));
-                    return;
-                }
-            };
-            state.active_property = Some(JmeterProperty {
-                target,
-                name,
-                value: String::new(),
-            });
-        }
-        _ if is_supported_jmeter_structure(&tag, test_class) => {}
-        _ => state.diagnostics.push(diag(
-            source,
-            offset,
-            format!("elemento JMeter não suportado: {tag}"),
-        )),
-    }
-}
-
-fn handle_jmeter_empty(
-    source: &str,
-    offset: usize,
-    element: &BytesStart<'_>,
-    state: &mut JmeterParseState,
-) {
-    let tag = element_name(element);
-    let attributes = match element_attributes(element) {
-        Ok(attributes) => attributes,
-        Err(message) => {
-            state.diagnostics.push(diag(source, offset, message));
-            return;
-        }
-    };
-    if attributes
-        .get("elementType")
-        .is_some_and(|element_type| element_type == "HTTPArgument")
-    {
-        state.diagnostics.push(diag(
-            source,
-            offset,
-            "argumento HTTP do JMeter vazio não pode preservar o corpo da request",
-        ));
-        return;
-    }
-    if !is_supported_jmeter_structure(&tag, attributes.get("testclass").map(String::as_str)) {
-        state.diagnostics.push(diag(
-            source,
-            offset,
-            format!("elemento JMeter não suportado: {tag}"),
-        ));
-    }
-}
-
-fn append_jmeter_text(
-    source: &str,
-    offset: usize,
-    raw: &[u8],
-    active_property: &mut Option<JmeterProperty>,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) {
-    let Some(property) = active_property.as_mut() else {
-        return;
-    };
-    let Ok(raw) = std::str::from_utf8(raw) else {
-        diagnostics.push(diag(source, offset, "texto XML não está em UTF-8"));
-        return;
-    };
-    match quick_xml::escape::unescape(raw) {
-        Ok(value) => property.value.push_str(&value),
-        Err(error) => diagnostics.push(diag(
-            source,
-            offset,
-            format!("entidade XML inválida: {error}"),
-        )),
-    }
-}
-
-fn append_jmeter_cdata(
-    source: &str,
-    offset: usize,
-    raw: &[u8],
-    active_property: &mut Option<JmeterProperty>,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) {
-    let Some(property) = active_property.as_mut() else {
-        return;
-    };
-    match std::str::from_utf8(raw) {
-        Ok(value) => property.value.push_str(value),
-        Err(_) => diagnostics.push(diag(source, offset, "texto XML não está em UTF-8")),
-    }
-}
-
-/// The reader separates entity references from text to avoid implicit
-/// expansion. Property values accept only the five predefined XML entities;
-/// any other entity remains incompatible.
-fn append_jmeter_reference(
-    source: &str,
-    offset: usize,
-    raw: &[u8],
-    active_property: &mut Option<JmeterProperty>,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) {
-    let Some(property) = active_property.as_mut() else {
-        return;
-    };
-    let value = match raw {
-        b"quot" => '"',
-        b"apos" => '\'',
-        b"amp" => '&',
-        b"lt" => '<',
-        b"gt" => '>',
-        _ => {
-            diagnostics.push(diag(
-                source,
-                offset,
-                "entidade XML não permitida em propriedade JMeter",
-            ));
-            return;
-        }
-    };
-    property.value.push(value);
-}
-
-fn handle_jmeter_end(tag: &[u8], state: &mut JmeterParseState) {
-    match tag {
-        b"stringProp" | b"boolProp" | b"intProp" | b"longProp" => {
-            let Some(property) = state.active_property.take() else {
-                return;
-            };
-            match property.target {
-                JmeterPropertyTarget::Group(group) => {
-                    state.groups[group]
-                        .properties
-                        .insert(property.name, property.value.trim().to_string());
-                }
-                JmeterPropertyTarget::Sampler { group, sampler } => {
-                    state.groups[group].samplers[sampler]
-                        .properties
-                        .insert(property.name, property.value.trim().to_string());
-                }
-                JmeterPropertyTarget::Argument {
-                    group,
-                    sampler,
-                    argument,
-                } => {
-                    if let Some(argument) = state
-                        .groups
-                        .get_mut(group)
-                        .and_then(|group| group.samplers.get_mut(sampler))
-                        .and_then(|sampler| sampler.arguments.get_mut(argument))
-                    {
-                        argument
-                            .properties
-                            .insert(property.name, property.value.trim().to_string());
-                    }
-                }
-            }
-        }
-        b"elementProp" => state.active_argument = None,
-        b"HTTPSamplerProxy" => {
-            state.active_sampler = None;
-            state.active_argument = None;
-        }
-        b"ThreadGroup" | b"SetupThreadGroup" | b"PostThreadGroup" => {
-            state.active_group = None;
-            state.active_sampler = None;
-            state.active_argument = None;
-        }
-        _ => {}
-    }
-}
-
-fn element_name(element: &BytesStart<'_>) -> String {
-    String::from_utf8_lossy(element.name().as_ref()).into_owned()
-}
-
-fn element_attributes(element: &BytesStart<'_>) -> Result<HashMap<String, String>, String> {
-    let mut attributes = HashMap::new();
-    for attribute in element.attributes().with_checks(false) {
-        let attribute = attribute.map_err(|error| format!("atributo XML inválido: {error}"))?;
-        let key = std::str::from_utf8(attribute.key.as_ref())
-            .map_err(|_| "nome de atributo XML não está em UTF-8".to_string())?
-            .to_string();
-        let value = std::str::from_utf8(attribute.value.as_ref())
-            .map_err(|_| "valor de atributo XML não está em UTF-8".to_string())?;
-        let value = quick_xml::escape::unescape(value)
-            .map_err(|error| format!("entidade XML inválida: {error}"))?
-            .into_owned();
-        attributes.insert(key, value);
-    }
-    Ok(attributes)
-}
-
-fn is_supported_jmeter_structure(tag: &str, test_class: Option<&str>) -> bool {
-    matches!(
-        tag,
-        "jmeterTestPlan"
-            | "hashTree"
-            | "TestPlan"
-            | "ThreadGroup"
-            | "SetupThreadGroup"
-            | "PostThreadGroup"
-            | "HTTPSamplerProxy"
-            | "stringProp"
-            | "boolProp"
-            | "intProp"
-            | "longProp"
-            | "collectionProp"
-            | "elementProp"
-            | "objProp"
-            | "value"
-            | "name"
-            | "Arguments"
-            | "LoopController"
-    ) || matches!(
-        test_class,
-        Some("TestPlan" | "ThreadGroup" | "HTTPSamplerProxy")
-    )
 }
 
 fn requests_from_jmeter_group(
@@ -3877,6 +3402,32 @@ mod tests {
     }
 
     #[test]
+    fn rejects_jmeter_dtds_and_unknown_entities_without_expanding_them() {
+        for source in [
+            "<!DOCTYPE jmeterTestPlan><jmeterTestPlan><hashTree><TestPlan/><hashTree/></hashTree></jmeterTestPlan>",
+            "<jmeterTestPlan><hashTree><TestPlan><stringProp name='TestPlan.comments'>&unknown;</stringProp></TestPlan><hashTree/></hashTree></jmeterTestPlan>",
+            "<jmeterTestPlan><hashTree><TestPlan testname='&unknown;'/><hashTree/></hashTree></jmeterTestPlan>",
+        ] {
+            assert!(matches!(
+                analyze_load_test("entities.jmx", source, UNIX_EPOCH),
+                Err(LoadTestImportError::Incompatible { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_a_jmeter_source_that_exceeds_the_size_limit() {
+        let source = format!(
+            "<jmeterTestPlan>{}</jmeterTestPlan>",
+            " ".repeat(MAX_SOURCE_BYTES)
+        );
+        assert_eq!(
+            analyze_load_test("large.jmx", &source, UNIX_EPOCH).unwrap_err(),
+            LoadTestImportError::TooLarge
+        );
+    }
+
+    #[test]
     fn rejects_a_jmeter_xml_document_that_exceeds_the_depth_limit() {
         let nested = "<hashTree>".repeat(MAX_JMETER_XML_DEPTH);
         let closing = "</hashTree>".repeat(MAX_JMETER_XML_DEPTH);
@@ -3902,22 +3453,154 @@ mod tests {
     }
 
     #[test]
+    fn imports_a_real_jmeter_tree_in_source_order_with_disabled_subtrees_excluded() {
+        let source = include_str!("../tests/fixtures/load/finite-http.jmx");
+        let analysis = analyze_load_test("finite-http.jmx", source, UNIX_EPOCH).unwrap();
+        assert_eq!(
+            analysis
+                .requests
+                .iter()
+                .map(|request| (request.method.as_str(), request.url.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("GET", "https://catalog.example.test/items"),
+                ("POST", "https://catalog.example.test/items/body"),
+                ("GET", "https://checkout.example.test/cart"),
+            ]
+        );
+        assert_eq!(analysis.requests[0].body, None);
+        assert_eq!(
+            analysis.requests[1].body.as_deref(),
+            Some(r#"{"name":"coffee"}"#)
+        );
+        assert_eq!(analysis.requests[2].body, None);
+
+        let scenarios = analysis
+            .flow
+            .nodes()
+            .iter()
+            .filter_map(|node| match &node.kind {
+                FlowNodeKind::Load { node } if node.kind == LoadNodeKind::Scenario => {
+                    Some(serde_json::from_str::<serde_json::Value>(&node.config).unwrap())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(scenarios.len(), 2);
+        assert_eq!(scenarios[0]["name"], "Catalog");
+        assert_eq!(scenarios[0]["vus"], 2);
+        assert_eq!(scenarios[0]["iterationsPerVu"], 3);
+        assert_eq!(scenarios[1]["name"], "Checkout");
+        assert_eq!(scenarios[1]["vus"], 1);
+        assert_eq!(scenarios[1]["iterationsPerVu"], 2);
+        assert!(analysis.flow.edges().iter().any(|edge| {
+            edge.source_node_id == "scenario-1-request-1"
+                && edge.target_node_id == "scenario-1-request-2"
+        }));
+        assert!(!analysis.flow.edges().iter().any(|edge| {
+            edge.source_node_id.starts_with("scenario-1-request-")
+                && edge.target_node_id.starts_with("scenario-2-request-")
+        }));
+    }
+
+    #[test]
+    fn rejects_missing_or_orphan_jmeter_hash_trees_and_nested_declarations() {
+        for tree in [
+            "<ThreadGroup/>",
+            "<hashTree/>",
+            "<ThreadGroup/><hashTree/><hashTree/>",
+            "<ThreadGroup/><HTTPSamplerProxy/><hashTree/>",
+            "<ThreadGroup><HTTPSamplerProxy/></ThreadGroup><hashTree/>",
+            "<ThreadGroup/><hashTree><HTTPSamplerProxy/></hashTree>",
+            "<ThreadGroup/><hashTree><HTTPSamplerProxy/><HTTPSamplerProxy/><hashTree/></hashTree>",
+            "<ThreadGroup/><hashTree><HTTPSamplerProxy><HTTPSamplerProxy/></HTTPSamplerProxy><hashTree/></hashTree>",
+        ] {
+            let source = format!(
+                "<jmeterTestPlan><hashTree><TestPlan/><hashTree>{tree}</hashTree></hashTree></jmeterTestPlan>"
+            );
+            assert!(
+                matches!(
+                    analyze_load_test("malformed.jmx", &source, UNIX_EPOCH),
+                    Err(LoadTestImportError::Incompatible { .. })
+                ),
+                "malformed JMeter tree was accepted: {tree}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_active_unsupported_jmeter_elements_with_source_locations() {
+        for element in [
+            "<JSR223Sampler/>",
+            "<ConstantTimer/>",
+            "<LoopController/>",
+            "<HeaderManager/>",
+        ] {
+            let source = format!(
+                "<jmeterTestPlan><hashTree><TestPlan/><hashTree><ThreadGroup/><hashTree>\n  {element}<hashTree/>\n</hashTree></hashTree></hashTree></jmeterTestPlan>"
+            );
+            let Err(LoadTestImportError::Incompatible { diagnostics }) =
+                analyze_load_test("unsupported.jmx", &source, UNIX_EPOCH)
+            else {
+                panic!("unsupported JMeter element was accepted: {element}");
+            };
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| { diagnostic.line == 2 && diagnostic.column > 1 })
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_the_entire_hash_tree_of_a_disabled_jmeter_sampler() {
+        let source = r#"
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree>
+              <ThreadGroup testname="Smoke">
+                <stringProp name="ThreadGroup.num_threads">1</stringProp>
+              </ThreadGroup><hashTree>
+                <HTTPSamplerProxy testname="Disabled" enabled="false">
+                  <stringProp name="HTTPSampler.domain">excluded.example.test</stringProp>
+                </HTTPSamplerProxy><hashTree>
+                  <JSR223Sampler enabled="true"/><hashTree/>
+                </hashTree>
+                <HTTPSamplerProxy testname="Active">
+                  <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
+                </HTTPSamplerProxy><hashTree/>
+              </hashTree>
+            </hashTree></hashTree></jmeterTestPlan>
+        "#;
+        let analysis = analyze_load_test("disabled-child.jmx", source, UNIX_EPOCH).unwrap();
+        assert_eq!(analysis.requests.len(), 1);
+        assert!(
+            analysis
+                .requests
+                .iter()
+                .all(|request| !request.url.contains("excluded"))
+        );
+    }
+
+    #[test]
     fn imports_a_jmeter_http_sampler_from_its_own_xml_scope() {
         let source = r#"
             <jmeterTestPlan>
               <hashTree>
+                <TestPlan testname="Smoke plan"/><hashTree>
                 <ThreadGroup testname="Smoke">
                   <stringProp name="ThreadGroup.num_threads">2</stringProp>
                   <stringProp name="ThreadGroup.ramp_time">0</stringProp>
-                  <intProp name="LoopController.loops">2</intProp>
+                  <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+                    <intProp name="LoopController.loops">2</intProp>
+                  </elementProp>
+                </ThreadGroup><hashTree>
                   <HTTPSamplerProxy testname="Get health">
                     <stringProp name="HTTPSampler.protocol">https</stringProp>
                     <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                     <stringProp name="HTTPSampler.path">health</stringProp>
                     <stringProp name="HTTPSampler.method">GET</stringProp>
                     <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
-                  </HTTPSamplerProxy>
-                </ThreadGroup>
+                  </HTTPSamplerProxy><hashTree/>
+                </hashTree></hashTree>
               </hashTree>
             </jmeterTestPlan>
         "#;
@@ -3933,7 +3616,7 @@ mod tests {
                 .any(|(name, value)| name == "HTTPSampler.follow_redirects" && value == "true")
         );
         let FlowNodeKind::Load { node } = &analysis.flow.nodes()[1].kind else {
-            panic!("segundo node deveria ser Scenario");
+            panic!("second node should be a scenario");
         };
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&node.config).unwrap(),
@@ -3955,17 +3638,18 @@ mod tests {
     #[test]
     fn imports_jmeter_head_and_options_http_samplers() {
         let source = r#"
-            <jmeterTestPlan><hashTree><ThreadGroup testname="Smoke">
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree><ThreadGroup testname="Smoke">
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
+            </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="health">
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <stringProp name="HTTPSampler.method">HEAD</stringProp>
-              </HTTPSamplerProxy>
+              </HTTPSamplerProxy><hashTree/>
               <HTTPSamplerProxy testname="cors">
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <stringProp name="HTTPSampler.method">OPTIONS</stringProp>
-              </HTTPSamplerProxy>
-            </ThreadGroup></hashTree></jmeterTestPlan>
+              </HTTPSamplerProxy><hashTree/>
+            </hashTree></hashTree></hashTree></jmeterTestPlan>
         "#;
 
         let analysis = analyze_load_test("methods.jmx", source, UNIX_EPOCH).unwrap();
@@ -3982,8 +3666,9 @@ mod tests {
     #[test]
     fn imports_a_jmeter_raw_http_body_without_reencoding_it() {
         let source = r#"
-            <jmeterTestPlan><hashTree><ThreadGroup testname="Create">
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree><ThreadGroup testname="Create">
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
+            </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="create">
                 <stringProp name="HTTPSampler.protocol">https</stringProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
@@ -3997,8 +3682,8 @@ mod tests {
                     </elementProp>
                   </collectionProp>
                 </elementProp>
-              </HTTPSamplerProxy>
-            </ThreadGroup></hashTree></jmeterTestPlan>
+              </HTTPSamplerProxy><hashTree/>
+            </hashTree></hashTree></hashTree></jmeterTestPlan>
         "#;
 
         let analysis = analyze_load_test("raw-body.jmx", source, UNIX_EPOCH).unwrap();
@@ -4021,28 +3706,136 @@ mod tests {
     }
 
     #[test]
+    fn preserves_raw_jmeter_body_whitespace_cdata_and_xml_character_references() {
+        let source = include_str!("../tests/fixtures/load/finite-http.jmx");
+        for (encoded, expected) in [
+            (
+                "  &lt;item&gt;&amp;&#xE9;&#10;&lt;/item&gt;  ",
+                "  <item>&é\n</item>  ",
+            ),
+            (
+                "<![CDATA[ \n <item>&literal;</item>\t ]]>",
+                " \n <item>&literal;</item>\t ",
+            ),
+            (
+                "first\r\nsecond\rthird&#13;fourth",
+                "first\nsecond\nthird\rfourth",
+            ),
+            ("<![CDATA[first\r\nsecond\rthird]]>", "first\nsecond\nthird"),
+        ] {
+            let source = source.replace("{&quot;name&quot;:&quot;coffee&quot;}", encoded);
+            let analysis = analyze_load_test("raw-whitespace.jmx", &source, UNIX_EPOCH).unwrap();
+            assert_eq!(analysis.requests[1].body.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn rejects_jmeter_test_plan_modes_that_change_execution_semantics() {
+        let source = include_str!("../tests/fixtures/load/finite-http.jmx");
+        for name in [
+            "TestPlan.serialize_threadgroups",
+            "TestPlan.functional_mode",
+        ] {
+            let source = source.replace(
+                &format!("<boolProp name=\"{name}\">false</boolProp>"),
+                &format!("<boolProp name=\"{name}\">true</boolProp>"),
+            );
+            let Err(LoadTestImportError::Incompatible { diagnostics }) =
+                analyze_load_test("test-plan-mode.jmx", &source, UNIX_EPOCH)
+            else {
+                panic!("unsupported TestPlan mode was accepted: {name}");
+            };
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(name))
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_untranslated_jmeter_scheduling_properties() {
+        let fixture = include_str!("../tests/fixtures/load/finite-http.jmx");
+        for (name, value, expected_diagnostic) in [
+            ("ThreadGroup.scheduler", "", "ThreadGroup.scheduler"),
+            ("ThreadGroup.scheduler", "1", "ThreadGroup.scheduler"),
+            (
+                "LoopController.continue_forever",
+                "maybe",
+                "LoopController.continue_forever",
+            ),
+            ("ThreadGroup.ramp_time", "-1", "ThreadGroup.ramp_time"),
+            ("ThreadGroup.ramp_time", "abc", "ThreadGroup.ramp_time"),
+            ("ThreadGroup.duration", "1.5", "ThreadGroup.duration"),
+            (
+                "ThreadGroup.delay",
+                "18446744073709551616",
+                "ThreadGroup.delay",
+            ),
+            (
+                "ThreadGroup.on_sample_error",
+                "stopthread",
+                "política de erro",
+            ),
+            (
+                "ThreadGroup.on_sample_error",
+                "stoptest",
+                "política de erro",
+            ),
+        ] {
+            let source = fixture
+                .lines()
+                .filter(|line| !line.contains(&format!("name=\"{name}\"")))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .replacen(
+                    "<stringProp name=\"ThreadGroup.num_threads\">2</stringProp>",
+                    &format!("<stringProp name=\"ThreadGroup.num_threads\">2</stringProp><stringProp name=\"{name}\">{value}</stringProp>"),
+                    1,
+                );
+            let Err(LoadTestImportError::Incompatible { diagnostics }) =
+                analyze_load_test("invalid-scheduling.jmx", &source, UNIX_EPOCH)
+            else {
+                panic!("unsupported scheduling property was accepted: {name}={value}");
+            };
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(expected_diagnostic)),
+                "missing scheduling diagnostic for {name}={value}: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
     fn imports_multiple_finite_jmeter_thread_groups_as_independent_scenarios() {
         let source = r#"
-            <jmeterTestPlan><hashTree>
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree>
               <ThreadGroup testname="Catalog">
                 <stringProp name="ThreadGroup.num_threads">2</stringProp>
-                <intProp name="LoopController.loops">3</intProp>
+                <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+                  <intProp name="LoopController.loops">3</intProp>
+                </elementProp>
+              </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="list">
                   <stringProp name="HTTPSampler.protocol">https</stringProp>
                   <stringProp name="HTTPSampler.domain">catalog.example.test</stringProp>
                   <stringProp name="HTTPSampler.path">items</stringProp>
-                </HTTPSamplerProxy>
-              </ThreadGroup>
+                </HTTPSamplerProxy><hashTree/>
+              </hashTree>
               <ThreadGroup testname="Checkout">
                 <stringProp name="ThreadGroup.num_threads">1</stringProp>
-                <intProp name="LoopController.loops">2</intProp>
+                <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+                  <intProp name="LoopController.loops">2</intProp>
+                </elementProp>
+              </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="cart">
                   <stringProp name="HTTPSampler.protocol">https</stringProp>
                   <stringProp name="HTTPSampler.domain">checkout.example.test</stringProp>
                   <stringProp name="HTTPSampler.path">cart</stringProp>
-                </HTTPSamplerProxy>
-              </ThreadGroup>
-            </hashTree></jmeterTestPlan>
+                </HTTPSamplerProxy><hashTree/>
+              </hashTree>
+            </hashTree></hashTree></jmeterTestPlan>
         "#;
 
         let analysis = analyze_load_test("multiple.jmx", source, UNIX_EPOCH).unwrap();
@@ -4079,13 +3872,14 @@ mod tests {
     #[test]
     fn rejects_jmeter_ramp_up_without_returning_a_partial_flow() {
         let source = r#"
-            <jmeterTestPlan><hashTree><ThreadGroup testname="Smoke">
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree><ThreadGroup testname="Smoke">
               <stringProp name="ThreadGroup.num_threads">2</stringProp>
               <stringProp name="ThreadGroup.ramp_time">1</stringProp>
+            </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="request">
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
-              </HTTPSamplerProxy>
-            </ThreadGroup></hashTree></jmeterTestPlan>
+              </HTTPSamplerProxy><hashTree/>
+            </hashTree></hashTree></hashTree></jmeterTestPlan>
         "#;
 
         assert!(matches!(
@@ -4098,11 +3892,11 @@ mod tests {
     #[test]
     fn rejects_unsupported_jmeter_test_elements_without_partial_import() {
         let source = r#"
-            <jmeterTestPlan><hashTree>
-              <ThreadGroup testname="Smoke">
-                <HeaderManager testclass="HeaderManager" testname="headers" />
-              </ThreadGroup>
-            </hashTree></jmeterTestPlan>
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree>
+              <ThreadGroup testname="Smoke"/><hashTree>
+                <HeaderManager testclass="HeaderManager" testname="headers"/><hashTree/>
+              </hashTree>
+            </hashTree></hashTree></jmeterTestPlan>
         "#;
         assert!(matches!(
             analyze_load_test("smoke.jmx", source, UNIX_EPOCH),
@@ -4113,15 +3907,16 @@ mod tests {
     #[test]
     fn rejects_jmeter_encoded_arguments_without_a_partial_import() {
         let source = r#"
-            <jmeterTestPlan><hashTree><ThreadGroup testname="Smoke">
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree><ThreadGroup testname="Smoke">
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
+            </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="request">
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <elementProp name="argument" elementType="HTTPArgument">
                   <stringProp name="Argument.value">payload</stringProp>
                 </elementProp>
-              </HTTPSamplerProxy>
-            </ThreadGroup></hashTree></jmeterTestPlan>
+              </HTTPSamplerProxy><hashTree/>
+            </hashTree></hashTree></hashTree></jmeterTestPlan>
         "#;
         assert!(matches!(
             analyze_load_test("smoke.jmx", source, UNIX_EPOCH),
@@ -4133,8 +3928,9 @@ mod tests {
     #[test]
     fn rejects_multiple_jmeter_raw_body_arguments_without_a_partial_import() {
         let source = r#"
-            <jmeterTestPlan><hashTree><ThreadGroup testname="Smoke">
+            <jmeterTestPlan><hashTree><TestPlan/><hashTree><ThreadGroup testname="Smoke">
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
+            </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="request">
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
@@ -4142,8 +3938,8 @@ mod tests {
                   <elementProp name="one" elementType="HTTPArgument"><stringProp name="Argument.value">first</stringProp></elementProp>
                   <elementProp name="two" elementType="HTTPArgument"><stringProp name="Argument.value">second</stringProp></elementProp>
                 </collectionProp></elementProp>
-              </HTTPSamplerProxy>
-            </ThreadGroup></hashTree></jmeterTestPlan>
+              </HTTPSamplerProxy><hashTree/>
+            </hashTree></hashTree></hashTree></jmeterTestPlan>
         "#;
 
         assert!(matches!(
