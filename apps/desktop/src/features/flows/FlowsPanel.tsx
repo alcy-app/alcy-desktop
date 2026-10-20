@@ -214,7 +214,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
             <div className={['flows-list-row', row.kind === 'flow' && row.folderId ? 'flows-list-row--nested' : '', draggedId === item.id ? 'flows-list-row--dragging' : '', dragOverId === item.id && dragOverEdge ? `flows-list-row--drop-${dragOverEdge}` : ''].filter(Boolean).join(' ')} data-flow-drop-id={item.id} data-flow-drop-kind={kind}
               onContextMenu={(event) => { event.preventDefault(); setMenuOpenKey(key) }}
               onPointerDown={(event) => {
-                if (event.button !== 0 || isSearching || isRenaming || (event.target as HTMLElement).closest('.flows-menu-wrapper')) return
+                if (event.button !== 0 || isSearching || isRenaming || (event.target as HTMLElement).closest('.flows-menu-wrapper, .ui-menu')) return
                 startDrag(item.id, kind, label, event)
               }}>
               <button ref={(element) => { if (element) rowButtonsRef.current.set(key, element); else rowButtonsRef.current.delete(key) }} type="button" className="flows-list-item" aria-expanded={kind === 'folder' ? open : undefined}
@@ -250,7 +250,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 ) : <span className="flows-list-item-name" data-change-kind={changeKind}>{label}</span>}
               </button>
               {changeKind && <ChangeMarker kind={changeKind} />}
-              <OptionsMenu label={t('flows.moreOptionsAria', { name: label })} wrapperClassName="flows-menu-wrapper" menuClassName="flows-menu" menuPlacement="auto" menuBoundarySelector=".env-sidebar" isOpen={menuOpenKey === key} onToggle={() => setMenuOpenKey((current) => current === key ? null : key)} onClose={() => setMenuOpenKey(null)}>
+              <OptionsMenu label={t('flows.moreOptionsAria', { name: label })} wrapperClassName="flows-menu-wrapper" menuClassName="flows-menu" menuPlacement="auto" menuPortal isOpen={menuOpenKey === key} onToggle={() => setMenuOpenKey((current) => current === key ? null : key)} onClose={() => setMenuOpenKey(null)}>
                 {kind === 'folder' && <MenuItem label={t('flows.addButtonAria')} onSelect={() => addFlow(item.id)} />}
                 {kind === 'folder' && onAddLoadFlow && <MenuItem label={t('flows.addLoadFlowAria')} onSelect={() => addFlow(item.id, true)} />}
                 {kind === 'folder' && <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates(item.id)} />}

@@ -14,8 +14,7 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { Badge } from '../../shared/ui/Badge'
 import { Button } from '../../shared/ui/Button'
 import { Modal } from '../../shared/ui/Modal'
-import { PlusIcon, RefreshIcon, Spinner } from '../../shared/ui/icons'
-import { IconButton } from '../../shared/ui/IconButton'
+import { PlusIcon, Spinner } from '../../shared/ui/icons'
 import { useToast } from '../../shared/ui/use-toast'
 import { hasOpenModal } from '../../shared/ui/open-modals'
 import { comboFromEvent, comboFromMouseEvent, isShortcutFor } from '../../shared/shortcuts/shortcuts'
@@ -1202,7 +1201,6 @@ export function FlowCanvas({
             <span>{t('flows.canvas.addBlocksMenuLabel')}</span>
           </button>
           <Button variant="ghost" size="sm" onClick={organization.organizing ? organization.cancel : organization.organize} disabled={nodes.every((node) => node.type === 'note')}>{t(organization.organizing ? 'flows.canvas.cancelOrganization' : 'flows.canvas.organize')}</Button>
-          {organization.canUndo && <IconButton icon={<RefreshIcon size={14} />} label={t('flows.canvas.undoOrganization')} onClick={organization.restore} />}
         </Panel>
 
         <Panel position="top-right" className="flow-canvas-run-actions">

@@ -11,7 +11,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Templates com uma galeria visual para criar flows em branco ou partir de exemplos prontos.
 - Pastas no módulo de flows para agrupar e organizar os flows do workspace.
 - O gravador de HAR também grava as requisições feitas pelos flows, com headers e resposta, para inspecionar e salvar junto com os envios manuais.
-- Organização automática dos flows, com opção de desfazer, para alinhar os blocos e acompanhar suas conexões.
+- Organização automática dos flows para alinhar os blocos e acompanhar suas conexões.
 - O Display permite escolher o formato do resultado e navegar por respostas longas, expandindo ou recolhendo objetos JSON.
 - Troca da requisição de um bloco diretamente pela URL.
 
@@ -25,6 +25,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Fixed
 
+- Os menus de contexto dos flows deixam de ficar encobertos pelos outros itens da lista.
 - Corrigido o erro que podia travar a interface ao acessar variáveis nos requests de um flow.
 - Os scripts sugerem os módulos dentro de `require('…')` e os métodos das bibliotecas que vêm com o app, como lodash, crypto-js, moment e uuid.
 - Os blocos dos flows deixam de ficar borrados ao ampliar o canvas ou interagir com seus controles.

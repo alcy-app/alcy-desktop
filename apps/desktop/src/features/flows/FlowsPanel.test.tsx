@@ -188,6 +188,28 @@ function FolderPanel({ count = 1, onOpenFlow = vi.fn() }: { count?: number; onOp
 }
 
 describe('flow folders', () => {
+  it('keeps folder menus above virtualized rows without starting a row drag from menu actions', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    try {
+      render(<FolderPanel />)
+      createFromToolbar('Criar pasta')
+      fireEvent.keyDown(screen.getByLabelText('Nome da pasta'), { key: 'Enter' })
+      fireEvent.contextMenu(screen.getByRole('button', { name: 'Checkout' }))
+      const menu = screen.getByRole('menu')
+      expect(menu.parentElement).toBe(document.body)
+      expect(menu).toHaveClass('ui-menu--portal')
+      expect(document.querySelector('.flows-list')).not.toContainElement(menu)
+      const rename = within(menu).getByRole('menuitem', { name: 'Renomear' })
+      fireEvent.pointerDown(rename, { button: 0, clientX: 5, clientY: 5 })
+      fireEvent.pointerMove(window, { clientX: 5, clientY: 25 })
+      expect(document.querySelector('.flows-list-row--dragging')).not.toBeInTheDocument()
+      expect(menu).toBeInTheDocument()
+      fireEvent.pointerUp(window, { clientX: 5, clientY: 25 })
+      fireEvent.click(rename)
+      expect(screen.getByLabelText('Nome da pasta')).toHaveFocus()
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('starts closed on entry and closes again when returning to the flows panel', () => {
     function SwitchablePanel() {
       const [visible, setVisible] = useState(true)
