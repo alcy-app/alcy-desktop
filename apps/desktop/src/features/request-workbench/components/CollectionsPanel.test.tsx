@@ -115,9 +115,9 @@ describe('CollectionsPanel — marcas de alteração', () => {
     const collections = [node('c1', 'Customer API', [node('f1', 'Orders', [], [request('r1', 'List orders')])])]
     renderPanel(collections, new Map([['r1', 'added']]), new Set(['c1', 'f1']))
 
-    // A requisição tem letra própria.
+    // The request has its own letter marker.
     expect(screen.getByText('A')).toBeInTheDocument()
-    // A pasta e a coleção ancestrais só têm a bolinha (aria-label do i18n), sem letra própria.
+    // Ancestor folders and collections only show a dot with a translated aria-label.
     expect(screen.getAllByLabelText('Contém alterações não enviadas')).toHaveLength(2)
     expect(screen.getByText('Orders')).toHaveAttribute('data-change-kind', 'added')
     expect(screen.getByText('Customer API')).toHaveAttribute('data-change-kind', 'added')
@@ -128,7 +128,7 @@ describe('CollectionsPanel — marcas de alteração', () => {
     renderPanel(collections, new Map([['f1', 'added']]), new Set(['c1', 'f1']))
 
     expect(screen.getByText('A')).toBeInTheDocument()
-    // Só a coleção (que não mudou ela mesma) ganha a bolinha — a pasta já tem letra própria.
+    // Only the unchanged collection gets a dot; the folder has its own letter marker.
     expect(screen.getAllByLabelText('Contém alterações não enviadas')).toHaveLength(1)
     expect(screen.getByText('Customer API')).toHaveAttribute('data-change-kind', 'added')
   })
@@ -218,21 +218,27 @@ describe('CollectionsPanel — expandir e recolher tudo', () => {
   })
 })
 
-describe('CollectionsPanel — ordenação alfabética', () => {
-  it('alterna a direção pelo ícone de ordenação de collections e subpastas', () => {
+describe('CollectionsPanel — alphabetical sorting', () => {
+  it('offers sorting only in collection and folder context menus and alternates direction', () => {
     const onSortChildren = vi.fn()
     const collections = [node('c1', 'Customer API', [node('f1', 'Orders', [], [request('r1', 'List orders')])])]
     renderPanel(collections, new Map(), new Set(['c1']), noop, noop, { onSortChildren })
     const customerRow = screen.getByText('Customer API').closest('.collections-row') as HTMLElement
     const ordersRow = screen.getByText('Orders').closest('.collections-row') as HTMLElement
 
-    fireEvent.click(within(customerRow).getByRole('button', { name: 'Ordenar conteúdo de A a Z' }))
-    expect(onSortChildren).toHaveBeenCalledWith('c1', 'ascending')
+    expect(screen.queryByRole('button', { name: /Ordenar conteúdo/ })).not.toBeInTheDocument()
 
-    fireEvent.click(within(customerRow).getByRole('button', { name: 'Ordenar conteúdo de Z a A' }))
+    fireEvent.contextMenu(customerRow)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ordenar conteúdo de A a Z' }))
+    expect(onSortChildren).toHaveBeenCalledWith('c1', 'ascending')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+    fireEvent.contextMenu(customerRow)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ordenar conteúdo de Z a A' }))
     expect(onSortChildren).toHaveBeenLastCalledWith('c1', 'descending')
 
-    fireEvent.click(within(ordersRow).getByRole('button', { name: 'Ordenar conteúdo de A a Z' }))
+    fireEvent.click(within(ordersRow).getByRole('button', { name: 'Mais opções de Orders' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ordenar conteúdo de A a Z' }))
     expect(onSortChildren).toHaveBeenLastCalledWith('f1', 'ascending')
   })
 })
@@ -390,8 +396,8 @@ describe('CollectionsPanel — seleção múltipla', () => {
     fireEvent.click(screen.getByText('Customer API'))
     fireEvent.click(screen.getByText('Second'), { shiftKey: true })
 
-    // Linhas marcadas: Customer API, Closed (recolhida, mas o filho vai junto), First, Second. A
-    // contagem é a do que as ações atingem: a coleção já leva o resto.
+    // Selected rows: Customer API, Closed (collapsed, including its child), First, Second.
+    // The count reflects action targets: the collection already includes the rest.
     expect(within(selectionBar()).getByText('1 selecionado')).toBeInTheDocument()
     expect(rowOf('Customer API')).toHaveClass('collections-row--selected')
     expect(rowOf('Closed')).toHaveClass('collections-row--selected')
@@ -817,7 +823,7 @@ describe('CollectionsPanel — rótulos e favoritas', () => {
 })
 
 describe('CollectionsPanel — grupos do menu de contexto', () => {
-  /** Itens do menu aberto em grupos, quebrando nas divisórias. */
+  /** Group open menu items by separators. */
   const menuGroups = () => {
     const groups: string[][] = [[]]
     for (const element of Array.from(screen.getByRole('menu').children)) {
@@ -844,7 +850,7 @@ describe('CollectionsPanel — grupos do menu de contexto', () => {
     expect(collectionGroups[1]).toEqual(['Executar...', 'Gerar flow'])
     expect(collectionGroups[2]).toEqual(['Favoritar', 'Rótulos...'])
     expect(collectionGroups[3][0]).toBe('Gerenciar...')
-    expect(collectionGroups.slice(-2)).toEqual([['Renomear', 'Selecionar'], ['Remover']])
+    expect(collectionGroups.slice(-2)).toEqual([['Ordenar conteúdo de A a Z', 'Renomear', 'Selecionar'], ['Remover']])
 
     fireEvent.contextMenu(screen.getByText('Pasta'))
     expect(menuGroups().some((group) => group.includes('Favoritar'))).toBe(false)

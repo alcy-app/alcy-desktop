@@ -35,8 +35,6 @@ import {
   PlusIcon,
   SearchIcon,
   Spinner,
-  SortAscendingIcon,
-  SortDescendingIcon,
   StarIcon,
   TagIcon,
   TrashIcon,
@@ -704,18 +702,6 @@ function FolderRow({
             />
           )}
 
-          <IconButton
-            className="collections-sort-button"
-            icon={nextSortDirection === 'ascending' ? <SortAscendingIcon size={12} /> : <SortDescendingIcon size={12} />}
-            label={t(nextSortDirection === 'ascending' ? 'collections.sortAscendingAction' : 'collections.sortDescendingAction')}
-            disabled={!hasChildren}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation()
-              onSort(node.id)
-            }}
-          />
-
           <OptionsMenu
             label={t('collections.moreOptionsAria', { name: label })}
             wrapperClassName="collections-menu-wrapper"
@@ -830,6 +816,14 @@ function FolderRow({
               )
             )}
             <MenuSeparator />
+            <MenuItem
+              label={t(nextSortDirection === 'ascending' ? 'collections.sortAscendingAction' : 'collections.sortDescendingAction')}
+              disabled={!hasChildren}
+              onSelect={() => {
+                onSort(node.id)
+                onCloseMenu()
+              }}
+            />
             <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
             <MenuItem
               label={t('collections.selectMenuItem')}
@@ -1005,7 +999,7 @@ export function CollectionsPanel({
     query: '',
     ids: new Set(),
   }))
-  /** Last sort direction for each collection or folder; its button shows the next direction. */
+  /** Last sort direction for each collection or folder; its menu action shows the next direction. */
   const [lastSortDirections, setLastSortDirections] = useState<ReadonlyMap<string, AlphabeticalSortDirection>>(() => new Map())
   /** A new object per click makes repeated reveal requests scroll to the item again. */
   const [revealTarget, setRevealTarget] = useState<{ id: string } | null>(null)

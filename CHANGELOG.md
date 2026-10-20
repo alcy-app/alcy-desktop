@@ -15,6 +15,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Changed
 
+- A ordenação do conteúdo de collections e pastas fica apenas no menu de contexto, sem botão nas linhas da sidebar.
 - Os flows usam blocos mais compactos, com um resumo de cada etapa e as opções de duplicar e excluir no menu de três pontos, inclusive nas anotações.
 
 ### Fixed
