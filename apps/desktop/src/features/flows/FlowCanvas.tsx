@@ -54,6 +54,7 @@ import { FlowRequestEditor } from './FlowRequestEditor'
 import type { FlowVariableDefinition } from './FlowDataBrowser'
 import { availableNodePosition } from './new-node-position'
 import type { FlowDatasetSource } from './FlowDatasetFields'
+import { availableNodeIdentifier, identifierError, renameGraphNode, renameNodeReferences } from './node-identifiers'
 
 
 const DEFAULT_CONDITION: ConditionState = { left: '', operator: 'equals', right: '' }
@@ -207,6 +208,7 @@ interface PaletteTrigger {
 }
 
 interface FlowCanvasProps {
+  onRenameNode?: (previous: string, next: string) => void
   requestSaving?: boolean
   requestDrafts?: Record<string, RequestContent>
   onRequestDraftChange?: (nodeId: string, request: RequestSummary, content: RequestContent, inline: boolean) => void
@@ -230,7 +232,7 @@ interface FlowCanvasProps {
   onEditInlineRequest?: (nodeId: string, request: RequestSummary) => void
   /** An inline request saved elsewhere; apply each revision once to prevent subsequent graph updates from restoring stale content. */
   externalInlineRequest?: { nodeId: string; request: RequestSummary; revision: number }
-  /** Abre o mock avulso de um bloco "Ligar mock" numa aba do workbench (spec 0121). */
+  /** Open the inline mock of a Start mock block in a workbench tab (spec 0121). */
   onEditInlineMockServer?: (nodeId: string, server: MockServerDto) => void
   /** Inline mock saved by a workbench tab; follows the same revision mechanism as inline requests. */
   externalInlineMockServer?: { nodeId: string; server: MockServerDto; revision: number }
@@ -243,6 +245,7 @@ interface FlowCanvasProps {
 
 /** Flow graph editing and execution. Mount with key={flow.id}: React Flow state hooks consume initial values once, so switching flows requires a fresh instance. */
 export function FlowCanvas({
+  onRenameNode,
   requestSaving = false,
   requestDrafts = {}, onRequestDraftChange, onSaveRequestDrafts, onDiscardRequestDrafts, onPrepareRun,
   flow,
@@ -270,6 +273,7 @@ export function FlowCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(toFlowEdges(flow.edges))
   const [paletteTrigger, setPaletteTrigger] = useState<PaletteTrigger | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [mappingNodeId, setMappingNodeId] = useState<string | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [logOpen, setLogOpen] = useState(false)
   const [inspectorTab, setInspectorTab] = useState<'configuration' | 'data' | 'output'>('configuration')
@@ -343,11 +347,15 @@ export function FlowCanvas({
   const isRunning = isLoadFlow ? loadRun.isRunning : standardRun.isRunning
   const cancel = isLoadFlow ? loadRun.cancel : standardRun.cancel
   const { statuses, traversedEdges, logEntries, runStartedAtMs, flowExecutionId, run } = standardRun
+  const [snapshotNodeIds, setSnapshotNodeIds] = useState<Record<string, string>>({})
+  const [snapshotRunId, setSnapshotRunId] = useState(flowExecutionId)
+  if (snapshotRunId !== flowExecutionId) { setSnapshotRunId(flowExecutionId); setSnapshotNodeIds({}) }
   const outputVersions = useMemo(() => {
     const versions: Record<string, number> = {}
     for (const entry of logEntries) if (entry.finishedAtMs !== null) versions[entry.nodeId] = (versions[entry.nodeId] ?? 0) + 1
+    for (const [nodeId, snapshotId] of Object.entries(snapshotNodeIds)) versions[nodeId] = versions[snapshotId] ?? 0
     return versions
-  }, [logEntries])
+  }, [logEntries, snapshotNodeIds])
 
   const onChangeRef = useRef(onChange)
   const latestGraphRef = useRef({ nodes, edges })
@@ -373,7 +381,7 @@ export function FlowCanvas({
     setNodes((current) => {
       const source = current.find((node) => node.id === nodeId)
       if (!source) return current
-      const newId = crypto.randomUUID()
+      const newId = availableNodeIdentifier(source.id.length <= 48 ? source.id : source.type ?? 'node', current)
       const position = availableNodePosition({ x: source.position.x + 40, y: source.position.y + 40 }, current)
       if (isSimpleFlowNode(source)) {
         return [...current, simpleFlowNode(newId, position, configOfSimpleNode(source))]
@@ -488,7 +496,7 @@ export function FlowCanvas({
       const node = latestGraphRef.current.nodes.find((candidate) => candidate.id === nodeId)
       if (!node || !isSimpleFlowNode(node) || node.data.config.kind !== 'inlineRequest') return
       flushChange()
-      if (onRequestDraftChange) { setSelectedNodeId(nodeId); setInspectorTab('configuration') }
+      if (onRequestDraftChange) { setSelectedNodeId(nodeId); setMappingNodeId(nodeId); setInspectorTab('configuration') }
       else onEditInlineRequest?.(nodeId, node.data.config.request)
     },
     [flushChange, onEditInlineRequest, onRequestDraftChange],
@@ -510,7 +518,7 @@ export function FlowCanvas({
     () =>
       nodes.map((node): FlowNode => {
         const onDelete = () => deleteNode(node.id)
-        const onOpenSettings = () => { setSelectedNodeId(node.id); setInspectorTab('configuration') }
+        const onOpenSettings = () => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }
         const onDuplicate = () => duplicateNode(node.id)
         const visited = node.type === 'start' ? traversedEdges.size > 0 : isVisitedStatus(statuses[node.id])
         if (isSimpleFlowNode(node)) {
@@ -720,6 +728,11 @@ export function FlowCanvas({
     return { definitions: values.filter((value) => value.name.trim()), datasets }
   }, [nodes, ancestorIds, t])
   const { definitions, datasets } = availableData
+  const mappingTarget = renderNodes.find((node) => node.id === (mappingNodeId ?? selectedNodeId))
+  const mappingAncestors = computeAncestorIds(mappingTarget?.id ?? '', edges)
+  const mappingSources = computeAncestorRequestRefs(mappingAncestors, renderNodes)
+  const mappingVariables = mergeScopedVariables(environmentVariables, collections, mappingTarget?.type === 'request' ? mappingTarget.data.requestId : null)
+  const mappingDefinitions = [...computeAncestorLocalVariables(mappingAncestors, renderNodes), ...(mappingTarget?.id === selectedNodeId ? definitions.map((definition) => definition.name) : [])]
   const graphSignature = useMemo(() => JSON.stringify({ nodes: fromFlowNodes(nodes).map((node) => ({ ...node, position: undefined })), edges: fromFlowEdges(edges), requests: nodes.filter((node) => node.type === 'request').map((node) => findRequest(collections, (node.data as { requestId: string }).requestId)?.content), environmentVariables }), [nodes, edges, collections, environmentVariables])
   const beginRun = () => {
     if (draftNodeIds.length > 0) { setPendingRun(true); return }
@@ -787,10 +800,18 @@ export function FlowCanvas({
     const origin = instance.screenToFlowPosition(externalRequestChain.clientPoint)
     const { nodes: currentNodes, edges: currentEdges } = latestGraphRef.current
     const connectFrom = startWithoutOutput(fromFlowNodes(currentNodes), fromFlowEdges(currentEdges))
-    const chain = buildRequestChain(externalRequestChain.requestIds, origin, connectFrom)
+    const reserved = [...currentNodes.map((node) => ({ id: node.id }))]
+    let index = 0
+    const chain = buildRequestChain(externalRequestChain.requestIds, origin, connectFrom, () => {
+      if (index >= externalRequestChain.requestIds.length) return crypto.randomUUID()
+      const requestId = externalRequestChain.requestIds[index++]
+      const id = availableNodeIdentifier(findRequest(collections, requestId)?.name ?? 'request', reserved)
+      reserved.push({ id })
+      return id
+    })
     setNodes((current) => [...current, ...toFlowNodes(chain.nodes)])
     setEdges((current) => [...current, ...toFlowEdges(chain.edges)])
-  }, [externalRequestChain, setNodes, setEdges])
+  }, [externalRequestChain, setNodes, setEdges, collections])
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -935,6 +956,27 @@ export function FlowCanvas({
     [setNodes],
   )
 
+  const renameNode = (next: string) => {
+    if (!selectedNodeId || standardRun.isRunning || loadRun.isRunning || requestSaving || savingDrafts || identifierError(next, selectedNodeId, nodes)) return
+    const previous = selectedNodeId
+    const graph = renameGraphNode(fromFlowNodes(nodes), fromFlowEdges(edges), previous, next)
+    onRenameNode?.(previous, next)
+    for (const node of renderNodes) {
+      if (node.type !== 'request' || !node.data.request) continue
+      const request = node.data.request
+      const content = requestDrafts[node.id] ?? request.content
+      const updated = renameNodeReferences(content, previous, next)
+      if (JSON.stringify(content) !== JSON.stringify(updated)) onRequestDraftChange?.(node.id === previous ? next : node.id, request, updated, false)
+    }
+    setNodes(toFlowNodes(graph.nodes))
+    setEdges(toFlowEdges(graph.edges))
+    setSelectedNodeId(next)
+    setMappingNodeId(next)
+    setSnapshotNodeIds((current) => { const updated = { ...current, [next]: current[previous] ?? previous }; delete updated[previous]; return updated })
+    setDisplayFormats((current) => { const updated = { ...current, [next]: current[previous] ?? 'auto' }; delete updated[previous]; try { localStorage.setItem(`alcy:flows:${flow.id}:display-formats`, JSON.stringify(updated)) } catch { /* Keep presentation preferences in memory. */ } return updated })
+    onChange(graph.nodes, graph.edges)
+  }
+
   // Place toolbar-created nodes near the visible canvas center using screenToFlowPosition with screen coordinates.
   const newNodePosition = (): { x: number; y: number } => {
     const instance = reactFlowInstanceRef.current
@@ -975,7 +1017,7 @@ export function FlowCanvas({
   // Notes remain unconnected even when created from a handle.
   const handlePaletteSelectSimple = (config: SimpleNodeKindState) => {
     const sourceNodeId = config.kind === 'note' ? null : (paletteTrigger?.sourceNodeId ?? null)
-    const newId = crypto.randomUUID()
+    const newId = availableNodeIdentifier(config.kind === 'inlineRequest' ? config.request.name : config.kind, nodes)
     const position = positionForNewNode(paletteTrigger?.sourceNodeId ?? null, paletteTrigger?.sourceHandle)
     setNodes((current) => [...current, simpleFlowNode(newId, position, config)])
     if (sourceNodeId) addAutoEdge(sourceNodeId, newId)
@@ -999,7 +1041,7 @@ export function FlowCanvas({
 
   const handlePaletteSelectLoad = (loadKind: LoadNodeKindState) => {
     const sourceNodeId = paletteTrigger?.sourceNodeId ?? null
-    const newId = crypto.randomUUID()
+    const newId = availableNodeIdentifier(loadKind, nodes)
     setNodes((current) => [...current, {
       id: newId,
       type: 'block',
@@ -1017,7 +1059,7 @@ export function FlowCanvas({
 
   const handlePaletteSelectIf = () => {
     const sourceNodeId = paletteTrigger?.sourceNodeId ?? null
-    const newId = crypto.randomUUID()
+    const newId = availableNodeIdentifier('if', nodes)
     setNodes((current) => [
       ...current,
       {
@@ -1033,7 +1075,7 @@ export function FlowCanvas({
 
   const handlePaletteSelectRequest = () => {
     const sourceNodeId = paletteTrigger?.sourceNodeId ?? null
-    const newId = crypto.randomUUID()
+    const newId = availableNodeIdentifier('request', nodes)
     setNodes((current) => [
       ...current,
       {
@@ -1058,7 +1100,7 @@ export function FlowCanvas({
   }
 
   return (
-    <FlowMappingProvider scopeKey={selectedNodeId ?? ''} references={[...effectiveVariables.map((variable) => `{{${variable.name}}}`), ...definitions.map((definition) => `{{${definition.name}}}`), ...ancestorRequests.flatMap((ancestor) => ancestor.output === 'mockServer' ? [`{{nodes.${ancestor.nodeId}.server.url}}`] : [`{{nodes.${ancestor.nodeId}.${ancestor.output === 'mockRequest' ? 'request' : 'response'}.body}}`, `{{nodes.${ancestor.nodeId}.${ancestor.output === 'mockRequest' ? 'request.method' : 'response.status'}}}`])]} onInsert={() => setInspectorTab('configuration')}><div className="flow-canvas-shell flow-studio">
+    <FlowMappingProvider rootPath={rootPath} flowExecutionId={flowExecutionId} onTargetNodeChange={setMappingNodeId} scopeKey={mappingNodeId ?? selectedNodeId ?? ''} sources={mappingSources.filter((source) => source.output !== 'mockServer').map((source) => ({ nodeId: source.nodeId, snapshotNodeId: snapshotNodeIds[source.nodeId], label: source.label, scope: source.output === 'mockRequest' ? 'request' : 'response' }))} references={[...mappingVariables.map((variable) => `{{${variable.name}}}`), ...mappingDefinitions.map((name) => `{{${name}}}`), ...mappingSources.flatMap((source) => source.output === 'mockServer' ? [`{{nodes.${source.nodeId}.server.url}}`] : (source.output === 'mockRequest' ? ['request.body', 'request.method', 'request.path'] : ['response.body', 'response.status', 'response.headers']).map((path) => `{{nodes.${source.nodeId}.${path}}}`))]} onInsert={() => setInspectorTab('configuration')}><div className="flow-canvas-shell flow-studio">
     <div
       className="flow-canvas"
       ref={containerRef}
@@ -1078,7 +1120,7 @@ export function FlowCanvas({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
-        onNodeDoubleClick={(_event, node) => { setSelectedNodeId(node.id); setInspectorTab('configuration') }}
+        onNodeDoubleClick={(_event, node) => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
@@ -1150,6 +1192,10 @@ export function FlowCanvas({
 
       {selection && (
         <NodeInspectorPanel
+          snapshotNodeIds={snapshotNodeIds}
+          nodeIdentifiers={nodes}
+          onRenameNode={onRenameNode ? renameNode : undefined}
+          renameDisabled={standardRun.isRunning || loadRun.isRunning || requestSaving || savingDrafts}
           outputVersions={outputVersions}
           flowId={flow.id}
           datasets={datasets}
@@ -1157,7 +1203,7 @@ export function FlowCanvas({
           flowExecutionId={flowExecutionId}
           activeTab={inspectorTab}
           onTabChange={setInspectorTab}
-          nodeStatus={statuses[selection.id]}
+          nodeStatus={statuses[snapshotNodeIds[selection.id] ?? selection.id]}
           load={isLoadFlow}
           definitions={definitions}
           outdated={executedSignature !== null && executedSignature !== graphSignature}
@@ -1212,7 +1258,7 @@ export function FlowCanvas({
     {logOpen && (
       <RunLogPanel
         rootPath={rootPath}
-        onSelectNode={(nodeId) => { setSelectedNodeId(nodeId); setInspectorTab('output'); void reactFlowInstanceRef.current?.fitView({ nodes: [{ id: nodeId }], maxZoom: 1, duration: 200 }) }}
+        onSelectNode={(nodeId) => { const currentId = Object.entries(snapshotNodeIds).find(([, snapshotId]) => snapshotId === nodeId)?.[0] ?? nodeId; setSelectedNodeId(currentId); setMappingNodeId(currentId); setInspectorTab('output'); void reactFlowInstanceRef.current?.fitView({ nodes: [{ id: currentId }], maxZoom: 1, duration: 200 }) }}
         key={runStartedAtMs ?? 0}
         entries={logEntries}
         nodeInfo={runLogNodeInfo}

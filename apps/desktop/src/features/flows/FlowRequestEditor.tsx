@@ -21,6 +21,7 @@ import { RestBodyPanel } from '../request-workbench/components/RestBodyPanel'
 import { TemplateHighlightedField } from '../request-workbench/components/TemplateHighlightedField'
 import type { BodyState } from '../request-workbench/request-workbench.types'
 import { FlowTabs } from './FlowTabs'
+import { useFlowMapping } from './flow-reference'
 
 interface Props {
   content: RequestContent
@@ -36,8 +37,13 @@ interface Props {
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const
 
-export function FlowRequestEditor({ content, rootPath, variables, targetLabel, dirty, busy = false, onChange, onSave, onDiscard }: Props) {
+export function FlowRequestEditor({ content, rootPath, variables: environmentVariables, targetLabel, dirty, busy = false, onChange, onSave, onDiscard }: Props) {
   const { t } = useLanguage()
+  const { references } = useFlowMapping()
+  const roots = references.map((reference) => reference.slice(2, -2))
+  const templateNames = [...JSON.stringify(content).matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((match) => match[1].trim())
+  const known = [...new Set([...roots, ...templateNames.filter((name) => roots.some((root) => name === root || name.startsWith(`${root}.`)))])]
+  const variables = [...environmentVariables, ...known.filter((name) => !environmentVariables.some((variable) => variable.name === name)).map((name) => ({ name, value: t('flows.studio.unresolved'), sensitive: false }))]
   const [tab, setTab] = useState<'body' | 'headers' | 'params' | 'auth' | 'scripts'>('body')
   const [body, setBody] = useState(() => toBodyState(content.body))
   const [params, setParams] = useState(() => parseQueryParams(content.endpointUrl).map((param) => ({ ...param, id: crypto.randomUUID(), enabled: true })))

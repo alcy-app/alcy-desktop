@@ -14,6 +14,7 @@ interface Props {
   rootPath: string
   flowExecutionId: string | null
   nodeId: string
+  snapshotNodeId?: string
   scope?: 'request' | 'response'
   onReference?: (reference: string, preview: string) => void
 }
@@ -29,7 +30,7 @@ export function FlowReferenceActions({ reference }: { reference: string | null }
   </span>
 }
 
-export function FlowOutputExplorer({ rootPath, flowExecutionId, nodeId, scope = 'response', onReference, version = 0 }: Props) {
+export function FlowOutputExplorer({ rootPath, flowExecutionId, nodeId, snapshotNodeId = nodeId, scope = 'response', onReference, version = 0 }: Props) {
   const { t } = useLanguage()
   const { registerReferences } = useFlowMapping()
   const [pointer, setPointer] = useState('')
@@ -42,7 +43,7 @@ export function FlowOutputExplorer({ rootPath, flowExecutionId, nodeId, scope = 
   const [state, setState] = useState<{ key: string; result: FlowOutputInspectionDto | null; error: string } | null>(null)
   const [refresh, setRefresh] = useState(0)
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const requestKey = JSON.stringify([rootPath, flowExecutionId, nodeId, pointer, debouncedQuery, cursor, format, refresh, version])
+  const requestKey = JSON.stringify([rootPath, flowExecutionId, nodeId, snapshotNodeId, pointer, debouncedQuery, cursor, format, refresh, version])
   const result = state?.key === requestKey ? state.result : null
   const error = state?.key === requestKey ? state.error : ''
   const loading = Boolean(flowExecutionId && state?.key !== requestKey)
@@ -57,7 +58,7 @@ export function FlowOutputExplorer({ rootPath, flowExecutionId, nodeId, scope = 
     const load = async (text: boolean, attempts = 0) => {
       queryId = crypto.randomUUID()
       try {
-        const next = await inspectFlowOutput({ rootPath, flowExecutionId, nodeId, queryId, pointer, query: debouncedQuery, cursor, text })
+        const next = await inspectFlowOutput({ rootPath, flowExecutionId, nodeId: snapshotNodeId, queryId, pointer, query: debouncedQuery, cursor, text })
         if (!active) return
         if (next.availability === 'pending' && attempts < 20) { retry = window.setTimeout(() => { void load(text, attempts + 1) }, 250); return }
         setState({ key: requestKey, result: next, error: '' })
@@ -70,7 +71,7 @@ export function FlowOutputExplorer({ rootPath, flowExecutionId, nodeId, scope = 
     }
     void load(format === 'text')
     return () => { active = false; window.clearTimeout(retry); void cancelFlowOutputQuery(queryId).catch(() => undefined) }
-  }, [rootPath, flowExecutionId, nodeId, pointer, debouncedQuery, cursor, format, refresh, requestKey])
+  }, [rootPath, flowExecutionId, snapshotNodeId, pointer, debouncedQuery, cursor, format, refresh, requestKey])
 
   const navigate = (next: string) => { setPointer(next); setCursor(null); setPrevious([]); setQuery(''); setDebouncedQuery(''); setFormat('auto') }
   const refreshOutput = () => { if (error) navigate(''); setCursor(null); setPrevious([]); setRefresh((value) => value + 1) }

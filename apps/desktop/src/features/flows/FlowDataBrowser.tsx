@@ -16,6 +16,7 @@ export interface FlowVariableDefinition {
 }
 
 interface Props {
+  snapshotNodeIds?: Record<string, string>
   outputVersions?: Record<string, number>
   flowId?: string
   datasets?: FlowDatasetSource[]
@@ -27,7 +28,7 @@ interface Props {
   load?: boolean
 }
 
-export function FlowDataBrowser({ variables, definitions, ancestors, rootPath, flowExecutionId, load, flowId = '', datasets = [], outputVersions = {} }: Props) {
+export function FlowDataBrowser({ variables, definitions, ancestors, rootPath, flowExecutionId, load, flowId = '', datasets = [], outputVersions = {}, snapshotNodeIds = {} }: Props) {
   const { t } = useLanguage()
   const [query, setQuery] = useState('')
   const [offset, setOffset] = useState(0)
@@ -54,7 +55,7 @@ export function FlowDataBrowser({ variables, definitions, ancestors, rootPath, f
       <label className="flow-inspector-field-label" htmlFor="flow-source-node">{t('flows.studio.previousNodes')}</label>
       <Select id="flow-source-node" value={selected?.nodeId ?? ''} onChange={(event) => setSource(event.target.value)}>{matchingAncestors.slice(0, 100).map((ancestor) => <option key={ancestor.nodeId} value={ancestor.nodeId}>{ancestor.label}</option>)}</Select>
       {!flowExecutionId && selected && selected.output !== 'mockServer' && <div className="flow-data-field"><code>{selected.output === 'mockRequest' ? 'request.body' : 'response.body'}</code><FlowReferenceActions reference={`{{nodes.${selected.nodeId}.${selected.output === 'mockRequest' ? 'request' : 'response'}.body}}`} /></div>}
-      {selected?.output === 'mockServer' ? <div className="flow-data-field"><code>{`{{nodes.${selected.nodeId}.server.url}}`}</code><FlowReferenceActions reference={`{{nodes.${selected.nodeId}.server.url}}`} /></div> : selected && <FlowOutputExplorer key={`${selected.nodeId}:${flowExecutionId}`} version={outputVersions[selected.nodeId] ?? 0} rootPath={rootPath} flowExecutionId={flowExecutionId} nodeId={selected.nodeId} scope={selected.output === 'mockRequest' ? 'request' : 'response'} />}
+      {selected?.output === 'mockServer' ? <div className="flow-data-field"><code>{`{{nodes.${selected.nodeId}.server.url}}`}</code><FlowReferenceActions reference={`{{nodes.${selected.nodeId}.server.url}}`} /></div> : selected && <FlowOutputExplorer key={`${selected.nodeId}:${flowExecutionId}`} version={outputVersions[selected.nodeId] ?? 0} rootPath={rootPath} flowExecutionId={flowExecutionId} nodeId={selected.nodeId} snapshotNodeId={snapshotNodeIds[selected.nodeId]} scope={selected.output === 'mockRequest' ? 'request' : 'response'} />}
     </>}
     {rows.length === 0 && matchingAncestors.length === 0 && datasets.length === 0 && <p className="flow-studio-empty">{t('flows.studio.noSources')}</p>}
   </section>

@@ -6,9 +6,10 @@ interface MappingContext {
   insert: (reference: string) => boolean
   hasTarget: boolean
   registerReferences: (references: string[]) => void
+  references: string[]
 }
 
-export const FlowMappingContext = createContext<MappingContext>({ insert: () => false, hasTarget: false, registerReferences: () => undefined })
+export const FlowMappingContext = createContext<MappingContext>({ insert: () => false, hasTarget: false, registerReferences: () => undefined, references: [] })
 export const useFlowMapping = () => useContext(FlowMappingContext)
 
 /** JSON pointers are for inspection; execution continues using the existing dot syntax. */

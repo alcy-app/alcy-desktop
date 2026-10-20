@@ -21,7 +21,7 @@ export type IfNodeType = Node<
 >
 
 /** If nodes expose true/false outputs and preserve the selected branch in edge handles (spec 0047). Conditions are editable in the inspector and quick editor. */
-export function IfNode({ data }: NodeProps<IfNodeType>) {
+export function IfNode({ data, id }: NodeProps<IfNodeType>) {
   const { t } = useLanguage()
 
   return (
@@ -31,7 +31,7 @@ export function IfNode({ data }: NodeProps<IfNodeType>) {
       visited={data.visited}
       readOnly={data.readOnly}
       onOpenSettings={data.onOpenSettings}
-      headerActions={!data.readOnly && data.onConditionChange && <QuickNodeEdit config={{ kind: 'if', condition: data.condition }} onChange={(config) => { if (config.kind === 'if') data.onConditionChange?.(config.condition) }} />}
+      headerActions={!data.readOnly && data.onConditionChange && <QuickNodeEdit nodeId={id} config={{ kind: 'if', condition: data.condition }} onChange={(config) => { if (config.kind === 'if') data.onConditionChange?.(config.condition) }} />}
       onDuplicate={data.onDuplicate}
       onDelete={data.onDelete}
       outputs={[

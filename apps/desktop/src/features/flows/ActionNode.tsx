@@ -10,7 +10,7 @@ import { DisplayValue } from './DisplayValue'
 const MAX_ASSIGNMENTS_SHOWN = 4
 
 /** Shared card for single-output action nodes (spec 0083). */
-function ActionCard({ data, children }: { data: SimpleNodeData; children: ReactNode }) {
+function ActionCard({ data, children, nodeId }: { data: SimpleNodeData; children: ReactNode; nodeId: string }) {
   return (
     <FlowNodeCard
       kind={data.config.kind}
@@ -18,7 +18,7 @@ function ActionCard({ data, children }: { data: SimpleNodeData; children: ReactN
       visited={data.visited}
       readOnly={data.readOnly}
       onOpenSettings={data.onOpenSettings}
-      headerActions={!data.readOnly && <QuickNodeEdit config={data.config} onChange={(config) => { if (config.kind !== 'if') data.onConfigChange(config) }} />}
+      headerActions={!data.readOnly && <QuickNodeEdit nodeId={nodeId} config={data.config} onChange={(config) => { if (config.kind !== 'if') data.onConfigChange(config) }} />}
       onDuplicate={data.onDuplicate}
       onDelete={data.onDelete}
     >
@@ -27,12 +27,12 @@ function ActionCard({ data, children }: { data: SimpleNodeData; children: ReactN
   )
 }
 
-export function LogNode({ data }: NodeProps<SimpleFlowNodeType>) {
+export function LogNode({ data, id }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   if (data.config.kind !== 'log') return null
   const { message } = data.config
   return (
-    <ActionCard data={data}>
+    <ActionCard data={data} nodeId={id}>
       {message ? (
         <code className="flow-node-code-block" title={message}>
           {message}
@@ -54,13 +54,13 @@ function isLongDisplayValue(message: string | null): boolean {
 }
 
 /** Show the last backend-redacted result. Keep the scaled canvas free of scrolling areas to avoid WebKitGTK rasterization blur; inspect full available results in the inspector. */
-export function DisplayNode({ data }: NodeProps<SimpleFlowNodeType>) {
+export function DisplayNode({ data, id }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   if (data.config.kind !== 'display') return null
   const { runStatus } = data
   const { template } = data.config
   return (
-    <ActionCard data={data}>
+    <ActionCard data={data} nodeId={id}>
       {template ? (
         <code className="flow-node-inline-code" title={template}>
           {template}
@@ -80,22 +80,22 @@ export function DisplayNode({ data }: NodeProps<SimpleFlowNodeType>) {
   )
 }
 
-export function SleepNode({ data }: NodeProps<SimpleFlowNodeType>) {
+export function SleepNode({ data, id }: NodeProps<SimpleFlowNodeType>) {
   if (data.config.kind !== 'sleep') return null
   return (
-    <ActionCard data={data}>
+    <ActionCard data={data} nodeId={id}>
       <span className="flow-node-duration">{formatSleepDuration(data.config.durationMs)}</span>
     </ActionCard>
   )
 }
 
-export function SetVariablesNode({ data }: NodeProps<SimpleFlowNodeType>) {
+export function SetVariablesNode({ data, id }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   if (data.config.kind !== 'setVariables') return null
   const { assignments } = data.config
   const hidden = assignments.length - MAX_ASSIGNMENTS_SHOWN
   return (
-    <ActionCard data={data}>
+    <ActionCard data={data} nodeId={id}>
       {assignments.length === 0 ? (
         <span className="flow-node-placeholder">{t('flows.canvas.setVariablesEmpty')}</span>
       ) : (

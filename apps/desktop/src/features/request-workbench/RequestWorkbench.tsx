@@ -1820,6 +1820,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             ) : activeFlow ? (
               <FlowCanvas
                 requestSaving={savingFlowRequests}
+                onRenameNode={(previous, next) => { workbench.renameFlowNode(activeFlow.id, previous, next); openTabs.renameFlowNode(activeFlow.id, previous, next) }}
                 requestDrafts={Object.fromEntries([...flowDraftTabs].filter(([, tab]) => isTabDirty(tab)).map(([nodeId, tab]) => [nodeId, contentOf(tab)]))}
                 onRequestDraftChange={(nodeId, request, content, inline) => workbench.editFlowRequestDraft(request, content, inline ? { flowId: activeFlow.id, nodeId } : undefined)}
                 onSaveRequestDrafts={async (updates, graph) => {

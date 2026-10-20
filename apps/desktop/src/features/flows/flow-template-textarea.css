@@ -1,0 +1,11 @@
+.flow-template-field { position: relative; width: 100%; min-width: 0; }
+.flow-template-field > .flow-template-input,
+.flow-template-field > .flow-template-overlay { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; tab-size: 8; }
+.flow-template-field[data-wrap='off'] > .flow-template-input,
+.flow-template-field[data-wrap='off'] > .flow-template-overlay { white-space: pre; overflow-wrap: normal; }
+.flow-template-field > .flow-template-input { display: block; position: relative; z-index: 1; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--caret); }
+.flow-template-field > .flow-template-input::placeholder { color: var(--text-muted); -webkit-text-fill-color: var(--text-muted); }
+.flow-template-field > .flow-template-input::selection { color: transparent; -webkit-text-fill-color: transparent; background: var(--selection-bg); }
+.flow-template-field > .flow-template-overlay { position: absolute; top: 1px; left: 1px; z-index: 2; min-height: 0; margin: 0; border: 0; background: transparent; box-shadow: none; overflow: hidden; resize: none; pointer-events: none; user-select: none; }
+.flow-template-overlay .var-token { padding: 0; margin: 0; pointer-events: none; cursor: inherit; }
+.flow-template-field:has(> .flow-template-input:disabled) > .flow-template-overlay { opacity: 0.5; }

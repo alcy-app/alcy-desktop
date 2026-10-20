@@ -14,11 +14,11 @@ export interface OpenTabDescriptor {
   label: string
   dirty: boolean
   preview: boolean
-  /** Aba fixada: fica antes das não fixadas na barra. */
+  /** Fixed tabs appear before movable tabs. */
   fixed: boolean
-  /** `false` para abas que não aceitam fixar (revisão, conflito). */
+  /** False for tabs that cannot be fixed, such as review or conflict tabs. */
   fixable?: boolean
-  /** Protocolo/método para o badge antes do nome — só abas de requisição. */
+  /** Protocol or method badge shown before request tab names. */
   request?: Pick<WorkbenchTab, 'protocol' | 'method'>
 }
 
@@ -31,7 +31,7 @@ export type ActiveOpenTab =
   | { kind: 'mockServer'; id: string }
   | null
 
-/** Aba somente leitura com o snapshot de um run de flow do histórico. */
+/** Read-only snapshot of a historical flow run. */
 export interface RunLogTab {
   id: string
   label: string
@@ -39,7 +39,7 @@ export interface RunLogTab {
   pinned: boolean
 }
 
-/** Aba somente leitura com os detalhes (Markdown) de uma notificação. */
+/** Read-only notification details rendered as Markdown. */
 export interface NotificationTab {
   id: string
   notification: AppNotification
@@ -50,7 +50,7 @@ export interface MockServerTab {
   serverId: string
   label: string
   dirty: boolean
-  /** Mock avulso de um bloco "Ligar mock" (spec 0121): "Salvar" grava no flow. */
+  /** Inline mock owned by a Start mock block; Save writes to its flow (spec 0121). */
   flowNodeRef?: { flowId: string; nodeId: string }
 }
 
@@ -73,33 +73,25 @@ interface FlowsSlice {
   flows: FlowState[]
 }
 
-/** Combina as abas de requisição geridas por `useWorkbenchState` com abas
- * de flow abertas nesta sessão numa única barra. Flows abertos
- * não são persistidos entre reinícios (diferente do conteúdo do flow em si,
- * que é persistido por `useFlowsState`) — só o conjunto de flows já
- * existentes fica salvo; quais estavam abertos como aba é efêmero, por
- * enquanto. */
+/** Combine workbench request tabs and session-only flow tabs in a single bar.
+ * Flow contents are persisted separately by useFlowsState. */
 export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
   const { language, t } = useLanguage()
   const [openFlowIds, setOpenFlowIds] = useState<string[]>([])
   const [activeFlowId, setActiveFlowId] = useState<string | null>(null)
   const [runLogTabs, setRunLogTabs] = useState<RunLogTab[]>([])
   const [activeRunLogId, setActiveRunLogId] = useState<string | null>(null)
-  // Abas do runner de coleções (spec 0073): só da sessão, como as de flow.
+  // Collection runner tabs are session-only, like flow tabs (spec 0073).
   const [runnerTabs, setRunnerTabs] = useState<RunnerTab[]>([])
   const [activeRunnerId, setActiveRunnerId] = useState<string | null>(null)
-  // Detalhes de notificações: só da sessão, como as do runner.
+  // Notification details are session-only, like runner tabs.
   const [notificationTabs, setNotificationTabs] = useState<NotificationTab[]>([])
   const [activeNotificationId, setActiveNotificationId] = useState<string | null>(null)
   const [mockServerTabs, setMockServerTabs] = useState<MockServerTab[]>([])
   const [activeMockServerId, setActiveMockServerId] = useState<string | null>(null)
-  // Abas fixadas que não são de requisição (as de requisição guardam `fixed` no workbench e vão
-  // para a sessão gravada; estas, como as próprias abas, só vivem na sessão).
+  // Fixed non-request tabs remain session-only; request tabs persist their fixed state in the workbench.
   const [fixedOtherIds, setFixedOtherIds] = useState<string[]>([])
-  // Os callbacks abaixo chegam a componentes `memo` (sidebar, barra de abas)
-  // e não podem depender do objeto `workbench`, novo a cada render, nem de
-  // `tabs`, que muda a cada tecla digitada: usam os métodos (estáveis) e leem
-  // as abas de requisição atuais por ref.
+  // Callbacks passed to memoized components use stable methods and read current request tabs through a ref.
   const {
     selectTab,
     pinTab,
@@ -183,10 +175,10 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
       fixed: fixedOtherIds.includes(tab.id),
     })),
   ]
-  // Fixadas primeiro; dentro de cada grupo vale a ordem de abertura/arraste (sort é estável).
+  // Fixed tabs come first; stable sorting preserves opening or drag order within each group.
   const descriptors = [...unsortedDescriptors].sort((a, b) => Number(b.fixed) - Number(a.fixed))
   const activeOpenTabId = activeOpenTab?.id ?? null
-  // Lido no fechamento de abas sem entrar nas dependências: muda a cada tecla (ver `requestTabsRef`).
+  // Closing callbacks read the current order without depending on every request edit.
   const descriptorsRef = useRef(descriptors)
   useEffect(() => {
     descriptorsRef.current = descriptors
@@ -213,9 +205,9 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     setActiveNotificationId(null)
   }, [])
 
-  /** Abre (ou só ativa) a aba do mock avulso de um bloco "Ligar mock". */
+  /** Open or activate the inline mock tab belonging to a Start mock block. */
   const openInlineMockServer = useCallback((flowId: string, nodeId: string, label: string) => {
-    const id = `mock-server:flow:${flowId}:${nodeId}`
+    const id = mockServerTabs.find((tab) => tab.flowNodeRef?.flowId === flowId && tab.flowNodeRef.nodeId === nodeId)?.id ?? `mock-server:flow:${flowId}:${nodeId}`
     setMockServerTabs((current) =>
       current.some((tab) => tab.id === id) ? current : [...current, { id, serverId: id, label, dirty: false, flowNodeRef: { flowId, nodeId } }],
     )
@@ -224,13 +216,18 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     setActiveRunLogId(null)
     setActiveRunnerId(null)
     setActiveNotificationId(null)
+  }, [mockServerTabs])
+
+  /** Preserve an inline mock tab and its local edits after its graph node is renamed. */
+  const renameFlowNode = useCallback((flowId: string, previous: string, next: string) => {
+    setMockServerTabs((current) => current.map((tab) => tab.flowNodeRef?.flowId === flowId && tab.flowNodeRef.nodeId === previous ? { ...tab, flowNodeRef: { flowId, nodeId: next } } : tab))
   }, [])
 
   const updateMockServerTab = useCallback((serverId: string, patch: Partial<Pick<MockServerTab, 'label' | 'dirty'>>) => {
     setMockServerTabs((current) => current.map((tab) => (tab.serverId === serverId ? { ...tab, ...patch } : tab)))
   }, [])
 
-  /** Abre (ou só ativa, se já aberta) a aba do runner. */
+  /** Open or activate a runner tab. */
   const openRunner = useCallback((tab: RunnerTab) => {
     setRunnerTabs((current) => (current.some((candidate) => candidate.id === tab.id) ? current : [...current, tab]))
     setActiveRunnerId(tab.id)
@@ -238,7 +235,7 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     setActiveMockServerId(null)
   }, [])
 
-  /** Abre (ou só ativa, se já aberta) a aba com os detalhes da notificação. */
+  /** Open or activate a notification details tab. */
   const openNotification = useCallback((notification: AppNotification) => {
     const id = `notification:${notification.id}`
     setNotificationTabs((current) =>
@@ -322,11 +319,8 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     [mockServerTabs, notificationTabs, openFlowIds, runLogTabs, runnerTabs, selectTab],
   )
 
-  /** Quem assume ao fechar a aba de requisição ativa. A aba de uma
-   * requisição avulsa volta ao flow de onde veio, se ele estiver aberto. Sem
-   * outra aba de requisição, a vez passa à última aba de flow, run ou runner
-   * aberta: com nenhuma ativa, a área principal caía no editor de requisição
-   * vazio (GraphQL por padrão), como se uma requisição tivesse sido aberta. */
+  /** Return inline request tabs to their open flow. When no request tab remains,
+   * activate another open view instead of falling back to an empty request editor. */
   const activateAfterClosingRequest = useCallback(
     (id: string) => {
       const originFlowId = requestTabsRef.current.find((tab) => tab.id === id)?.flowNodeRef?.flowId
@@ -349,9 +343,7 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     [mockServerTabs, notificationTabs, openFlowIds, runLogTabs, runnerTabs],
   )
 
-  /** Desmarca a aba fechada e, se era a exibida, passa a vez à vizinha na barra (à direita, senão à
-   * esquerda). Sem isso, a área principal caía na aba de requisição ativa ou no editor vazio
-   * (GraphQL por padrão), longe de onde o usuário estava. */
+  /** Clear a closed tab's active state and activate its right or left neighbor. */
   const releaseClosedTab = useCallback(
     (id: string, clearActive: (update: (currentActive: string | null) => string | null) => void) => {
       clearActive((currentActive) => (currentActive === id ? null : currentActive))
@@ -430,13 +422,13 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
         return
       }
       setFixedOtherIds((current) => (current.includes(id) ? current.filter((fixedId) => fixedId !== id) : [...current, id]))
-      // Fixar tira a aba do modo de pré-visualização, como o duplo clique.
+      // Fixing a tab promotes it from preview, like double-clicking.
       setRunLogTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, pinned: true } : tab)))
     },
     [mockServerTabs, notificationTabs, openFlowIds, runLogTabs, runnerTabs, toggleFixTab],
   )
 
-  /** Fecha as abas que `shouldClose` aceita. Se a aba ativa some, a vez passa à primeira que sobrou. */
+  /** Close matching tabs and activate the first remaining view when needed. */
   const closeOpenTabsWhere = useCallback(
     (shouldClose: (id: string) => boolean) => {
       const keep = (id: string) => !shouldClose(id)
@@ -549,9 +541,7 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     [mockServerTabs, notificationTabs, openFlowIds, runLogTabs, runnerTabs, closeAllTabs, closeOtherTabs],
   )
 
-  /** Só reordena dentro do mesmo grupo (requests entre si, flows entre si) —
-   * arrastar entre grupos não faz nada por enquanto, escopo suficiente para
-   * esta etapa (ver spec 0042). */
+  /** Reorder within request or flow groups; dragging between groups does nothing (spec 0042). */
   const reorderOpenTabs = useCallback(
     (draggedId: string, targetId: string, edge: DropEdge) => {
       if (runLogTabs.some((tab) => tab.id === draggedId || tab.id === targetId)) return
@@ -583,8 +573,7 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     [mockServerTabs, notificationTabs, openFlowIds, runLogTabs, runnerTabs, reorderTabs],
   )
 
-  /** Move várias abas de uma vez. Só entram as do mesmo tipo e do mesmo grupo (fixadas ou não) da aba
-   * alvo — requisições entre requisições, flows entre flows —, como na reordenação de uma aba só. */
+  /** Move multiple tabs within the target's type and fixed or movable group. */
   const reorderOpenTabsGroup = useCallback(
     (ids: readonly string[], targetId: string, edge: DropEdge) => {
       const target = descriptors.find((tab) => tab.id === targetId)
@@ -624,6 +613,7 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
     notificationTabs,
     openMockServer,
     openInlineMockServer,
+    renameFlowNode,
     updateMockServerTab,
     mockServerTabs,
     selectOpenTab,

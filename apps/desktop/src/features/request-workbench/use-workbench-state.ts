@@ -54,6 +54,7 @@ import type {
 } from './request-workbench.types'
 import type { RestoredTab } from './tab-session'
 import { internSchema } from './schema-registry'
+import { renameNodeReferences } from '../flows/node-identifiers'
 
 /** Release a windowed body once no tab references it (spec 0020). Best effort: the backend cache also enforces a memory limit. */
 function releaseIfWindowed(execution: ExecutionState) {
@@ -737,6 +738,18 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     setState((current) => ({ ...current, activeTabId: tabId }))
   }, [])
 
+  /** Keep inline tabs attached and preserve their dirty state when graph references change. */
+  const renameFlowNode = useCallback((flowId: string, previous: string, next: string) => {
+    setState((current) => ({ ...current, tabs: current.tabs.map((tab) => {
+      if (tab.flowNodeRef?.flowId !== flowId) return tab
+      const content = renameNodeReferences(contentOf(tab), previous, next)
+      const restored = tabFromContent(null, tab.name, content)
+      const updated = { ...tab, protocol: restored.protocol, endpointUrl: restored.endpointUrl, query: restored.query, variables: restored.variables, method: restored.method, body: restored.body, headers: restored.headers, params: restored.params, routeParams: restored.routeParams, authorization: restored.authorization, grpc: restored.grpc, preRequestScript: restored.preRequestScript, postResponseScript: restored.postResponseScript, savedContent: renameNodeReferences(tab.savedContent, previous, next), flowNodeRef: { flowId, nodeId: tab.flowNodeRef.nodeId === previous ? next : tab.flowNodeRef.nodeId } }
+      updated.dirty = computeDirty(updated)
+      return updated
+    }) }))
+  }, [])
+
   const pinTab = useCallback(
     (tabId: string) => {
       updateTab(tabId, { pinned: true })
@@ -1035,6 +1048,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     openDraft,
     openFlowNodeRequest,
     editFlowRequestDraft,
+    renameFlowNode,
     selectTab,
     pinTab,
     pinRequest,
