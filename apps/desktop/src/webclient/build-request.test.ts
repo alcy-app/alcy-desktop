@@ -88,11 +88,47 @@ describe('prepareRequest', () => {
     })
   })
 
-  it('reports variables without value', () => {
-    const folder = root([request({ url: '{{missingHost}}/x', routeParameters: [] })])
+  it('preserves undefined placeholders while resolving known variables', () => {
+    const folder = root([request({
+      url: '{{baseUrl}}/users/:id?q={{ missingQuery }}',
+      routeParameters: [{ name: 'id', value: '{{missingId}}' }],
+      headers: [{ name: 'X-Optional', value: '{{missingHeader}}', enabled: true }],
+      authentication: { type: 'bearer', token: '{{missingToken}}' },
+      body: '{{userId}}/{{missingBody}}',
+    })])
     const prepared = prepareRequest(folder.requests[0], [folder], snapshot(folder), {})
 
-    expect(prepared).toEqual({ ok: false, error: { kind: 'missingVariables', names: ['missingHost'] } })
+    expect(prepared).toEqual({
+      ok: true,
+      oauth2: null,
+      call: {
+        method: 'POST',
+        url: 'https://scope.test/users/{{missingId}}?q={{ missingQuery }}',
+        headers: [['X-Optional', '{{missingHeader}}'], ['Authorization', 'Bearer {{missingToken}}']],
+        body: { kind: 'text', text: '42/{{missingBody}}' },
+      },
+    })
+  })
+
+  it('preserves missing GraphQL variable values while still rejecting invalid JSON', () => {
+    const graphql = request({
+      protocol: 'graphql',
+      url: 'https://api.test/graphql',
+      routeParameters: [],
+      body: 'query { user { id } }',
+      variables: '{"id":"{{missing}}"}',
+    })
+    const folder = root([graphql])
+    const prepared = prepareRequest(graphql, [folder], snapshot(folder), {})
+
+    expect(prepared.ok && prepared.call.body).toEqual({
+      kind: 'text',
+      text: JSON.stringify({ query: graphql.body, variables: { id: '{{missing}}' } }),
+    })
+    expect(prepareRequest({ ...graphql, variables: '{"id":{{missing}}}' }, [folder], snapshot(folder), {})).toMatchObject({
+      ok: false,
+      error: { kind: 'invalidVariables' },
+    })
   })
 
   it('builds a GraphQL body without interpolating the query', () => {

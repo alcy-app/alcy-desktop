@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::TemplateError;
 use crate::node_reference::NodeRunHistory;
-use crate::resolve_variables::resolve_variables_with_node_history;
+use crate::resolve_variables::resolve_request_template;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ResolveRequestError {
@@ -25,8 +25,8 @@ fn route_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
 
-/// Substitui placeholders `/:nome` somente no caminho da URL. O esquema,
-/// autoridade, query string e fragmento não são interpretados como rota.
+/// Substitute `/:name` only in URL paths, excluding the scheme, authority,
+/// query string and fragment.
 pub fn apply_route_parameters(url: &str, parameters: &[RouteParameter]) -> String {
     let path_end = url.find(['?', '#']).unwrap_or(url.len());
     let (path, suffix) = url.split_at(path_end);
@@ -60,26 +60,17 @@ pub fn apply_route_parameters(url: &str, parameters: &[RouteParameter]) -> Strin
     output
 }
 
-/// Resolve `{{variavel}}` em um `Request` já construído (endpoint, headers,
-/// `variables` e campos de autenticação), contra as variáveis do ambiente
-/// ativo.
-///
-/// Faz o mesmo trabalho que `execute_graphql_request::build_request`/
-/// `execute_rest_request::build_request` já fazem campo a campo sobre DTOs
-/// crus de entrada — mas operando sobre um `Request` que já existe (a forma
-/// em que uma requisição salva de coleção, `SavedRequest.request`, chega até
-/// aqui). O corpo do documento (`document.body`) só é interpolado para REST
-/// — GraphQL nunca interpola o corpo da query, mesma assimetria dos dois
-/// `build_request` citados acima.
+/// Resolve templates in an existing saved request against active variables and
+/// ancestor outputs, keeping unknown environment placeholders literal. This
+/// mirrors command DTO interpolation, including preserving GraphQL query text.
 pub fn resolve_request_variables(
     request: &Request,
     variables: &[EnvironmentVariable],
     node_history: &NodeRunHistory,
     ancestors: &HashSet<String>,
 ) -> Result<Request, ResolveRequestError> {
-    let resolve = |template: &str| {
-        resolve_variables_with_node_history(template, variables, node_history, ancestors)
-    };
+    let resolve =
+        |template: &str| resolve_request_template(template, variables, node_history, ancestors);
 
     let route_parameters = request
         .route_parameters
@@ -104,8 +95,7 @@ pub fn resolve_request_variables(
 
     let request_variables = resolve(&request.variables)?;
 
-    // Campos do corpo estruturado (urlencoded/form-data/binary) são
-    // interpolados um a um — o executor REST monta o corpo a partir deles.
+    // Interpolate structured body fields before the REST executor encodes them.
     let body_payload = match &request.body_payload {
         BodyPayload::UrlEncoded(fields) => BodyPayload::UrlEncoded(
             fields
@@ -619,26 +609,59 @@ mod tests {
     }
 
     #[test]
-    fn fails_when_a_referenced_variable_is_missing() {
+    fn preserves_missing_environment_variables_in_request_fields() {
         let request = Request::new(
-            Endpoint::new("{{missing}}").unwrap(),
-            RequestDocument::new(ProtocolId::GraphQl, ""),
-            "",
-            vec![],
-            Authentication::None,
+            Endpoint::new("{{baseUrl}}/users/{{ missing }}").unwrap(),
+            RequestDocument::new(ProtocolId::Rest, r#"{"name":"{{missing}}"}"#),
+            r#"{"name":"{{missing}}"}"#,
+            vec![HeaderEntry::new("X-Name", "{{missing}}", true).unwrap()],
+            Authentication::Bearer {
+                token: "{{missing}}".to_string(),
+            },
         );
 
-        let error = resolve_request_variables(
+        let resolved = resolve_request_variables(
             &request,
             &sample_variables(),
             &NodeRunHistory::new(),
             &no_ancestors(),
         )
-        .unwrap_err();
+        .unwrap();
 
         assert_eq!(
-            error,
-            ResolveRequestError::Template(TemplateError::MissingVariable("missing".to_string()))
+            resolved.endpoint.url(),
+            "https://api.example.com/users/{{ missing }}"
         );
+        assert_eq!(resolved.document.body, r#"{"name":"{{missing}}"}"#);
+        assert_eq!(resolved.variables, r#"{"name":"{{missing}}"}"#);
+        assert_eq!(resolved.headers[0].value(), "{{missing}}");
+        assert_eq!(
+            resolved.authentication,
+            Authentication::Bearer {
+                token: "{{missing}}".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn still_rejects_invalid_or_unavailable_node_outputs() {
+        for reference in ["nodes.invalid", "nodes.req-a.response.status"] {
+            let request = Request::new(
+                Endpoint::new("https://api.example.com").unwrap(),
+                RequestDocument::new(ProtocolId::Rest, format!("{{{{{reference}}}}}")),
+                "",
+                vec![],
+                Authentication::None,
+            );
+
+            let error =
+                resolve_request_variables(&request, &[], &NodeRunHistory::new(), &no_ancestors())
+                    .unwrap_err();
+
+            assert!(matches!(
+                error,
+                ResolveRequestError::Template(TemplateError::NodeReference(_))
+            ));
+        }
     }
 }

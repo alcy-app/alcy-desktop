@@ -29,21 +29,24 @@ function formatArgs(args: SchemaInputValue[]): string {
   return `(${args.map(formatArg).join(', ')})`
 }
 
-function typeMatchesSearch(type: SchemaType, term: string): boolean {
-  if (!term) return true
-  if (type.name.toLowerCase().includes(term)) return true
-  return type.fields.some((field) => field.name.toLowerCase().includes(term))
-}
-
 function entryName(entry: SchemaListEntry): string {
   return entry.kind === 'type' ? entry.type.name : `@${entry.directive.name}`
 }
 
-function entryMatchesSearch(entry: SchemaListEntry, search: string): boolean {
-  const term = search.trim().toLowerCase()
-  if (!term) return true
-  if (entry.kind === 'type') return typeMatchesSearch(entry.type, term)
-  return entry.directive.name.toLowerCase().includes(term)
+function entrySearchScore(entry: SchemaListEntry, term: string): readonly [number, number, number] | null {
+  if (!term) return [0, 0, 0]
+  const name = (entry.kind === 'type' ? entry.type.name : entry.directive.name).toLowerCase()
+  const position = name.indexOf(term)
+  // Direct names come before field matches; closest lengths come first,
+  // including exact matches, with prefixes breaking ties before substrings.
+  if (position !== -1) return [0, name.length - term.length, position]
+  if (entry.kind === 'directive') return null
+  const matchingFields = entry.type.fields
+    .map((field) => field.name.toLowerCase())
+    .filter((field) => field.includes(term))
+    .sort((a, b) => a.length - b.length || a.indexOf(term) - b.indexOf(term))
+  const field = matchingFields[0]
+  return field === undefined ? null : [1, field.length - term.length, field.indexOf(term)]
 }
 
 function TypeRefLink({ display, name, onSelect }: { display: string; name: string | null; onSelect: (name: string) => void }) {
@@ -104,9 +107,23 @@ export function SchemaPanel({ schema, onLoad, onCancel }: SchemaPanelProps) {
       ...currentTypes.map((type): SchemaListEntry => ({ kind: 'type', type })),
       ...currentDirectives.map((directive): SchemaListEntry => ({ kind: 'directive', directive })),
     ]
+    const term = search.trim().toLowerCase()
     return entries
-      .filter((entry) => entryMatchesSearch(entry, search))
-      .sort((a, b) => entryName(a).localeCompare(entryName(b)))
+      .flatMap((entry) => {
+        const score = entrySearchScore(entry, term)
+        return score === null ? [] : [{ entry, score }]
+      })
+      .sort((a, b) => {
+        const left = a.score
+        const right = b.score
+        return (
+          left[0] - right[0] ||
+          left[1] - right[1] ||
+          left[2] - right[2] ||
+          entryName(a.entry).localeCompare(entryName(b.entry))
+        )
+      })
+      .map(({ entry }) => entry)
   }, [schema, search])
 
   const selectedType =

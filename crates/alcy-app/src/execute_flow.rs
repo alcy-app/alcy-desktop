@@ -18,7 +18,7 @@ use crate::mock_control::{
 };
 use crate::node_reference::NodeRunHistory;
 use crate::resolve_variables::{
-    MAX_OUTPUT_VALUE_CHARS, resolve_for_display, resolve_for_display_with_limit,
+    MAX_OUTPUT_VALUE_CHARS, resolve_for_display_with_limit, resolve_request_for_display,
 };
 use crate::run_variables::{apply_assignments, with_run_variables};
 use crate::{RequestExecutor, Substitution, resolve_request_variables};
@@ -104,7 +104,7 @@ pub trait FlowRunSink: Sync {
     /// Deliver request URL details after node_started; optional like node_output.
     fn node_call(&self, _node_id: &str, _details: &RequestCallDetails) {}
     /// Chamada recebida por um node `MockWaitRequest`, entregue antes de
-    /// `node_finished`. Opcional, como `node_output`.
+    /// `node_finished`. Optional, like `node_output`.
     fn node_request(&self, _node_id: &str, _request: &CapturedRequest) {}
 }
 
@@ -1232,7 +1232,7 @@ fn prepare_request<S: FlowRunSink>(
     sink.node_started(node_id);
     // Execution resolution already succeeded; display resolution should too, otherwise omit only optional details.
     let template = request_to_run.endpoint.url();
-    if let Ok(display) = resolve_for_display(template, variables, history, ancestors) {
+    if let Ok(display) = resolve_request_for_display(template, variables, history, ancestors) {
         sink.node_call(
             node_id,
             &RequestCallDetails {
@@ -1753,6 +1753,53 @@ mod tests {
                 .unwrap()
                 .push((node_id.to_string(), details.clone()));
         }
+    }
+
+    #[test]
+    fn request_details_preserve_unknown_variables_without_losing_masked_substitutions() {
+        let template = "{{baseUrl}}/users/{{ missing }}?key={{apiKey}}";
+        let request = Request::new(
+            Endpoint::new(template).unwrap(),
+            RequestDocument::new(ProtocolId::Rest, ""),
+            "",
+            vec![],
+            Authentication::None,
+        );
+        let variables = vec![
+            EnvironmentVariable::new("baseUrl", "https://api.example.com", false).unwrap(),
+            EnvironmentVariable::new("apiKey", "secret", true).unwrap(),
+        ];
+        let sink = CallRecordingSink {
+            calls: Mutex::new(Vec::new()),
+        };
+
+        let resolved = prepare_request(
+            "req-a",
+            &request,
+            &variables,
+            &NodeRunHistory::new(),
+            &HashSet::new(),
+            &sink,
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved.endpoint.url(),
+            "https://api.example.com/users/{{ missing }}?key=secret"
+        );
+        let calls = sink.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        let (node_id, details) = &calls[0];
+        assert_eq!(node_id, "req-a");
+        assert_eq!(details.request_url, template);
+        assert_eq!(
+            details.resolved_url,
+            "https://api.example.com/users/{{ missing }}?key=••••••••"
+        );
+        assert_eq!(details.sent_url, resolved.endpoint.url());
+        assert_eq!(details.variables.len(), 2);
+        assert!(details.variables[1].sensitive);
+        assert_eq!(details.variables[1].value, "••••••••");
     }
 
     #[tokio::test]

@@ -618,7 +618,7 @@ pub async fn execute_rest_request(
         Err(failure) => log::warn!(
             target: "alcy::request",
             "rest {execution_id}: falhou ({})",
-            crate::logging::error_kind(failure)
+            crate::logging::error_summary(failure)
         ),
     }
     result
@@ -995,21 +995,55 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_request_referencing_an_undefined_variable() {
+    fn preserves_undefined_variables_when_building_a_request() {
         let mut input = valid_input();
         input.endpoint_url = "{{baseUrl}}/users".to_string();
 
-        let error = build_request(input).unwrap_err();
+        let request = build_request(input).unwrap();
 
-        assert_eq!(
-            error,
-            ExecuteRestRequestError::InvalidRequest {
-                message: TemplateError::MissingVariable("baseUrl".to_string()).to_string(),
-                cause: Some(InvalidRequestCause::MissingVariable {
-                    name: "baseUrl".to_string(),
-                }),
-            }
-        );
+        assert_eq!(request.endpoint.url(), "{{baseUrl}}/users");
+    }
+
+    #[tokio::test]
+    async fn sends_requests_with_undefined_header_and_body_variables() {
+        use wiremock::matchers::{body_string, header};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("X-Name", "{{name}}"))
+            .and(body_string(r#"{"name":"{{ name }}"}"#))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut input = valid_input();
+        input.endpoint_url = server.uri();
+        input.method = HttpMethodInput::Post;
+        input.headers.push(HeaderInput {
+            name: "X-Name".to_string(),
+            value: "{{name}}".to_string(),
+            enabled: true,
+        });
+        input.body = BodyInput::Raw {
+            content: r#"{"name":"{{ name }}"}"#.to_string(),
+            raw_language: RawBodyLanguageInput::Json,
+        };
+        let root_path = input.root_path.clone();
+
+        let output = execute_rest_request_inner(
+            input,
+            &ExecutionRegistry::default(),
+            &ReqwestRestExecutor::new(),
+            &ResponseBodyCache::default(),
+            &CookieJar::default(),
+            HistoryPreferences::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.status_code, 200);
+        fs_cleanup(&root_path);
     }
 
     #[tokio::test]
@@ -1624,7 +1658,7 @@ mod tests {
         fs_cleanup(&root_path);
     }
 
-    /// Executa um GET que responde `{"ok":true}` e devolve a entrada gravada.
+    /// Execute a GET returning `{"ok":true}` and return the persisted entry.
     async fn send_and_load_history_entry(history: HistoryPreferences) -> alcy_domain::HistoryEntry {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

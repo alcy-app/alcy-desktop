@@ -11,7 +11,7 @@ import { ChevronRightIcon, CloseIcon, RefreshIcon, SearchIcon, Spinner } from '.
 import { useTooltip } from '../../../shared/ui/use-tooltip'
 import { createEmptyQuery, getArgValue, isFieldSelected, parseQuery } from '../graphql-query-tree'
 import type { ParsedQuery } from '../graphql-query-tree'
-import { fieldKey, searchQueryExplorerFields } from '../query-explorer-search'
+import { fieldKey, rankQueryExplorerFields, searchQueryExplorerFields } from '../query-explorer-search'
 import type { QueryExplorerSearchResult } from '../query-explorer-search'
 import { describeSchemaError, schemaErrorDetail } from '../schema-error-messages'
 import { FailureMessage } from './FailureMessage'
@@ -56,8 +56,8 @@ export function QueryExplorer({ query, schema, onToggleField, onSetArgument, onL
     [rootType, schema, deferredSearch],
   )
 
-  // Durante a busca, os ancestrais dos campos encontrados abrem sozinhos; o
-  // usuário ainda pode recolhê-los, sem perder a expansão feita fora da busca.
+  // Search expands ancestors automatically; users can still collapse them
+  // without losing the expansion state from before the search.
   const [syncedSearchResult, setSyncedSearchResult] = useState(searchResult)
   const [searchExpanded, setSearchExpanded] = useState<Set<string>>(new Set(searchResult?.expanded))
   if (searchResult !== syncedSearchResult) {
@@ -118,7 +118,11 @@ export function QueryExplorer({ query, schema, onToggleField, onSetArgument, onL
 
   const types = schema.schema.types
   const rootFields = rootType
-    ? rootType.fields.filter((field) => !searchResult || searchResult.visible.has(field.name))
+    ? rankQueryExplorerFields(
+        rootType.fields.filter((field) => !searchResult || searchResult.visible.has(field.name)),
+        [],
+        searchResult,
+      )
     : []
 
   return (
@@ -214,7 +218,7 @@ export function QueryExplorer({ query, schema, onToggleField, onSetArgument, onL
   )
 }
 
-/** Destaca no nome do campo o trecho que casa com a busca. */
+/** Highlight the matching portion of the field name. */
 function highlightMatch(name: string, term: string | undefined): ReactNode {
   if (!term) return name
   const start = name.toLowerCase().indexOf(term)
@@ -241,7 +245,7 @@ interface FieldNodeProps {
   onSetArgument: SetArgument
 }
 
-/** Nó recursivo da árvore: uma linha (checkbox + nome + tipo) e, se expandido, seus argumentos e subcampos. */
+/** Recursive field row, with arguments and child fields when expanded. */
 function FieldNode({
   field,
   path,
@@ -267,11 +271,12 @@ function FieldNode({
   const canExpand = hasSubfields || hasArgs
   const selected = isFieldSelected(parsed, path, field.name)
   const childType = hasSubfields && field.typeName ? typeIndexOf(types).get(field.typeName) : undefined
-  // Num ancestral de campo encontrado, só os filhos do caminho aparecem; um
-  // campo aberto à mão (fora do caminho) mostra todos os seus filhos.
-  const childFields = search?.expanded.has(key)
+  // Search ancestors only show matching paths; manually opened fields outside
+  // those paths show all their children.
+  const visibleChildFields = search?.expanded.has(key)
     ? (childType?.fields.filter((childField) => search.visible.has(fieldKey([...fieldPath, childField.name]))) ?? [])
     : (childType?.fields ?? [])
+  const childFields = rankQueryExplorerFields(visibleChildFields, fieldPath, search)
 
   return (
     <li className="query-explorer-node">

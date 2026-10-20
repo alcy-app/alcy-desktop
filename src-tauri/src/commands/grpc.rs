@@ -1191,7 +1191,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_variables_in_additional_messages_and_preserves_missing_variable_errors() {
+    fn resolves_defined_variables_and_preserves_unknown_ones_in_additional_messages() {
         let mut input = SendGrpcMessageInput {
             execution_id: "stream".to_string(),
             message: r#"{"name":"{{name}}"}"#.to_string(),
@@ -1204,10 +1204,10 @@ mod tests {
         };
         assert_eq!(resolve_stream_message(&input).unwrap(), r#"{"name":"Ana"}"#);
         input.environment_variables.clear();
-        assert!(matches!(
-            resolve_stream_message(&input),
-            Err(GrpcCommandError::InvalidRequest { .. })
-        ));
+        assert_eq!(
+            resolve_stream_message(&input).unwrap(),
+            r#"{"name":"{{name}}"}"#
+        );
     }
 
     #[test]

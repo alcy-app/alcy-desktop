@@ -53,7 +53,7 @@ const VECTOR: SealedEnvelope = {
 
 afterEach(() => vi.unstubAllGlobals())
 
-/** Chamadas às APIs, sem a sondagem do servidor (`/__alcy/health`). */
+/** API calls without the server health probe (`/__alcy/health`). */
 const apiCalls = (fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) =>
   fetchMock.mock.calls.filter(([url]) => url !== '/__alcy/health')
 
@@ -85,15 +85,16 @@ describe('webclient App', () => {
     expect(JSON.parse(window.localStorage.getItem('alcy-webclient:test-export:credentials') ?? '{}')).toEqual({ 'variable:token': 'kept' })
   })
 
-  it('explains a missing variable instead of sending', async () => {
-    const fetchMock = vi.fn<typeof fetch>()
+  it('sends requests with undefined variables preserved', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response('[]', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     render(<App initial={{ kind: 'ready', snapshot: { ...snapshot, environment: null } }} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('baseUrl')
-    expect(apiCalls(fetchMock)).toEqual([])
+    await screen.findByText('200')
+    expect(apiCalls(fetchMock)).toHaveLength(1)
+    expect(apiCalls(fetchMock)[0][0]).toBe('{{baseUrl}}/users')
   })
 
   it('warns about exported gRPC requests and never sends them as HTTP', async () => {

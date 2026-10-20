@@ -16,13 +16,16 @@ pub enum TemplateError {
     NodeReference(#[from] NodeReferenceError),
 }
 
-/// Substitui cada ocorrência de `{{nome}}` em `template`, resolvendo cada
-/// nome com `resolve_name`.
-///
-/// `{{` sem um `}}` correspondente é mantido literal (não é um erro) — só
-/// um nome referenciado e não resolvido produz um erro.
+#[derive(Clone, Copy)]
+enum MissingVariables {
+    Preserve,
+    Reject,
+}
+
+/// Resolve each `{{name}}`, preserving unmatched opening braces literally.
 fn resolve_placeholders(
     template: &str,
+    missing_variables: MissingVariables,
     resolve_name: impl Fn(&str) -> Result<String, TemplateError>,
 ) -> Result<String, TemplateError> {
     let mut result = String::with_capacity(template.len());
@@ -35,7 +38,14 @@ fn resolve_placeholders(
         match after_open.find("}}") {
             Some(end) => {
                 let name = after_open[..end].trim();
-                result.push_str(&resolve_name(name)?);
+                match resolve_name(name) {
+                    Err(TemplateError::MissingVariable(_))
+                        if matches!(missing_variables, MissingVariables::Preserve) =>
+                    {
+                        result.push_str(&rest[start..start + end + 4]);
+                    }
+                    resolved => result.push_str(&resolved?),
+                }
                 rest = &after_open[end + 2..];
             }
             None => {
@@ -60,32 +70,25 @@ fn lookup_environment_variable(
         .ok_or_else(|| TemplateError::MissingVariable(name.to_string()))
 }
 
-/// Substitui cada ocorrência de `{{nome}}` em `template` pelo valor da
-/// variável correspondente em `variables`.
-///
-/// `{{` sem um `}}` correspondente é mantido literal (não é um erro) —
-/// só uma variável referenciada e ausente do ambiente produz
-/// `TemplateError::MissingVariable`.
+/// Substitute defined environment variables and preserve unknown placeholders
+/// exactly as typed so a missing environment value does not prevent sending.
 pub fn resolve_variables(
     template: &str,
     variables: &[EnvironmentVariable],
 ) -> Result<String, TemplateError> {
-    resolve_placeholders(template, |name| {
+    resolve_placeholders(template, MissingVariables::Preserve, |name| {
         lookup_environment_variable(name, variables)
     })
 }
 
-/// Como `resolve_variables`, mas nomes com o prefixo reservado `nodes.`
-/// resolvem contra `history` (respostas de nodes de requisição já
-/// concluídos num run de flow) em vez do ambiente ativo — só aceito quando
-/// o node referenciado está em `ancestors` (dependência real via edge).
+/// Resolve flow control values strictly, including references to ancestor nodes.
 pub(crate) fn resolve_variables_with_node_history(
     template: &str,
     variables: &[EnvironmentVariable],
     history: &NodeRunHistory,
     ancestors: &HashSet<String>,
 ) -> Result<String, TemplateError> {
-    resolve_placeholders(template, |name| {
+    resolve_placeholders(template, MissingVariables::Reject, |name| {
         if is_node_reference(name) {
             Ok(resolve_node_reference(name, history, ancestors)?)
         } else {
@@ -94,28 +97,41 @@ pub(crate) fn resolve_variables_with_node_history(
     })
 }
 
-/// Valor exibido no lugar de uma variável sensível.
+/// Resolve request values while preserving unknown environment placeholders.
+/// Node references still require valid syntax and available ancestor outputs.
+pub(crate) fn resolve_request_template(
+    template: &str,
+    variables: &[EnvironmentVariable],
+    history: &NodeRunHistory,
+    ancestors: &HashSet<String>,
+) -> Result<String, TemplateError> {
+    resolve_placeholders(template, MissingVariables::Preserve, |name| {
+        if is_node_reference(name) {
+            Ok(resolve_node_reference(name, history, ancestors)?)
+        } else {
+            lookup_environment_variable(name, variables)
+        }
+    })
+}
+
+/// Display value for sensitive variables.
 pub(crate) const MASKED_VALUE: &str = "••••••••";
-/// Limite do valor exibido de uma referência a node (o corpo de uma resposta
-/// pode ser grande; o detalhe é só para inspeção).
+/// Node reference display limit: response bodies can be large.
 const MAX_DISPLAY_VALUE_CHARS: usize = 200;
-/// Limite de cada valor substituído na saída de um node `Log`/`Display` —
-/// maior que o do detalhe da URL chamada porque aqui o valor é o conteúdo
-/// principal, mas ainda limitado para não trafegar/gravar um corpo inteiro.
+/// Log/Display values allow more detail but still avoid transporting or storing
+/// an entire response body.
 pub(crate) const MAX_OUTPUT_VALUE_CHARS: usize = 4000;
 
-/// Uma variável `{{nome}}` substituída em um template, com o valor usado.
+/// A substituted `{{name}}` and its display value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Substitution {
     pub name: String,
-    /// Mascarado quando a variável é sensível; truncado se muito longo.
+    /// Masked when sensitive; truncated when too long.
     pub value: String,
     pub sensitive: bool,
 }
 
-/// Template resolvido para exibição (histórico de um run): `text` é o
-/// template com cada placeholder trocado pelo valor exibível (sensíveis
-/// mascarados) e `substitutions` lista o que foi usado, na ordem de aparição.
+/// Resolved run history text with masked values and substitutions in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedForDisplay {
     pub text: String,
@@ -131,17 +147,33 @@ pub(crate) fn truncate_for_display(value: String, max_chars: usize) -> String {
     truncated
 }
 
-/// Template resolvido para exibição (ex.: a URL chamada num run de
-/// coleção): variáveis sensíveis mascaradas, valores longos truncados. Com
-/// um placeholder que não resolve, devolve o template como está.
+/// Resolve request display text, masking sensitive values and preserving unknown
+/// environment placeholders. Invalid node references retain the original text.
 pub fn resolve_template_for_display(template: &str, variables: &[EnvironmentVariable]) -> String {
-    resolve_for_display(template, variables, &NodeRunHistory::new(), &HashSet::new())
+    resolve_request_for_display(template, variables, &NodeRunHistory::new(), &HashSet::new())
         .map(|resolved| resolved.text)
         .unwrap_or_else(|_| template.to_string())
 }
 
-/// Como `resolve_variables_with_node_history`, mas para exibição: nunca
-/// devolve um segredo e reporta cada substituição feita.
+/// Request history keeps unresolved environment placeholders without losing
+/// substitutions or sensitive value masking for the variables that do resolve.
+pub(crate) fn resolve_request_for_display(
+    template: &str,
+    variables: &[EnvironmentVariable],
+    history: &NodeRunHistory,
+    ancestors: &HashSet<String>,
+) -> Result<ResolvedForDisplay, TemplateError> {
+    resolve_for_display_with_policy(
+        template,
+        variables,
+        history,
+        ancestors,
+        MAX_DISPLAY_VALUE_CHARS,
+        MissingVariables::Preserve,
+    )
+}
+
+/// Resolve flow display text without exposing secrets and report substitutions.
 pub(crate) fn resolve_for_display(
     template: &str,
     variables: &[EnvironmentVariable],
@@ -157,8 +189,7 @@ pub(crate) fn resolve_for_display(
     )
 }
 
-/// Como `resolve_for_display`, com o limite de caracteres de cada valor
-/// substituído dado por quem chama.
+/// Resolve display text with a caller-selected character limit per substitution.
 pub(crate) fn resolve_for_display_with_limit(
     template: &str,
     variables: &[EnvironmentVariable],
@@ -166,8 +197,26 @@ pub(crate) fn resolve_for_display_with_limit(
     ancestors: &HashSet<String>,
     max_value_chars: usize,
 ) -> Result<ResolvedForDisplay, TemplateError> {
+    resolve_for_display_with_policy(
+        template,
+        variables,
+        history,
+        ancestors,
+        max_value_chars,
+        MissingVariables::Reject,
+    )
+}
+
+fn resolve_for_display_with_policy(
+    template: &str,
+    variables: &[EnvironmentVariable],
+    history: &NodeRunHistory,
+    ancestors: &HashSet<String>,
+    max_value_chars: usize,
+    missing_variables: MissingVariables,
+) -> Result<ResolvedForDisplay, TemplateError> {
     let substitutions = RefCell::new(Vec::new());
-    let text = resolve_placeholders(template, |name| {
+    let text = resolve_placeholders(template, missing_variables, |name| {
         let (value, sensitive) = if is_node_reference(name) {
             (resolve_node_reference(name, history, ancestors)?, false)
         } else {
@@ -242,10 +291,64 @@ mod tests {
     }
 
     #[test]
-    fn fails_when_a_referenced_variable_is_missing() {
-        let error = resolve_variables("{{missing}}", &variables()).unwrap_err();
+    fn preserves_missing_placeholders_without_skipping_defined_variables() {
+        let result = resolve_variables(
+            "{{baseUrl}}/{{ missing }}/{{token}}/{{missing}}",
+            &variables(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            "https://api.example.com/{{ missing }}/secret/{{missing}}"
+        );
+    }
+
+    #[test]
+    fn flow_control_resolution_still_requires_defined_variables() {
+        let error = resolve_variables_with_node_history(
+            "{{missing}}",
+            &variables(),
+            &NodeRunHistory::new(),
+            &HashSet::new(),
+        )
+        .unwrap_err();
 
         assert_eq!(error, TemplateError::MissingVariable("missing".to_string()));
+    }
+
+    #[test]
+    fn request_display_preserves_missing_placeholders_and_masks_defined_secrets() {
+        let template = "{{baseUrl}}/{{ missing }}?token={{token}}";
+        let result = resolve_request_for_display(
+            template,
+            &variables(),
+            &NodeRunHistory::new(),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.text,
+            "https://api.example.com/{{ missing }}?token=••••••••"
+        );
+        assert_eq!(result.substitutions.len(), 2);
+        assert_eq!(result.substitutions[0].name, "baseUrl");
+        assert_eq!(result.substitutions[1].value, MASKED_VALUE);
+        assert!(result.substitutions[1].sensitive);
+        assert_eq!(
+            resolve_template_for_display(template, &variables()),
+            result.text
+        );
+        assert!(
+            resolve_for_display(
+                template,
+                &variables(),
+                &NodeRunHistory::new(),
+                &HashSet::new(),
+            )
+            .is_err()
+        );
     }
 
     #[test]

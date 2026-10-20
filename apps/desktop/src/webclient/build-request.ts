@@ -1,7 +1,7 @@
 /**
- * Monta a chamada HTTP de uma requisição do webclient: aplica credenciais,
- * resolve variáveis e traduz autenticação e corpo, como o backend faz no
- * app (`alcy-rest`, `alcy-graphql`, `alcy-http-auth`).
+ * Builds a webclient HTTP call: applies credentials, resolves variables and
+ * translates authentication and bodies like the app's native backend
+ * (`alcy-rest`, `alcy-graphql`, `alcy-http-auth`).
  */
 
 import { applyAuthenticationCredentials, applyRequestCredentials, credentialVariables } from './credentials'
@@ -17,7 +17,7 @@ export interface HttpCall {
   body: CallBody
 }
 
-/** Token buscado antes da chamada (OAuth2 client credentials). */
+/** Token fetched before the call (OAuth2 client credentials). */
 export interface OAuth2Step {
   tokenUrl: string
   clientId: string
@@ -26,13 +26,12 @@ export interface OAuth2Step {
 }
 
 export type PrepareError =
-  | { kind: 'missingVariables'; names: string[] }
   | { kind: 'invalidVariables'; message: string }
   | { kind: 'unsupported'; features: UnsupportedFeature[] }
 
 export type Prepared = { ok: true; call: HttpCall; oauth2: OAuth2Step | null } | { ok: false; error: PrepareError }
 
-/** Autenticação efetiva (própria ou da pasta mais próxima) e o nó dono dela. */
+/** Effective authentication (own or nearest folder's) and its owning node. */
 export function effectiveAuthentication(
   request: WebclientRequest,
   chain: WebclientFolder[],
@@ -54,8 +53,8 @@ function utf8Base64(text: string): string {
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 
 /**
- * `chain` vai da raiz do export até a pasta que contém a requisição.
- * `request` é o rascunho da sessão (edições na tela), não o original.
+ * `chain` runs from the export root to the folder containing the request.
+ * `request` is the session draft, including edits, rather than the original.
  */
 export function prepareRequest(
   request: WebclientRequest,
@@ -75,12 +74,7 @@ export function prepareRequest(
   )
   for (const [name, value] of credentialVariables(snapshot.credentials, values)) variables.set(name, value)
 
-  const missing = new Set<string>()
-  const resolve = (template: string) => {
-    const resolution = resolveTemplate(template, variables)
-    resolution.missing.forEach((name) => missing.add(name))
-    return resolution.text
-  }
+  const resolve = (template: string) => resolveTemplate(template, variables).text
 
   const routeParameters = draft.routeParameters.map((parameter) => ({ ...parameter, value: resolve(parameter.value) }))
   const url = applyRouteParameters(resolve(draft.url), routeParameters)
@@ -132,7 +126,7 @@ export function prepareRequest(
         return { ok: false, error: { kind: 'invalidVariables', message: error instanceof Error ? error.message : String(error) } }
       }
     }
-    // A query GraphQL não é interpolada, igual ao app.
+    // GraphQL query text is not interpolated, just like in the app.
     body = { kind: 'text', text: JSON.stringify({ query: draft.body, variables: parsedVariables }) }
     if (!headers.some(([name]) => sameName(name, 'content-type'))) headers.push(['Content-Type', 'application/json'])
   } else {
@@ -159,6 +153,5 @@ export function prepareRequest(
     }
   }
 
-  if (missing.size > 0) return { ok: false, error: { kind: 'missingVariables', names: [...missing] } }
   return { ok: true, call: { method: draft.method, url, headers, body }, oauth2 }
 }

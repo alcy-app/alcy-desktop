@@ -25,6 +25,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Fixed
 
+- Variáveis não definidas no ambiente deixam de bloquear o envio; suas referências são mantidas na requisição.
+- A busca no schema GraphQL mostra primeiro os nomes exatos e os candidatos com comprimento mais próximo do termo buscado.
+- Os logs de erro passam a incluir as causas reconhecidas das falhas e os motivos encadeados dos erros da interface.
 - Os menus de contexto dos flows deixam de ficar encobertos pelos outros itens da lista.
 - Corrigido o erro que podia travar a interface ao acessar variáveis nos requests de um flow.
 - Os scripts sugerem os módulos dentro de `require('…')` e os métodos das bibliotecas que vêm com o app, como lodash, crypto-js, moment e uuid.

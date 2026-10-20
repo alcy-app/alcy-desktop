@@ -1,12 +1,11 @@
-//! Logs locais do Alcy.
+//! Local Alcy logs.
 //!
-//! Cada linha vai para `~/Documentos/Alcy/logs/alcy.log` (com rotação; os
-//! arquivos rotacionados são apagados depois de uma hora). Nada sai da máquina.
+//! Lines go to `~/Documentos/Alcy/logs/alcy.log`, with rotation and removal
+//! of rotated files after an hour. Nothing leaves the machine.
 //!
-//! Regra de privacidade: nunca registrar headers, corpos, tokens,
-//! chaves, valores de variáveis/segredos nem query strings. De URLs, só
-//! esquema, host e caminho (`url_for_log`). Registre ids, tipos, status,
-//! contagens, durações e o `kind` dos erros.
+//! Never log headers, bodies, tokens, keys, variable/secret values or query
+//! strings. URLs keep only scheme, host and path (`url_for_log`). Log IDs,
+//! types, status, counts, durations, error kinds and safe structured causes.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -15,23 +14,23 @@ use log::LevelFilter;
 use tauri::{Manager, Runtime};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
-/// Pastas do Alcy visíveis ao usuário (`~/Documentos/Alcy/...`).
+/// User-visible Alcy directories (`~/Documentos/Alcy/...`).
 pub struct AlcyDirs {
     pub logs: PathBuf,
-    /// Cópias dos workspaces feitas antes de cada atualização (spec 0120).
+    /// Workspace backups made before each update (spec 0120).
     pub backups: PathBuf,
 }
 
 const LOG_FILE_NAME: &str = "alcy";
 const MAX_LOG_FILE_BYTES: u128 = 5 * 1024 * 1024;
 const KEPT_LOG_FILES: usize = 10;
-/// Idade (última escrita) a partir da qual um arquivo rotacionado é apagado.
+/// Age since last write after which a rotated file is removed.
 const MAX_ROTATED_LOG_AGE: Duration = Duration::from_secs(60 * 60);
-/// Intervalo entre as limpezas de logs antigos enquanto o app está aberto.
+/// Interval between expired-log cleanup passes while the app is open.
 const LOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-/// Resolve `~/Documentos/Alcy` (ou a pasta de dados do app, se o sistema
-/// não tiver pasta de documentos).
+/// Resolve `~/Documentos/Alcy`, falling back to app data when the system
+/// has no documents directory.
 pub fn alcy_dirs<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<AlcyDirs> {
     let base = match app.path().document_dir() {
         Ok(documents) => documents.join("Alcy"),
@@ -43,7 +42,7 @@ pub fn alcy_dirs<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<AlcyDirs> {
     })
 }
 
-/// Plugin de log: arquivo rotativo (+ stdout em debug).
+/// Logging plugin: rotating file, plus stdout in debug builds.
 pub fn plugin<R: Runtime>(logs_dir: &Path) -> tauri::plugin::TauriPlugin<R> {
     let mut targets = vec![Target::new(TargetKind::Folder {
         path: logs_dir.to_path_buf(),
@@ -56,7 +55,7 @@ pub fn plugin<R: Runtime>(logs_dir: &Path) -> tauri::plugin::TauriPlugin<R> {
     tauri_plugin_log::Builder::new()
         .clear_targets()
         .targets(targets)
-        // `timezone_strategy` redefine o formato; precisa vir antes de `format`.
+        // `timezone_strategy` resets the format, so it must precede `format`.
         .timezone_strategy(TimezoneStrategy::UseLocal)
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -70,7 +69,7 @@ pub fn plugin<R: Runtime>(logs_dir: &Path) -> tauri::plugin::TauriPlugin<R> {
         .rotation_strategy(RotationStrategy::KeepSome(KEPT_LOG_FILES))
         .max_file_size(MAX_LOG_FILE_BYTES)
         .level(LevelFilter::Info)
-        // Bibliotecas de janela/rede são verbosas em Info.
+        // Windowing and network libraries are verbose at Info level.
         .level_for("tao", LevelFilter::Warn)
         .level_for("wry", LevelFilter::Warn)
         .level_for("hyper", LevelFilter::Warn)
@@ -80,9 +79,8 @@ pub fn plugin<R: Runtime>(logs_dir: &Path) -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
-/// Apaga os arquivos rotacionados (`alcy_<data>.log`) escritos pela última
-/// vez há mais de `MAX_ROTATED_LOG_AGE`. O arquivo ativo (`alcy.log`) fica.
-/// Devolve quantos arquivos saíram.
+/// Remove rotated files (`alcy_<date>.log`) last written more than
+/// `MAX_ROTATED_LOG_AGE` ago. Keep the active `alcy.log` and return the count.
 fn remove_expired_logs(dir: &Path, now: SystemTime) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
@@ -108,25 +106,27 @@ fn remove_expired_logs(dir: &Path, now: SystemTime) -> usize {
     removed
 }
 
-/// Limpa os logs expirados agora e a cada `LOG_CLEANUP_INTERVAL`, numa thread
-/// própria que dorme entre as passadas.
+/// Clean up expired logs now and every `LOG_CLEANUP_INTERVAL` on a dedicated
+/// thread that sleeps between passes.
 pub fn spawn_expired_logs_cleanup(dir: PathBuf) {
     let spawned = std::thread::Builder::new()
         .name("alcy-log-cleanup".to_string())
-        .spawn(move || loop {
-            let removed = remove_expired_logs(&dir, SystemTime::now());
-            if removed > 0 {
-                log::info!(target: "alcy::logs", "{removed} arquivo(s) de log antigo(s) apagado(s)");
+        .spawn(move || {
+            loop {
+                let removed = remove_expired_logs(&dir, SystemTime::now());
+                if removed > 0 {
+                    log::info!(target: "alcy::logs", "{removed} expired log file(s) removed");
+                }
+                std::thread::sleep(LOG_CLEANUP_INTERVAL);
             }
-            std::thread::sleep(LOG_CLEANUP_INTERVAL);
         });
     if spawned.is_err() {
-        log::warn!(target: "alcy::logs", "limpeza de logs antigos não iniciou");
+        log::warn!(target: "alcy::logs", "expired log cleanup failed to start");
     }
 }
 
-/// `2026-10-01T12:00:00.123-03:00` no fuso local (UTC se o sistema não
-/// informar o fuso).
+/// `2026-10-01T12:00:00.123-03:00` in local time (UTC when the system
+/// does not provide a timezone).
 fn timestamp() -> String {
     let now = TimezoneStrategy::UseLocal.get_now();
     let offset = now.offset();
@@ -156,10 +156,9 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-/// Versão de uma URL segura para log: esquema, host, porta e caminho, sem
-/// credenciais, query nem fragmento. Modelos com `{{variável}}` que ainda não
-/// são URL mantêm só os nomes das variáveis (nunca os valores), também sem
-/// query, fragmento nem credenciais.
+/// Safe URL for logging: scheme, host, port and path, without credentials,
+/// query or fragment. Templates with `{{variable}}` that are not yet valid URLs
+/// keep variable names only, also without query, fragment or credentials.
 pub fn url_for_log(raw: &str) -> String {
     let raw = raw.trim();
     if let Ok(url) = url::Url::parse(raw) {
@@ -184,9 +183,8 @@ pub fn url_for_log(raw: &str) -> String {
     without_credentials.chars().take(200).collect()
 }
 
-/// Commands chamados com frequência (autosave, leitura em janelas, polling,
-/// o próprio envio de logs): não entram no rastro de IPC para não afogar os
-/// eventos relevantes.
+/// Frequent commands (autosave, windowed reads, polling and log submission)
+/// stay out of the IPC trace to keep relevant events visible.
 const QUIET_COMMANDS: &[&str] = &[
     "write_frontend_logs",
     "read_response_body_chunk",
@@ -206,29 +204,26 @@ const QUIET_COMMANDS: &[&str] = &[
     "list_request_sends",
 ];
 
-/// Rastro de IPC: o nome de cada command chamado pelo frontend (nunca os
-/// argumentos).
+/// Trace command names called by the frontend, never their arguments.
 pub fn log_invoke(command: &str) {
     if !QUIET_COMMANDS.contains(&command) {
         log::info!(target: "alcy::ipc", "command {command}");
     }
 }
 
-/// Registra a falha de uma operação (só o `kind` do erro) e devolve o
-/// resultado intacto.
+/// Log an operation failure with its safe structured reason, preserving the result.
 pub fn logged<T, E: serde::Serialize>(
     target: &str,
     operation: &str,
     result: Result<T, E>,
 ) -> Result<T, E> {
     if let Err(error) = &result {
-        log::warn!(target: target, "{operation} falhou ({})", error_kind(error));
+        log::warn!(target: target, "{operation} failed ({})", error_summary(error));
     }
     result
 }
 
-/// Variante de `logged` para corpos síncronos com `?`: executa `work` e
-/// registra a falha.
+/// Run synchronous `work` with `?` support and log its failure.
 pub fn logged_with<T, E: serde::Serialize>(
     target: &str,
     operation: &str,
@@ -237,7 +232,7 @@ pub fn logged_with<T, E: serde::Serialize>(
     logged(target, operation, work())
 }
 
-/// O `kind` de um erro de command (todos serializam com `tag = "kind"`).
+/// Read a command error kind (all serialize with `tag = "kind"`).
 pub fn error_kind<E: serde::Serialize>(error: &E) -> String {
     serde_json::to_value(error)
         .ok()
@@ -247,7 +242,27 @@ pub fn error_kind<E: serde::Serialize>(error: &E) -> String {
                 .and_then(|kind| kind.as_str())
                 .map(str::to_string)
         })
-        .unwrap_or_else(|| "desconhecido".to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Include only typed causes and numeric metadata. Technical messages, cause
+/// payloads and script/server errors may contain request data or credentials.
+pub fn error_summary<E: serde::Serialize>(error: &E) -> String {
+    let kind = error_kind(error);
+    let Ok(value) = serde_json::to_value(error) else {
+        return kind;
+    };
+    let Some(cause) = value.get("cause") else {
+        return kind;
+    };
+    let Some(reason) = cause.get("type").and_then(serde_json::Value::as_str) else {
+        return kind;
+    };
+    let mut summary = format!("{kind}; reason={reason}");
+    if let Some(status) = cause.get("status").and_then(serde_json::Value::as_u64) {
+        summary.push_str(&format!("; status={status}"));
+    }
+    summary
 }
 
 #[cfg(test)]
@@ -275,10 +290,38 @@ mod tests {
             NotFound { message: String },
         }
         let error = Sample::NotFound {
-            message: "segredo".to_string(),
+            message: "sensitive message".to_string(),
         };
         assert_eq!(error_kind(&error), "notFound");
-        assert_eq!(error_kind(&"texto"), "desconhecido");
+        assert_eq!(error_kind(&"text"), "unknown");
+    }
+
+    #[test]
+    fn error_summary_includes_typed_reasons_without_sensitive_payloads() {
+        let error = serde_json::json!({
+            "kind": "invalidRequest",
+            "message": "sensitive technical message",
+            "cause": { "type": "invalidHeaderValue", "name": "sensitive header name" }
+        });
+        assert_eq!(
+            error_summary(&error),
+            "invalidRequest; reason=invalidHeaderValue"
+        );
+        assert_eq!(
+            error_summary(&serde_json::json!({
+                "kind": "network",
+                "message": "sensitive token response",
+                "cause": { "type": "oauth2TokenStatus", "status": 401 }
+            })),
+            "network; reason=oauth2TokenStatus; status=401"
+        );
+        assert_eq!(
+            error_summary(
+                &serde_json::json!({ "kind": "script", "message": "sensitive script output" })
+            ),
+            "script"
+        );
+        assert_eq!(error_summary(&"unstructured error"), "unknown");
     }
 
     #[test]
@@ -293,9 +336,9 @@ mod tests {
             "alcy.log",
             "alcy_2026-10-01_10-00-00.log",
             "alcy_2026-10-01_10-00-00.log.bak",
-            "outro.log",
+            "other.log",
         ] {
-            std::fs::write(dir.join(name), "linha").unwrap();
+            std::fs::write(dir.join(name), "line").unwrap();
         }
 
         assert_eq!(remove_expired_logs(&dir, SystemTime::now()), 0);
@@ -307,7 +350,7 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(left, ["alcy.log", "outro.log"]);
+        assert_eq!(left, ["alcy.log", "other.log"]);
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

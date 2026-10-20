@@ -541,7 +541,7 @@ pub async fn execute_graphql_request(
         Err(failure) => log::warn!(
             target: "alcy::request",
             "graphql {execution_id}: falhou ({})",
-            crate::logging::error_kind(failure)
+            crate::logging::error_summary(failure)
         ),
     }
     result
@@ -909,21 +909,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_request_referencing_an_undefined_variable() {
+    fn preserves_undefined_variables_when_building_a_request() {
         let mut input = valid_input();
         input.endpoint_url = "{{baseUrl}}/graphql".to_string();
+        input.variables = r#"{"name":"{{ name }}"}"#.to_string();
+        input.headers.push(HeaderInput {
+            name: "X-Name".to_string(),
+            value: "{{name}}".to_string(),
+            enabled: true,
+        });
 
-        let error = build_request(input).unwrap_err();
+        let request = build_request(input).unwrap();
 
-        assert_eq!(
-            error,
-            ExecuteGraphqlRequestError::InvalidRequest {
-                message: TemplateError::MissingVariable("baseUrl".to_string()).to_string(),
-                cause: Some(InvalidRequestCause::MissingVariable {
-                    name: "baseUrl".to_string(),
-                }),
-            }
-        );
+        assert_eq!(request.endpoint.url(), "{{baseUrl}}/graphql");
+        assert_eq!(request.variables, r#"{"name":"{{ name }}"}"#);
+        assert_eq!(request.headers.last().unwrap().value(), "{{name}}");
     }
 
     #[tokio::test]

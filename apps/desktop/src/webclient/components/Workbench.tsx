@@ -12,8 +12,6 @@ import { ResponseView, type ResponseState } from './ResponseView'
 
 function prepareErrorMessage(error: PrepareError): string {
   switch (error.kind) {
-    case 'missingVariables':
-      return t('error.missingVariables', { names: error.names.join(', ') })
     case 'invalidVariables':
       return t('error.invalidVariables', { message: error.message })
     case 'unsupported':
@@ -50,7 +48,7 @@ export function Workbench({ snapshot }: { snapshot: Snapshot }) {
   const [responses, setResponses] = useState<Record<string, ResponseState>>({})
   const controllers = useRef(new Map<string, AbortController>())
 
-  // O título só aparece depois de aberto: num export com senha ele também é dado protegido.
+  // Only reveal the title after opening: password-protected exports protect it too.
   useEffect(() => {
     document.title = snapshot.title
   }, [snapshot.title])

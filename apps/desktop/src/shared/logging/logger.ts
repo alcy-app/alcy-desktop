@@ -1,11 +1,9 @@
 import { writeFrontendLogs, type FrontendLogEntry, type FrontendLogLevel } from '../../bindings/write-frontend-logs'
 
 /**
- * Logger do frontend: agrupa eventos e envia ao log local do app (ver
- * `src-tauri/src/logging.rs`) a cada poucos segundos — nunca uma IPC por
- * evento. Mesma regra de privacidade do backend: registre ids, tipos,
- * contagens e estados; nunca headers, corpos, tokens, valores de variáveis
- * ou URLs com query string (query e fragmento são cortados por garantia).
+ * Batch frontend events into the local app log (see `src-tauri/src/logging.rs`).
+ * Follow backend privacy rules: log IDs, types, counts and states, never headers,
+ * bodies, tokens or variable values. Strip URL credentials, queries and fragments.
  */
 
 const FLUSH_INTERVAL_MS = 2000
@@ -15,17 +13,42 @@ const MAX_MESSAGE_CHARS = 1500
 let queue: FrontendLogEntry[] = []
 let timer: ReturnType<typeof setTimeout> | null = null
 
-/** Corta query string e fragmento de qualquer URL no texto. */
+/** Strip credentials, query strings and fragments from URLs in log text. */
 export function scrubUrls(text: string): string {
-  return text.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)[?#][^\s"'<>]*/gi, '$1?…')
+  return text
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/"'<>]*@/gi, '$1')
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)[?#][^\s"'<>]*/gi, '$1?…')
 }
 
-function describe(data: unknown): string {
+function describeError(error: Error, seen = new Set<Error>()): string {
+  if (seen.has(error) || seen.size >= 5) return '…'
+  seen.add(error)
+  const message = `${error.name}: ${error.message}`
+  if (error.cause === undefined) return message
+  const cause = describeCause(error.cause, seen)
+  return `${message}; cause: ${cause}`
+}
+
+/** Error causes may carry request options; keep diagnostic fields only. */
+function describeCause(cause: unknown, seen: Set<Error>, depth = 0): string {
+  if (depth >= 5) return '…'
+  if (cause instanceof Error) return describeError(cause, seen)
+  if (cause === null || typeof cause !== 'object') return describe(cause, seen)
+  const details: Record<string, string> = {}
+  for (const key of ['name', 'message', 'kind', 'type', 'reason', 'cause', 'status']) {
+    if (Object.hasOwn(cause, key)) {
+      details[key] = describeCause((cause as Record<string, unknown>)[key], seen, depth + 1)
+    }
+  }
+  return JSON.stringify(details)
+}
+
+function describe(data: unknown, seen = new Set<Error>()): string {
   if (data === undefined) return ''
-  if (data instanceof Error) return `${data.name}: ${data.message}`
+  if (data instanceof Error) return describeError(data, seen)
   if (typeof data === 'string') return data
   try {
-    return JSON.stringify(data)
+    return JSON.stringify(data, (_key, value: unknown) => value instanceof Error ? describeError(value, seen) : value)
   } catch {
     return String(data)
   }
@@ -66,16 +89,16 @@ export const logger = {
 
 let installed = false
 
-/** Erros não tratados, rejeições de promise e o envio final ao sair. */
+/** Capture unhandled errors, promise rejections and the final flush on exit. */
 export function installGlobalLogHandlers(): void {
   if (installed) return
   installed = true
   window.addEventListener('error', (event) => {
-    logger.error('window', 'erro não tratado', event.error ?? event.message)
+    logger.error('window', 'unhandled error', event.error ?? event.message)
   })
   window.addEventListener('unhandledrejection', (event) => {
-    logger.error('window', 'promise rejeitada sem tratamento', event.reason)
+    logger.error('window', 'unhandled promise rejection', event.reason)
   })
   window.addEventListener('pagehide', flushLogs)
-  logger.info('app', `interface iniciada (${navigator.language}, ${window.innerWidth}x${window.innerHeight})`)
+  logger.info('app', `interface started (${navigator.language}, ${window.innerWidth}x${window.innerHeight})`)
 }

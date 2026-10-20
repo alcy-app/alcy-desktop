@@ -635,7 +635,7 @@ pub async fn execute_flow(
         Err(error) => log::warn!(
             target: "alcy::flow",
             "{flow_execution_id}: flow failed ({})",
-            crate::logging::error_kind(error)
+            crate::logging::error_summary(error)
         ),
     }
     result

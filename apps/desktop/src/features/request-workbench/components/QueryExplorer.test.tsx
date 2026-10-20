@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SchemaField, SchemaType } from '../../../bindings/load-schema'
-import { fireEvent, render, screen } from '../../../test-utils'
+import { fireEvent, render, screen, waitFor } from '../../../test-utils'
 import type { SchemaLoadState } from '../request-workbench.types'
 import { QueryExplorer } from './QueryExplorer'
 
@@ -51,6 +51,39 @@ function renderExplorer(onToggleField = vi.fn()) {
 }
 
 describe('QueryExplorer', () => {
+  it('ranks root and nested candidates without changing field selection paths', async () => {
+    const onToggleField = vi.fn()
+    const schema: SchemaLoadState = {
+      status: 'success',
+      schema: {
+        queryType: 'Query', mutationType: null, subscriptionType: null, directives: [],
+        types: [
+          objectType('Query', [field('emailAddress', 'String'), field('profile', 'Profile'), field('email', 'String')]),
+          objectType('Profile', [field('billingEmail', 'String'), field('emailAlias', 'String'), field('email', 'String')]),
+        ],
+      },
+    }
+    render(
+      <QueryExplorer query="" schema={schema} onToggleField={onToggleField}
+        onSetArgument={vi.fn()} onLoad={vi.fn()} onCancel={vi.fn()} />,
+    )
+    const fieldOrder = () => screen.getAllByRole('checkbox').map((checkbox) => checkbox.getAttribute('aria-label'))
+    const label = (path: string) => `Adicionar campo ${path} à query`
+    expect(fieldOrder()).toEqual(['emailAddress', 'profile', 'email'].map(label))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar campos' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Buscar campos' }), { target: { value: ' EMAIL ' } })
+
+    await waitFor(() => expect(fieldOrder()).toEqual([
+      'email', 'profile', 'profile > email', 'profile > emailAlias', 'profile > billingEmail', 'emailAddress',
+    ].map(label)))
+    fireEvent.click(screen.getByRole('checkbox', { name: label('profile > email') }))
+    expect(onToggleField).toHaveBeenCalledWith(['profile'], 'email', false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar busca' }))
+    await waitFor(() => expect(fieldOrder()).toEqual(['emailAddress', 'profile', 'email'].map(label)))
+  })
+
   it('busca um campo aninhado, mostra só o caminho até ele e permite selecioná-lo', async () => {
     const onToggleField = renderExplorer()
 

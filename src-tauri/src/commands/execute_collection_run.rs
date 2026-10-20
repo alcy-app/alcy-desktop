@@ -591,7 +591,7 @@ pub async fn execute_collection_run(
         Err(error) => log::warn!(
             target: "alcy::runner",
             "{run_id}: execução falhou ({})",
-            crate::logging::error_kind(error)
+            crate::logging::error_summary(error)
         ),
     }
     result
