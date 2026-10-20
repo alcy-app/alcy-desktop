@@ -12,6 +12,7 @@ import {
 
 export interface VirtualizedListHandle {
   scrollToEnd: () => void
+  scrollToKey: (key: string) => void
   isAtEnd: () => boolean
 }
 
@@ -60,8 +61,7 @@ function MeasuredRow({ itemKey, top, onMeasure, children }: MeasuredRowProps) {
   )
 }
 
-/** Lista virtualizada local à feature. Alturas reais substituem a estimativa,
- * inclusive quando uma linha do console é expandida. */
+/** Virtualized rows use measured heights, including expanded console entries. */
 function VirtualizedListInner<T>(
   {
     items,
@@ -131,6 +131,16 @@ function VirtualizedListInner<T>(
   useImperativeHandle(
     ref,
     () => ({
+      scrollToKey(key: string) {
+        const element = viewportRef.current
+        const index = items.findIndex((item) => getKey(item) === key)
+        if (!element || index < 0) return
+        const top = layout.offsets[index]
+        if (top < element.scrollTop || top + estimatedRowHeight > element.scrollTop + element.clientHeight) {
+          element.scrollTop = top
+          setScrollTop(top)
+        }
+      },
       scrollToEnd() {
         const element = viewportRef.current
         if (!element) return
@@ -142,7 +152,7 @@ function VirtualizedListInner<T>(
         return viewportRef.current ? atEnd(viewportRef.current) : true
       },
     }),
-    [onScrollStateChange],
+    [onScrollStateChange, items, getKey, layout, estimatedRowHeight],
   )
 
   return (

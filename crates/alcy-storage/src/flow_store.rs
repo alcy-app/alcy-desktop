@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alcy_domain::{
-    ComparisonOperator, Condition, Flow, FlowEdge, FlowExecutionKind, FlowNode, FlowNodeKind,
-    FlowPosition, LoadNode, LoadNodeKind, MockCallCountOperator, MockServerSource,
-    VariableAssignment, VariableOperation,
+    ComparisonOperator, Condition, Flow, FlowEdge, FlowExecutionKind, FlowFolder, FlowNode,
+    FlowNodeKind, FlowPosition, LoadNode, LoadNodeKind, MockCallCountOperator, MockServerSource,
+    VariableAssignment, VariableOperation, validate_flow_folders,
 };
 use serde::{Deserialize, Serialize};
 
@@ -14,25 +14,34 @@ use crate::collections_store::{PersistedRequest, persisted_from_request, request
 use crate::mock_server_store::{Server as PersistedMockServer, server_from, server_to};
 use crate::storage_error::StorageError;
 
-// v2 (spec 0048 / ADR 0016): o shape do JSON não mudou, mas uma edge sem
-// handle saindo de um node `Request` passou a significar "saída de sucesso"
-// em vez de "sempre segue". O bump faz uma build anterior recusar o arquivo
-// (`UnsupportedVersion`) em vez de rodar os dois ramos incondicionalmente.
-const CURRENT_VERSION: u32 = 3;
+// v2 gives unnamed request edges success semantics (spec 0048 / ADR 0016).
+// v3 adds load flows. v4 adds folders; older builds reject the file rather
+// than silently losing workspace organization.
+const CURRENT_VERSION: u32 = 4;
 const LEGACY_VERSION: u32 = 1;
-const PREVIOUS_VERSION: u32 = 2;
+const PREVIOUS_VERSION: u32 = 3;
 const MANIFEST_FILE_NAME: &str = "alcy-flows.json";
 
-/// Estado completo de flows lido ou gravado de uma vez.
+/// Complete workspace flow state, loaded and saved atomically.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FlowsSnapshot {
     pub flows: Vec<Flow>,
+    pub folders: Vec<FlowFolder>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct PersistedFile {
     version: u32,
     flows: Vec<PersistedFlow>,
+    #[serde(default)]
+    folders: Vec<PersistedFlowFolder>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedFlowFolder {
+    id: String,
+    name: String,
+    flow_ids: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -88,17 +97,15 @@ enum PersistedNodeKind {
     Block {
         label: String,
     },
-    // Aditivo: um arquivo `alcy-flows.json` v1 gravado antes deste variante
-    // continua deserializando de forma idêntica — não há bump de
-    // `CURRENT_VERSION` (ver spec 0043).
+    // Additive variant: earlier v1 files deserialize unchanged (spec 0043).
     Request {
         request_id: String,
     },
-    // Aditivo (spec 0047), mesmo raciocínio acima.
+    // Additive variant (spec 0047), as above.
     If {
         condition: PersistedCondition,
     },
-    // Aditivos (spec 0083), mesmo raciocínio acima.
+    // Additive variants (spec 0083), as above.
     Note {
         text: String,
         width: f64,
@@ -116,28 +123,26 @@ enum PersistedNodeKind {
     SetVariables {
         assignments: Vec<PersistedVariableAssignment>,
     },
-    // Aditivo (spec 0084), mesmo raciocínio acima.
+    // Additive variant (spec 0084), as above.
     While {
         condition: PersistedCondition,
         max_iterations: u32,
     },
-    // Aditivos (spec 0085), mesmo raciocínio acima.
+    // Additive variants (spec 0085), as above.
     Break,
     Continue,
-    // Aditivo (spec 0086): a requisição inteira, no mesmo formato de uma
-    // requisição de coleção (`alcy-collections.json`).
+    // Additive (spec 0086): a full request in the collections storage format.
     InlineRequest {
         request: Box<PersistedRequest>,
     },
-    /// v3: configuração do bloco de carga é JSON canônico, validado pelo
-    /// motor próprio antes de executar; salvar/importar nunca a interpreta.
+    /// v3: canonical load-block JSON, validated by the engine before execution.
+    /// Saving and importing preserve it without interpretation.
     Load {
         load_kind: PersistedLoadNodeKind,
         label: String,
         config: String,
     },
-    // Aditivos (spec 0121), mesmo raciocínio de `Request`. O mock avulso usa
-    // o mesmo formato de `alcy-mock-servers.json`.
+    // Additive (spec 0121), like Request. Inline mocks reuse mock-server storage.
     MockStart {
         source: PersistedMockSource,
     },
@@ -218,16 +223,13 @@ struct PersistedEdge {
     id: String,
     source_node_id: String,
     target_node_id: String,
-    // Aditivo (spec 0047): ausente num arquivo v1 gravado antes do node
-    // `If` existir resolve para `None`, sem bump de `CURRENT_VERSION`.
+    // Additive (spec 0047): missing handles in older v1 files default to None.
     #[serde(default)]
     source_handle: Option<String>,
 }
 
-/// Lê e grava os flows de um workspace (`alcy-flows.json`) na raiz da pasta
-/// do workspace, com escrita atômica (arquivo temporário + rename) e
-/// formato versionado. Flows não são compartilhados entre workspaces —
-/// cada um tem seu próprio arquivo, como coleções, ambientes e histórico.
+/// Versioned workspace flow storage using a temporary file and atomic rename.
+/// Each workspace has its own independent `alcy-flows.json` manifest.
 pub struct FlowStore {
     path: PathBuf,
 }
@@ -251,6 +253,7 @@ impl FlowStore {
 
         if persisted.version != CURRENT_VERSION
             && persisted.version != PREVIOUS_VERSION
+            && persisted.version != 2
             && persisted.version != LEGACY_VERSION
         {
             return Err(StorageError::UnsupportedVersion(persisted.version));
@@ -262,13 +265,35 @@ impl FlowStore {
             .map(flow_from_persisted)
             .collect::<Result<Vec<_>, StorageError>>()?;
 
-        Ok(FlowsSnapshot { flows })
+        let folders = persisted
+            .folders
+            .into_iter()
+            .map(|folder| FlowFolder {
+                id: folder.id,
+                name: folder.name,
+                flow_ids: folder.flow_ids,
+            })
+            .collect::<Vec<_>>();
+        validate_flow_folders(&flows, &folders)
+            .map_err(|error| StorageError::Corrupted(error.to_string()))?;
+        Ok(FlowsSnapshot { flows, folders })
     }
 
     pub fn save(&self, snapshot: &FlowsSnapshot) -> Result<(), StorageError> {
+        validate_flow_folders(&snapshot.flows, &snapshot.folders)
+            .map_err(|error| StorageError::Write(error.to_string()))?;
         let persisted = PersistedFile {
             version: CURRENT_VERSION,
             flows: snapshot.flows.iter().map(persisted_from_flow).collect(),
+            folders: snapshot
+                .folders
+                .iter()
+                .map(|folder| PersistedFlowFolder {
+                    id: folder.id.clone(),
+                    name: folder.name.clone(),
+                    flow_ids: folder.flow_ids.clone(),
+                })
+                .collect(),
         };
 
         let json = serde_json::to_string_pretty(&persisted)
@@ -424,9 +449,8 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
         })
         .collect::<Result<_, StorageError>>()?;
 
-    // Migração v1 -> v2 (idempotente, aplicada a qualquer versão aceita): uma
-    // edge sem handle saindo de um `Request` vira a saída de sucesso,
-    // preservando o caminho que já existia.
+    // Idempotent v1 -> v2 migration: unnamed request edges become success edges,
+    // preserving the original execution path for every accepted version.
     let request_node_ids: HashSet<&str> = nodes
         .iter()
         .filter(|node| matches!(node.kind, FlowNodeKind::Request { .. }))
@@ -687,9 +711,7 @@ mod tests {
         std::env::temp_dir().join(format!("alcy-flow-store-test-{nanos}-{count}"))
     }
 
-    /// O formato persistido só guarda milissegundos — usado nos testes de
-    /// round-trip para que o flow original já nasça na precisão que
-    /// sobrevive a uma volta pelo disco.
+    /// Match millisecond storage precision when constructing round-trip fixtures.
     fn millis_now() -> SystemTime {
         UNIX_EPOCH + Duration::from_millis(to_millis(SystemTime::now()))
     }
@@ -724,7 +746,10 @@ mod tests {
         )
         .unwrap();
 
-        FlowsSnapshot { flows: vec![flow] }
+        FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        }
     }
 
     #[test]
@@ -783,7 +808,10 @@ mod tests {
             now,
         )
         .unwrap();
-        let snapshot = FlowsSnapshot { flows: vec![flow] };
+        let snapshot = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
 
         store.save(&snapshot).unwrap();
         let loaded = store.load().unwrap();
@@ -887,11 +915,14 @@ mod tests {
             now,
         )
         .unwrap();
-        let snapshot = FlowsSnapshot { flows: vec![flow] };
+        let snapshot = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
 
         store.save(&snapshot).unwrap();
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
-        assert!(raw.contains("\"version\": 3"));
+        assert!(raw.contains("\"version\": 4"));
 
         assert_eq!(store.load().unwrap(), snapshot);
 
@@ -899,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn save_then_load_round_trips_a_load_flow_as_version_three() {
+    fn save_then_load_round_trips_a_load_flow_as_current_version() {
         let root = temp_root();
         let store = FlowStore::new(root.clone());
         let now = millis_now();
@@ -936,11 +967,14 @@ mod tests {
             now,
         )
         .unwrap();
-        let snapshot = FlowsSnapshot { flows: vec![flow] };
+        let snapshot = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
 
         store.save(&snapshot).unwrap();
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
-        assert!(raw.contains("\"version\": 3"));
+        assert!(raw.contains("\"version\": 4"));
         assert!(raw.contains("\"execution_kind\": \"load\""));
         assert_eq!(store.load().unwrap(), snapshot);
 
@@ -1079,7 +1113,10 @@ mod tests {
             now,
         )
         .unwrap();
-        let snapshot = FlowsSnapshot { flows: vec![flow] };
+        let snapshot = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
 
         store.save(&snapshot).unwrap();
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
@@ -1146,7 +1183,10 @@ mod tests {
             now,
         )
         .unwrap();
-        let snapshot = FlowsSnapshot { flows: vec![flow] };
+        let snapshot = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
 
         store.save(&snapshot).unwrap();
         let loaded = store.load().unwrap();
@@ -1238,6 +1278,114 @@ mod tests {
         assert_eq!(loaded, snapshot);
 
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn round_trips_ordered_folders_and_empty_folders_without_changing_graphs() {
+        let root = temp_root();
+        let store = FlowStore::new(root.clone());
+        let mut snapshot = sample_snapshot();
+        snapshot.folders = vec![
+            FlowFolder {
+                id: "empty".into(),
+                name: "Empty".into(),
+                flow_ids: vec![],
+            },
+            FlowFolder {
+                id: "folder".into(),
+                name: "Checkout".into(),
+                flow_ids: vec![snapshot.flows[0].id.clone()],
+            },
+        ];
+        store.save(&snapshot).unwrap();
+        assert_eq!(store.load().unwrap(), snapshot);
+
+        // Removing a folder preserves its graphs.
+        snapshot.folders.clear();
+        store.save(&snapshot).unwrap();
+        assert_eq!(store.load().unwrap(), snapshot);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reads_all_older_versions_without_folders_and_saves_as_v4() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let store = FlowStore::new(root.clone());
+        let snapshot = sample_snapshot();
+        for version in 1..=3 {
+            let legacy = serde_json::json!({
+                "version": version,
+                "flows": snapshot.flows.iter().map(persisted_from_flow).collect::<Vec<_>>(),
+            });
+            fs::write(root.join(MANIFEST_FILE_NAME), legacy.to_string()).unwrap();
+            let loaded = store.load().unwrap();
+            assert_eq!(loaded, snapshot);
+            store.save(&loaded).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap())
+                    .unwrap();
+            assert_eq!(saved["version"], 4);
+        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_invalid_folders_without_overwriting_the_previous_snapshot() {
+        let root = temp_root();
+        let store = FlowStore::new(root.clone());
+        let snapshot = sample_snapshot();
+        store.save(&snapshot).unwrap();
+        let folder = FlowFolder {
+            id: "folder".into(),
+            name: "Checkout".into(),
+            flow_ids: vec![snapshot.flows[0].id.clone()],
+        };
+        let cases = vec![
+            vec![FlowFolder {
+                name: " ".into(),
+                ..folder.clone()
+            }],
+            vec![FlowFolder {
+                id: "".into(),
+                ..folder.clone()
+            }],
+            vec![FlowFolder {
+                flow_ids: vec!["missing".into()],
+                ..folder.clone()
+            }],
+            vec![FlowFolder {
+                flow_ids: vec![snapshot.flows[0].id.clone(); 2],
+                ..folder.clone()
+            }],
+            vec![folder.clone(), folder.clone()],
+            vec![
+                folder.clone(),
+                FlowFolder {
+                    id: "other".into(),
+                    ..folder
+                },
+            ],
+        ];
+        for folders in cases {
+            let invalid = FlowsSnapshot {
+                flows: snapshot.flows.clone(),
+                folders,
+            };
+            assert!(store.save(&invalid).is_err());
+            assert_eq!(store.load().unwrap(), snapshot);
+        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_corrupted_folder_memberships_on_load() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(MANIFEST_FILE_NAME), r#"{"version":4,"flows":[],"folders":[{"id":"folder","name":"Checkout","flow_ids":["missing"]}]}"#).unwrap();
+        let error = FlowStore::new(root.clone()).load().unwrap_err();
+        assert!(matches!(error, StorageError::Corrupted(_)));
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

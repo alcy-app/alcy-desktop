@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { FlowDto, FlowsError } from './list-flows'
+import type { FlowDto, FlowFolderDto, FlowsError } from './list-flows'
 
 export interface SaveFlowsInput {
   flows: FlowDto[]
+  folders: FlowFolderDto[]
 }
 
 export type SaveFlowsResult = { ok: true } | { ok: false; error: FlowsError }

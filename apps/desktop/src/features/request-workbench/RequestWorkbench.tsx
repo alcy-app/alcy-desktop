@@ -1412,6 +1412,13 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const flowsSlice = useMemo(
     () => ({
       flows: FEATURE_FLAGS.loadTesting ? flows.flows : flows.flows.filter((flow) => flow.executionKind !== 'load'),
+      folders: flows.folders,
+      saveError: flows.saveError,
+      onAddFolder: flows.addFolder,
+      onRenameFolder: flows.renameFolder,
+      onRemoveFolder: flows.removeFolder,
+      onMoveFolder: flows.moveFolder,
+      onMoveFlowToFolder: flows.moveFlowToFolder,
       onAddFlow: flows.addFlow,
       onAddLoadFlow: FEATURE_FLAGS.loadTesting ? flows.addLoadFlow : undefined,
       onImportLoadTest: FEATURE_FLAGS.loadTesting ? handleImportLoadTest : undefined,
@@ -1420,7 +1427,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       onMoveFlow: flows.moveFlow,
       onOpenFlow: openFlow,
     }),
-    [flows.flows, flows.addFlow, flows.addLoadFlow, flows.renameFlow, flows.moveFlow, handleImportLoadTest, handleRemoveFlow, openFlow],
+    [flows.flows, flows.folders, flows.saveError, flows.addFolder, flows.renameFolder, flows.removeFolder, flows.moveFolder, flows.moveFlowToFolder, flows.addFlow, flows.addLoadFlow, flows.renameFlow, flows.moveFlow, handleImportLoadTest, handleRemoveFlow, openFlow],
   )
 
   const activeFlow =

@@ -45,17 +45,14 @@
   right: 2px;
 }
 
-/* No overflow of its own: the scroll belongs to the panel's
-   `.sidebar-panel-scroll` (a single scrollbar, on the sidebar's edge), not to
-   this list — two nested containers with independent overflow-y made the
-   scrollbar "flicker" on blur. */
+/* The virtual list owns the panel scrolling viewport. */
 .flows-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-/* A linha inteira é a superfície (fundo no hover/foco), com o "⋯" dentro dela, como nas coleções. */
+/* The whole row shares its hover and focus surface with the options menu. */
 .flows-list-row {
   display: flex;
   align-items: center;
@@ -66,7 +63,7 @@
   transition: background-color var(--duration-fast) var(--ease-out);
 }
 
-/* O item focado (alvo do atalho de renomear) usa o mesmo fundo do hover. */
+/* Focused items use the hover background. */
 .flows-list-row:hover,
 .flows-list-row:focus-within {
   background: var(--surface-raised);
@@ -104,7 +101,7 @@
   white-space: nowrap;
 }
 
-/* Mesma convenção de cor por alteração local usada nas coleções (ver collections-panel.css). */
+/* Use the same local-change colors as collections. */
 .flows-list-item-name[data-change-kind='added'] {
   color: var(--success);
 }
@@ -120,7 +117,7 @@
 
 /* ---- Motion ---- */
 
-/* Arrastar para reordenar: a linha de inserção mostra onde o flow será solto. */
+/* Insertion lines indicate the drop position. */
 .flows-list-row--dragging {
   opacity: 0.4;
 }
@@ -133,7 +130,7 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-/* Menu "⋯" por linha, como nas coleções: aparece com o mouse sobre a linha. */
+/* Show the options menu on row hover and keyboard focus. */
 .flows-menu-wrapper {
   position: relative;
   flex-shrink: 0;
@@ -147,7 +144,7 @@
   opacity: 1;
 }
 
-/* Cartão e itens do menu vêm de shared/ui/menu.css; aqui só o posicionamento. */
+/* Menu appearance comes from shared/ui/menu.css; only positioning lives here. */
 .flows-menu {
   position: absolute;
   right: 0;
@@ -162,4 +159,46 @@
   margin-top: 0;
   margin-bottom: 2px;
   transform-origin: bottom;
+}
+
+.flows-list.virtual-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.flows-list .virtual-list-spacer {
+  position: relative;
+  min-width: 100%;
+}
+
+.flows-list .virtual-list-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.flows-list-row--nested {
+  padding-left: var(--space-6);
+}
+
+.flows-list-row--drop-inside {
+  background: var(--surface-raised);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.flows-root-drop {
+  margin: 0 var(--space-2);
+  padding: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-md);
+}
+
+.flows-save-error {
+  padding: var(--space-2);
+  color: var(--error);
+  font-size: var(--font-size-sm);
 }

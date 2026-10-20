@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use alcy_domain::{
-    ComparisonOperator, Condition, Flow, FlowEdge, FlowExecutionKind, FlowNode, FlowNodeKind,
-    FlowPosition, LoadNode, LoadNodeKind, MockCallCountOperator, MockServerSource,
-    VariableAssignment, VariableOperation,
+    ComparisonOperator, Condition, Flow, FlowEdge, FlowExecutionKind, FlowFolder, FlowNode,
+    FlowNodeKind, FlowPosition, LoadNode, LoadNodeKind, MockCallCountOperator, MockServerSource,
+    VariableAssignment, VariableOperation, validate_flow_folders,
 };
 use alcy_storage::{FlowStore, FlowsSnapshot, StorageError};
 
@@ -63,12 +63,8 @@ pub enum LoadNodeKindDto {
     Threshold,
 }
 
-/// `rename_all` sozinho só renomeia a tag (`kind`), não os campos dentro de
-/// cada variante — sem `rename_all_fields`, `request_id` exigiria a chave
-/// JSON `request_id` (snake_case) em vez de `requestId`, quebrando a
-/// desserialização de qualquer node de requisição vindo do frontend
-/// (`label`, único campo de `Block`, não expõe isso por não ter case a
-/// mudar).
+/// `rename_all_fields` converts struct-variant fields so frontend `requestId`
+/// deserializes correctly instead of requiring `request_id`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "kind",
@@ -109,18 +105,17 @@ pub enum FlowNodeKindDto {
     },
     Break,
     Continue,
-    /// Requisição avulsa (spec 0086) — mesmo DTO de uma requisição de coleção.
+    /// Inline request (spec 0086), using the collection request DTO.
     InlineRequest {
         request: Box<SavedRequestDto>,
     },
     Load {
         load_kind: LoadNodeKindDto,
         label: String,
-        /// JSON canônico da configuração do bloco; não é executado nem
-        /// interpretado pelo command.
+        /// Canonical block JSON, preserved without interpretation or execution.
         config: String,
     },
-    /// Blocos de mock server (spec 0121).
+    /// Mock server blocks (spec 0121).
     MockStart {
         source: MockServerSourceDto,
     },
@@ -146,7 +141,7 @@ pub enum FlowNodeKindDto {
     },
 }
 
-/// Mock salvo (pelo id) ou avulso (o mesmo DTO do editor de mock servers).
+/// Saved mock ID or inline mock using the mock-server editor DTO.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(
     tag = "type",
@@ -197,9 +192,8 @@ pub struct FlowEdgeDto {
     pub id: String,
     pub source_node_id: String,
     pub target_node_id: String,
-    /// `None` para toda edge saindo de um node de saída única; `Some("true"
-    /// | "false")` para as duas saídas de um `If` e `Some("success" |
-    /// "failure")` para as duas saídas de um `Request`.
+    /// None for single-output nodes, true/false for If branches,
+    /// and success/failure for Request branches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_handle: Option<String>,
 }
@@ -229,10 +223,19 @@ pub struct FlowInput {
     pub updated_at_ms: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowFolderDto {
+    pub id: String,
+    pub name: String,
+    pub flow_ids: Vec<String>,
+}
+
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowsSnapshotDto {
     pub flows: Vec<FlowDto>,
+    pub folders: Vec<FlowFolderDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,6 +249,8 @@ pub struct ListFlowsInput {
 pub struct SaveFlowsInput {
     pub root_path: String,
     pub flows: Vec<FlowInput>,
+    #[serde(default)]
+    pub folders: Vec<FlowFolderDto>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -504,14 +509,20 @@ pub(crate) fn flow_to_dto(flow: &Flow) -> FlowDto {
 fn snapshot_to_dto(snapshot: FlowsSnapshot) -> FlowsSnapshotDto {
     FlowsSnapshotDto {
         flows: snapshot.flows.iter().map(flow_to_dto).collect(),
+        folders: snapshot
+            .folders
+            .into_iter()
+            .map(|folder| FlowFolderDto {
+                id: folder.id,
+                name: folder.name,
+                flow_ids: folder.flow_ids,
+            })
+            .collect(),
     }
 }
 
-/// Reaproveitada por `commands::execute_flow`, que monta um `Flow`
-/// transiente (nunca persistido) a partir do mesmo `FlowNodeDto` que a UI já
-/// envia para `save_flows`.
-/// Falha só com a requisição ou o mock de um node avulso inválidos (ex.:
-/// nome vazio).
+/// Also used by execution to build a transient graph from the editor DTO.
+/// Rejects invalid inline requests and mocks, such as those with empty names.
 pub(crate) fn nodes_from_dto(nodes: Vec<FlowNodeDto>) -> Result<Vec<FlowNode>, String> {
     nodes
         .into_iter()
@@ -639,7 +650,7 @@ pub(crate) fn nodes_from_dto(nodes: Vec<FlowNodeDto>) -> Result<Vec<FlowNode>, S
         .collect()
 }
 
-/// Ver `nodes_from_dto`.
+/// See `nodes_from_dto`.
 pub(crate) fn edges_from_dto(edges: Vec<FlowEdgeDto>) -> Vec<FlowEdge> {
     edges
         .into_iter()
@@ -677,14 +688,23 @@ fn build_snapshot(input: SaveFlowsInput) -> Result<FlowsSnapshot, FlowsError> {
         .map(flow_from_input)
         .collect::<Result<Vec<_>, FlowsError>>()?;
 
-    Ok(FlowsSnapshot { flows })
+    let folders = input
+        .folders
+        .into_iter()
+        .map(|folder| FlowFolder {
+            id: folder.id,
+            name: folder.name,
+            flow_ids: folder.flow_ids,
+        })
+        .collect::<Vec<_>>();
+    validate_flow_folders(&flows, &folders).map_err(|error| FlowsError::Invalid {
+        message: error.to_string(),
+    })?;
+    Ok(FlowsSnapshot { flows, folders })
 }
 
-/// Lista os flows persistidos no workspace em `input.root_path`. Retorna
-/// uma lista vazia quando nada foi persistido ainda — diferente de
-/// Environments, um flow não tem um valor padrão sensato para sintetizar.
-/// Flows não são compartilhados entre workspaces — cada um tem seu
-/// próprio arquivo, como coleções, ambientes e histórico.
+/// List flows in the workspace at `input.root_path`. An unsaved workspace
+/// starts empty; flows are stored independently for each workspace.
 #[tauri::command]
 pub async fn list_flows(input: ListFlowsInput) -> Result<FlowsSnapshotDto, FlowsError> {
     let result = run_blocking(move || list_flows_inner(PathBuf::from(input.root_path))).await;
@@ -697,8 +717,7 @@ fn list_flows_inner(root: PathBuf) -> Result<FlowsSnapshotDto, FlowsError> {
     Ok(snapshot_to_dto(snapshot))
 }
 
-/// Ver `ordered_save`: o autosave dispara gravações em sequência, e uma
-/// mais antiga nunca pode sobrescrever uma mais nova.
+/// See `ordered_save`: older autosaves must never overwrite newer ones.
 static FLOW_SAVES: OrderedSaves = OrderedSaves::new();
 
 #[tauri::command]
@@ -712,8 +731,7 @@ pub async fn save_flows(input: SaveFlowsInput) -> Result<(), FlowsError> {
     crate::logging::logged("alcy::flow", "salvar flows", result)
 }
 
-/// Roda `work` (leitura/escrita do arquivo inteiro de flows) na thread pool
-/// de blocking, fora da thread principal que também pinta a interface.
+/// Run whole-file I/O on the blocking pool, away from the UI thread.
 async fn run_blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, FlowsError> + Send + 'static,
 ) -> Result<T, FlowsError> {
@@ -734,10 +752,9 @@ fn save_flows_inner(root: PathBuf, input: SaveFlowsInput) -> Result<(), FlowsErr
     Ok(())
 }
 
-/// Assets importados pertencem ao ID do flow. A limpeza acontece somente
-/// depois que o manifesto canônico foi salvo: uma falha ao salvar nunca apaga
-/// a cópia rastreável do flow anterior. Diretórios temporários de importação
-/// têm ponto no início e são responsabilidade do importador que os criou.
+/// Imported assets belong to their flow ID. Clean up only after saving the
+/// canonical manifest, preserving the previous graph on save failure. Hidden
+/// temporary import directories remain the importing operation's responsibility.
 fn remove_orphaned_flow_assets(
     root: &std::path::Path,
     snapshot: &FlowsSnapshot,
@@ -780,15 +797,8 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::UNIX_EPOCH;
 
-    /// `#[serde(rename_all = "camelCase")]` num enum só renomeia a tag
-    /// (`kind`), não os campos dentro de cada variante struct — sem
-    /// `rename_all_fields`, esta desserialização falharia com "missing
-    /// field `request_id`" mesmo com `requestId` presente no JSON (bug real
-    /// que só se manifestava por `execute_flow`/`save_flows`, nunca pelos
-    /// testes deste arquivo, que sempre construíam `FlowNodeDto`
-    /// diretamente em Rust em vez de desserializar de uma string JSON real
-    /// como a IPC do Tauri faz). `Block { label }` não expunha o bug por
-    /// não ter um campo cuja grafia mude entre snake_case e camelCase.
+    /// Exercise real IPC JSON: constructing Rust DTOs directly would miss
+    /// regressions in camelCase struct-variant field deserialization.
     #[test]
     fn deserializes_a_request_node_from_camel_case_json_like_the_frontend_sends() {
         let json = r#"[
@@ -904,6 +914,7 @@ mod tests {
         let input = SaveFlowsInput {
             root_path: root.to_string_lossy().to_string(),
             flows: vec![sample_flow_input()],
+            folders: vec![],
         };
 
         save_flows_inner(root.clone(), input).unwrap();
@@ -914,6 +925,50 @@ mod tests {
         assert_eq!(snapshot.flows[0].nodes.len(), 1);
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn folder_membership_round_trips_through_camel_case_ipc() {
+        let root = temp_root();
+        let folder: FlowFolderDto = serde_json::from_value(serde_json::json!({
+            "id": "folder", "name": "Checkout", "flowIds": ["flow-1"]
+        }))
+        .unwrap();
+        save_flows_inner(
+            root.clone(),
+            SaveFlowsInput {
+                root_path: root.to_string_lossy().into(),
+                flows: vec![sample_flow_input()],
+                folders: vec![folder],
+            },
+        )
+        .unwrap();
+        let snapshot = serde_json::to_value(list_flows_inner(root.clone()).unwrap()).unwrap();
+        assert_eq!(
+            snapshot["folders"][0]["flowIds"],
+            serde_json::json!(["flow-1"])
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_missing_flow_membership_as_invalid_input() {
+        let root = temp_root();
+        let error = save_flows_inner(
+            root.clone(),
+            SaveFlowsInput {
+                root_path: root.to_string_lossy().into(),
+                flows: vec![],
+                folders: vec![FlowFolderDto {
+                    id: "folder".into(),
+                    name: "Checkout".into(),
+                    flow_ids: vec!["missing".into()],
+                }],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, FlowsError::Invalid { .. }));
+        assert!(!root.exists());
     }
 
     #[test]
@@ -929,6 +984,7 @@ mod tests {
             SaveFlowsInput {
                 root_path: root.to_string_lossy().to_string(),
                 flows: vec![sample_flow_input()],
+                folders: vec![],
             },
         )
         .unwrap();
@@ -947,6 +1003,7 @@ mod tests {
         let input = SaveFlowsInput {
             root_path: root.to_string_lossy().to_string(),
             flows: vec![flow],
+            folders: vec![],
         };
 
         let error = save_flows_inner(root, input).unwrap_err();
@@ -961,6 +1018,7 @@ mod tests {
         let input = SaveFlowsInput {
             root_path: root_a.to_string_lossy().to_string(),
             flows: vec![sample_flow_input()],
+            folders: vec![],
         };
 
         save_flows_inner(root_a.clone(), input).unwrap();

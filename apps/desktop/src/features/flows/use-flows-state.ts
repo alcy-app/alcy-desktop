@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { moveById } from '../environments/reorder'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
 import { listFlows } from '../../bindings/list-flows'
-import type { FlowDto } from '../../bindings/list-flows'
+import type { FlowDto, FlowFolderDto } from '../../bindings/list-flows'
 import { saveFlows } from '../../bindings/save-flows'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { requestFromDto, requestToDto } from '../request-workbench/use-collections-state'
@@ -157,6 +157,9 @@ export function createFlowFromRequests(name: string, requestIds: string[]): Flow
 export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
   const { t } = useLanguage()
   const [flows, setFlows] = useState<FlowState[]>([])
+  const [folders, setFolders] = useState<FlowFolderDto[]>([])
+  const foldersRef = useRef(folders)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
   // Do not save after a failed load; an empty UI must never overwrite an unreadable or newer file.
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -168,7 +171,8 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
 
   useEffect(() => {
     flowsRef.current = flows
-  }, [flows])
+    foldersRef.current = folders
+  }, [flows, folders])
 
   /** Reload from disk and cancel pending saves that could overwrite externally updated content. */
   const reload = useCallback(() => {
@@ -188,6 +192,8 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
 
       if (result.ok) {
         setFlows(result.value.flows.map(flowFromDto))
+        setFolders(result.value.folders ?? [])
+        setSaveError(null)
       }
 
       setLoadError(result.ok ? null : result.error.message)
@@ -211,7 +217,10 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     }
 
     saveTimeoutRef.current = window.setTimeout(() => {
-      void saveFlows(workspaceRootPath, { flows: flows.map(dtoFromFlow) }).then(() => onSaved?.())
+      void saveFlows(workspaceRootPath, { flows: flows.map(dtoFromFlow), folders }).then((result) => {
+        setSaveError(result.ok ? null : result.error.message)
+        if (result.ok) onSaved?.()
+      })
     }, SAVE_DEBOUNCE_MS)
 
     return () => {
@@ -219,11 +228,12 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
         window.clearTimeout(saveTimeoutRef.current)
       }
     }
-  }, [flows, loaded, loadError, workspaceRootPath, onSaved])
+  }, [flows, folders, loaded, loadError, workspaceRootPath, onSaved])
 
-  const addFlow = useCallback(() => {
+  const addFlow = useCallback((folderId?: string) => {
     const flow = createFlow(t('flows.newFlowName'))
     setFlows((current) => [...current, flow])
+    if (folderId) setFolders((current) => current.map((folder) => folder.id === folderId ? { ...folder, flowIds: [...folder.flowIds, flow.id] } : folder))
     return flow.id
   }, [t])
 
@@ -233,12 +243,13 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     return flow.id
   }, [])
 
-  const addLoadFlow = useCallback(() => {
+  const addLoadFlow = useCallback((folderId?: string) => {
     const flow = createLoadFlow(t('flows.newLoadFlowName'), {
       scenario: t('flows.loadNode.scenario.label'),
       request: t('flows.loadNode.request.label'),
     })
     setFlows((current) => [...current, flow])
+    if (folderId) setFolders((current) => current.map((folder) => folder.id === folderId ? { ...folder, flowIds: [...folder.flowIds, flow.id] } : folder))
     return flow.id
   }, [t])
 
@@ -252,10 +263,51 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
   /** Reorder flows by drag; the persisted array determines display order. */
   const moveFlow = useCallback((draggedId: string, targetId: string, edge: SiblingEdge) => {
     setFlows((current) => moveById(current, draggedId, targetId, edge))
+    setFolders((current) => {
+      const targetFolderId = current.find((folder) => folder.flowIds.includes(targetId))?.id
+      return current.map((folder) => ({
+        ...folder,
+        flowIds: folder.id === targetFolderId
+          ? [...folder.flowIds.filter((id) => id !== draggedId), draggedId]
+          : folder.flowIds.filter((id) => id !== draggedId),
+      }))
+    })
   }, [])
 
   const removeFlow = useCallback((id: string) => {
     setFlows((current) => current.filter((flow) => flow.id !== id))
+    setFolders((current) => current.map((folder) => ({ ...folder, flowIds: folder.flowIds.filter((flowId) => flowId !== id) })))
+  }, [])
+
+  const addFolder = useCallback(() => {
+    const folder = { id: crypto.randomUUID(), name: t('flows.newFolderName'), flowIds: [] }
+    setFolders((current) => [...current, folder])
+    return folder.id
+  }, [t])
+
+  const renameFolder = useCallback((id: string, name: string) => {
+    if (!name.trim()) return
+    setFolders((current) => current.map((folder) => folder.id === id ? { ...folder, name } : folder))
+  }, [])
+
+  const removeFolder = useCallback((id: string) => {
+    setFolders((current) => current.filter((folder) => folder.id !== id))
+  }, [])
+
+  const moveFolder = useCallback((id: string, targetId: string, edge: SiblingEdge) => {
+    setFolders((current) => moveById(current, id, targetId, edge))
+  }, [])
+
+  const moveFlowToFolder = useCallback((flowId: string, folderId: string | null) => {
+    setFolders((current) => {
+      if (folderId !== null && !current.some((folder) => folder.id === folderId)) return current
+      return current.map((folder) => ({
+        ...folder,
+        flowIds: folder.id === folderId
+          ? [...folder.flowIds.filter((id) => id !== flowId), flowId]
+          : folder.flowIds.filter((id) => id !== flowId),
+      }))
+    })
   }, [])
 
   const renameFlow = useCallback((id: string, name: string) => {
@@ -322,8 +374,9 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
       window.clearTimeout(saveTimeoutRef.current)
       saveTimeoutRef.current = null
     }
-    const result = await saveFlows(workspaceRootPath, { flows: flowsRef.current.map(dtoFromFlow) })
+    const result = await saveFlows(workspaceRootPath, { flows: flowsRef.current.map(dtoFromFlow), folders: foldersRef.current })
     if (!result.ok) throw new Error(result.error.message)
+    setSaveError(null)
     onSaved?.()
   }, [loaded, loadError, onSaved, workspaceRootPath])
 
@@ -334,7 +387,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     if (!next.some((flow) => flow.id === id)) throw new Error('Flow no longer exists')
     if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
     saveTimeoutRef.current = null
-    const result = await saveFlows(workspaceRootPath, { flows: next.map(dtoFromFlow) })
+    const result = await saveFlows(workspaceRootPath, { flows: next.map(dtoFromFlow), folders: foldersRef.current })
     if (!result.ok) throw new Error(result.error.message)
     setFlows(next)
     onSaved?.()
@@ -342,6 +395,13 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
 
   return {
     flows,
+    folders,
+    saveError,
+    addFolder,
+    renameFolder,
+    removeFolder,
+    moveFolder,
+    moveFlowToFolder,
     loadError,
     loaded,
     reload,

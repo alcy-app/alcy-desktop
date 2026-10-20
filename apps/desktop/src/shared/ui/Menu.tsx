@@ -24,6 +24,8 @@ interface OptionsMenuProps {
   menuBoundarySelector?: string
   /** Render over the interface without contributing to an ancestor's scroll area. */
   menuPortal?: boolean
+  /** Horizontal trigger edge used to align a portal menu. */
+  menuAlign?: 'start' | 'end'
 }
 
 /** Icon button with an anchored menu that closes on blur or Escape. */
@@ -41,6 +43,7 @@ export function OptionsMenu({
   menuPlacement = 'bottom',
   menuBoundarySelector,
   menuPortal = false,
+  menuAlign = 'end',
 }: OptionsMenuProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -63,8 +66,9 @@ export function OptionsMenu({
     const spaceAbove = rect.top - margin - gap
     const above = menuPlacement === 'auto' && menu.offsetHeight > spaceBelow && spaceAbove > spaceBelow
     const top = above ? rect.top - gap - menu.offsetHeight : rect.bottom + gap
+    const left = menuAlign === 'start' ? rect.left : rect.right - menu.offsetWidth
     menu.style.top = `${Math.max(margin, Math.min(top, viewportHeight - margin - menu.offsetHeight))}px`
-    menu.style.left = `${Math.max(margin, Math.min(rect.right - menu.offsetWidth, viewportWidth - margin - menu.offsetWidth))}px`
+    menu.style.left = `${Math.max(margin, Math.min(left, viewportWidth - margin - menu.offsetWidth))}px`
     menu.classList.toggle('ui-menu--top', above)
 
     const closeOutside = (event: PointerEvent) => {
@@ -82,7 +86,7 @@ export function OptionsMenu({
       window.removeEventListener('resize', onClose)
       window.removeEventListener('scroll', closeOnScroll, true)
     }
-  }, [isOpen, menuPortal, menuPlacement, children, onClose])
+  }, [isOpen, menuPortal, menuPlacement, menuAlign, children, onClose])
 
   useLayoutEffect(() => {
     if (!isOpen || !menuPortal) return
@@ -166,6 +170,7 @@ export function OptionsMenu({
 
 interface MenuItemProps {
   label: string
+  icon?: ReactNode
   danger?: boolean
   disabled?: boolean
   autoFocus?: boolean
@@ -174,7 +179,7 @@ interface MenuItemProps {
   onSelect: () => void
 }
 
-export function MenuItem({ label, danger, disabled, autoFocus, selected, onSelect }: MenuItemProps) {
+export function MenuItem({ label, icon, danger, disabled, autoFocus, selected, onSelect }: MenuItemProps) {
   return (
     <button
       type="button"
@@ -182,6 +187,7 @@ export function MenuItem({ label, danger, disabled, autoFocus, selected, onSelec
       aria-checked={selected}
       className={[
         'ui-menu-item',
+        icon ? 'ui-menu-item--with-icon' : null,
         danger ? 'ui-menu-item--danger' : null,
         selected ? 'ui-menu-item--selected' : null,
       ]
@@ -191,6 +197,7 @@ export function MenuItem({ label, danger, disabled, autoFocus, selected, onSelec
       autoFocus={autoFocus}
       onClick={onSelect}
     >
+      {icon && <span className="ui-menu-item-icon" aria-hidden="true">{icon}</span>}
       {label}
     </button>
   )

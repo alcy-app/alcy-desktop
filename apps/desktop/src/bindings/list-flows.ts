@@ -17,9 +17,8 @@ export type VariableAssignmentDto = { name: string } & (
 
 export type FlowExecutionKindDto = 'standard' | 'load'
 
-/** Blocos declarativos disponíveis exclusivamente em flows de carga. A
- * configuração fica serializada no backend para que novos campos possam ser
- * adicionados sem alargar o contrato do canvas a cada executor. */
+/** Load-only declarative blocks. Native code preserves serialized configuration
+ * without expanding the canvas contract for each executor. */
 export type LoadNodeKindDto =
   | 'scenario'
   | 'request'
@@ -38,8 +37,7 @@ export type LoadNodeKindDto =
   | 'metric'
   | 'threshold'
 
-/** Mock ligado por um bloco `mockStart` (spec 0121): um mock salvo do
- * workspace ou um avulso, guardado inteiro no flow. */
+/** A saved workspace mock or full inline mock started by mockStart (spec 0121). */
 export type MockServerSourceDto = { type: 'saved'; serverId: string } | { type: 'inline'; server: MockServerDto }
 
 export type MockCallCountOperatorDto = 'equals' | 'atLeast' | 'atMost'
@@ -58,10 +56,9 @@ export type FlowNodeKindDto =
   | { kind: 'break' }
   | { kind: 'continue' }
   | { kind: 'load'; loadKind: LoadNodeKindDto; label: string; config: string }
-  /** Requisição avulsa: mesmo DTO de uma requisição de coleção. */
+  /** Inline request, using the collection request DTO. */
   | { kind: 'inlineRequest'; request: SavedRequestDto }
-  /** Blocos de mock server (spec 0121): os demais apontam para o bloco
-   * `mockStart` que ligou o mock. */
+  /** Mock blocks reference the mockStart node that started their mock (spec 0121). */
   | { kind: 'mockStart'; source: MockServerSourceDto }
   | { kind: 'mockStop'; startNodeId: string }
   | { kind: 'mockWaitRequest'; startNodeId: string; routeId: string; timeoutMs: number }
@@ -78,9 +75,7 @@ export interface FlowEdgeDto {
   id: string
   sourceNodeId: string
   targetNodeId: string
-  /** `undefined`/`null` para toda edge saindo de um node de saída única;
-   * `"true"`/`"false"` para as duas edges saindo de um `If` ou de um bloco de
-   * mock com duas saídas. */
+  /** Absent for single-output nodes; true/false or success/failure for branches. */
   sourceHandle?: string | null
 }
 
@@ -94,8 +89,15 @@ export interface FlowDto {
   updatedAtMs: number
 }
 
+export interface FlowFolderDto {
+  id: string
+  name: string
+  flowIds: string[]
+}
+
 export interface FlowsSnapshotDto {
   flows: FlowDto[]
+  folders: FlowFolderDto[]
 }
 
 export type FlowsError = { kind: 'invalid'; message: string } | { kind: 'storage'; message: string }

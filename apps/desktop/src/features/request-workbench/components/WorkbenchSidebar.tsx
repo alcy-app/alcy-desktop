@@ -19,6 +19,7 @@ import { FEATURE_FLAGS } from '../../../shared/feature-flags'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import type { CollectionLabelDto, LabelColor, ScopedVariableDto } from '../../../bindings/list-collections'
 import type { HistoryEntrySummaryDto } from '../../../bindings/list-history'
+import type { FlowFolderDto } from '../../../bindings/list-flows'
 import type { ActiveComponentKind } from '../history'
 import type { SiblingEdge } from '../../../shared/use-pointer-drag'
 import type { FlowState } from '../../flows/flows.types'
@@ -129,8 +130,15 @@ interface HistoryPanelSlice {
 
 interface FlowsPanelSlice {
   flows: FlowState[]
-  onAddFlow: () => string
-  onAddLoadFlow?: () => string
+  folders: FlowFolderDto[]
+  saveError: string | null
+  onAddFolder: () => string
+  onRenameFolder: (id: string, name: string) => void
+  onRemoveFolder: (id: string) => void
+  onMoveFolder: (id: string, targetId: string, edge: SiblingEdge) => void
+  onMoveFlowToFolder: (flowId: string, folderId: string | null) => void
+  onAddFlow: (folderId?: string) => string
+  onAddLoadFlow?: (folderId?: string) => string
   onImportLoadTest?: () => void
   onRenameFlow: (id: string, name: string) => void
   onRemoveFlow: (id: string) => void

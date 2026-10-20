@@ -8,6 +8,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Added
 
+- Pastas no módulo de flows para agrupar e organizar os flows do workspace.
 - O gravador de HAR também grava as requisições feitas pelos flows, com headers e resposta, para inspecionar e salvar junto com os envios manuais.
 - Organização automática dos flows, com opção de desfazer, para alinhar os blocos e acompanhar suas conexões.
 - O Display permite escolher o formato do resultado e navegar por respostas longas, expandindo ou recolhendo objetos JSON.

@@ -10,6 +10,7 @@ mod endpoint;
 mod environment;
 mod execution_error;
 mod flow;
+mod flow_folder;
 mod general_settings;
 mod gitlab;
 mod grpc_call;
@@ -54,6 +55,7 @@ pub use flow::{
     FlowNodeKind, FlowPosition, LoadNode, LoadNodeKind, MockCallCountOperator, MockServerSource,
     VariableAssignment, VariableOperation,
 };
+pub use flow_folder::{FlowFolder, FlowFoldersError, validate_flow_folders};
 pub use general_settings::{
     DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_RESPONSE_SIZE_LIMIT_MB, GeneralSettings, HistoryRetention, HistoryRetentionError,

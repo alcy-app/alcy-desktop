@@ -13,7 +13,7 @@ vi.mock('../../bindings/save-flows', () => ({ saveFlows: vi.fn() }))
 function wrapper({ children }: { children: ReactNode }) { return <LanguageProvider>{children}</LanguageProvider> }
 
 beforeEach(() => {
-  vi.mocked(listFlows).mockResolvedValue({ ok: true, value: { flows: [{ id: 'flow', name: 'Flow', executionKind: 'standard', nodes: [{ id: 'start', kind: 'start', x: 0, y: 0 }], edges: [], createdAtMs: 0, updatedAtMs: 0 }] } })
+  vi.mocked(listFlows).mockResolvedValue({ ok: true, value: { folders: [], flows: [{ id: 'flow', name: 'Flow', executionKind: 'standard', nodes: [{ id: 'start', kind: 'start', x: 0, y: 0 }], edges: [], createdAtMs: 0, updatedAtMs: 0 }] } })
   vi.mocked(saveFlows).mockReset().mockResolvedValue({ ok: true })
 })
 
