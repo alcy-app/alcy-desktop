@@ -1506,36 +1506,38 @@ export function CollectionsPanel({
                 label={t('collections.importButton')}
                 onClick={() => setImportModalOpen(true)}
               />
-              <IconButton
-                icon={expandedIds.size === 0 ? <ExpandAllIcon size={12} /> : <CollapseAllIcon size={12} />}
-                label={t(expandedIds.size === 0 ? 'collections.expandAllAria' : 'collections.collapseAllAria')}
-                onClick={expandedIds.size === 0 ? onExpandAll : onCollapseAll}
-              />
-              <IconButton
-                icon={<LocateIcon size={12} />}
-                label={t('collections.revealActiveAria')}
-                disabled={!canReveal}
-                onClick={revealOpenRequest}
-              />
-              {/* Create Collection lives in the plus popover; an empty tree has no toolbar menu actions. */}
-              {collections.length > 0 && (
-                <OptionsMenu
-                  label={t('collections.moreOptionsMenuAria')}
-                  wrapperClassName="collections-toolbar-menu-wrapper"
-                  menuClassName="collections-menu"
-                  isOpen={moreMenuOpen}
-                  onToggle={() => setMoreMenuOpen((current) => !current)}
-                  onClose={() => setMoreMenuOpen(false)}
-                >
-                  <MenuItem
-                    label={t('collections.exportAllButton')}
-                    onSelect={() => {
-                      void onExportAll()
-                      setMoreMenuOpen(false)
-                    }}
-                  />
-                </OptionsMenu>
-              )}
+              <div className="collections-toolbar-navigation">
+                <IconButton
+                  icon={expandedIds.size === 0 ? <ExpandAllIcon size={12} /> : <CollapseAllIcon size={12} />}
+                  label={t(expandedIds.size === 0 ? 'collections.expandAllAria' : 'collections.collapseAllAria')}
+                  onClick={expandedIds.size === 0 ? onExpandAll : onCollapseAll}
+                />
+                <IconButton
+                  icon={<LocateIcon size={12} />}
+                  label={t('collections.revealActiveAria')}
+                  disabled={!canReveal}
+                  onClick={revealOpenRequest}
+                />
+                {/* Create Collection lives in the plus popover; an empty tree has no toolbar menu actions. */}
+                {collections.length > 0 && (
+                  <OptionsMenu
+                    label={t('collections.moreOptionsMenuAria')}
+                    wrapperClassName="collections-toolbar-menu-wrapper"
+                    menuClassName="collections-menu"
+                    isOpen={moreMenuOpen}
+                    onToggle={() => setMoreMenuOpen((current) => !current)}
+                    onClose={() => setMoreMenuOpen(false)}
+                  >
+                    <MenuItem
+                      label={t('collections.exportAllButton')}
+                      onSelect={() => {
+                        void onExportAll()
+                        setMoreMenuOpen(false)
+                      }}
+                    />
+                  </OptionsMenu>
+                )}
+              </div>
             </>
           )}
         </div>

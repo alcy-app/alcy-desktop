@@ -5,9 +5,15 @@
   gap: 6px;
 }
 
+.collections-toolbar-navigation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
 .collections-toolbar-menu-wrapper {
   position: relative;
-  margin-left: auto;
 }
 
 .collections-search {
