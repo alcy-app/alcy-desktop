@@ -27,7 +27,10 @@ import type { FlowVariableDefinition } from './FlowDataBrowser'
 import { FlowOutputExplorer } from './FlowOutputExplorer'
 import type { NodeRunStatus } from './use-flow-run'
 import { describeRunStatus } from './node-run-status'
-import { DisplayValue } from './DisplayValue'
+import { DisplayOutput } from './DisplayOutput'
+import { displayBodyNodeId } from './display-output-source'
+import { DisplayFormatSelect } from './DisplayFormatSelect'
+import type { DisplayFormat } from './display-format'
 import { FlowTabs } from './FlowTabs'
 import type { FlowDatasetSource } from './FlowDatasetFields'
 import { NodeIdentifierField } from './NodeIdentifierField'
@@ -65,8 +68,8 @@ interface NodeInspectorPanelProps {
   activeTab?: 'configuration' | 'data' | 'output'
   onTabChange?: (tab: 'configuration' | 'data' | 'output') => void
   outdated?: boolean
-  displayFormat?: 'auto' | 'json' | 'text'
-  onDisplayFormatChange?: (format: 'auto' | 'json' | 'text') => void
+  displayFormat?: DisplayFormat
+  onDisplayFormatChange?: (format: DisplayFormat) => void
   selection: InspectorSelection
   ancestorRequests: AncestorRequestRef[]
   /** Names declared by ancestor Set variables nodes. */
@@ -132,6 +135,8 @@ export function NodeInspectorPanel({
   onClose,
 }: NodeInspectorPanelProps) {
   const { t } = useLanguage()
+  const displaySourceId = selection.kind === 'display' ? displayBodyNodeId(selection.template) : null
+  const displaySource = displaySourceId && rootPath && flowExecutionId ? { rootPath, flowExecutionId, nodeId: snapshotNodeIds[displaySourceId] ?? displaySourceId, version: outputVersions[displaySourceId] ?? 0 } : undefined
   const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [dataTrayOpen, setDataTrayOpen] = useState(false)
@@ -268,7 +273,7 @@ export function NodeInspectorPanel({
         )}
 
         {selection.kind === 'display' && (<>
-          <Field label={t('flows.studio.displayFormat')}><Select value={displayFormat} onChange={(event) => onDisplayFormatChange?.(event.target.value as 'auto' | 'json' | 'text')}><option value="auto">{t('flows.studio.auto')}</option><option value="json">JSON</option><option value="text">{t('flows.studio.text')}</option></Select></Field>
+          <Field label={t('flows.studio.displayFormat')}><DisplayFormatSelect value={displayFormat} onChange={onDisplayFormatChange} /></Field>
           <Field label={t('flows.canvas.displayTemplateLabel')} hint={t('flows.canvas.displayHint')}>
             <FlowTemplateTextarea
               mono
@@ -365,7 +370,7 @@ export function NodeInspectorPanel({
         {(tab === 'data' || expanded || dataTrayOpen) && dataBrowser}
       </div>}
       {tab === 'output' && <div className="flow-studio-output-pane">
-        {selection.kind === 'request' || selection.kind === 'inlineRequest' || selection.kind === 'mockWaitRequest' ? <FlowOutputExplorer version={outputVersions[selection.id] ?? 0} key={`${selection.id}:${flowExecutionId}`} rootPath={rootPath} flowExecutionId={flowExecutionId} nodeId={selection.id} snapshotNodeId={snapshotNodeIds[selection.id]} scope={selection.kind === 'mockWaitRequest' ? 'request' : 'response'} /> : nodeStatus.status === 'completed' ? <DisplayValue value={nodeStatus.message ?? ''} format={displayFormat} /> : <p className="flow-studio-empty">{nodeStatus.status === 'failed' ? nodeStatus.message : load ? t('flows.studio.loadData') : status?.label ?? t('flows.studio.runToInspect')}</p>}
+        {selection.kind === 'request' || selection.kind === 'inlineRequest' || selection.kind === 'mockWaitRequest' ? <FlowOutputExplorer version={outputVersions[selection.id] ?? 0} key={`${selection.id}:${flowExecutionId}`} rootPath={rootPath} flowExecutionId={flowExecutionId} nodeId={selection.id} snapshotNodeId={snapshotNodeIds[selection.id]} scope={selection.kind === 'mockWaitRequest' ? 'request' : 'response'} /> : nodeStatus.status === 'completed' ? <DisplayOutput value={nodeStatus.message ?? ''} format={displayFormat} source={displaySource} /> : <p className="flow-studio-empty">{nodeStatus.status === 'failed' ? nodeStatus.message : load ? t('flows.studio.loadData') : status?.label ?? t('flows.studio.runToInspect')}</p>}
       </div>}
       </div>
       <footer className="flow-studio-footer"><span title={selection.id}>{t('flows.studio.nodeReference')} · {selection.id.slice(0, 8)}</span></footer>

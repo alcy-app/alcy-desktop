@@ -7,7 +7,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   ClockIcon,
-  EyeIcon,
   FlowIcon,
   GearIcon,
   GlobeIcon,
@@ -15,31 +14,30 @@ import {
   PencilIcon,
   RefreshIcon,
   RunnerIcon,
-  SendIcon,
   StopIcon,
   TerminalIcon,
   VariablesIcon,
 } from '../../shared/ui/icons'
 import type { FlowNodeKindState } from './flows.types'
+import { FlowDisplayIcon } from './FlowDisplayIcon'
 
 export type FlowNodeKind = FlowNodeKindState['kind']
 
-/** Categoria visual de um bloco — cada uma tem um token `--flow-tone-*`
- * (spec 0087) que pinta o ícone, a borda superior e a seleção do cartão. */
+/** Visual category whose flow tone colors the icon, rail and selection. */
 export type FlowTone = 'start' | 'control' | 'request' | 'data' | 'time' | 'output' | 'note' | 'mock'
 
 export interface NodeKindAppearance {
   tone: FlowTone
   Icon: ComponentType<{ size?: number }>
-  /** Título do cartão. Bloco e requisições mostram o nome dado pelo usuário e só usam este como reserva. */
+  /** Default title, overridden by user-defined block and request names. */
   titleKey: TranslationKey
-  /** Nome do tipo na paleta de blocos. */
+  /** Kind label in the block palette. */
   labelKey: TranslationKey
-  /** Subtítulo do cartão e descrição na paleta. */
+  /** Card subtitle and palette description. */
   descriptionKey: TranslationKey
 }
 
-/** Uma só fonte para ícone, cor e textos de cada tipo — usada pelos nodes e pela `BlockPalette`. */
+/** Shared kind icons, colors and copy for canvas nodes and the block palette. */
 export const NODE_KIND_APPEARANCE: Record<FlowNodeKind, NodeKindAppearance> = {
   start: {
     tone: 'start',
@@ -106,20 +104,19 @@ export const NODE_KIND_APPEARANCE: Record<FlowNodeKind, NodeKindAppearance> = {
   },
   display: {
     tone: 'output',
-    Icon: EyeIcon,
+    Icon: FlowDisplayIcon,
     titleKey: 'flows.canvas.nodeTitle.display',
     labelKey: 'flows.canvas.newDisplayLabel',
     descriptionKey: 'flows.canvas.nodeDescription.display',
   },
   request: {
     tone: 'request',
-    Icon: SendIcon,
+    Icon: GlobeIcon,
     titleKey: 'flows.canvas.newRequestBlockLabel',
     labelKey: 'flows.canvas.newRequestBlockLabel',
     descriptionKey: 'flows.canvas.nodeDescription.request',
   },
-  /** Os blocos de carga usam o mesmo cartão genérico até terem um renderer
-   * próprio; a entrada mantém o mapa total e tipado por `FlowNodeKind`. */
+  /** Load blocks share the generic renderer and keep the kind mapping exhaustive. */
   load: {
     tone: 'control',
     Icon: RunnerIcon,

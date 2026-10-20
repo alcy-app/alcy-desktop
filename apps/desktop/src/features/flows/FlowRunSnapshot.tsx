@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Background, BackgroundVariant, Controls, ReactFlow } from '@xyflow/react'
 import type { ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -8,7 +8,7 @@ import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { findRequest, requestMethodLabel } from '../request-workbench/collection-tree'
 import type { TreeNode } from '../request-workbench/collection-tree'
-import { isSimpleFlowNode, snapViewportToWholePixels, toFlowEdges, toFlowNodes } from './flow-canvas-mapping'
+import { isSimpleFlowNode, snapViewportToWholePixels, terminalFlowNodeIds, toFlowEdges, toFlowNodes } from './flow-canvas-mapping'
 import type { FlowNode } from './flow-canvas-mapping'
 import type { FlowEdgeType } from './flow-edge-types'
 import { edgeTypes, nodeTypes } from './flow-node-types'
@@ -19,6 +19,11 @@ import { RunLogPanel } from './RunLogPanel'
 import { simpleNodeLogInfo } from './simple-node-types'
 import type { RunLogNodeInfo } from './RunLogPanel'
 import { edgeFromDto, flowNodeFromDto } from './use-flows-state'
+import { FLOW_GEOMETRY as G, flowGeometryStyle } from './flow-geometry'
+import { flowLayoutModel } from './flow-layout-model'
+import { flowEdgeRoutes } from './flow-layout'
+import { displayBodyNodeId } from './display-output-source'
+import type { DisplayFormat } from './display-format'
 import './flow-canvas.css'
 import './flow-studio.css'
 
@@ -33,9 +38,11 @@ interface FlowRunSnapshotProps {
 export function FlowRunSnapshot({ detail, collections, environmentVariables, rootPath }: FlowRunSnapshotProps) {
   const { t } = useLanguage()
   const instanceRef = useRef<ReactFlowInstance<FlowNode, FlowEdgeType> | null>(null)
+  const [displayFormats, setDisplayFormats] = useState<Record<string, DisplayFormat>>({})
 
   const nodeStates = useMemo(() => detail.nodes.map(flowNodeFromDto), [detail.nodes])
   const edgeStates = useMemo(() => detail.edges.map(edgeFromDto), [detail.edges])
+  const terminalIds = useMemo(() => terminalFlowNodeIds(toFlowNodes(nodeStates), toFlowEdges(edgeStates)), [nodeStates, edgeStates])
   const replayed = useMemo(
     () => replayRun(nodeStates, edgeStates, detail.events, detail.startedAtMs),
     [nodeStates, edgeStates, detail.events, detail.startedAtMs],
@@ -48,11 +55,19 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables, roo
 
   const nodes = useMemo<FlowNode[]>(
     () =>
-      toFlowNodes(nodeStates).map((node): FlowNode => {
+      toFlowNodes(nodeStates).map((canonical): FlowNode => {
+        const node = { ...canonical, className: terminalIds.has(canonical.id) ? 'flow-terminal-node' : '' }
         const noop = () => {}
         const visited = node.type === 'start' ? replayed.traversedEdges.size > 0 : isVisitedStatus(replayed.statuses[node.id])
         const runStatus = replayed.statuses[node.id] ?? { status: 'idle' as const }
-        if (isSimpleFlowNode(node)) return { ...node, data: { ...node.data, runStatus, visited, readOnly: true } }
+        if (isSimpleFlowNode(node)) {
+          const sourceId = node.data.config.kind === 'display' ? displayBodyNodeId(node.data.config.template) : null
+          return { ...node, data: { ...node.data, runStatus, visited, readOnly: true,
+            displayFormat: displayFormats[node.id] ?? 'auto',
+            onDisplayFormatChange: (format: DisplayFormat) => setDisplayFormats((current) => ({ ...current, [node.id]: format })),
+            displaySource: sourceId && rootPath ? { rootPath, flowExecutionId: detail.id, nodeId: sourceId } : undefined,
+          } }
+        }
         if (node.type === 'request') {
           const requestId = node.data.requestId
           return {
@@ -73,16 +88,17 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables, roo
         if (node.type === 'block') return { ...node, data: { ...node.data, visited, readOnly: true } }
         return { ...node, data: { visited } }
       }),
-    [nodeStates, replayed, collections, environmentVariables],
+    [nodeStates, replayed, collections, environmentVariables, terminalIds, displayFormats, rootPath, detail.id],
   )
 
+  const routes = useMemo(() => flowEdgeRoutes(flowLayoutModel(nodes, toFlowEdges(edgeStates))), [nodes, edgeStates])
   const edges = useMemo<FlowEdgeType[]>(
     () =>
-      toFlowEdges(edgeStates).map((edge) => ({
+      toFlowEdges(edgeStates).map((edge, index) => ({
         ...edge,
-        data: { onDelete: () => {}, active: false, traversed: replayed.traversedEdges.has(edge.id), hovered: false },
+        data: { onDelete: () => {}, active: false, traversed: replayed.traversedEdges.has(edge.id), hovered: false, ...routes[index] },
       })),
-    [edgeStates, replayed.traversedEdges],
+    [edgeStates, replayed.traversedEdges, routes],
   )
 
   const nodeInfo = useMemo<Record<string, RunLogNodeInfo>>(() => {
@@ -111,7 +127,7 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables, roo
   }, [nodeStates, collections, t])
 
   return (
-    <div className="flow-canvas-shell flow-studio">
+    <div className="flow-canvas-shell flow-studio" style={flowGeometryStyle}>
       <div className="flow-canvas">
         <ReactFlow
           nodes={nodes}
@@ -122,13 +138,14 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables, roo
           nodesConnectable={false}
           elementsSelectable={false}
           fitView
+          fitViewOptions={{ maxZoom: 1 }}
           onInit={(instance) => {
             instanceRef.current = instance
           }}
           onMoveEnd={(_event, viewport) => snapViewportToWholePixels(instanceRef.current, viewport)}
           proOptions={{ hideAttribution: true }}
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1.5} />
+          <Background variant={BackgroundVariant.Dots} gap={G.grid} size={1} />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>

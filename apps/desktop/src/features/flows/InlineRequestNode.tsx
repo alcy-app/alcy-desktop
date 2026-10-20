@@ -1,59 +1,16 @@
 import type { NodeProps } from '@xyflow/react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { describeVariable } from '../request-workbench/template-highlight'
-import { FlowNodeCard } from './FlowNodeCard'
-import { NodeReferenceMeta, RequestMethodBadge } from './RequestNode'
+import { FlowRequestCard } from './FlowRequestCard'
+import { RequestMethodBadge } from './RequestNode'
 import type { SimpleFlowNodeType } from './simple-node-types'
 import { UrlPreview } from './UrlPreview'
 
-/** Requisição avulsa (spec 0086): a requisição inteira fica no flow e é
- * editada numa aba do workbench — clicar na URL abre essa aba. Mesmas saídas
- * `success`/`failure` do `RequestNode`. */
-export function InlineRequestNode({ id, data }: NodeProps<SimpleFlowNodeType>) {
+/** Inline requests use the same compact overview as collection requests. */
+export function InlineRequestNode({ data }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
-  const { config } = data
-  if (config.kind !== 'inlineRequest') return null
-  const { request } = config
-
-  return (
-    <FlowNodeCard
-      kind="inlineRequest"
-      title={request.name || t('common.unnamed')}
-      titleBadge={<RequestMethodBadge request={request} />}
-      runStatus={data.runStatus}
-      visited={data.visited}
-      readOnly={data.readOnly}
-      outputs={[
-        { id: 'success', label: t('flows.canvas.requestSuccessLabel'), variant: 'positive' },
-        { id: 'failure', label: t('flows.canvas.requestFailureLabel'), variant: 'negative' },
-      ]}
-      onOpenSettings={data.onOpenSettings}
-      meta={<NodeReferenceMeta id={id} />}
-      onDuplicate={data.onDuplicate}
-      onDelete={data.onDelete}
-    >
-      <button
-        type="button"
-        className="flow-node-url nodrag"
-        aria-label={t('flows.canvas.editInlineRequestAria')}
-        disabled={data.readOnly || !data.onEditRequest}
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation()
-          data.onEditRequest?.()
-        }}
-      >
-        {request.content.endpointUrl ? (
-          <UrlPreview
-            template={request.content.endpointUrl}
-            describe={(name) =>
-              name.startsWith('nodes.') ? t('flows.canvas.urlNodeVariableHint') : describeVariable(t, name, data.environmentVariables ?? [])
-            }
-          />
-        ) : (
-          <span className="flow-node-placeholder">{t('flows.canvas.inlineRequestEmptyUrl')}</span>
-        )}
-      </button>
-    </FlowNodeCard>
-  )
+  if (data.config.kind !== 'inlineRequest') return null
+  const { request } = data.config
+  const summary = <><RequestMethodBadge request={request} /><span><UrlPreview template={request.content.endpointUrl || t('flows.canvas.inlineRequestEmptyUrl')} describe={(name) => name.startsWith('nodes.') ? t('flows.canvas.urlNodeVariableHint') : describeVariable(t, name, data.environmentVariables ?? [])} /></span></>
+  return <FlowRequestCard kind="inlineRequest" request={request} runStatus={data.runStatus} visited={data.visited} readOnly={data.readOnly} onOpenSettings={data.onOpenSettings} onDuplicate={data.onDuplicate} onDelete={data.onDelete}>{data.readOnly ? <span className="flow-node-request-summary">{summary}</span> : <button type="button" className="flow-node-request-summary flow-node-request-picker nodrag nopan" title={request.content.endpointUrl} aria-label={t('flows.canvas.openNodeSettingsAria')} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); (data.onEditRequest ?? data.onOpenSettings)() }}>{summary}</button>}</FlowRequestCard>
 }

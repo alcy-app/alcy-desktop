@@ -15,6 +15,20 @@ export function isSimpleFlowNode(node: FlowNode): node is SimpleFlowNodeType {
   return isSimpleNodeKind(node.type)
 }
 
+/** Every connected leaf is an endpoint, including the leaves of separate branches. */
+export function terminalFlowNodeIds(nodes: readonly { id: string; type?: string }[], edges: readonly { source: string; target: string }[]): Set<string> {
+  const eligible = new Set(nodes.filter((node) => node.type !== 'note' && node.type !== 'start').map((node) => node.id))
+  const known = new Set(nodes.filter((node) => node.type !== 'note').map((node) => node.id))
+  const incoming = new Set<string>()
+  const outgoing = new Set<string>()
+  for (const edge of edges) {
+    if (!known.has(edge.source) || !known.has(edge.target)) continue
+    incoming.add(edge.target)
+    outgoing.add(edge.source)
+  }
+  return new Set([...eligible].filter((id) => incoming.has(id) && !outgoing.has(id)))
+}
+
 export function toFlowNodes(nodes: FlowNodeState[]): FlowNode[] {
   return nodes.map((node): FlowNode => {
     if (isSimpleNode(node)) return simpleFlowNode(node.id, node.position, simpleNodeConfig(node))
@@ -87,8 +101,7 @@ export function toFlowEdges(edges: FlowEdgeState[]): Edge[] {
 }
 
 
-/** Cor de cada ramo (spec 0087) — a mesma das saídas no rodapé do cartão:
- * verdadeiro/sucesso verde, falha vermelho, corpo do loop âmbar. */
+/** Branch marker colors: success is green, failure is red, and loop bodies are amber (spec 0087). */
 const BRANCH_EDGE_COLOR: Record<FlowSourceHandle, string> = {
   true: 'var(--success)',
   success: 'var(--success)',
@@ -102,9 +115,7 @@ const BRANCH_EDGE_COLOR: Record<FlowSourceHandle, string> = {
   body: 'var(--warning)',
 }
 
-/** Seta da edge na cor do ramo de onde ela sai. A cor vai inline no marker
- * (o xyflow não pinta a seta pela classe da edge), então precisa ser uma
- * variável CSS, não um valor fixo, para acompanhar o tema. */
+/** React Flow markers need inline CSS variables to follow the theme; edge classes do not color their arrows. */
 export function edgeMarker(sourceHandle: string | null | undefined): EdgeMarker {
   return {
     type: MarkerType.ArrowClosed,
@@ -112,11 +123,7 @@ export function edgeMarker(sourceHandle: string | null | undefined): EdgeMarker 
   }
 }
 
-/** Arredonda o deslocamento do canvas para pixels inteiros ao fim de cada
- * pan/zoom (inclusive o `fitView` inicial). O xyflow não arredonda o
- * `translate` do viewport, e com meio pixel o WebKitGTK desenha os nodes
- * borrados. Depois de arredondado, o próximo fim de movimento já chega
- * inteiro, então não entra em laço. */
+/** Round viewport offsets after pan, zoom and initial fitView to prevent blurry fractional-pixel rendering in WebKitGTK. Whole-pixel offsets avoid a feedback loop. */
 export function snapViewportToWholePixels(instance: Pick<ReactFlowInstance, 'setViewport'> | null, viewport: Viewport) {
   const x = Math.round(viewport.x)
   const y = Math.round(viewport.y)

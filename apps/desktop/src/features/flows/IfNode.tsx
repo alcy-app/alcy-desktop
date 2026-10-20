@@ -3,7 +3,6 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { ConditionView } from './ConditionView'
 import type { ConditionState } from './flows.types'
 import { FlowNodeCard } from './FlowNodeCard'
-import { QuickNodeEdit } from './QuickNodeEdit'
 import type { NodeRunStatus } from './use-flow-run'
 
 export type IfNodeType = Node<
@@ -20,8 +19,8 @@ export type IfNodeType = Node<
   'if'
 >
 
-/** If nodes expose true/false outputs and preserve the selected branch in edge handles (spec 0047). Conditions are editable in the inspector and quick editor. */
-export function IfNode({ data, id }: NodeProps<IfNodeType>) {
+/** If nodes expose true/false outputs and preserve the selected branch in edge handles (spec 0047). Conditions are editable in the inspector. */
+export function IfNode({ data }: NodeProps<IfNodeType>) {
   const { t } = useLanguage()
 
   return (
@@ -31,7 +30,6 @@ export function IfNode({ data, id }: NodeProps<IfNodeType>) {
       visited={data.visited}
       readOnly={data.readOnly}
       onOpenSettings={data.onOpenSettings}
-      headerActions={!data.readOnly && data.onConditionChange && <QuickNodeEdit nodeId={id} config={{ kind: 'if', condition: data.condition }} onChange={(config) => { if (config.kind === 'if') data.onConditionChange?.(config.condition) }} />}
       onDuplicate={data.onDuplicate}
       onDelete={data.onDelete}
       outputs={[

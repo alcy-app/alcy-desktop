@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ScopedVariableChange } from '../../bindings/execute-graphql-request'
-import { addEdge, Background, BackgroundVariant, Controls, Panel, ReactFlow, useEdgesState, useNodesState } from '@xyflow/react'
+import { addEdge, Background, BackgroundVariant, ConnectionLineType, Controls, Panel, ReactFlow, useEdgesState, useNodesState } from '@xyflow/react'
 import type { Connection, Edge, FinalConnectionState, ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
@@ -14,7 +14,8 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { Badge } from '../../shared/ui/Badge'
 import { Button } from '../../shared/ui/Button'
 import { Modal } from '../../shared/ui/Modal'
-import { PlusIcon, Spinner } from '../../shared/ui/icons'
+import { PlusIcon, RefreshIcon, Spinner } from '../../shared/ui/icons'
+import { IconButton } from '../../shared/ui/IconButton'
 import { useToast } from '../../shared/ui/use-toast'
 import { hasOpenModal } from '../../shared/ui/open-modals'
 import { comboFromEvent, comboFromMouseEvent, isShortcutFor } from '../../shared/shortcuts/shortcuts'
@@ -31,7 +32,7 @@ import { RunLogPanel } from './RunLogPanel'
 import type { RunLogNodeInfo } from './RunLogPanel'
 import { NodeInspectorPanel } from './NodeInspectorPanel'
 import type { AncestorRequestRef, InspectorSelection } from './NodeInspectorPanel'
-import { edgeMarker, isSimpleFlowNode, snapViewportToWholePixels, toFlowEdges, toFlowNodes } from './flow-canvas-mapping'
+import { edgeMarker, isSimpleFlowNode, snapViewportToWholePixels, terminalFlowNodeIds, toFlowEdges, toFlowNodes } from './flow-canvas-mapping'
 import type { FlowNode } from './flow-canvas-mapping'
 import { edgeTypes, nodeTypes } from './flow-node-types'
 import { buildRequestChain, startWithoutOutput } from './request-chain'
@@ -55,6 +56,13 @@ import type { FlowVariableDefinition } from './FlowDataBrowser'
 import { availableNodePosition } from './new-node-position'
 import type { FlowDatasetSource } from './FlowDatasetFields'
 import { availableNodeIdentifier, identifierError, renameGraphNode, renameNodeReferences } from './node-identifiers'
+import { FLOW_GEOMETRY as G, flowGeometryStyle, flowNodeSize } from './flow-geometry'
+import { flowLayoutModel } from './flow-layout-model'
+import { branchOrder, flowEdgeRoutes } from './flow-layout'
+import { useFlowLayout } from './use-flow-layout'
+import { isDisplayFormat } from './display-format'
+import type { DisplayFormat } from './display-format'
+import { displayBodyNodeId } from './display-output-source'
 
 
 const DEFAULT_CONDITION: ConditionState = { left: '', operator: 'equals', right: '' }
@@ -281,17 +289,26 @@ export function FlowCanvas({
   const [runAfterSave, setRunAfterSave] = useState(false)
   const [savingDrafts, setSavingDrafts] = useState(false)
   const [executedSignature, setExecutedSignature] = useState<string | null>(null)
-  const [displayFormats, setDisplayFormats] = useState<Record<string, 'auto' | 'json' | 'text'>>(() => {
+  const [displayFormats, setDisplayFormats] = useState<Record<string, DisplayFormat>>(() => {
     try {
       const saved: unknown = JSON.parse(localStorage.getItem(`alcy:flows:${flow.id}:display-formats`) ?? '{}')
       if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {}
-      return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, 'auto' | 'json' | 'text'] => ['auto', 'json', 'text'].includes(String(entry[1]))))
+      return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, DisplayFormat] => isDisplayFormat(entry[1])))
     } catch { return {} }
   })
+  const setDisplayFormat = useCallback((nodeId: string, format: DisplayFormat) => {
+    setDisplayFormats((current) => ({ ...current, [nodeId]: format }))
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem(`alcy:flows:${flow.id}:display-formats`, JSON.stringify(displayFormats)) } catch { /* Preferences remain usable in memory. */ }
+  }, [displayFormats, flow.id])
   const [loadPreview, setLoadPreview] = useState<LoadFlowPreviewDto | null>(null)
   const [loadingLoadPreview, setLoadingLoadPreview] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const reactFlowInstanceRef = useRef<ReactFlowInstance<FlowNode, FlowEdgeType> | null>(null)
+  const organization = useFlowLayout(nodes, edges, setNodes,
+    () => { void reactFlowInstanceRef.current?.fitView({ nodes: nodes.filter((node) => node.type !== 'note').map(({ id }) => ({ id })), maxZoom: 1, padding: 0.2 }) },
+    () => showToast(t('flows.canvas.organizeFailed'), 'error'))
 
   // Resolve each mock block against its Start mock node (spec 0121).
   const simpleConfigs = useMemo(
@@ -514,14 +531,17 @@ export function FlowCanvas({
   )
 
   // Resolve collection requests live so renames and content edits appear immediately. Dragging updates canonical nodes; execution decorations belong only to this derived view.
+  const terminalIds = useMemo(() => terminalFlowNodeIds(nodes, edges), [nodes, edges])
   const renderNodes = useMemo<FlowNode[]>(
     () =>
-      nodes.map((node): FlowNode => {
+      nodes.map((canonical): FlowNode => {
+        const node = { ...canonical, className: [canonical.className, terminalIds.has(canonical.id) ? 'flow-terminal-node' : ''].filter(Boolean).join(' ') }
         const onDelete = () => deleteNode(node.id)
         const onOpenSettings = () => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }
         const onDuplicate = () => duplicateNode(node.id)
         const visited = node.type === 'start' ? traversedEdges.size > 0 : isVisitedStatus(statuses[node.id])
         if (isSimpleFlowNode(node)) {
+          const sourceId = node.data.config.kind === 'display' ? displayBodyNodeId(node.data.config.template) : null
           return {
             ...node,
             data: {
@@ -533,6 +553,8 @@ export function FlowCanvas({
               onDuplicate,
               onConfigChange: (config: SimpleNodeKindState) => setConfigForNode(node.id, config),
               displayFormat: displayFormats[node.id] ?? 'auto',
+              onDisplayFormatChange: (format: DisplayFormat) => setDisplayFormat(node.id, format),
+              displaySource: sourceId && flowExecutionId ? { rootPath, flowExecutionId, nodeId: snapshotNodeIds[sourceId] ?? sourceId, version: outputVersions[sourceId] ?? 0 } : undefined,
               ...(node.data.config.kind === 'inlineRequest'
                 ? { onEditRequest: () => editInlineRequest(node.id), environmentVariables }
                 : {}),
@@ -594,6 +616,12 @@ export function FlowCanvas({
       collections,
       environmentVariables,
       displayFormats,
+      terminalIds,
+      setDisplayFormat,
+      rootPath,
+      flowExecutionId,
+      snapshotNodeIds,
+      outputVersions,
       setConditionForNode,
       statuses,
       traversedEdges,
@@ -669,18 +697,20 @@ export function FlowCanvas({
   )
 
   // An edge is active while its target request node is executing.
+  const edgeRoutes = useMemo(() => flowEdgeRoutes(flowLayoutModel(nodes, edges)), [nodes, edges])
   const renderEdges = useMemo<FlowEdgeType[]>(
     () =>
-      edges.map((edge) => ({
+      edges.map((edge, index) => ({
         ...edge,
         data: {
           onDelete: () => removeEdge(edge.id),
           active: statuses[edge.target]?.status === 'running',
           traversed: traversedEdges.has(edge.id),
           hovered: edge.id === hoveredEdgeId,
+          ...edgeRoutes[index],
         },
       })),
-    [edges, statuses, traversedEdges, hoveredEdgeId, removeEdge],
+    [edges, statuses, traversedEdges, hoveredEdgeId, removeEdge, edgeRoutes],
   )
 
   // Use React Flow's edge hover events instead of a separate invisible path; see FlowEdge.tsx.
@@ -808,6 +838,12 @@ export function FlowCanvas({
       const id = availableNodeIdentifier(findRequest(collections, requestId)?.name ?? 'request', reserved)
       reserved.push({ id })
       return id
+    })
+    const occupied = flowLayoutModel(currentNodes, currentEdges).nodes.map((node) => ({ position: node.position, measured: { width: node.width, height: node.height } }))
+    chain.nodes = chain.nodes.map((node) => {
+      const position = availableNodePosition(node.position, occupied)
+      occupied.push({ position, measured: flowNodeSize('request', 2) })
+      return { ...node, position }
     })
     setNodes((current) => [...current, ...toFlowNodes(chain.nodes)])
     setEdges((current) => [...current, ...toFlowEdges(chain.edges)])
@@ -987,12 +1023,13 @@ export function FlowCanvas({
 
   // Honor explicit drop positions. Otherwise place nodes to the right of their source with a branch offset, or at the visible center.
   const positionForNewNode = (sourceNodeId: string | null, sourceHandle?: FlowSourceHandle): { x: number; y: number } => {
-    if (paletteTrigger?.dropPosition) return paletteTrigger.dropPosition
+    if (paletteTrigger?.dropPosition) return availableNodePosition(paletteTrigger.dropPosition, nodes)
     if (sourceNodeId) {
       const source = nodes.find((node) => node.id === sourceNodeId)
       if (source) {
-        const yOffset = sourceHandle === 'true' || sourceHandle === 'success' || sourceHandle === 'loop' ? -110 : sourceHandle ? 110 : 0
-        return availableNodePosition({ x: source.position.x + (source.measured?.width ?? 288) + 96, y: source.position.y + yOffset }, nodes)
+        const sourceHeight = source.measured?.height ?? 128
+        const yOffset = branchOrder(sourceHandle) * (sourceHeight + G.rowGap)
+        return availableNodePosition({ x: source.position.x + (source.measured?.width ?? (source.type === 'start' ? G.compactWidth : G.width)) + G.columnGap, y: source.position.y + yOffset }, nodes)
       }
     }
     return availableNodePosition(newNodePosition(), nodes)
@@ -1100,7 +1137,7 @@ export function FlowCanvas({
   }
 
   return (
-    <FlowMappingProvider rootPath={rootPath} flowExecutionId={flowExecutionId} onTargetNodeChange={setMappingNodeId} scopeKey={mappingNodeId ?? selectedNodeId ?? ''} sources={mappingSources.filter((source) => source.output !== 'mockServer').map((source) => ({ nodeId: source.nodeId, snapshotNodeId: snapshotNodeIds[source.nodeId], label: source.label, scope: source.output === 'mockRequest' ? 'request' : 'response' }))} references={[...mappingVariables.map((variable) => `{{${variable.name}}}`), ...mappingDefinitions.map((name) => `{{${name}}}`), ...mappingSources.flatMap((source) => source.output === 'mockServer' ? [`{{nodes.${source.nodeId}.server.url}}`] : (source.output === 'mockRequest' ? ['request.body', 'request.method', 'request.path'] : ['response.body', 'response.status', 'response.headers']).map((path) => `{{nodes.${source.nodeId}.${path}}}`))]} onInsert={() => setInspectorTab('configuration')}><div className="flow-canvas-shell flow-studio">
+    <FlowMappingProvider rootPath={rootPath} flowExecutionId={flowExecutionId} onTargetNodeChange={setMappingNodeId} scopeKey={mappingNodeId ?? selectedNodeId ?? ''} sources={mappingSources.filter((source) => source.output !== 'mockServer').map((source) => ({ nodeId: source.nodeId, snapshotNodeId: snapshotNodeIds[source.nodeId], label: source.label, scope: source.output === 'mockRequest' ? 'request' : 'response' }))} references={[...mappingVariables.map((variable) => `{{${variable.name}}}`), ...mappingDefinitions.map((name) => `{{${name}}}`), ...mappingSources.flatMap((source) => source.output === 'mockServer' ? [`{{nodes.${source.nodeId}.server.url}}`] : (source.output === 'mockRequest' ? ['request.body', 'request.method', 'request.path'] : ['response.body', 'response.status', 'response.headers']).map((path) => `{{nodes.${source.nodeId}.${path}}}`))]} onInsert={() => setInspectorTab('configuration')}><div className="flow-canvas-shell flow-studio" style={flowGeometryStyle}>
     <div
       className="flow-canvas"
       ref={containerRef}
@@ -1112,6 +1149,12 @@ export function FlowCanvas({
       onMouseLeave={() => {
         lastPointerRef.current = null
       }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' && event.target instanceof HTMLElement && event.target.matches('.react-flow__node')) {
+          const id = event.target.dataset.id
+          if (id) { event.preventDefault(); setSelectedNodeId(id); setMappingNodeId(id); setInspectorTab('configuration') }
+        }
+      }}
       onAuxClick={onCanvasAuxClick}
     >
       <ReactFlow
@@ -1119,8 +1162,10 @@ export function FlowCanvas({
         edges={renderEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        connectionLineType={ConnectionLineType.SmoothStep}
         onNodesChange={onNodesChange}
         onNodeDoubleClick={(_event, node) => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }}
+        onNodeClick={(_event, node) => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
@@ -1134,9 +1179,12 @@ export function FlowCanvas({
           reactFlowInstanceRef.current = instance
         }}
         fitView
+        snapToGrid
+        snapGrid={[G.grid, G.grid]}
+        fitViewOptions={{ maxZoom: 1 }}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1.5} />
+        <Background variant={BackgroundVariant.Dots} gap={G.grid} size={1} />
         <Controls showInteractive={false} />
 
         <Panel position="top-left" className="flow-canvas-panel">
@@ -1153,6 +1201,8 @@ export function FlowCanvas({
             <PlusIcon size={13} />
             <span>{t('flows.canvas.addBlocksMenuLabel')}</span>
           </button>
+          <Button variant="ghost" size="sm" onClick={organization.organizing ? organization.cancel : organization.organize} disabled={nodes.every((node) => node.type === 'note')}>{t(organization.organizing ? 'flows.canvas.cancelOrganization' : 'flows.canvas.organize')}</Button>
+          {organization.canUndo && <IconButton icon={<RefreshIcon size={14} />} label={t('flows.canvas.undoOrganization')} onClick={organization.restore} />}
         </Panel>
 
         <Panel position="top-right" className="flow-canvas-run-actions">
@@ -1208,7 +1258,7 @@ export function FlowCanvas({
           definitions={definitions}
           outdated={executedSignature !== null && executedSignature !== graphSignature}
           displayFormat={displayFormats[selection.id] ?? 'auto'}
-          onDisplayFormatChange={(format) => { const next = { ...displayFormats, [selection.id]: format }; setDisplayFormats(next); try { localStorage.setItem(`alcy:flows:${flow.id}:display-formats`, JSON.stringify(next)) } catch { /* Presentation preferences remain usable in memory. */ } }}
+          onDisplayFormatChange={(format) => setDisplayFormat(selection.id, format)}
           requestEditor={selectedRequest && onRequestDraftChange ? <FlowRequestEditor key={selection.kind === 'request' ? selectedRequest.id : selection.id} rootPath={rootPath} content={requestDrafts[selection.id] ?? selectedRequest.content} variables={effectiveVariables} dirty={Boolean(requestDrafts[selection.id])} busy={requestSaving} targetLabel={selection.kind === 'request' ? t('flows.studio.saveTargetLinked', { path: findRequestPath(collections, selectedRequest.id)?.join(' / ') ?? selectedRequest.name }) : t('flows.studio.saveTargetInline')} onChange={(content) => onRequestDraftChange(selection.id, selectedRequest, content, selection.kind !== 'request')} onSave={() => saveDrafts([selection.id])} onDiscard={() => onDiscardRequestDrafts?.([selection.id])} /> : undefined}
           selection={selection}
           ancestorRequests={ancestorRequests}

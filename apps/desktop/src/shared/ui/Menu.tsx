@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, type FocusEvent, type ReactNode } from 'react'
+import { useContext, useLayoutEffect, useRef, type FocusEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckIcon, EllipsisIcon } from './icons'
 import { useTooltip } from './use-tooltip'
+import { OverlayMotionContext } from './overlay-motion-context'
 import './buttons.css'
 import './menu.css'
 
@@ -43,6 +44,7 @@ export function OptionsMenu({
 }: OptionsMenuProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const animateOverlay = useContext(OverlayMotionContext)
 
   useLayoutEffect(() => {
     if (!isOpen || !menuPortal) return
@@ -121,7 +123,7 @@ export function OptionsMenu({
   const menu = isOpen ? (
     <div
       ref={menuRef}
-      className={['ui-menu', menuClassName, menuPortal ? 'ui-menu--portal' : null].filter(Boolean).join(' ')}
+      className={['ui-menu', menuClassName, menuPortal ? 'ui-menu--portal' : null, !animateOverlay ? 'ui-menu--static' : null].filter(Boolean).join(' ')}
       role="menu"
       aria-label={label}
       // Clicking a non-interactive area keeps focus inside the menu.

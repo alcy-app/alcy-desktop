@@ -17,14 +17,14 @@ function renderNote(data: Partial<SimpleNodeData> = {}) {
 }
 
 describe('NoteNode', () => {
-  it('mostra o texto sem campo editável até o clique duplo', () => {
+  it('shows text without an editable field until double-clicked', () => {
     renderNote()
 
     expect(screen.getByText('Lembrete')).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
-  it('edita com clique duplo e sai da edição com Esc', () => {
+  it('edits on double-click and exits editing with Escape', () => {
     const onConfigChange = vi.fn()
     renderNote({ onConfigChange })
 
@@ -37,10 +37,29 @@ describe('NoteNode', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
-  it('não entra em edição no modo somente leitura', () => {
+  it('does not enter editing or show actions in read-only mode', () => {
     renderNote({ readOnly: true })
 
     fireEvent.doubleClick(screen.getByText('Lembrete'))
     expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Ações do bloco' })).toBeNull()
+  })
+
+  it('uses the same three-dot actions menu as operation nodes', () => {
+    const onDuplicate = vi.fn()
+    const onDelete = vi.fn()
+    const { container } = renderNote({ onDuplicate, onDelete })
+    const trigger = screen.getByRole('button', { name: 'Ações do bloco' })
+    expect(container.querySelector('.flow-node-toolbar')).toBeNull()
+    fireEvent.doubleClick(trigger)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menu')).toHaveClass('ui-menu--static')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicar este node' }))
+    expect(onDuplicate).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Excluir este node' }))
+    expect(onDelete).toHaveBeenCalledOnce()
   })
 })

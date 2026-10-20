@@ -37,7 +37,7 @@ describe('flow data mapping', () => {
   it('positions new cards without overlapping existing measured nodes', () => {
     const position = { x: 360, y: 0 }
     const next = availableNodePosition(position, [{ position: { x: 360, y: 0 }, measured: { width: 300, height: 400 } }, { position: { x: 360, y: 500 }, measured: { width: 300, height: 200 } }])
-    expect(next).toEqual({ x: 360, y: 732 })
+    expect(next).toEqual({ x: 368, y: 736 })
     expect(position).toEqual({ x: 360, y: 0 })
   })
   it('converts JSON pointers using execution syntax and rejects unrepresentable keys', () => {

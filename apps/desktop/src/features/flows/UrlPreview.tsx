@@ -2,12 +2,11 @@ import { parseTemplate } from '../request-workbench/template-highlight'
 
 interface UrlPreviewProps {
   template: string
-  /** Texto do tooltip de uma variável `{{nome}}` da URL. */
+  /** Tooltip for a URL variable placeholder. */
   describe: (name: string) => string
 }
 
-/** URL com os trechos `{{variável}}` destacados; passar o mouse sobre um deles
- * mostra o valor (`title` nativo, para não ser cortado pelo truncamento). */
+/** Highlight URL placeholders with a native tooltip that survives truncation. */
 export function UrlPreview({ template, describe }: UrlPreviewProps) {
   return (
     <>

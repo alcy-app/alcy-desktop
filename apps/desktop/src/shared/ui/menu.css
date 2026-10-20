@@ -19,6 +19,12 @@
   outline: none;
 }
 
+.ui-menu--static,
+.ui-menu--static .ui-menu-item {
+  animation: none;
+  transition: none;
+}
+
 .ui-menu.ui-menu--portal,
 .ui-menu.ui-menu--portal.ui-menu--top {
   position: fixed;

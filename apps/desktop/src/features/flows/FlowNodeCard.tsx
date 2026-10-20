@@ -1,156 +1,77 @@
 import { Handle, Position } from '@xyflow/react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
-import { Badge } from '../../shared/ui/Badge'
-import { IconButton } from '../../shared/ui/IconButton'
-import { AlertIcon, GearIcon } from '../../shared/ui/icons'
+import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
+import { AlertIcon } from '../../shared/ui/icons'
+import { OverlayMotionContext } from '../../shared/ui/overlay-motion-context'
 import type { FlowSourceHandle } from './flows.types'
 import { NODE_KIND_APPEARANCE } from './node-kind-appearance'
 import type { FlowNodeKind } from './node-kind-appearance'
 import { describeRunStatus, runStateClass } from './node-run-status'
-import { NodeToolbar } from './NodeToolbar'
 import type { NodeRunStatus } from './use-flow-run'
+import { FlowNodeSurface } from './FlowNodeSurface'
+import { flowNodeSize } from './flow-geometry'
 
-/** Cor da saída no rodapé: verde (verdadeiro/sucesso), vermelho (falha),
- * âmbar (corpo do loop) ou neutro (falso/fim). */
 export type NodeOutputVariant = 'positive' | 'negative' | 'loop' | 'neutral'
-
-export interface NodeOutput {
-  id: FlowSourceHandle
-  label: string
-  variant: NodeOutputVariant
-}
+export interface NodeOutput { id: FlowSourceHandle; label: string; variant: NodeOutputVariant; detail?: string }
 
 interface FlowNodeCardProps {
   kind: FlowNodeKind
-  /** Padrão: o título do tipo (`NODE_KIND_APPEARANCE`). */
   title?: string
-  /** Padrão: a descrição do tipo. */
   subtitle?: string
-  /** Antes do título — ex.: o método HTTP de uma requisição. */
   titleBadge?: ReactNode
+  headerControls?: ReactNode
   runStatus?: NodeRunStatus
   visited?: boolean
   readOnly?: boolean
-  /** Cartão estreito, para nodes sem conteúdo (Start, Break, Continue). */
   compact?: boolean
   hasInput?: boolean
-  /** `'single'`: uma saída sem rótulo; lista: saídas nomeadas no rodapé; `'none'`: sem saída. */
   outputs?: 'single' | 'none' | NodeOutput[]
   onOpenSettings?: () => void
-  /** Ações extras no cabeçalho, antes da engrenagem. */
-  headerActions?: ReactNode
-  /** Linha entre o corpo e as saídas — ex.: id do node e copiar referência. */
-  meta?: ReactNode
   onDuplicate?: () => void
   onDelete?: () => void
-  /** Modificadores extras do cartão (ex.: requisição não configurada). */
   className?: string
   children?: ReactNode
 }
 
-/** Moldura de todo node executável do canvas (spec 0087): cabeçalho com
- * ícone da categoria, título, subtítulo e status do run; corpo com o
- * conteúdo do tipo; faixa de erro; saídas nomeadas no rodapé. A cor vem de
- * `--node-tone`, definido pela classe `flow-node--tone-*`. */
-export function FlowNodeCard({
-  kind,
-  title,
-  subtitle,
-  titleBadge,
-  runStatus = { status: 'idle' },
-  visited,
-  readOnly,
-  compact,
-  hasInput = true,
-  outputs = 'single',
-  onOpenSettings,
-  headerActions,
-  meta,
-  onDuplicate,
-  onDelete,
-  className,
-  children,
-}: FlowNodeCardProps) {
+/** Shared chassis with an overview body or a scrollable Display viewport. */
+export function FlowNodeCard({ kind, title, subtitle, titleBadge, headerControls, runStatus = { status: 'idle' }, visited, readOnly, compact, hasInput = true, outputs = 'single', onOpenSettings, onDuplicate, onDelete, className, children }: FlowNodeCardProps) {
   const { t } = useLanguage()
+  const [menuOpen, setMenuOpen] = useState(false)
   const appearance = NODE_KIND_APPEARANCE[kind]
   const { Icon } = appearance
   const chip = describeRunStatus(runStatus, t)
   const resolvedTitle = title ?? t(appearance.titleKey)
-
-  const classes = [
-    'flow-node',
-    `flow-node--${kind}`,
-    `flow-node--tone-${appearance.tone}`,
-    compact ? 'flow-node--compact' : '',
-    runStateClass(runStatus, visited),
-    className ?? '',
-  ]
-    .filter(Boolean)
-    .join(' ')
-
-  return (
-    <div className={classes}>
-      {hasInput && <Handle type="target" position={Position.Left} className="flow-node-handle flow-node-handle--input" />}
-
-      <div className="flow-node-header">
-        <span className="flow-node-icon" aria-hidden="true">
-          <Icon size={15} />
-        </span>
-        <div className="flow-node-heading">
-          <div className="flow-node-title-row">
-            {titleBadge}
-            <span className="flow-node-title" title={resolvedTitle}>
-              {resolvedTitle}
-            </span>
-          </div>
-          <span className="flow-node-subtitle">{subtitle ?? t(appearance.descriptionKey)}</span>
+  const summary = children === false || children === null || children === undefined ? subtitle ?? t(appearance.descriptionKey) : children
+  const classes = ['flow-node', `flow-node--${kind}`, compact ? 'flow-node--compact' : '', runStateClass(runStatus, visited), className ?? ''].filter(Boolean).join(' ')
+  const inputHandle = hasInput && <Handle type="target" position={Position.Left} className="flow-node-handle flow-node-handle--input" />
+  const singleHandle = outputs === 'single' && <Handle type="source" position={Position.Right} className="flow-node-handle flow-node-handle--output flow-node-handle--header" />
+  const handles = <>{inputHandle}{singleHandle}{Array.isArray(outputs) && outputs.map((output, index) => <Handle key={output.id} type="source" position={Position.Right} id={output.id} className="flow-node-handle flow-node-handle--output" style={{ top: `calc(var(--flow-node-header-height, 40px) + max(var(--flow-node-summary-height, 40px), calc(32px * var(--text-scale) + 8px)) + 1px + ${index + 0.5} * var(--flow-node-output-height, 24px))` }} />)}</>
+  return <OverlayMotionContext value={false}><FlowNodeSurface size={flowNodeSize(kind, Array.isArray(outputs) ? outputs.length : 0)} className={kind === 'start' ? 'flow-node-chassis--start' : ''} handles={handles}><div className={classes}>
+    {hasInput && <span aria-hidden="true" className="flow-node-visual-handle flow-node-handle flow-node-handle--input" />}
+    <div className="flow-node-header">
+      <span className="flow-node-icon" aria-hidden="true"><Icon size={16} /></span>
+      <div className="flow-node-heading">
+        <div className="flow-node-title-row">
+          {titleBadge}
+          {!readOnly && onOpenSettings ? <button type="button" className="flow-node-title flow-node-title-button nodrag nopan" title={resolvedTitle} aria-label={t('flows.canvas.openNodeSettingsAria')} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpenSettings() }}>{resolvedTitle}</button> : <span className="flow-node-title" title={resolvedTitle}>{resolvedTitle}</span>}
         </div>
-        {(chip || headerActions || (onOpenSettings && !readOnly)) && (
-          <div className="flow-node-header-actions">
-            {chip && (
-              <Badge tone={chip.tone} className="flow-node-run-chip" title={chip.detail ? `${chip.label} · ${chip.detail}` : chip.label}>
-                <span className="flow-node-run-chip-label">{chip.label}</span>
-                {chip.detail && <span className="flow-node-run-chip-detail">{chip.detail}</span>}
-              </Badge>
-            )}
-            {headerActions}
-            {onOpenSettings && !readOnly && (
-              <span className="nodrag">
-                <IconButton icon={<GearIcon size={12} />} label={t('flows.canvas.openNodeSettingsAria')} size="sm" onClick={onOpenSettings} />
-              </span>
-            )}
-          </div>
-        )}
+        {compact && kind === 'start' && <span className="flow-node-subtitle">{subtitle ?? t(appearance.descriptionKey)}</span>}
       </div>
-
-      {children !== undefined && children !== null && children !== false && <div className="flow-node-body">{children}</div>}
-
-      {runStatus.status === 'failed' && (
-        <div className="flow-node-error" role="status" title={runStatus.message}>
-          <AlertIcon size={12} />
-          <span className="flow-node-error-message">{runStatus.message}</span>
-        </div>
-      )}
-
-      {meta && <div className="flow-node-meta">{meta}</div>}
-
-      {Array.isArray(outputs) ? (
-        <div className="flow-node-outputs" aria-label={t('flows.canvas.nodeOutputsLabel')}>
-          {outputs.map((output) => (
-            <div key={output.id} className={`flow-node-output flow-node-output--${output.variant}`}>
-              <span className="flow-node-output-label">{output.label}</span>
-              <Handle type="source" position={Position.Right} id={output.id} className="flow-node-handle flow-node-handle--output" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        outputs === 'single' && (
-          <Handle type="source" position={Position.Right} className="flow-node-handle flow-node-handle--output flow-node-handle--header" />
-        )
-      )}
-
-      {!readOnly && onDuplicate && onDelete && <NodeToolbar onDuplicate={onDuplicate} onDelete={onDelete} />}
+      {headerControls}
+      {chip && <span className={`flow-node-run-chip flow-node-status--${chip.tone}`} title={[chip.label, chip.detail].filter(Boolean).join(' · ')}>{chip.label}</span>}
+      {!readOnly && (onDuplicate || onDelete) && <div className="nodrag nopan" onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+        <OptionsMenu label={t('flows.canvas.nodeActions')} isOpen={menuOpen} onToggle={() => setMenuOpen(!menuOpen)} onClose={() => setMenuOpen(false)} menuPortal menuPlacement="auto">
+          {onDuplicate && <MenuItem label={t('flows.canvas.duplicateNodeAria')} onSelect={() => { setMenuOpen(false); onDuplicate() }} />}
+          {onDelete && <MenuItem label={t('flows.canvas.deleteNodeAria')} danger onSelect={() => { setMenuOpen(false); onDelete() }} />}
+        </OptionsMenu>
+      </div>}
     </div>
-  )
+    {!compact && <div className="flow-node-body">
+      {runStatus.status === 'failed' ? <div className="flow-node-error" role="status" title={runStatus.message}><AlertIcon size={12} /><span className="flow-node-summary">{runStatus.message.slice(0, 240)}</span></div> : <div className="flow-node-summary">{summary}</div>}
+    </div>}
+    {Array.isArray(outputs) ? <div className="flow-node-outputs" aria-label={t('flows.canvas.nodeOutputsLabel')}>
+      {outputs.map((output) => <div key={output.id} className={`flow-node-output flow-node-output--${output.variant}`}><span className="flow-node-output-label">{output.label}</span>{output.detail && <span className="flow-node-output-detail">{output.detail}</span>}<span aria-hidden="true" className="flow-node-visual-handle flow-node-handle flow-node-handle--output" /></div>)}
+    </div> : outputs === 'single' && <span aria-hidden="true" className="flow-node-visual-handle flow-node-handle flow-node-handle--output flow-node-handle--header" />}
+  </div></FlowNodeSurface></OverlayMotionContext>
 }

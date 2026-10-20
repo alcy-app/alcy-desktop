@@ -9,6 +9,7 @@ import { requestFromDto, requestToDto } from '../request-workbench/use-collectio
 import { isFlowSourceHandle, isSimpleNode, simpleNodeConfig } from './flows.types'
 import type { FlowEdgeState, FlowNodeState, FlowState, SimpleNodeKindState } from './flows.types'
 import { buildRequestChain } from './request-chain'
+import { FLOW_GEOMETRY as G } from './flow-geometry'
 import type { RequestSummary } from '../request-workbench/collection-tree'
 import { defaultLoadNodeConfig } from './load-node-config'
 import type { MockServerDto } from '../../bindings/mock-servers'
@@ -136,8 +137,8 @@ export function createLoadFlow(
     executionKind: 'load',
     nodes: [
       ...flow.nodes,
-      { id: scenarioId, kind: 'load', loadKind: 'scenario', label: labels.scenario, config: defaultLoadNodeConfig('scenario'), position: { x: 300, y: 0 } },
-      { id: requestId, kind: 'load', loadKind: 'request', label: labels.request, config: defaultLoadNodeConfig('request'), position: { x: 660, y: -70 } },
+      { id: scenarioId, kind: 'load', loadKind: 'scenario', label: labels.scenario, config: defaultLoadNodeConfig('scenario'), position: { x: G.compactWidth + G.columnGap, y: 0 } },
+      { id: requestId, kind: 'load', loadKind: 'request', label: labels.request, config: defaultLoadNodeConfig('request'), position: { x: G.compactWidth + G.width + G.columnGap * 2, y: 0 } },
     ],
     edges: [
       { id: crypto.randomUUID(), sourceNodeId: START_NODE_ID, targetNodeId: scenarioId },
@@ -149,7 +150,7 @@ export function createLoadFlow(
 /** Create a flow that chains the selected requests after Start (spec 0095). */
 export function createFlowFromRequests(name: string, requestIds: string[]): FlowState {
   const flow = createFlow(name)
-  const chain = buildRequestChain(requestIds, { x: 360, y: 0 }, START_NODE_ID)
+  const chain = buildRequestChain(requestIds, { x: G.compactWidth + G.columnGap, y: 0 }, START_NODE_ID)
   return { ...flow, nodes: [...flow.nodes, ...chain.nodes], edges: chain.edges }
 }
 

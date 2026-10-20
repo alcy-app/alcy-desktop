@@ -45,6 +45,7 @@ function OutputRow({ entry, depth, selectedPath, onSelect, initiallyOpen = false
   const container = isContainer(entry.value)
   const kind = kindOf(entry.value)
   const selected = entry.path !== null && entry.path === selectedPath
+  const summary = summarize(entry.value)
 
   const children = container && open ? (isRoot ? childrenOfRoot(entry) : childEntries(entry.value, entry.path)) : []
 
@@ -52,18 +53,22 @@ function OutputRow({ entry, depth, selectedPath, onSelect, initiallyOpen = false
     <li role="treeitem" aria-expanded={container ? open : undefined} aria-selected={selected}>
       <button
         type="button"
+        aria-label={`${entry.key} ${summary}`}
         className={`flow-output-row${selected ? ' flow-output-row--selected' : ''}`}
         style={{ paddingLeft: `calc(var(--space-2) + ${depth} * var(--space-4))` }}
         onClick={() => {
           if (container) setOpen((current) => !current)
           if (entry.path !== null) onSelect(entry.path)
         }}
+        onKeyDown={(event) => {
+          if (container && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) { event.preventDefault(); event.stopPropagation(); setOpen(event.key === 'ArrowRight') }
+        }}
       >
         <span className="flow-output-chevron" aria-hidden="true">
           {container ? open ? <ChevronDownIcon size={11} /> : <ChevronRightIcon size={11} /> : null}
         </span>
         <span className="flow-output-key">{entry.key}</span>
-        <span className={`flow-output-value flow-output-value--${kind}`}>{summarize(entry.value)}</span>
+        <span className={`flow-output-value flow-output-value--${kind}`} title={summary}>{summary}</span>
       </button>
       {children.length > 0 && (
         <ul role="group">

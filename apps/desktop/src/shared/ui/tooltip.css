@@ -2,8 +2,7 @@
   display: inline-flex;
 }
 
-/* Botões desabilitados não recebem eventos de mouse em todos os webviews:
-   deixa o hover cair no host, que é quem dispara o tooltip. */
+/* Disabled buttons do not receive pointer events in every webview; their host triggers the tooltip. */
 .ui-tooltip-host > :disabled {
   pointer-events: none;
 }
@@ -12,8 +11,7 @@
   cursor: not-allowed;
 }
 
-/* Renderizado num portal em `document.body`; `top`/`left` vêm do
-   `useTooltip`, já presos às bordas da janela. */
+/* Fixed portal in document.body; useTooltip supplies viewport-clamped coordinates. */
 .ui-tooltip {
   position: fixed;
   top: 0;
@@ -37,6 +35,11 @@
   max-width: min(480px, calc(100vw - 16px));
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.ui-tooltip--static {
+  animation: none;
+  transition: none;
 }
 
 @keyframes ui-tooltip-in {

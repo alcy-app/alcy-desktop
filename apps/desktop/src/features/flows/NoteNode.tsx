@@ -2,33 +2,34 @@ import { useState } from 'react'
 import { NodeResizer } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import { useLanguage } from '../../shared/i18n/use-language'
-import { NodeToolbar } from './NodeToolbar'
+import { OverlayMotionContext } from '../../shared/ui/overlay-motion-context'
+import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
 import type { SimpleFlowNodeType } from './simple-node-types'
+import { FlowNodeSurface } from './FlowNodeSurface'
 
 const MIN_WIDTH = 140
 const MIN_HEIGHT = 70
 
-/** Anotação livre no canvas (spec 0083): sem handles, não executa e não
- * aparece no log. Fora da edição, o texto é só exibição e a nota inteira
- * arrasta; clique duplo abre a edição (um `textarea` com `nodrag`), que
- * termina ao sair do campo ou com Esc. O tamanho muda pelas alças do
- * `NodeResizer` quando selecionada. */
-export function NoteNode({ data, selected }: NodeProps<SimpleFlowNodeType>) {
+/** A resizable canvas annotation with no handles or execution. Double-click edits its text;
+ * blur or Escape returns to dragging the entire note (spec 0083). */
+export function NoteNode({ data, selected, width, height }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   const [editing, setEditing] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const { config } = data
   if (config.kind !== 'note') return null
 
   const isEditing = editing && !data.readOnly
+  const size = { width: width ?? config.width, height: height ?? config.height }
+  const resizer = !data.readOnly && <NodeResizer isVisible={selected} minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} />
+  const edit = () => { if (!data.readOnly) setEditing(true) }
 
   return (
-    <div
+    <OverlayMotionContext value={false}><FlowNodeSurface size={size} handles={resizer} onDoubleClick={edit}><div
+      style={size}
       className="flow-node flow-node--note flow-node--tone-note"
-      onDoubleClick={() => {
-        if (!data.readOnly) setEditing(true)
-      }}
+      onDoubleClick={edit}
     >
-      {!data.readOnly && <NodeResizer isVisible={selected} minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} />}
       {isEditing ? (
         <textarea
           className="flow-note-text nodrag nowheel"
@@ -54,7 +55,12 @@ export function NoteNode({ data, selected }: NodeProps<SimpleFlowNodeType>) {
           {config.text || (data.readOnly ? '' : t('flows.canvas.noteEmptyHint'))}
         </div>
       )}
-      {!data.readOnly && <NodeToolbar onDuplicate={data.onDuplicate} onDelete={data.onDelete} />}
-    </div>
+      {!data.readOnly && <div className="flow-note-actions nodrag nopan" onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+        <OptionsMenu label={t('flows.canvas.nodeActions')} isOpen={menuOpen} onToggle={() => setMenuOpen(!menuOpen)} onClose={() => setMenuOpen(false)} menuPortal menuPlacement="auto">
+          <MenuItem label={t('flows.canvas.duplicateNodeAria')} onSelect={() => { setMenuOpen(false); data.onDuplicate() }} />
+          <MenuItem label={t('flows.canvas.deleteNodeAria')} danger onSelect={() => { setMenuOpen(false); data.onDelete() }} />
+        </OptionsMenu>
+      </div>}
+    </div></FlowNodeSurface></OverlayMotionContext>
   )
 }

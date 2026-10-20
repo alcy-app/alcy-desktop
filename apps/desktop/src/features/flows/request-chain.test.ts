@@ -20,30 +20,30 @@ function sequentialIds() {
 }
 
 describe('requestIdsForItem', () => {
-  it('gera só a própria requisição', () => {
+  it('resolves a single request', () => {
     expect(requestIdsForItem(collections, 'a')).toEqual({ name: 'Req a', requestIds: ['a'] })
   })
 
-  it('percorre uma pasta recursivamente na ordem da sidebar', () => {
+  it('walks a folder recursively in sidebar order', () => {
     expect(requestIdsForItem(collections, 'c')).toEqual({ name: 'N c', requestIds: ['deep', 'a', 'root'] })
     expect(requestIdsForItem(collections, 'f1')?.requestIds).toEqual(['deep', 'a'])
   })
 
-  it('devolve lista vazia para pasta sem requisições e null para item inexistente', () => {
+  it('returns an empty list for an empty folder and null for a missing item', () => {
     expect(requestIdsForItem(collections, 'empty')).toEqual({ name: 'N empty', requestIds: [] })
     expect(requestIdsForItem(collections, 'nope')).toBeNull()
   })
 })
 
 describe('buildRequestChain', () => {
-  it('encadeia as requisições pela saída de sucesso e liga o node de origem ao primeiro', () => {
+  it('chains success outputs and connects the source to the first request', () => {
     const { nodes, edges } = buildRequestChain(['a', 'b', 'c'], { x: 100, y: 50 }, 'start', sequentialIds())
 
     expect(nodes.map((current) => current.kind === 'request' && current.requestId)).toEqual(['a', 'b', 'c'])
     expect(nodes.map((current) => current.position)).toEqual([
-      { x: 100, y: 50 },
-      { x: 460, y: 50 },
-      { x: 820, y: 50 },
+      { x: 96, y: 48 },
+      { x: 448, y: 48 },
+      { x: 800, y: 48 },
     ])
     expect(edges).toEqual([
       { id: 'id-3', sourceNodeId: 'start', targetNodeId: 'id-0' },
@@ -52,20 +52,20 @@ describe('buildRequestChain', () => {
     ])
   })
 
-  it('nasce solta sem node de origem', () => {
+  it('leaves the chain disconnected when no source is provided', () => {
     const { edges } = buildRequestChain(['a', 'b'], { x: 0, y: 0 }, null, sequentialIds())
 
     expect(edges).toHaveLength(1)
     expect(edges[0].sourceNodeId).toBe('id-0')
   })
 
-  it('quebra a grade depois de cinco colunas', () => {
+  it('wraps the grid after five columns with space for taller cards', () => {
     const { nodes } = buildRequestChain(['1', '2', '3', '4', '5', '6'], { x: 0, y: 0 }, null, sequentialIds())
 
-    expect(nodes[5].position).toEqual({ x: 0, y: 220 })
+    expect(nodes[5].position).toEqual({ x: 0, y: 176 })
   })
 
-  it('não gera nada para uma lista vazia', () => {
+  it('generates nothing for an empty list', () => {
     expect(buildRequestChain([], { x: 0, y: 0 }, 'start')).toEqual({ nodes: [], edges: [] })
   })
 })
@@ -76,7 +76,7 @@ describe('startWithoutOutput', () => {
     { id: 'r', kind: 'request', requestId: 'a', position: { x: 360, y: 0 } },
   ]
 
-  it('devolve o Start só enquanto ele não tem saída', () => {
+  it('returns Start only while it has no outgoing edges', () => {
     expect(startWithoutOutput(nodes, [])).toBe('start')
     expect(startWithoutOutput(nodes, [{ id: 'e', sourceNodeId: 'start', targetNodeId: 'r' }])).toBeNull()
   })

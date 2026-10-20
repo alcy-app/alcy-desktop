@@ -12,10 +12,14 @@ import type {
 import type { MockStartInfo } from './mock-nodes'
 import type { RunLogNodeInfo } from './RunLogPanel'
 import type { NodeRunStatus } from './use-flow-run'
+import type { DisplayFormat } from './display-format'
+import type { DisplayBodySource } from './display-output-source'
 
 /** Canonical configuration plus transient execution and interaction data for simple canvas nodes (spec 0083). */
 export interface SimpleNodeData extends Record<string, unknown> {
-  displayFormat?: 'auto' | 'json' | 'text'
+  displayFormat?: DisplayFormat
+  onDisplayFormatChange?: (format: DisplayFormat) => void
+  displaySource?: DisplayBodySource
   config: SimpleNodeKindState
   runStatus: NodeRunStatus
   onOpenSettings: () => void
@@ -49,7 +53,7 @@ export const CONDITION_OPERATOR_SYMBOL: Record<ComparisonOperatorState, string> 
 const DEFAULT_WHILE_CONDITION: ConditionState = { left: '', operator: 'lessThan', right: '' }
 const DEFAULT_WHILE_MAX_ITERATIONS = 100
 
-/** Espera inicial de um bloco "Aguardar chamada". */
+/** Initial timeout for a Wait for request block. */
 export const DEFAULT_MOCK_WAIT_TIMEOUT_MS = 30_000
 
 /** Default dimensions for a new note. */

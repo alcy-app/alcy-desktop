@@ -3,10 +3,9 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { ConditionView } from './ConditionView'
 import { FlowNodeCard } from './FlowNodeCard'
 import type { SimpleFlowNodeType } from './simple-node-types'
-import { QuickNodeEdit } from './QuickNodeEdit'
 
 /** While nodes repeat their loop output while the condition holds; the done output continues afterward (spec 0084, ADR 0033). */
-export function WhileNode({ data, id }: NodeProps<SimpleFlowNodeType>) {
+export function WhileNode({ data }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   const { config } = data
   if (config.kind !== 'while') return null
@@ -18,7 +17,6 @@ export function WhileNode({ data, id }: NodeProps<SimpleFlowNodeType>) {
       visited={data.visited}
       readOnly={data.readOnly}
       onOpenSettings={data.onOpenSettings}
-      headerActions={!data.readOnly && <QuickNodeEdit nodeId={id} config={config} onChange={(next) => { if (next.kind !== 'if') data.onConfigChange(next) }} />}
       onDuplicate={data.onDuplicate}
       onDelete={data.onDelete}
       outputs={[

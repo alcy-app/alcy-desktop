@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { FocusEvent, KeyboardEvent, MouseEvent } from 'react'
+import { OverlayMotionContext } from './overlay-motion-context'
 import './tooltip.css'
 
 export type TooltipSide = 'top' | 'bottom' | 'left' | 'right'
@@ -22,8 +23,7 @@ interface Size {
 }
 
 /**
- * Posição do balão na viewport: centralizado no lado pedido, trocando para o
- * lado oposto quando não cabe e preso às bordas da janela no outro eixo.
+ * Center on the requested side, flip when necessary, and clamp the other axis to the viewport.
  */
 export function computeTooltipPosition(anchor: Rect, tooltip: Size, side: TooltipSide, viewport: Size) {
   const clamp = (value: number, size: number, limit: number) =>
@@ -60,11 +60,11 @@ function isFocusVisible(element: Element): boolean {
 
 interface UseTooltipOptions {
   side?: TooltipSide
-  /** Ignora o foco: o balão só aparece ao passar o mouse. */
+  /** Ignore focus and show only on hover. */
   hoverOnly?: boolean
-  /** Quebra linhas longas (URLs, caminhos) em vez de manter uma linha só. */
+  /** Wrap long URLs or paths. */
   multiline?: boolean
-  /** Desliga o tooltip sem mudar a ordem dos hooks do chamador. */
+  /** Disable the tooltip without changing the caller's hook order. */
   enabled?: boolean
 }
 
@@ -78,16 +78,15 @@ export interface TooltipTriggerProps {
 }
 
 /**
- * Tooltip aplicado direto no elemento-alvo (sem wrapper, então o layout não
- * muda). O balão é renderizado num portal em `document.body` com posição
- * `fixed`: ancestrais com `overflow` não o cortam, e ele nunca sai da janela.
- * Aparece com atraso no hover ou no foco por teclado; some ao sair, ao clicar
- * ou com Escape.
+ * Bind directly to the target without changing its layout. A fixed portal in document.body
+ * avoids clipping and stays inside the viewport. Show after a hover or keyboard-focus delay;
+ * hide on leave, click or Escape. The originating surface controls overlay motion across portals.
  */
 export function useTooltip(label: string, { side = 'bottom', hoverOnly = false, multiline = false, enabled = true }: UseTooltipOptions = {}) {
   const [anchor, setAnchor] = useState<Rect | null>(null)
   const timerRef = useRef<number | null>(null)
   const tooltipRef = useRef<HTMLSpanElement>(null)
+  const animateOverlay = useContext(OverlayMotionContext)
 
   const cancel = useCallback(() => {
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)
@@ -118,7 +117,7 @@ export function useTooltip(label: string, { side = 'bottom', hoverOnly = false, 
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') hide()
     }
-    // O balão é `fixed`: ao rolar qualquer container, ele descolaria do alvo.
+    // A fixed tooltip would lose its anchor when any container scrolls.
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('scroll', hide, true)
     window.addEventListener('blur', hide)
@@ -129,7 +128,7 @@ export function useTooltip(label: string, { side = 'bottom', hoverOnly = false, 
     }
   }, [visible, hide])
 
-  // Mede o balão já renderizado e o posiciona antes da pintura.
+  // Measure and position the mounted tooltip before painting.
   useLayoutEffect(() => {
     const element = tooltipRef.current
     if (!visible || !element || !anchor) return
@@ -148,7 +147,7 @@ export function useTooltip(label: string, { side = 'bottom', hoverOnly = false, 
     },
     onMouseLeave: hide,
     onFocus: (event) => {
-      // No host em span, o foco chega por bubbling: o elemento focado é o `target`.
+      // Wrapper spans receive bubbled focus; the focused element is event.target.
       if (enabled && !hoverOnly && isFocusVisible(event.target)) scheduleShow(event.currentTarget)
     },
     onBlur: hide,
@@ -160,7 +159,7 @@ export function useTooltip(label: string, { side = 'bottom', hoverOnly = false, 
 
   const tooltip = visible
     ? createPortal(
-        <span ref={tooltipRef} role="tooltip" className={multiline ? 'ui-tooltip ui-tooltip--multiline' : 'ui-tooltip'}>
+        <span ref={tooltipRef} role="tooltip" className={['ui-tooltip', multiline ? 'ui-tooltip--multiline' : null, !animateOverlay ? 'ui-tooltip--static' : null].filter(Boolean).join(' ')}>
           {label}
         </span>,
         document.body,
@@ -170,7 +169,7 @@ export function useTooltip(label: string, { side = 'bottom', hoverOnly = false, 
   return { triggerProps, tooltip }
 }
 
-/** Encadeia um handler do tooltip com o handler recebido por props, sem sobrescrevê-lo. */
+/** Chain tooltip and caller handlers without overwriting either. */
 export function chainHandlers<E>(first: ((event: E) => void) | undefined, second: ((event: E) => void) | undefined) {
   return (event: E) => {
     first?.(event)

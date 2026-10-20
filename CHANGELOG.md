@@ -9,10 +9,19 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Added
 
 - O gravador de HAR também grava as requisições feitas pelos flows, com headers e resposta, para inspecionar e salvar junto com os envios manuais.
+- Organização automática dos flows, com opção de desfazer, para alinhar os blocos e acompanhar suas conexões.
+- O Display permite escolher o formato do resultado e navegar por respostas longas, expandindo ou recolhendo objetos JSON.
+- Troca da requisição de um bloco diretamente pela URL.
+
+### Changed
+
+- Os flows usam blocos mais compactos, com um resumo de cada etapa e as opções de duplicar e excluir no menu de três pontos, inclusive nas anotações.
 
 ### Fixed
 
 - Os scripts sugerem os módulos dentro de `require('…')` e os métodos das bibliotecas que vêm com o app, como lodash, crypto-js, moment e uuid.
+- Os blocos dos flows deixam de ficar borrados ao ampliar o canvas ou interagir com seus controles.
+- As variáveis nas URLs dos blocos de requisição voltam a aparecer destacadas.
 
 ## [0.7.0] - 16/10/2026
 

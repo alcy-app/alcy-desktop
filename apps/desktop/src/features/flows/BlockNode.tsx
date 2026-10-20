@@ -68,7 +68,7 @@ export function BlockNode({ data }: NodeProps<BlockNodeType>) {
       onDelete={data.onDelete}
       titleBadge={data.loadKind === 'request' && typeof settings.method === 'string' ? <span className="flow-node-method">{settings.method}</span> : undefined}
     >
-      {summary.length > 0 && <dl className="flow-node-assignments">{summary.map(([label, value]) => <div key={label} className="flow-node-assignment"><dt className="flow-node-assignment-name">{t(label)}</dt><dd className="flow-node-assignment-value" title={String(value)}>{String(value)}</dd></div>)}</dl>}
+      {data.loadKind === 'script' && typeof settings.code === 'string' && settings.code ? <code>{settings.code.slice(0, 160)}</code> : summary.length > 0 && <dl className="flow-node-assignments">{summary.map(([label, value]) => <div key={label} className="flow-node-assignment"><dt className="flow-node-assignment-name">{t(label)}</dt><dd className="flow-node-assignment-value" title={String(value)}>{String(value)}</dd></div>)}</dl>}
     </FlowNodeCard>
   )
 }
