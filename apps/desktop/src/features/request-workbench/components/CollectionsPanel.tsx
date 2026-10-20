@@ -420,9 +420,10 @@ function RequestRow({
               }}
             />
             <MenuSeparator />
-            <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
+            <MenuItem label={t('collections.renameMenuItem')} shortcutAction="renameItem" onSelect={startRename} />
             <MenuItem
               label={t('collections.duplicateMenuItem')}
+              shortcutAction="duplicateItem"
               onSelect={() => {
                 onDuplicate(request.id)
                 onCloseMenu()
@@ -446,6 +447,7 @@ function RequestRow({
             <MenuSeparator />
             <MenuItem
               label={t('common.remove')}
+              shortcutAction="deleteItem"
               danger
               onSelect={() => {
                 onRemove(request.id, 'request', label)
@@ -824,7 +826,7 @@ function FolderRow({
                 onCloseMenu()
               }}
             />
-            <MenuItem label={t('collections.renameMenuItem')} onSelect={startRename} />
+            <MenuItem label={t('collections.renameMenuItem')} shortcutAction="renameItem" onSelect={startRename} />
             <MenuItem
               label={t('collections.selectMenuItem')}
               onSelect={() => {
@@ -835,6 +837,7 @@ function FolderRow({
             <MenuSeparator />
             <MenuItem
               label={t('common.remove')}
+              shortcutAction="deleteItem"
               danger
               onSelect={() => {
                 onRemove(node.id, kind, label)

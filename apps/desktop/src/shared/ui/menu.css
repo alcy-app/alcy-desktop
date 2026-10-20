@@ -63,10 +63,21 @@
   background: var(--surface-raised);
 }
 
-.ui-menu-item--with-icon {
+.ui-menu-item--with-icon,
+.ui-menu-item--with-shortcut {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+.ui-menu-item-shortcut {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .ui-menu-item-icon {

@@ -254,9 +254,9 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 {kind === 'folder' && <MenuItem label={t('flows.addButtonAria')} onSelect={() => addFlow(item.id)} />}
                 {kind === 'folder' && onAddLoadFlow && <MenuItem label={t('flows.addLoadFlowAria')} onSelect={() => addFlow(item.id, true)} />}
                 {kind === 'folder' && <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates(item.id)} />}
-                <MenuItem label={t('flows.renameMenuItem')} onSelect={() => rename(row)} />
+                <MenuItem label={t('flows.renameMenuItem')} shortcutAction="renameItem" onSelect={() => rename(row)} />
                 {row.kind === 'flow' && <MenuItem label={t('flows.moveToFolder')} onSelect={() => { setMovingFlow(row.item); setMenuOpenKey(null) }} />}
-                <MenuItem label={t('common.remove')} danger onSelect={() => { setPendingRemove(row); setMenuOpenKey(null) }} />
+                <MenuItem label={t('common.remove')} shortcutAction="deleteItem" danger onSelect={() => { setPendingRemove(row); setMenuOpenKey(null) }} />
               </OptionsMenu>
             </div>
           )

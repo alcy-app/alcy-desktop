@@ -1,5 +1,7 @@
 import { useContext, useLayoutEffect, useRef, type FocusEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { formatCombo, type ShortcutAction } from '../shortcuts/shortcuts'
+import { useShortcuts } from '../shortcuts/use-shortcuts'
 import { CheckIcon, EllipsisIcon } from './icons'
 import { useTooltip } from './use-tooltip'
 import { OverlayMotionContext } from './overlay-motion-context'
@@ -171,6 +173,8 @@ export function OptionsMenu({
 interface MenuItemProps {
   label: string
   icon?: ReactNode
+  /** Show only the first configured binding for this action. */
+  shortcutAction?: ShortcutAction
   danger?: boolean
   disabled?: boolean
   autoFocus?: boolean
@@ -179,7 +183,14 @@ interface MenuItemProps {
   onSelect: () => void
 }
 
-export function MenuItem({ label, icon, danger, disabled, autoFocus, selected, onSelect }: MenuItemProps) {
+function MenuItemShortcut({ action }: { action: ShortcutAction }) {
+  const { bindings } = useShortcuts()
+  const combo = bindings[action][0]
+  if (!combo) return null
+  return <kbd className="ui-menu-item-shortcut" aria-hidden="true">{formatCombo(combo)}</kbd>
+}
+
+export function MenuItem({ label, icon, shortcutAction, danger, disabled, autoFocus, selected, onSelect }: MenuItemProps) {
   return (
     <button
       type="button"
@@ -188,6 +199,7 @@ export function MenuItem({ label, icon, danger, disabled, autoFocus, selected, o
       className={[
         'ui-menu-item',
         icon ? 'ui-menu-item--with-icon' : null,
+        shortcutAction ? 'ui-menu-item--with-shortcut' : null,
         danger ? 'ui-menu-item--danger' : null,
         selected ? 'ui-menu-item--selected' : null,
       ]
@@ -199,6 +211,7 @@ export function MenuItem({ label, icon, danger, disabled, autoFocus, selected, o
     >
       {icon && <span className="ui-menu-item-icon" aria-hidden="true">{icon}</span>}
       {label}
+      {shortcutAction && <MenuItemShortcut action={shortcutAction} />}
     </button>
   )
 }

@@ -30,7 +30,7 @@ interface OpenTabsBarProps {
   onCloseUnfixed: () => void
   onCloseMany: (ids: string[]) => void
   onToggleFix: (id: string) => void
-  /** Abre o popover de tipos de requisição, ancorado no retângulo do "+". */
+  /** Open the request type popover anchored to the plus button rectangle. */
   onNewTab: (anchor: DOMRect) => void
   onReorder: (draggedId: string, targetId: string, edge: DropEdge) => void
   onReorderGroup: (ids: string[], targetId: string, edge: DropEdge) => void
@@ -47,13 +47,13 @@ interface TabContextMenuState {
   dirty: boolean
   fixed: boolean
   fixable: boolean
-  /** Abas selecionadas em grupo quando o menu abriu sobre uma delas; 0 fora de uma seleção múltipla. */
+  /** Number of selected tabs when the menu opens on the group; zero outside a multi-selection. */
   selectionCount: number
   x: number
   y: number
 }
 
-/** Ação de fechar abas pendente de confirmação — alguma das abas afetadas tem alterações não salvas. */
+/** Tab closing action awaiting confirmation because an affected tab has unsaved changes. */
 type PendingClose = { kind: 'tab'; tabId: string; label: string } | { kind: 'others'; tabId: string } | { kind: 'unfixed' } | { kind: 'selected'; ids: string[] } | { kind: 'all' }
 
 function TabContextMenu({
@@ -110,6 +110,7 @@ function TabContextMenu({
         <>
         <MenuItem
           label={t('workbench.openTabs.saveTabMenuItem')}
+          shortcutAction="saveRequest"
           disabled={menu.kind !== 'request' || !menu.dirty}
           autoFocus={menu.dirty}
           onSelect={() => {
@@ -127,6 +128,7 @@ function TabContextMenu({
         />
         <MenuItem
           label={t('workbench.openTabs.closeTabMenuItem')}
+          shortcutAction="closeTab"
           autoFocus={!menu.dirty}
           onSelect={() => {
             onCloseTab()
@@ -182,9 +184,8 @@ export const OpenTabsBar = memo(function OpenTabsBar({
   const { t } = useLanguage()
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null)
-  /** Seleção múltipla: Ctrl/Cmd+clique alterna uma aba e Shift+clique marca o intervalo a partir da
-   * âncora (a aba ativa, até o primeiro clique). Pode guardar ids de abas que já fecharam —
-   * `selection` é a versão filtrada pelas abas que existem, na ordem da barra. */
+  /** Ctrl/Cmd+click toggles a tab; Shift+click selects a range from the anchor (initially the active tab).
+   * IDs may outlive closed tabs; `selection` filters existing tabs in bar order. */
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [anchorId, setAnchorId] = useState<string | null>(null)
   const selection = tabs.filter((tab) => selectedIds.has(tab.id))
@@ -195,7 +196,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     setAnchorId(null)
   }
 
-  /** Devolve `true` quando o clique foi de seleção e não deve ativar a aba. */
+  /** Return true when the click changes selection and should not activate the tab. */
   const handleSelectClick = (id: string, event: ReactMouseEvent): boolean => {
     const additive = event.ctrlKey || event.metaKey
     const anchor = anchorId !== null && tabs.some((tab) => tab.id === anchorId) ? anchorId : activeTabId
@@ -236,7 +237,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
         )
         return
       }
-      // As fixadas ficam sempre antes das demais: arrastar entre os dois grupos não faz nada.
+      // Fixed tabs stay before the others; dragging between the two groups does nothing.
       const draggedTab = tabs.find((tab) => tab.id === dragged.id)
       const targetTab = tabs.find((tab) => tab.id === target.id)
       if (draggedTab && targetTab && draggedTab.fixed !== targetTab.fixed) return
@@ -246,7 +247,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
 
   const openContextMenu = (tab: OpenTabDescriptor, event: ReactMouseEvent) => {
     event.preventDefault()
-    // Botão direito fora da seleção a desfaz; sobre uma aba selecionada, o menu age no grupo.
+    // Right-clicking outside the selection clears it; on a selected tab, the menu acts on the group.
     const inGroup = selection.length > 1 && selectedIds.has(tab.id)
     if (!inGroup && selectedIds.size > 0) clearSelection()
     setContextMenu({
@@ -262,7 +263,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     })
   }
 
-  /** Fecha direto se não houver alterações não salvas entre as abas afetadas; caso contrário, pede confirmação. */
+  /** Close immediately when affected tabs have no unsaved changes; otherwise request confirmation. */
   const requestCloseTab = (tabId: string, label: string) => {
     const tab = tabs.find((candidate) => candidate.id === tabId)
     if (tab && tab.dirty) {
@@ -305,8 +306,8 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     }
   }
 
-  // Atalho de fechar a aba ativa (Ctrl+W por padrão): despachado aqui, onde mora a
-  // confirmação de descarte. Não age por trás de um modal.
+  // Handle the active tab's close shortcut (Ctrl+W by default) here to confirm discarding changes.
+  // Ignore it while a modal is open.
   const { bindings } = useShortcuts()
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
