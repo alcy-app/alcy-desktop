@@ -26,8 +26,7 @@ use crate::commands::flows::{FlowEdgeDto, FlowNodeDto, flow_to_dto};
 use crate::commands::general_settings::HistoryPreferencesState;
 use crate::commands::response_body_cache::ResponseBodyCache;
 
-/// Retenção das leituras de uma entrada, onde o valor não tem efeito (a poda
-/// usa a retenção configurada, em `list_history`).
+/// Retention is irrelevant to detail reads; list_history prunes using the configured preference.
 const DEFAULT_HISTORY_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Debug, Deserialize)]
@@ -46,10 +45,7 @@ pub struct GetHistoryEntryInput {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HistoryOutcomeSummaryDto {
-    // `rename_all` no nível do enum só renomeia o `tag` de cada variante,
-    // não os campos dentro dela (surpresa do serde: sem isto aqui, o JSON
-    // sai com `status_code`/`duration_ms`/`size_bytes` em vez de
-    // camelCase, quebrando o binding TypeScript).
+    // Serde's enum rename_all renames variant tags, not variant fields; repeat the field convention to preserve camelCase IPC bindings.
     #[serde(rename_all = "camelCase")]
     Success {
         status_code: u16,
@@ -71,7 +67,7 @@ pub struct RequestHistorySummaryDto {
     pub outcome: HistoryOutcomeSummaryDto,
 }
 
-/// Um run de flow inteiro, como um único evento do histórico.
+/// One complete flow run represented as a single history entry.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowRunHistorySummaryDto {
@@ -83,7 +79,7 @@ pub struct FlowRunHistorySummaryDto {
     pub status: String,
 }
 
-/// Um run do runner de coleções, como um único evento do histórico.
+/// One collection runner execution represented as a single history entry.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionRunHistorySummaryDto {
@@ -97,7 +93,7 @@ pub struct CollectionRunHistorySummaryDto {
     pub total: u32,
 }
 
-/// Resumo de uma execução de carga, sem métricas, thresholds ou amostras.
+/// Load summary without metrics, thresholds or samples.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadRunHistorySummaryDto {
@@ -112,9 +108,7 @@ pub struct LoadRunHistorySummaryDto {
     pub failed_requests: u64,
 }
 
-/// `origin` separa os eventos por tipo de componente: `collection` para
-/// requisições avulsas/de collection, `flow` para runs de flow, `runner`
-/// para runs do runner de coleções e `load` para runs de carga.
+/// Origin distinguishes individual requests, standard flows, collection runners and load runs.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "origin", rename_all = "camelCase")]
 pub enum HistoryEntrySummaryDto {
@@ -138,8 +132,7 @@ impl HistoryEntrySummaryDto {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HistoryOutcomeDetailDto {
-    // Ver o comentário em `HistoryOutcomeSummaryDto`: `rename_all` no
-    // enum não alcança os campos da variante, precisa repetir aqui.
+    // As in HistoryOutcomeSummaryDto, repeat camelCase on enum variant fields.
     #[serde(rename_all = "camelCase")]
     Success {
         status_code: u16,
@@ -149,12 +142,9 @@ pub enum HistoryOutcomeDetailDto {
         body_encoding: ResponseBodyEncodingOutput,
         headers: Vec<ResponseHeaderOutput>,
         graphql_errors: Vec<GraphqlErrorOutput>,
-        /// O histórico guardou só parte do corpo (teto de persistência,
-        /// `MAX_PERSISTED_RESPONSE_BODY_BYTES`); `size_bytes` continua sendo
-        /// o tamanho original da resposta.
+        /// The persisted body may be a bounded prefix; size_bytes retains the original response size.
         body_truncated: bool,
-        /// `false` quando o histórico guardou só o resumo (status, tempo e
-        /// tamanho): "Salvar respostas" estava desligado no envio.
+        /// False when response saving was disabled and only status, duration and size were stored.
         response_stored: bool,
     },
     Failed {
@@ -171,7 +161,7 @@ pub struct HistoryEntryDetailDto {
     pub endpoint: String,
     pub method: HttpMethodInput,
     pub body: String,
-    /// Corpo REST estruturado (`None` para GraphQL) — ver `SavedRequestDto`.
+    /// Structured REST body, absent for GraphQL; see SavedRequestDto.
     pub rest_body: Option<BodyInput>,
     pub variables: String,
     pub headers: Vec<HeaderInput>,
@@ -190,7 +180,7 @@ pub enum HistoryCommandError {
         message: String,
     },
     NotFound,
-    /// A comparação pediu um envio cuja resposta não foi guardada.
+    /// Comparison requested a run whose response was not stored.
     ResponseNotStored,
 }
 
@@ -259,9 +249,7 @@ fn summary_from_entry(entry: HistorySummary) -> RequestHistorySummaryDto {
     }
 }
 
-/// Prefixo do handle sob o qual um corpo de histórico acima do limiar fica
-/// em `ResponseBodyCache` — evita colidir com o namespace de
-/// `execution_id` de execuções ao vivo, que compartilham o mesmo cache.
+/// History cache handles use a separate namespace to avoid collisions with live execution IDs in the shared response body cache.
 const HISTORY_BODY_HANDLE_PREFIX: &str = "history:";
 
 fn detail_from_entry(entry: HistoryEntry, body_cache: &ResponseBodyCache) -> HistoryEntryDetailDto {
@@ -273,8 +261,7 @@ fn detail_from_entry(entry: HistoryEntry, body_cache: &ResponseBodyCache) -> His
     let response_stored = !entry.response_omitted;
     let outcome = match entry.outcome {
         HistoryOutcome::Success(response) => {
-            // Um envio REST nunca tem erros GraphQL; não vale percorrer o
-            // corpo (potencialmente de vários MB) atrás de um `errors`.
+            // REST responses cannot have GraphQL errors; avoid parsing potentially large bodies for an errors field.
             let graphql_errors = if is_graphql {
                 interpret_graphql_errors(&response.body)
                     .into_iter()
@@ -340,14 +327,7 @@ fn detail_from_entry(entry: HistoryEntry, body_cache: &ResponseBodyCache) -> His
     }
 }
 
-/// Lista o resumo do histórico do workspace em `input.root_path`, mais
-/// recente primeiro. Sem corpo de resposta nem conteúdo da requisição —
-/// só o necessário para montar a lista agrupada por data (ver
-/// `get_history_entry` para o detalhe completo de uma entrada).
-///
-/// Antes de ler, poda o que passou da retenção configurada: uma retenção
-/// reduzida (ou o histórico desativado) vale também para o que já estava
-/// em disco, e não só a partir da próxima gravação.
+/// List newest-first history metadata without request or response bodies. Prune with the current retention preference before reading, including existing entries when retention is shortened or disabled.
 #[tauri::command]
 pub async fn list_history(
     input: ListHistoryInput,
@@ -359,8 +339,7 @@ pub async fn list_history(
     crate::logging::logged("alcy::history", "listar histórico", result)
 }
 
-/// Leitura dos índices/detalhes do histórico (arquivos inteiros, parse JSON)
-/// na thread pool de blocking, nunca na thread principal da interface.
+/// Read and parse history on blocking workers, never the interface's main thread.
 async fn run_blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, HistoryCommandError> + Send + 'static,
 ) -> Result<T, HistoryCommandError> {
@@ -380,7 +359,7 @@ fn list_history_inner(
     let requests = HistoryStore::new(root.clone(), retention.duration());
     let runs = FlowRunHistoryStore::new(root.clone(), retention.duration());
     let collection_runs = CollectionRunHistoryStore::new(root.clone(), retention.duration());
-    // Best-effort: uma poda que falhe não impede de listar o que existe.
+    // Best effort: a pruning failure must not prevent listing available entries.
     for pruned in [requests.prune(), runs.prune(), collection_runs.prune()] {
         if let Err(error) = pruned {
             log::warn!(target: "alcy::history", "falha ao podar o histórico: {error}");
@@ -468,9 +447,7 @@ pub struct FlowRunNodeOutputDto {
     pub output: FlowNodeOutput,
 }
 
-/// Snapshot de um run: o grafo como foi executado, os eventos com hora (o
-/// frontend os reexecuta para reconstruir status, rastro e log) e a saída de
-/// cada node de requisição, com o corpo já limitado.
+/// Executed graph, timestamped replay events and optional bounded request output previews for a historical run.
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowRunDetailDto {
@@ -551,8 +528,7 @@ pub struct CollectionRunOutputDto {
     pub output: FlowNodeOutput,
 }
 
-/// Um run do runner como foi gravado: opções, plano, requisições no formato
-/// do evento `requestFinished` e as respostas guardadas.
+/// Persisted runner options, plan, requestFinished events and retained responses.
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionRunDetailDto {
@@ -606,7 +582,7 @@ fn collection_run_detail_from_record(record: CollectionRunRecord) -> CollectionR
     }
 }
 
-/// Busca um run do runner de coleções no histórico.
+/// Read a collection runner execution from history.
 #[tauri::command]
 pub async fn get_collection_run_history(
     input: GetHistoryEntryInput,
@@ -628,14 +604,27 @@ fn get_collection_run_history_inner(
         .ok_or(HistoryCommandError::NotFound)
 }
 
-/// Busca o snapshot de um run de flow do histórico (ver `FlowRunDetailDto`).
+/// Read the flow graph snapshot and replay metadata; output previews are optional.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetFlowHistoryInput {
+    pub root_path: String,
+    pub id: String,
+    pub include_outputs: Option<bool>,
+}
+
 #[tauri::command]
 pub async fn get_flow_run_history(
-    input: GetHistoryEntryInput,
+    input: GetFlowHistoryInput,
 ) -> Result<FlowRunDetailDto, HistoryCommandError> {
-    let result =
-        run_blocking(move || get_flow_run_history_inner(PathBuf::from(input.root_path), &input.id))
-            .await;
+    let result = run_blocking(move || {
+        let mut detail = get_flow_run_history_inner(PathBuf::from(input.root_path), &input.id)?;
+        if input.include_outputs == Some(false) {
+            detail.outputs.clear();
+        }
+        Ok(detail)
+    })
+    .await;
     crate::logging::logged("alcy::history", "abrir histórico de flow", result)
 }
 
@@ -649,15 +638,7 @@ fn get_flow_run_history_inner(
         .ok_or(HistoryCommandError::NotFound)
 }
 
-/// Busca o detalhe completo de uma entrada do histórico (requisição
-/// inteira + resposta), para restaurá-la como rascunho no workbench. O
-/// corpo da resposta passa pelo mesmo corte inline/janela que a execução
-/// ao vivo (`response_body_output`) — o que atravessa o
-/// IPC aqui segue o mesmo limiar. O corpo persistido pode ser só um prefixo
-/// do original (`body_truncated`, teto de persistência do histórico).
-///
-/// Ler e desserializar o detalhe roda em `spawn_blocking`; só a montagem
-/// do DTO (que precisa do cache em `State`) fica na task assíncrona.
+/// Restore a historical request and response as a workbench draft. Reuse live inline/windowed body transport and preserve persisted truncation. File reading and deserialization use spawn_blocking; only DTO and cache composition run in the async adapter.
 #[tauri::command]
 pub async fn get_history_entry(
     input: GetHistoryEntryInput,
@@ -677,7 +658,7 @@ fn load_history_entry(root: PathBuf, id: &str) -> Result<HistoryEntry, HistoryCo
         .ok_or(HistoryCommandError::NotFound)
 }
 
-/// O mesmo caminho do command, de forma síncrona, para os testes.
+/// Synchronous command implementation used by tests.
 #[cfg(test)]
 fn get_history_entry_inner(
     root: PathBuf,
@@ -1131,10 +1112,7 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
-    /// Regressão: comparar structs Rust diretamente (como os testes acima)
-    /// não pega um campo de variante de enum que o serde deixou de
-    /// renomear para camelCase — só aparece serializando de verdade e
-    /// olhando as chaves do JSON, que é o que o frontend realmente recebe.
+    /// Serialize enum variants in regression tests: comparing Rust structs alone cannot detect accidental snake_case wire fields.
     #[test]
     fn serializes_the_summary_success_outcome_with_camel_case_keys() {
         let root = temp_root();

@@ -266,6 +266,9 @@ impl From<FlowRunError> for ExecuteFlowError {
 struct ChannelSink<'a> {
     channel: &'a Channel<FlowRunEventDto>,
     outputs: &'a FlowRunOutputs,
+    body_capture: &'a alcy_storage::FlowBodyCapture,
+    history_outputs: Mutex<HashMap<String, FlowNodeOutput>>,
+    save_responses: bool,
     flow_execution_id: &'a str,
     /// Timestamped events persisted at run completion.
     recorded: Mutex<Vec<RecordedFlowEvent>>,
@@ -318,8 +321,20 @@ impl From<FlowNodeSkipReasonDto> for RecordedSkipReason {
 
 impl FlowRunSink for ChannelSink<'_> {
     fn node_output(&self, node_id: &str, response: &Response) {
-        self.outputs
+        self.body_capture.capture(
+            node_id,
+            &response.body,
+            response.encoding == BodyEncoding::Base64,
+        );
+        let preview = self
+            .outputs
             .store(self.flow_execution_id, node_id, response);
+        if self.save_responses {
+            self.history_outputs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(node_id.into(), preview);
+        }
         if self.record_exchanges {
             let url = self
                 .sent_urls
@@ -334,8 +349,16 @@ impl FlowRunSink for ChannelSink<'_> {
     }
 
     fn node_request(&self, node_id: &str, request: &CapturedRequest) {
-        self.outputs
+        self.body_capture.capture(node_id, &request.body, false);
+        let preview = self
+            .outputs
             .store_request(self.flow_execution_id, node_id, request);
+        if self.save_responses {
+            self.history_outputs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(node_id.into(), preview);
+        }
     }
 
     fn node_call(&self, node_id: &str, details: &RequestCallDetails) {
@@ -564,7 +587,7 @@ fn record_flow_run(
     let store = FlowRunHistoryStore::new(PathBuf::from(root_path), retention.duration());
     tauri::async_runtime::spawn_blocking(move || {
         if let Err(error) = store.record(&record) {
-            log::warn!("falha ao gravar histórico de flow: {error}");
+            log::warn!("failed to persist flow history: {error}");
         }
     })
 }
@@ -587,7 +610,7 @@ pub async fn execute_flow(
     let started = std::time::Instant::now();
     log::info!(
         target: "alcy::flow",
-        "{flow_execution_id}: iniciando flow ({} nós, {} conexões)",
+        "{flow_execution_id}: starting flow ({} nodes, {} edges)",
         input.nodes.len(),
         input.edges.len()
     );
@@ -606,12 +629,12 @@ pub async fn execute_flow(
     match &result {
         Ok(()) => log::info!(
             target: "alcy::flow",
-            "{flow_execution_id}: flow terminou em {} ms",
+            "{flow_execution_id}: flow finished in {} ms",
             started.elapsed().as_millis()
         ),
         Err(error) => log::warn!(
             target: "alcy::flow",
-            "{flow_execution_id}: flow falhou ({})",
+            "{flow_execution_id}: flow failed ({})",
             crate::logging::error_kind(error)
         ),
     }
@@ -693,9 +716,14 @@ async fn execute_flow_inner(
         input.environment_variables,
     );
     flow_outputs.begin(&input.flow_execution_id);
+    let archive = alcy_storage::FlowBodyCapture::new();
+    flow_outputs.attach_archive(archive.clone());
     let sink = ChannelSink {
         channel: on_event,
         outputs: flow_outputs,
+        body_capture: &archive,
+        history_outputs: Mutex::new(HashMap::new()),
+        save_responses: history.save_responses && !history.retention.is_disabled(),
         flow_execution_id: &input.flow_execution_id,
         recorded: Mutex::new(Vec::new()),
         record_exchanges: input.record_exchanges,
@@ -722,6 +750,16 @@ async fn execute_flow_inner(
 
     flow_registry.remove(&input.flow_execution_id);
 
+    let archive_destination =
+        if result.is_ok() && history.save_responses && !history.retention.is_disabled() {
+            alcy_storage::flow_body_directory(Path::new(&input.root_path), &input.flow_execution_id)
+        } else {
+            None
+        };
+    let finishing_archive = archive.clone();
+    let _ =
+        tauri::async_runtime::spawn_blocking(move || finishing_archive.finish(archive_destination))
+            .await;
     let summary = result?;
 
     // A run becomes one history entry; invalid graphs without events have nothing to record.
@@ -736,11 +774,15 @@ async fn execute_flow_inner(
             events,
             // With Save responses disabled, retain events/status/duration without bodies/headers.
             outputs: if history.save_responses {
-                flow_outputs
-                    .all(&input.flow_execution_id)
-                    .into_iter()
-                    .map(|(node_id, output)| recorded_output(node_id, output))
-                    .collect()
+                std::mem::take(
+                    &mut *sink
+                        .history_outputs
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()),
+                )
+                .into_iter()
+                .map(|(node_id, output)| recorded_output(node_id, output))
+                .collect()
             } else {
                 Vec::new()
             },
@@ -1105,7 +1147,7 @@ mod tests {
         let timeout = tokio::time::sleep(Duration::from_millis(20));
         tokio::pin!(timeout);
         tokio::select! {
-            _ = &mut run_future => panic!("não deveria terminar antes do cancelamento"),
+            _ = &mut run_future => panic!("must not finish before cancellation"),
             _ = &mut timeout => {}
         }
 

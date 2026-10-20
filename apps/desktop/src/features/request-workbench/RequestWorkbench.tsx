@@ -1427,11 +1427,17 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     openTabs.activeOpenTab?.kind === 'flow'
       ? flows.flows.find((flow) => flow.id === openTabs.activeOpenTab?.id && (FEATURE_FLAGS.loadTesting || flow.executionKind !== 'load'))
       : undefined
+  const [savingFlowRequests, setSavingFlowRequests] = useState(false)
 
   const activeRunLog =
     openTabs.activeOpenTab?.kind === 'runLog'
       ? openTabs.runLogTabs.find((tab) => tab.id === openTabs.activeOpenTab?.id)
       : undefined
+
+  const flowDraftTabs = useMemo(() => new Map([...workbench.tabs.flatMap((tab) => tab.flowNodeRef?.flowId === activeFlow?.id && tab.flowNodeRef ? [[tab.flowNodeRef.nodeId, tab] as const] : []), ...(activeFlow?.nodes ?? []).flatMap((node) => {
+    const tab = workbench.tabs.find((candidate) => node.kind === 'request' ? candidate.requestId === node.requestId : node.kind === 'inlineRequest' && candidate.flowNodeRef?.flowId === activeFlow?.id && candidate.flowNodeRef?.nodeId === node.id)
+    return tab ? [[node.id, tab] as const] : []
+  })]), [activeFlow, workbench.tabs])
 
   const activeNotificationTab =
     openTabs.activeOpenTab?.kind === 'notification'
@@ -1805,6 +1811,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               />
             ) : activeRunLog ? (
               <FlowRunSnapshot
+                rootPath={workspace.rootPath}
                 key={activeRunLog.id}
                 detail={activeRunLog.detail}
                 collections={collections.collections}
@@ -1812,6 +1819,29 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               />
             ) : activeFlow ? (
               <FlowCanvas
+                requestSaving={savingFlowRequests}
+                requestDrafts={Object.fromEntries([...flowDraftTabs].filter(([, tab]) => isTabDirty(tab)).map(([nodeId, tab]) => [nodeId, contentOf(tab)]))}
+                onRequestDraftChange={(nodeId, request, content, inline) => workbench.editFlowRequestDraft(request, content, inline ? { flowId: activeFlow.id, nodeId } : undefined)}
+                onSaveRequestDrafts={async (updates, graph) => {
+                  if (savingFlowRequests) throw new Error(t('flows.studio.saving'))
+                  setSavingFlowRequests(true)
+                  try {
+                  const linked = updates.filter((update) => !update.inline).map((update) => ({ id: update.request.id, content: update.request.content }))
+                  if (linked.length > 0) await collections.saveRequestContents(linked)
+                  if (updates.some((update) => update.inline)) await flows.saveGraph(activeFlow.id, graph.nodes, graph.edges)
+                  for (const update of updates) {
+                    const tab = flowDraftTabs.get(update.nodeId) ?? workbench.tabs.find((candidate) => candidate.flowNodeRef?.flowId === activeFlow.id && candidate.flowNodeRef.nodeId === update.nodeId)
+                    if (tab) workbench.markContentSaved(tab.id, update.request.content)
+                  }
+                  } finally { setSavingFlowRequests(false) }
+                }}
+                onDiscardRequestDrafts={(nodeIds) => {
+                  for (const nodeId of nodeIds) {
+                    const tab = flowDraftTabs.get(nodeId)
+                    if (tab) workbench.replaceTabContent(tab.id, tab.savedContent)
+                  }
+                }}
+                onPrepareRun={collections.flush}
                 key={activeFlow.id}
                 flow={activeFlow}
                 collections={collections.collections}

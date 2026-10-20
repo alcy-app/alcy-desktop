@@ -20,18 +20,17 @@ import { simpleNodeLogInfo } from './simple-node-types'
 import type { RunLogNodeInfo } from './RunLogPanel'
 import { edgeFromDto, flowNodeFromDto } from './use-flows-state'
 import './flow-canvas.css'
+import './flow-studio.css'
 
 interface FlowRunSnapshotProps {
+  rootPath?: string
   detail: FlowRunDetailDto
   collections: TreeNode[]
   environmentVariables: EnvironmentVariableDto[]
 }
 
-/** Snapshot somente leitura de um run do histórico: o grafo como foi
- * executado, com o rastro e os status daquele run, e o run log já aberto. Nada
- * aqui edita, salva nem executa — reexecuta os eventos gravados pelos mesmos
- * passos do run ao vivo. Montar com `key` do run. */
-export function FlowRunSnapshot({ detail, collections, environmentVariables }: FlowRunSnapshotProps) {
+/** Read-only historical graph and execution trail, reconstructed using the live reducers. Mount with the run ID; this view never edits or executes the graph. */
+export function FlowRunSnapshot({ detail, collections, environmentVariables, rootPath }: FlowRunSnapshotProps) {
   const { t } = useLanguage()
   const instanceRef = useRef<ReactFlowInstance<FlowNode, FlowEdgeType> | null>(null)
 
@@ -112,7 +111,7 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables }: F
   }, [nodeStates, collections, t])
 
   return (
-    <div className="flow-canvas-shell">
+    <div className="flow-canvas-shell flow-studio">
       <div className="flow-canvas">
         <ReactFlow
           nodes={nodes}
@@ -134,10 +133,11 @@ export function FlowRunSnapshot({ detail, collections, environmentVariables }: F
         </ReactFlow>
       </div>
       <RunLogPanel
+        rootPath={rootPath}
         entries={replayed.logEntries}
         nodeInfo={nodeInfo}
         runStartedAtMs={detail.startedAtMs}
-        flowExecutionId={null}
+        flowExecutionId={rootPath ? detail.id : null}
         isRunning={false}
         outputs={outputs}
       />

@@ -64,11 +64,8 @@ import { emptyGrpcCall } from './collection-tree'
 
 const SAVE_DEBOUNCE_MS = 500
 
-/** Resultado de uma tentativa de importar (por arquivo, URL ou texto
- * colado) — quem chama decide o que fazer com o erro (a modal de importar
- * mostra inline, para o usuário poder corrigir e tentar de novo). */
-/** Scripts trazidos pela importação: importados, mas nunca executados; `incompatible` conta os comandos
- * sem tradução, trocados por um erro explícito. */
+/** An import attempt result. Callers choose how to present failures; import dialogs keep them inline for correction and retry. */
+/** Imported scripts are preserved without execution; incompatible counts commands replaced by an explicit error. */
 export type ImportScriptStats = { count: number; incompatible: number }
 
 export type ImportOutcome = { ok: true; scripts?: ImportScriptStats } | { ok: false; message: string }
@@ -149,10 +146,7 @@ function bodyTextOf(content: RequestSummary['content']): string {
   }
 }
 
-/** `body` (campo único no wire) vem de `content.query` para GraphQL e de
- * `content.body` para REST — os dois pares (`query`/`variables` vs.
- * `method`/`body`) coexistem em `RequestContent`, mas só um é relevante
- * por protocolo. */
+/** The wire body is the GraphQL query or REST body. RequestContent preserves both protocol configurations, but only the selected protocol is active. */
 export function requestToDto(request: RequestSummary): SavedRequestDto {
   return {
     id: request.id,
@@ -194,7 +188,7 @@ function treeFromDto(nodes: (CollectionDto | FolderDto)[]): TreeNode[] {
   }))
 }
 
-/** Serve para collections e pastas: `labels` só sai quando houver rótulos, que só existem na raiz. */
+/** Collections and folders share this conversion; only root collections have labels. */
 function folderDtoFromNode(node: TreeNode): CollectionDto {
   return {
     id: node.id,
@@ -223,18 +217,15 @@ export function useCollectionsState(
   const [collections, setCollections] = useState<TreeNode[]>([])
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [loaded, setLoaded] = useState(false)
-  // Arquivo que não foi lido (ex.: gravado por uma versão mais nova do app): enquanto houver erro,
-  // nada é salvo, para não trocar o conteúdo do disco pela lista vazia mostrada na tela.
+  // Do not save after a failed load; an empty UI must never overwrite an unreadable or newer collection file.
   const [loadError, setLoadError] = useState<string | null>(null)
   const saveTimeoutRef = useRef<number | null>(null)
   const pendingSaveRef = useRef<{ workspaceRootPath: string; body: CollectionDto[] } | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
-  // O efeito de salvar reage a `collections`/`loaded` juntos — sem isso, o próprio carregamento
-  // (que muda os dois no mesmo render) dispararia um save supérfluo, reescrevendo o arquivo no
-  // disco sem nenhuma edição real (o que já bastava para acender "modificado" indevidamente).
+  // Loading collections and the loaded flag together must not cause redundant persistence or false change markers.
   const skipNextSaveRef = useRef(false)
 
-  /** Relê o arquivo do disco (ex.: depois de uma atualização do repositório remoto), descartando um save pendente que o sobrescreveria. */
+  /** Reload from disk and cancel pending saves that could overwrite externally updated content. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current)
@@ -287,9 +278,7 @@ export function useCollectionsState(
     }
   }, [collections, loaded, loadError, workspaceRootPath, onSaved])
 
-  /** Grava agora o save debounced pendente, se houver. Resolve quando a
-   * gravação termina: quem encerra o app, ou quem vai ler as coleções do
-   * disco (ex.: o runner), aguarda por ela. */
+  /** Flush the pending collection write before shutdown or commands that reload collections from disk. */
   const flushPendingSave = useCallback(async () => {
     if (saveTimeoutRef.current === null || pendingSaveRef.current === null) return
     window.clearTimeout(saveTimeoutRef.current)
@@ -299,12 +288,9 @@ export function useCollectionsState(
     await saveCollections(pending.workspaceRootPath, pending.body)
   }, [])
 
-  /** Um save debounced pendente não pode ser só cancelado ao trocar de
-   * workspace, desmontar ou fechar o app — isso perderia a última edição
-   * silenciosamente. Escopado a `workspaceRootPath` (não a `collections`)
-   * para que o cleanup só dispare nesses casos reais, não a cada tecla. */
+  /** Flush pending edits when leaving the workspace or closing the app. Scope cleanup to workspace lifetime rather than every collection edit. */
   useEffect(() => {
-    // Fechar a janela e reiniciar para instalar uma atualização passam por `runBeforeExit`.
+    // Window closing and update restarts both use runBeforeExit.
     const unregisterBeforeExit = registerBeforeExit(flushPendingSave)
 
     return () => {
@@ -337,7 +323,7 @@ export function useCollectionsState(
     setExpandedIds(allFolderIds(collections))
   }, [collections])
 
-  /** Expande as pastas que contêm a requisição, sem mexer no restante da árvore. */
+  /** Expand the request's ancestor folders while preserving the rest of the tree. */
   const revealRequest = useCallback(
     (id: string) => {
       const ancestors = findAncestorIds(collections, id)
@@ -446,7 +432,7 @@ export function useCollectionsState(
     const trimmed = name.trim()
     if (!trimmed) return
 
-    // Requisições irmãs podem ter o mesmo nome; só pastas/coleções são deduplicadas.
+    // Sibling requests may share names; only folder and collection names are deduplicated.
     setCollections((current) =>
       renameNode(current, id, kindOf(current, id) === 'folder' ? uniqueSiblingName(current, id, 'folder', trimmed) : trimmed),
     )
@@ -460,7 +446,7 @@ export function useCollectionsState(
     setCollections((current) => updateNodeVariables(current, id, variables))
   }, [])
 
-  /** Rótulos de collection (ADR 0060): ligar/desligar em uma ou várias collections e gerenciar em todas. */
+  /** Collection labels support bulk assignment and global management (ADR 0060). */
   const assignLabel = useCallback((ids: string[], label: CollectionLabelDto, assigned: boolean) => {
     setCollections((current) => assignCollectionLabel(current, ids, label, assigned))
   }, [])
@@ -477,7 +463,7 @@ export function useCollectionsState(
     setCollections((current) => removeLabelEverywhere(current, name))
   }, [])
 
-  /** Aplica gravações de script em variáveis de coleção/pasta; sem nada gravado, não toca no estado (nem no disco). */
+  /** Apply script writes to collection and folder variables; leave state and persistence untouched when there are no writes. */
   const applyScopedChanges = useCallback((changes: ScopedVariableChange[]) => {
     if (changes.length === 0) return
     setCollections((current) => applyScopedChangesInTree(current, changes))
@@ -492,7 +478,7 @@ export function useCollectionsState(
     })
   }, [])
 
-  /** Remoção em lote da seleção múltipla (spec 0104). */
+  /** Remove a multiple selection in one update (spec 0104). */
   const removeMany = useCallback((ids: string[]) => {
     setCollections((current) => removeNodes(current, ids))
     setExpandedIds((current) => {
@@ -509,6 +495,19 @@ export function useCollectionsState(
     },
     [expand],
   )
+
+  /** Persist explicit flow-editor saves before the execution engine reloads collections. */
+  const saveRequestContents = useCallback(async (updates: { id: string; content: RequestContent }[]) => {
+    if (!loaded || loadError !== null) throw new Error(loadError ?? 'Collections are not loaded')
+    const next = updates.reduce((tree, update) => updateRequestContentInTree(tree, update.id, update.content), collections)
+    if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
+    saveTimeoutRef.current = null
+    pendingSaveRef.current = null
+    const result = await saveCollections(workspaceRootPath, next.map(folderDtoFromNode))
+    if (!result.ok) throw new Error(result.error.message)
+    setCollections(next)
+    onSaved?.()
+  }, [collections, loaded, loadError, workspaceRootPath, onSaved])
 
   const updateRequestContent = useCallback((id: string, content: RequestContent) => {
     setCollections((current) => updateRequestContentInTree(current, id, content))
@@ -531,7 +530,7 @@ export function useCollectionsState(
     [collections, t, showToast],
   )
 
-  /** Exporta várias coleções num único arquivo (seleção múltipla, spec 0104). */
+  /** Export multiple selected collections into one file (spec 0104). */
   const exportCollectionsByIds = useCallback(
     async (ids: string[]) => {
       const nodes = ids
@@ -553,9 +552,7 @@ export function useCollectionsState(
     [collections, t, showToast],
   )
 
-  /** Coleção raiz que contém `id` (uma coleção ou pasta), para o export como
-   * webclient: a pasta precisa dos ancestrais para herdar variáveis e
-   * autenticação (spec 0113). */
+  /** Export the selected folder with its root collection so inherited variables and authentication remain available to the webclient (spec 0113). */
   const webclientSelection = useCallback(
     (id: string): { collection: CollectionDto; folderId: string | null; name: string } | null => {
       const root = collections.find((collection) => findNode([collection], id) !== null)
@@ -686,6 +683,7 @@ export function useCollectionsState(
     removeMany,
     moveMany,
     updateRequestContent,
+    saveRequestContents,
     exportCollection,
     exportCollectionsByIds,
     exportAll,

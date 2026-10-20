@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronDownIcon, ChevronRightIcon } from '../../shared/ui/icons'
 import { childEntries, childrenOfRoot, isContainer, kindOf, summarize } from './output-tree'
 import type { OutputEntry } from './output-tree'
+import { useLanguage } from '../../shared/i18n/use-language'
 
 interface OutputTreeProps {
   roots: OutputEntry[]
@@ -9,9 +10,7 @@ interface OutputTreeProps {
   onSelect: (path: string | null) => void
 }
 
-/** Árvore navegável do output de um node: expande objetos/arrays e permite
- * selecionar campo a campo. Os filhos só são montados quando o pai está
- * aberto, então um corpo grande não vira milhares de linhas de uma vez. */
+/** Expandable output tree with bounded child pages; collapsed branches do not mount their descendants. */
 export function OutputTree({ roots, selectedPath, onSelect }: OutputTreeProps) {
   return (
     <ul className="flow-output-tree" role="tree">
@@ -40,7 +39,9 @@ interface OutputRowProps {
 }
 
 function OutputRow({ entry, depth, selectedPath, onSelect, initiallyOpen = false, isRoot = false }: OutputRowProps) {
+  const { t } = useLanguage()
   const [open, setOpen] = useState(initiallyOpen)
+  const [offset, setOffset] = useState(0)
   const container = isContainer(entry.value)
   const kind = kindOf(entry.value)
   const selected = entry.path !== null && entry.path === selectedPath
@@ -66,9 +67,10 @@ function OutputRow({ entry, depth, selectedPath, onSelect, initiallyOpen = false
       </button>
       {children.length > 0 && (
         <ul role="group">
-          {children.map((child) => (
+          {children.slice(offset, offset + 100).map((child) => (
             <OutputRow key={child.key} entry={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} />
           ))}
+          {children.length > 100 && <li role="none" className="flow-data-pagination"><button type="button" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 100))}>{t('flows.studio.previousPage')}</button><button type="button" disabled={offset + 100 >= children.length} onClick={() => setOffset(offset + 100)}>{t('flows.studio.nextPage')}</button></li>}
         </ul>
       )}
     </li>

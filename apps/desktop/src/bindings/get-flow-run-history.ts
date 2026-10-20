@@ -11,9 +11,7 @@ export interface TimedFlowRunEventDto {
 
 export type FlowRunNodeOutputDto = FlowNodeOutputDto & { nodeId: string }
 
-/** Snapshot de um run gravado no histórico: o grafo como foi executado, os
- * eventos com hora (reexecutados no frontend pelos mesmos redutores do run ao
- * vivo) e a saída de cada node de requisição. */
+/** Historical run snapshot: executed graph, timestamped events replayed by the live reducers, and optional node output previews. */
 export interface FlowRunDetailDto {
   id: string
   flowName: string
@@ -30,7 +28,7 @@ export type GetFlowRunHistoryResult = { ok: true; value: FlowRunDetailDto } | { 
 
 export async function getFlowRunHistory(rootPath: string, id: string): Promise<GetFlowRunHistoryResult> {
   try {
-    const value = await invoke<FlowRunDetailDto>('get_flow_run_history', { input: { rootPath, id } })
+    const value = await invoke<FlowRunDetailDto>('get_flow_run_history', { input: { rootPath, id, includeOutputs: false } })
     return { ok: true, value }
   } catch (error) {
     return { ok: false, error: error as HistoryError }

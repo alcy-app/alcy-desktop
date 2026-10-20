@@ -13,24 +13,23 @@ import type { MockStartInfo } from './mock-nodes'
 import type { RunLogNodeInfo } from './RunLogPanel'
 import type { NodeRunStatus } from './use-flow-run'
 
-/** Dados de um node simples no canvas (spec 0083): a configuração inteira em
- * `config`, mais o que o canvas injeta a cada render (status do run e ações). */
+/** Canonical configuration plus transient execution and interaction data for simple canvas nodes (spec 0083). */
 export interface SimpleNodeData extends Record<string, unknown> {
+  displayFormat?: 'auto' | 'json' | 'text'
   config: SimpleNodeKindState
   runStatus: NodeRunStatus
   onOpenSettings: () => void
   onDelete: () => void
   onDuplicate: () => void
-  /** Edição direta no node (texto da anotação). */
+  /** Direct node edits, including note text. */
   onConfigChange: (config: SimpleNodeKindState) => void
-  /** Requisição avulsa: abre a requisição numa aba do workbench. */
+  /** Open an inline request in the inspector or workbench fallback. */
   onEditRequest?: () => void
-  /** Requisição avulsa: descreve as variáveis da URL no preview. */
+  /** Variables used to describe templates in inline request URL previews. */
   environmentVariables?: EnvironmentVariableDto[]
-  /** Blocos de mock (spec 0121): o mock do próprio "Ligar mock", ou o do
-   * bloco "Ligar mock" para onde os demais apontam. */
+  /** The mock started by this node or referenced by its Start mock node (spec 0121). */
   mockStart?: MockStartInfo | null
-  /** "Ligar mock" avulso: abre o mock numa aba do workbench. */
+  /** Open the inline Start mock in a workbench tab. */
   onEditMockServer?: () => void
   visited?: boolean
   readOnly?: boolean
@@ -38,7 +37,7 @@ export interface SimpleNodeData extends Record<string, unknown> {
 
 export type SimpleFlowNodeType = Node<SimpleNodeData, SimpleNodeKind>
 
-/** Símbolo exibido no node para o operador de uma condição (`if`/`while`). */
+/** Display symbol for an If or While comparison operator. */
 export const CONDITION_OPERATOR_SYMBOL: Record<ComparisonOperatorState, string> = {
   equals: '==',
   notEquals: '!=',
@@ -46,18 +45,18 @@ export const CONDITION_OPERATOR_SYMBOL: Record<ComparisonOperatorState, string> 
   lessThan: '<',
 }
 
-/** Condição de um `while` recém-criado — contador é o uso mais comum. */
+/** Default While condition; a counter is the common starting point. */
 const DEFAULT_WHILE_CONDITION: ConditionState = { left: '', operator: 'lessThan', right: '' }
 const DEFAULT_WHILE_MAX_ITERATIONS = 100
 
 /** Espera inicial de um bloco "Aguardar chamada". */
 export const DEFAULT_MOCK_WAIT_TIMEOUT_MS = 30_000
 
-/** Tamanho inicial de uma anotação nova. */
+/** Default dimensions for a new note. */
 export const DEFAULT_NOTE_SIZE = { width: 260, height: 140 }
 
-/** Configuração de um node simples recém-criado pela paleta. */
-/** Requisição avulsa fica de fora: precisa de um nome traduzido (ver `newInlineRequest`). */
+/** Initial configuration for a simple node selected from the palette. */
+/** Inline requests need a translated nonempty name; see newInlineRequest. */
 export function defaultSimpleNodeConfig(kind: Exclude<SimpleNodeKind, 'inlineRequest'>): SimpleNodeKindState {
   switch (kind) {
     case 'note':
@@ -89,9 +88,7 @@ export function defaultSimpleNodeConfig(kind: Exclude<SimpleNodeKind, 'inlineReq
   }
 }
 
-/** Node simples pronto para o canvas, com ações vazias — o canvas as
- * substitui a cada render. A anotação carrega o próprio tamanho, que o
- * `NodeResizer` do xyflow passa a controlar. */
+/** Initial canvas data with placeholder actions replaced by the canvas; React Flow's NodeResizer owns note dimensions. */
 export function simpleFlowNode(id: string, position: { x: number; y: number }, config: SimpleNodeKindState): SimpleFlowNodeType {
   const noop = () => {}
   return {
@@ -110,8 +107,7 @@ export function simpleFlowNode(id: string, position: { x: number; y: number }, c
   }
 }
 
-/** Configuração atual de um node simples do canvas — para a anotação, o
- * tamanho vem do próprio node (redimensionado pelo usuário). */
+/** Read current canonical configuration, taking resized note dimensions from the node itself. */
 export function configOfSimpleNode(node: SimpleFlowNodeType): SimpleNodeKindState {
   const { config } = node.data
   if (config.kind !== 'note') return config
@@ -135,26 +131,24 @@ export const SIMPLE_NODE_LABEL_KEY: Record<SimpleNodeKind, TranslationKey> = {
   mockAssertCalls: 'flows.canvas.newMockAssertCallsLabel',
 }
 
-/** Requisição avulsa recém-criada: REST em branco, com um nome (o backend
- * exige nome não vazio). */
+/** Create a blank REST request with the nonempty name required by the backend. */
 export function newInlineRequest(name: string): SimpleNodeKindState {
   return { kind: 'inlineRequest', request: { id: crypto.randomUUID(), name, protocol: 'rest', content: emptyRequestContent('rest') } }
 }
 
-/** `MÉTODO url` de uma requisição, como o log e o node mostram. */
+/** METHOD URL label shared by request cards and the execution log. */
 export function describeRequest(request: RequestSummary): string {
   return `${requestMethodLabel(request)} ${request.content.endpointUrl}`
 }
 
-/** Espera exibida no node e no log: ms abaixo de 1 s, segundos acima. */
+/** Display milliseconds below one second, otherwise seconds. */
 export function formatSleepDuration(durationMs: number): string {
   return durationMs < 1000 ? `${durationMs} ms` : `${durationMs / 1000} s`
 }
 
 const MAX_LOG_LABEL_CHARS = 40
 
-/** Como o log do run nomeia um node simples: o conteúdo configurado (curto)
- * quando há, senão o nome do tipo. */
+/** Use a compact configuration summary as the log label, falling back to the node kind. */
 export function simpleNodeLogInfo(config: SimpleNodeKindState, t: (key: TranslationKey) => string): RunLogNodeInfo {
   const kindLabel = t(SIMPLE_NODE_LABEL_KEY[config.kind])
   if (config.kind === 'inlineRequest') {

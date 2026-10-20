@@ -8,15 +8,14 @@ use serde::{Deserialize, Serialize};
 use crate::flow_store::{PersistedFlow, flow_from_persisted, persisted_from_flow};
 use crate::storage_error::StorageError;
 
-/// A v2 discrimina execuções normais e de carga no mesmo índice. Arquivos v1
-/// continuam sendo lidos como runs normais e são atualizados na próxima gravação.
+/// The v2 index distinguishes standard and load runs. Read v1 entries as standard runs and upgrade on the next write.
 const MANIFEST_VERSION: u32 = 2;
-const DETAIL_VERSION: u32 = 1;
+const DETAIL_VERSION: u32 = 2;
+const LOAD_DETAIL_VERSION: u32 = 1;
 const MANIFEST_FILE_NAME: &str = "alcy-flow-runs.json";
 const DETAIL_DIR_NAME: &str = "alcy-flow-runs";
 
-/// Como um run terminou, derivado dos eventos gravados: cancelado tem
-/// precedência sobre falha, e falha sobre concluído.
+/// Derive status from events: cancellation takes precedence over failure, then completion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FlowRunStatus {
@@ -25,9 +24,7 @@ pub enum FlowRunStatus {
     Cancelled,
 }
 
-/// Tipo de detalhe a que uma entrada do índice aponta. Mantém o histórico de
-/// flows num único arquivo, sem forçar consumidores de flows normais a abrir
-/// ou desserializar relatórios de carga.
+/// Index discriminator that keeps standard and load history together without loading unrelated detail formats.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FlowRunKind {
@@ -36,7 +33,7 @@ pub enum FlowRunKind {
     Load,
 }
 
-/// Resumo leve de um run — o que o índice guarda e basta para listar.
+/// Small run metadata sufficient for history listings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowRunSummary {
     pub id: String,
@@ -46,8 +43,7 @@ pub struct FlowRunSummary {
     pub status: FlowRunStatus,
 }
 
-/// Resumo leve de uma execução de carga, usado para a lista unificada de
-/// histórico sem transferir métricas, thresholds ou amostras.
+/// Load run summary without metrics, thresholds or samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadFlowRunSummary {
     pub id: String,
@@ -61,8 +57,7 @@ pub struct LoadFlowRunSummary {
     pub failed_requests: u64,
 }
 
-/// Contadores finais do runner de carga. Não há corpos de resposta nesta
-/// estrutura nem nos arquivos de histórico de carga.
+/// Final load counters; load history never stores response bodies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedLoadRunSummary {
@@ -106,8 +101,7 @@ pub struct RecordedLoadThreshold {
     pub passed: bool,
 }
 
-/// Request compacta usada pela paginação de resultados. O tamanho é limitado
-/// pelo command antes da persistência; nenhum dado de resposta é armazenado.
+/// Compact request sample bounded by the command before persistence; it contains no response data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedLoadSample {
@@ -120,8 +114,7 @@ pub struct RecordedLoadSample {
     pub duration_ms: u64,
 }
 
-/// Relatório persistido de carga. `samples` é deliberadamente uma amostra
-/// limitada para que o tamanho do histórico não acompanhe a taxa do teste.
+/// Bound the retained sample so report size does not grow with the load test's request rate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadFlowRunRecord {
@@ -165,7 +158,7 @@ pub enum RecordedSkipReason {
     Unreachable,
     Cancelled,
     BranchNotTaken,
-    /// Aditivo (spec 0085).
+    /// Additive enum variant (spec 0085).
     LoopInterrupted,
 }
 
@@ -188,8 +181,7 @@ pub enum RecordedEventKind {
     },
     Branched {
         result: bool,
-        /// Aditivo (spec 0121): explicação dos nodes de mock com saídas
-        /// `true`/`false`; `If` não traz mensagem.
+        /// Optional explanation for mock nodes with true/false outputs; If nodes omit it (spec 0121).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
@@ -200,13 +192,12 @@ pub enum RecordedEventKind {
     Skipped {
         reason: RecordedSkipReason,
     },
-    /// Aditivo (spec 0083): conclusão de `Log`/`Display`/`SetVariables`/
-    /// `Sleep`, com o texto já mascarado.
+    /// Completion of Log, Display, Set variables or Sleep with an already-redacted message (spec 0083).
     Completed {
         #[serde(default)]
         message: Option<String>,
     },
-    /// Aditivos (spec 0084): iteração iniciada e saída de um `While`.
+    /// While iteration and loop-exit events (spec 0084).
     LoopIteration {
         iteration: u32,
     },
@@ -215,8 +206,7 @@ pub enum RecordedEventKind {
     },
 }
 
-/// Um evento do run com o instante em que chegou, para o frontend
-/// reexecutá-los e reconstruir status, rastro e log.
+/// Timestamped event replayed by the frontend to reconstruct execution status, trail and log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedFlowEvent {
@@ -226,7 +216,7 @@ pub struct RecordedFlowEvent {
     pub kind: RecordedEventKind,
 }
 
-/// Saída de um node de requisição, com o corpo já limitado pelo chamador.
+/// Request node output with a caller-bounded preview body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedNodeOutput {
@@ -238,8 +228,7 @@ pub struct RecordedNodeOutput {
     pub body: String,
     pub base64: bool,
     pub truncated: bool,
-    /// Aditivo (spec 0121): presente quando a saída é a chamada recebida por
-    /// um node `MockWaitRequest` — `headers`/`body` são os da chamada.
+    /// Captured Wait for call output uses the incoming request headers and body (spec 0121).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<RecordedRequestLine>,
 }
@@ -251,8 +240,7 @@ pub struct RecordedRequestLine {
     pub path: String,
 }
 
-/// Um run de flow completo: o grafo como foi executado (snapshot, não uma
-/// referência ao flow salvo, que pode mudar depois), os eventos e as saídas.
+/// Executed graph snapshot, timestamped events and bounded node output previews for one run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlowRunRecord {
     pub id: String,
@@ -337,10 +325,7 @@ struct PersistedLoadDetail {
     omitted_samples: u64,
 }
 
-/// Runs de flow do workspace, um registro por execução (`alcy-flow-runs.json`
-/// como índice + `alcy-flow-runs/<id>.json` como detalhe), com escrita atômica
-/// e poda por retenção — mesmo desenho do histórico de requisições, em
-/// arquivos separados para não tocar o formato dele.
+/// Workspace flow history uses an index and one atomically written detail per run, with retention independent of request history.
 pub struct FlowRunHistoryStore {
     manifest_path: PathBuf,
     detail_dir: PathBuf,
@@ -356,7 +341,7 @@ impl FlowRunHistoryStore {
         }
     }
 
-    /// Resumo de cada run, mais recente primeiro, sem abrir nenhum detalhe.
+    /// Newest-first summaries without opening run details.
     pub fn load_summaries(&self) -> Result<Vec<FlowRunSummary>, StorageError> {
         Ok(self
             .load_index()?
@@ -372,7 +357,7 @@ impl FlowRunHistoryStore {
             .collect())
     }
 
-    /// Resumos de carga, mais recentes primeiro, sem abrir os relatórios.
+    /// Newest-first load summaries without opening load reports.
     pub fn load_load_summaries(&self) -> Result<Vec<LoadFlowRunSummary>, StorageError> {
         Ok(self
             .load_index()?
@@ -397,7 +382,7 @@ impl FlowRunHistoryStore {
             .collect())
     }
 
-    /// `Ok(None)` quando `id` não está no índice (ou não tem formato de id).
+    /// Return None for IDs that are invalid or absent from the index.
     pub fn load_record(&self, id: &str) -> Result<Option<FlowRunRecord>, StorageError> {
         if !is_valid_id(id)
             || !self
@@ -418,7 +403,7 @@ impl FlowRunHistoryStore {
         })?;
         let detail: PersistedDetail = serde_json::from_str(&raw)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
-        if detail.version != DETAIL_VERSION {
+        if !matches!(detail.version, 1 | DETAIL_VERSION) {
             return Err(StorageError::UnsupportedVersion(detail.version));
         }
 
@@ -433,8 +418,7 @@ impl FlowRunHistoryStore {
         }))
     }
 
-    /// Carrega somente o detalhe de uma execução de carga identificada no
-    /// índice v2. IDs de runs normais não expõem nem desserializam este formato.
+    /// Read only load runs identified by the v2 index; standard run IDs never deserialize as load reports.
     pub fn load_load_record(&self, id: &str) -> Result<Option<LoadFlowRunRecord>, StorageError> {
         if !is_valid_id(id)
             || !self
@@ -454,7 +438,7 @@ impl FlowRunHistoryStore {
         })?;
         let detail: PersistedLoadDetail = serde_json::from_str(&raw)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
-        if detail.version != DETAIL_VERSION {
+        if detail.version != LOAD_DETAIL_VERSION {
             return Err(StorageError::UnsupportedVersion(detail.version));
         }
 
@@ -473,8 +457,7 @@ impl FlowRunHistoryStore {
         }))
     }
 
-    /// Grava o detalhe, põe o resumo no início do índice e poda os runs mais
-    /// antigos que a retenção (índice e arquivo de detalhe).
+    /// Write the run detail, prepend its summary and prune expired index entries and detail files.
     pub fn record(&self, record: &FlowRunRecord) -> Result<(), StorageError> {
         if !is_valid_id(&record.id) {
             return Err(StorageError::Write(format!(
@@ -514,8 +497,7 @@ impl FlowRunHistoryStore {
         self.write_retained(index, true)
     }
 
-    /// Grava um relatório de carga no mesmo índice versionado dos flows
-    /// normais. Somente os agregados e a amostra já limitada são persistidos.
+    /// Persist bounded load aggregates and samples in the shared versioned history index.
     pub fn record_load(&self, record: &LoadFlowRunRecord) -> Result<(), StorageError> {
         if !is_valid_id(&record.id) {
             return Err(StorageError::Write(format!(
@@ -526,7 +508,7 @@ impl FlowRunHistoryStore {
 
         let mut index = self.load_index()?;
         let detail = PersistedLoadDetail {
-            version: DETAIL_VERSION,
+            version: LOAD_DETAIL_VERSION,
             flow_id: record.flow_id.clone(),
             flow_name: record.flow_name.clone(),
             started_at_ms: to_millis(record.started_at),
@@ -563,8 +545,7 @@ impl FlowRunHistoryStore {
         self.write_retained(index, true)
     }
 
-    /// Remove os runs mais antigos que a retenção sem gravar nada novo; sem
-    /// nada a podar, não reescreve o índice.
+    /// Prune expired runs without writing a new run; preserve the index when nothing expires.
     pub fn prune(&self) -> Result<(), StorageError> {
         let index = self.load_index()?;
         self.write_retained(index, false)
@@ -594,9 +575,14 @@ impl FlowRunHistoryStore {
         write_atomic(&self.manifest_path, &json)?;
 
         for entry in &pruned {
-            // Best-effort: a entrada já saiu do índice, então um arquivo
-            // órfão nunca mais é referenciado.
+            // Best effort after removing the index entry: orphaned detail files are no longer referenced.
             let _ = fs::remove_file(self.detail_path(&entry.id));
+            if let Some(directory) = crate::flow_body_directory(
+                self.detail_dir.parent().unwrap_or(&self.detail_dir),
+                &entry.id,
+            ) {
+                let _ = fs::remove_dir_all(directory);
+            }
         }
 
         Ok(())
@@ -623,8 +609,7 @@ impl FlowRunHistoryStore {
     }
 }
 
-/// O id vira nome de arquivo: só o alfabeto que o backend gera, para que um id
-/// vindo do frontend nunca escape do diretório de detalhes.
+/// IDs become filenames, so accept only the backend's generated identifier alphabet.
 fn is_valid_id(id: &str) -> bool {
     !id.is_empty()
         && id
@@ -816,6 +801,56 @@ mod tests {
         assert_eq!(summaries[0].flow_name, "Meu flow");
         assert_eq!(summaries[0].status, FlowRunStatus::Completed);
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn archived_bodies_survive_reopening_and_are_removed_with_history_retention() {
+        let root = temp_root();
+        let store = FlowRunHistoryStore::new(root.clone(), week());
+        let run = record(
+            "with-bodies",
+            now_ms_precision() - Duration::from_secs(60),
+            vec![],
+        );
+        store.record(&run).unwrap();
+        let capture = crate::FlowBodyCapture::new();
+        capture.capture("req", &"x".repeat(300_000), false);
+        let directory = crate::flow_body_directory(&root, &run.id).unwrap();
+        capture.finish(Some(directory.clone()));
+        drop(capture);
+        assert_eq!(
+            crate::read_archived_flow_body(&directory, "req")
+                .unwrap()
+                .availability,
+            "available"
+        );
+        assert_eq!(
+            fs::read(crate::archived_flow_body_path(&directory, "req"))
+                .unwrap()
+                .len(),
+            300_000
+        );
+        FlowRunHistoryStore::new(root.clone(), Duration::ZERO)
+            .prune()
+            .unwrap();
+        assert!(!directory.exists());
+        assert!(store.load_record(&run.id).unwrap().is_none());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn v1_details_remain_readable_without_body_archives() {
+        let root = temp_root();
+        let store = FlowRunHistoryStore::new(root.clone(), week());
+        let run = record("legacy", now_ms_precision(), vec![]);
+        store.record(&run).unwrap();
+        let path = store.detail_path(&run.id);
+        let mut detail: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        detail["version"] = 1.into();
+        fs::write(path, serde_json::to_vec(&detail).unwrap()).unwrap();
+        assert_eq!(store.load_record(&run.id).unwrap(), Some(run));
         fs::remove_dir_all(&root).ok();
     }
 

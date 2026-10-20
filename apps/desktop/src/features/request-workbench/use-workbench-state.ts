@@ -719,6 +719,20 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [])
 
+  /** Flow inspectors edit the same draft as request tabs without activating a tab. */
+  const editFlowRequestDraft = useCallback((request: { id: string; name: string; content: RequestContent }, content: RequestContent, flowNodeRef?: FlowNodeRef) => {
+    setState((current) => {
+      const existing = current.tabs.find((tab) => flowNodeRef
+        ? tab.flowNodeRef?.flowId === flowNodeRef.flowId && tab.flowNodeRef.nodeId === flowNodeRef.nodeId
+        : tab.requestId === request.id)
+      const base = existing ?? { ...tabFromContent(flowNodeRef ? null : request.id, request.name, request.content), flowNodeRef, pinned: true }
+      const next = tabFromContent(base.requestId, base.name, content)
+      const updated = { ...base, protocol: next.protocol, endpointUrl: next.endpointUrl, query: next.query, variables: next.variables, method: next.method, body: next.body, headers: next.headers, params: next.params, routeParams: next.routeParams, authorization: next.authorization, grpc: next.grpc, preRequestScript: next.preRequestScript, postResponseScript: next.postResponseScript, pinned: true }
+      updated.dirty = computeDirty(updated)
+      return { ...current, tabs: existing ? current.tabs.map((tab) => tab.id === existing.id ? updated : tab) : [...current.tabs, updated] }
+    })
+  }, [])
+
   const selectTab = useCallback((tabId: string) => {
     setState((current) => ({ ...current, activeTabId: tabId }))
   }, [])
@@ -870,8 +884,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
 
   /** Mark current tab content as saved after updating an existing request. */
   const markContentSaved = useCallback(
-    (tabId: string) => {
-      updateTab(tabId, (tab) => ({ savedContent: contentOf(tab) }))
+    (tabId: string, snapshot?: RequestContent) => {
+      updateTab(tabId, (tab) => ({ savedContent: snapshot ?? contentOf(tab) }))
     },
     [updateTab],
   )
@@ -1020,6 +1034,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     newDraftTab,
     openDraft,
     openFlowNodeRequest,
+    editFlowRequestDraft,
     selectTab,
     pinTab,
     pinRequest,

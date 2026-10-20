@@ -1,4 +1,4 @@
-//! Casos de uso e portas da aplicação Alcy.
+//! Application use cases and ports for Alcy.
 
 mod compare_responses;
 mod credential_store;
@@ -7,6 +7,7 @@ mod evaluate_value_monitors;
 mod execute_flow;
 mod execute_request;
 mod flow_graph;
+mod flow_output;
 mod iteration_data;
 mod json_path;
 mod load_execution;
@@ -42,6 +43,10 @@ pub use execute_flow::{
     FlowRunSummary, MAX_SLEEP_MS, MAX_WHILE_ITERATIONS, RequestCallDetails, execute_flow,
 };
 pub use execute_request::execute_request;
+pub use flow_output::{
+    FLOW_OUTPUT_PAGE_BYTES, FLOW_OUTPUT_PAGE_SIZE, FlowOutputField, FlowOutputPage,
+    inspect_flow_output, read_flow_output_value,
+};
 pub use iteration_data::{
     IterationData, IterationDataError, MAX_ITERATION_DATA_BYTES, MAX_ITERATION_DATA_ROWS,
     parse_iteration_data,

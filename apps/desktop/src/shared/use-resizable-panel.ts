@@ -8,13 +8,9 @@ interface UseResizablePanelOptions {
   minSize: number
   maxSize: number
   axis: Axis
-  /**
-   * 'reverse' quando arrastar no sentido positivo do eixo deve reduzir o
-   * tamanho — caso da alça acima do painel de resposta, cujo tamanho é
-   * medido de baixo para cima.
-   */
+  /** Use reverse when a positive drag reduces size, such as a response panel measured upward from its lower edge. */
   direction?: 'forward' | 'reverse'
-  /** Quando presente, o tamanho é persistido em localStorage sob esta chave. */
+  /** Persist panel size in localStorage under this optional key. */
   storageKey?: string
 }
 
@@ -31,7 +27,7 @@ function loadPersistedSize(storageKey: string | undefined, minSize: number, maxS
   }
 }
 
-/** Redimensionamento de painel por arraste da alça divisória. */
+/** Resize a panel by dragging its divider. */
 export function useResizablePanel({
   initialSize,
   minSize,
@@ -41,8 +37,7 @@ export function useResizablePanel({
   storageKey,
 }: UseResizablePanelOptions) {
   const [storedSize, setSize] = useState(() => loadPersistedSize(storageKey, minSize, maxSize) ?? initialSize)
-  // `maxSize` pode mudar com o espaço disponível (ex.: janela encolhida): o tamanho efetivo
-  // acompanha o limite atual, para o arraste partir do que está de fato na tela.
+  // Clamp size to the available space so dragging starts from the visible dimensions after a window resize.
   const size = Math.min(maxSize, Math.max(minSize, storedSize))
   const [isResizing, setIsResizing] = useState(false)
   const dragState = useRef<{ start: number; startSize: number } | null>(null)
@@ -55,9 +50,7 @@ export function useResizablePanel({
   useEffect(() => {
     if (!isResizing) return
 
-    // O tamanho vive no estado do workbench inteiro: aplicar a cada
-    // `pointermove` (vários por quadro) renderizava a tela toda várias vezes
-    // por quadro. Guarda o último valor e aplica no máximo uma vez por quadro.
+    // Batch pointer movement into one update per animation frame to avoid rerendering the whole workbench several times per frame.
     let pendingSize: number | null = null
     let frame: number | null = null
     const flush = () => {
@@ -83,7 +76,7 @@ export function useResizablePanel({
         try {
           window.localStorage.setItem(storageKey, String(sizeRef.current))
         } catch {
-          // storage indisponível — o tamanho só não persiste entre sessões
+          // Storage failure affects persistence only; resizing remains available in the current session.
         }
       }
     }
@@ -99,8 +92,7 @@ export function useResizablePanel({
 
   const startResizing = useCallback(
     (event: ReactPointerEvent) => {
-      // Evita que o arraste inicie seleção de texto/realce de hover nos
-      // elementos sobre os quais o cursor passa durante o redimensionamento.
+      // Prevent text selection and hover highlighting while dragging the divider.
       event.preventDefault()
       dragState.current = { start: axis === 'horizontal' ? event.clientX : event.clientY, startSize: size }
       setIsResizing(true)
@@ -108,5 +100,12 @@ export function useResizablePanel({
     [axis, size],
   )
 
-  return { size, isResizing, startResizing }
+  const changeSize = (next: number) => {
+    const clamped = Math.min(maxSize, Math.max(minSize, next))
+    setSize(clamped)
+    if (storageKey) {
+      try { window.localStorage.setItem(storageKey, String(clamped)) } catch { /* Resizing remains available when storage is unavailable. */ }
+    }
+  }
+  return { size, isResizing, startResizing, setSize: changeSize }
 }

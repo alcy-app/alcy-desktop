@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { RequestPicker } from './RequestPicker'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Badge } from '../../shared/ui/Badge'
@@ -10,10 +11,9 @@ import { InlineEditInput } from '../../shared/ui/InlineEditInput'
 import { Input } from '../../shared/ui/Input'
 import { Select } from '../../shared/ui/Select'
 import { Textarea } from '../../shared/ui/Textarea'
-import { CloseIcon, PlusIcon, SearchIcon, TrashIcon } from '../../shared/ui/icons'
-import { useToast } from '../../shared/ui/use-toast'
+import { CloseIcon, MaximizeIcon, RestoreIcon, PlusIcon, TrashIcon } from '../../shared/ui/icons'
+import { useResizablePanel } from '../../shared/use-resizable-panel'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
-import { describeVariable } from '../request-workbench/template-highlight'
 import { requestMethodLabel } from '../request-workbench/collection-tree'
 import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
 import type { ComparisonOperatorState, ConditionState, LoadNodeKindState, SimpleNodeKindState, VariableAssignmentState } from './flows.types'
@@ -22,6 +22,14 @@ import { LOAD_NODE_DEFINITIONS } from './load-node-config'
 import type { MockServerSummaryDto } from '../../bindings/mock-servers'
 import { MockNodeFields } from './MockNodeFields'
 import type { MockStartInfo } from './mock-nodes'
+import { FlowDataBrowser } from './FlowDataBrowser'
+import type { FlowVariableDefinition } from './FlowDataBrowser'
+import { FlowOutputExplorer } from './FlowOutputExplorer'
+import type { NodeRunStatus } from './use-flow-run'
+import { describeRunStatus } from './node-run-status'
+import { DisplayValue } from './DisplayValue'
+import { FlowTabs } from './FlowTabs'
+import type { FlowDatasetSource } from './FlowDatasetFields'
 
 export type InspectorSelection =
   | { id: string; kind: 'start' }
@@ -34,12 +42,25 @@ export type InspectorSelection =
 export interface AncestorRequestRef {
   nodeId: string
   label: string
-  /** O que o node expõe para referência: a resposta de uma requisição (padrão),
-   * a chamada recebida por um "Aguardar chamada" ou a URL de um "Ligar mock". */
+  /** Reference scope exposed by the ancestor: response, captured mock request, or started mock URL. */
   output?: 'response' | 'mockRequest' | 'mockServer'
 }
 
 interface NodeInspectorPanelProps {
+  outputVersions?: Record<string, number>
+  flowId?: string
+  datasets?: FlowDatasetSource[]
+  rootPath?: string
+  flowExecutionId?: string | null
+  nodeStatus?: NodeRunStatus
+  load?: boolean
+  definitions?: FlowVariableDefinition[]
+  requestEditor?: ReactNode
+  activeTab?: 'configuration' | 'data' | 'output'
+  onTabChange?: (tab: 'configuration' | 'data' | 'output') => void
+  outdated?: boolean
+  displayFormat?: 'auto' | 'json' | 'text'
+  onDisplayFormatChange?: (format: 'auto' | 'json' | 'text') => void
   selection: InspectorSelection
   ancestorRequests: AncestorRequestRef[]
   /** Nomes definidos por nodes `setVariables` ancestrais. */
@@ -52,28 +73,25 @@ interface NodeInspectorPanelProps {
   onConfigChange: (nodeId: string, config: SimpleNodeKindState) => void
   onLoadConfigChange: (nodeId: string, config: string) => void
   onImportDatasetAsset?: () => Promise<{ assetId: string; rows: number } | null>
-  /** Abre a requisição avulsa numa aba do workbench. */
+  /** Fallback action for opening an inline request in a workbench tab. */
   onEditInlineRequest: (nodeId: string) => void
-  /** Blocos de mock (spec 0121): "Ligar mock" ancestrais, o mock do bloco
-   * selecionado e os mocks salvos do workspace. */
+  /** Ancestor Start mock nodes, the selected mock and saved workspace mock summaries. */
   mockStartOptions: MockStartInfo[]
   selectedMockStart: MockStartInfo | null
   savedMockServers: MockServerSummaryDto[]
-  /** Abre o mock avulso numa aba do workbench. */
+  /** Open an inline mock in its workbench tab. */
   onEditInlineMockServer: (nodeId: string) => void
   onClose: () => void
 }
 
-/** Maior espera aceita pelo motor (`MAX_SLEEP_MS` em `execute_flow.rs`). */
+/** Maximum wait accepted by the execution engine. */
 const MAX_SLEEP_MS = 10 * 60 * 1000
-/** Maior limite de iterações aceito pelo motor (`MAX_WHILE_ITERATIONS`). */
+/** Maximum loop iteration count accepted by the execution engine. */
 const MAX_WHILE_ITERATIONS = 10_000
 
 const methodLabel = requestMethodLabel
 
-/** Painel que abre ao selecionar um node no canvas — conteúdo específico por
- * kind (não um schema genérico, já que `Block`/`Request` não têm campos de
- * configuração no domínio além do que já é mostrado aqui). */
+/** The selected node's configuration and data inspector; forms remain specific to each supported node kind. */
 const OPERATOR_OPTIONS: { value: ComparisonOperatorState; labelKey: 'flows.canvas.conditionOperatorEquals' | 'flows.canvas.conditionOperatorNotEquals' | 'flows.canvas.conditionOperatorGreaterThan' | 'flows.canvas.conditionOperatorLessThan' }[] = [
   { value: 'equals', labelKey: 'flows.canvas.conditionOperatorEquals' },
   { value: 'notEquals', labelKey: 'flows.canvas.conditionOperatorNotEquals' },
@@ -82,6 +100,11 @@ const OPERATOR_OPTIONS: { value: ComparisonOperatorState; labelKey: 'flows.canva
 ]
 
 export function NodeInspectorPanel({
+  outputVersions = {},
+  flowId = '', datasets = [],
+  rootPath = '', flowExecutionId = null, nodeStatus = { status: 'idle' }, load = false,
+  definitions, requestEditor, activeTab = 'configuration', onTabChange, outdated,
+  displayFormat = 'auto', onDisplayFormatChange,
   selection,
   ancestorRequests,
   ancestorLocalVariables,
@@ -102,6 +125,14 @@ export function NodeInspectorPanel({
 }: NodeInspectorPanelProps) {
   const { t } = useLanguage()
   const [pickerAnchor, setPickerAnchor] = useState<DOMRect | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [dataTrayOpen, setDataTrayOpen] = useState(false)
+  const [localTab, setLocalTab] = useState(activeTab)
+  const tab = onTabChange ? activeTab : localTab
+  const changeTab = onTabChange ?? setLocalTab
+  const panel = useResizablePanel({ initialSize: 440, minSize: 340, maxSize: 900, axis: 'horizontal', direction: 'reverse', storageKey: 'alcy:flows:inspector-width' })
+  const status = describeRunStatus(nodeStatus, t)
+  const dataBrowser = <FlowDataBrowser outputVersions={outputVersions} flowId={flowId} datasets={datasets} variables={environmentVariables} definitions={definitions ?? ancestorLocalVariables.map((name) => ({ name, source: t('flows.studio.local') }))} ancestors={ancestorRequests} rootPath={rootPath} flowExecutionId={flowExecutionId} load={load} />
 
   const title =
     selection.kind === 'start'
@@ -118,13 +149,18 @@ export function NodeInspectorPanel({
   const changeConfig = (config: SimpleNodeKindState) => onConfigChange(selection.id, config)
 
   return (
-    <aside className="flow-inspector-panel">
+    <aside className={`flow-inspector-panel flow-studio-inspector${expanded ? ' flow-studio-inspector--expanded' : ''}`} style={{ width: expanded ? undefined : panel.size }} aria-label={t('flows.studio.details')}>
+      {!expanded && <div className="flow-studio-resizer" role="separator" tabIndex={0} aria-orientation="vertical" aria-label={t('flows.studio.resize')} aria-valuemin={340} aria-valuemax={900} aria-valuenow={panel.size} onPointerDown={panel.startResizing} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); panel.setSize(panel.size + (event.key === 'ArrowLeft' ? 20 : -20)) } }} />}
       <header className="flow-inspector-header">
-        <h3>{title}</h3>
+        <div className="flow-studio-heading"><span className="flow-studio-eyebrow">{t('flows.studio.details')}</span><h3>{title}</h3></div>
+        {status && <Badge tone={status.tone}>{status.label}</Badge>}
+        <IconButton icon={expanded ? <RestoreIcon size={13} /> : <MaximizeIcon size={13} />} label={t(expanded ? 'flows.studio.collapse' : 'flows.studio.expand')} onClick={() => setExpanded((value) => !value)} />
         <IconButton icon={<CloseIcon size={12} />} label={t('flows.canvas.inspectorCloseAria')} onClick={onClose} />
       </header>
-
-      <div className="flow-inspector-body">
+      <FlowTabs items={(['configuration', 'data', 'output'] as const).map((id) => ({ id, label: t(`flows.studio.${id}`) }))} value={tab} onChange={changeTab} label={t('flows.studio.details')} />
+      {outdated && flowExecutionId && <p className="flow-data-notice">{t('flows.studio.outdated')}</p>}
+      <div className="flow-studio-workspace">
+      <div className="flow-inspector-body" role="tabpanel" aria-label={t('flows.studio.configuration')} data-flow-fields hidden={tab !== 'configuration'}>
         {selection.kind === 'start' && <p className="flow-inspector-hint">{t('flows.canvas.inspectorStartDescription')}</p>}
 
         {selection.kind === 'block' && (
@@ -134,6 +170,7 @@ export function NodeInspectorPanel({
             </label>
             <InlineEditInput
               id="flow-inspector-block-label"
+              data-flow-map="false"
               value={selection.label}
               aria-label={t('flows.canvas.inspectorBlockLabelAria')}
               onChange={(event) => onLabelChange(selection.id, event.target.value)}
@@ -142,7 +179,7 @@ export function NodeInspectorPanel({
         )}
 
         {selection.kind === 'load' && (
-          <LoadNodeFields
+          <div data-flow-map="false"><LoadNodeFields
             key={selection.id}
             label={selection.label}
             loadKind={selection.loadKind}
@@ -150,7 +187,7 @@ export function NodeInspectorPanel({
             onLabelChange={(label) => onLabelChange(selection.id, label)}
             onConfigChange={(config) => onLoadConfigChange(selection.id, config)}
             onImportDatasetAsset={onImportDatasetAsset}
-          />
+          /></div>
         )}
 
         {selection.kind === 'request' && (
@@ -186,6 +223,7 @@ export function NodeInspectorPanel({
                 }}
               />
             )}
+            {requestEditor}
           </>
         )}
 
@@ -219,7 +257,8 @@ export function NodeInspectorPanel({
           </Field>
         )}
 
-        {selection.kind === 'display' && (
+        {selection.kind === 'display' && (<>
+          <Field label={t('flows.studio.displayFormat')}><Select value={displayFormat} onChange={(event) => onDisplayFormatChange?.(event.target.value as 'auto' | 'json' | 'text')}><option value="auto">{t('flows.studio.auto')}</option><option value="json">JSON</option><option value="text">{t('flows.studio.text')}</option></Select></Field>
           <Field label={t('flows.canvas.displayTemplateLabel')} hint={t('flows.canvas.displayHint')}>
             <Textarea
               mono
@@ -229,7 +268,7 @@ export function NodeInspectorPanel({
               onChange={(event) => changeConfig({ kind: 'display', template: event.target.value })}
             />
           </Field>
-        )}
+        </>)}
 
         {selection.kind === 'sleep' && (
           <SleepFields
@@ -254,9 +293,10 @@ export function NodeInspectorPanel({
               </div>
               <p className="flow-inspector-request-url">{selection.request.content.endpointUrl || t('flows.canvas.inlineRequestEmptyUrl')}</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => onEditInlineRequest(selection.id)}>
+            {!requestEditor && <Button variant="ghost" size="sm" onClick={() => onEditInlineRequest(selection.id)}>
               {t('flows.canvas.editInlineRequestLabel')}
-            </Button>
+            </Button>}
+            {requestEditor}
           </>
         )}
 
@@ -309,20 +349,16 @@ export function NodeInspectorPanel({
           />
         )}
 
-        {(selection.kind === 'request' ||
-          selection.kind === 'inlineRequest' ||
-          selection.kind === 'if' ||
-          selection.kind === 'while' ||
-          selection.kind === 'log' ||
-          selection.kind === 'display' ||
-          selection.kind === 'setVariables') && (
-          <VariablesSection
-            ancestorRequests={ancestorRequests}
-            localVariables={ancestorLocalVariables}
-            environmentVariables={environmentVariables}
-          />
-        )}
       </div>
+      {tab !== 'output' && <div className={`flow-studio-data-pane${tab === 'data' ? ' flow-studio-data-pane--full' : ''}`}>
+        <button type="button" className="flow-studio-data-tray-toggle" hidden={tab === 'data' || expanded} aria-expanded={dataTrayOpen} onClick={() => setDataTrayOpen((value) => !value)}>{t('flows.studio.dataTray')}</button>
+        {(tab === 'data' || expanded || dataTrayOpen) && dataBrowser}
+      </div>}
+      {tab === 'output' && <div className="flow-studio-output-pane">
+        {nodeStatus.status === 'completed' ? <DisplayValue value={nodeStatus.message ?? ''} format={displayFormat} /> : selection.kind === 'request' || selection.kind === 'inlineRequest' || selection.kind === 'mockWaitRequest' ? <FlowOutputExplorer version={outputVersions[selection.id] ?? 0} key={`${selection.id}:${flowExecutionId}`} rootPath={rootPath} flowExecutionId={flowExecutionId} nodeId={selection.id} scope={selection.kind === 'mockWaitRequest' ? 'request' : 'response'} /> : <p className="flow-studio-empty">{nodeStatus.status === 'failed' ? nodeStatus.message : load ? t('flows.studio.loadData') : status?.label ?? t('flows.studio.runToInspect')}</p>}
+      </div>}
+      </div>
+      <footer className="flow-studio-footer"><span title={selection.id}>{t('flows.studio.nodeReference')} · {selection.id.slice(0, 8)}</span></footer>
     </aside>
   )
 }
@@ -336,9 +372,7 @@ interface LoadNodeFieldsProps {
   onImportDatasetAsset?: () => Promise<{ assetId: string; rows: number } | null>
 }
 
-/** A configuração de carga é mantida como JSON canônico no grafo. Este
- * editor aceita apenas objeto JSON: a validação semântica permanece no Rust
- * no preview, antes de qualquer request. */
+/** Load configuration remains canonical JSON in the graph; semantic validation runs in Rust before executing requests. */
 function LoadNodeFields({ label, loadKind, config, onLabelChange, onConfigChange, onImportDatasetAsset }: LoadNodeFieldsProps) {
   const { t } = useLanguage()
   const [draft, setDraft] = useState(config)
@@ -542,7 +576,7 @@ function HeadersLoadField({ headers, onChange }: { headers: unknown; onChange: (
     <div className="flow-inspector-assignments">
       <p className="flow-inspector-hint">{t('flows.loadNode.headersHint')}</p>
       {values.map((header, index) => (
-        <div key={`${index}-${header.name}`} className="flow-inspector-assignment">
+        <div key={index} className="flow-inspector-assignment">
           <div className="flow-inspector-assignment-header">
             <Input
               mono
@@ -560,6 +594,7 @@ function HeadersLoadField({ headers, onChange }: { headers: unknown; onChange: (
           </div>
           <Input
             mono
+            data-flow-map="true"
             value={header.value}
             placeholder={t('flows.loadNode.headerValue')}
             aria-label={t('flows.loadNode.headerValue')}
@@ -591,7 +626,7 @@ function RequestLoadFields({ config, onChange }: { config: LoadConfig; onChange:
         {(id) => <Input id={id} mono value={asString(config.url, '')} onChange={(event) => onChange({ ...config, url: event.target.value })} />}
       </Field>
       <Field label={t('flows.loadNode.request.body')}>
-        {(id) => <Textarea id={id} mono rows={5} value={asString(config.body, '')} onChange={(event) => onChange({ ...config, body: event.target.value })} />}
+        {(id) => <Textarea id={id} data-flow-map="true" mono rows={5} value={asString(config.body, '')} onChange={(event) => onChange({ ...config, body: event.target.value })} />}
       </Field>
       <Field label={t('flows.loadNode.request.timeout')} hint={t('flows.loadNode.request.timeoutHint')}>
         {(id) => <Input
@@ -1304,11 +1339,8 @@ interface ConditionFieldsProps {
   onChange: (condition: ConditionState) => void
 }
 
-/** Formulário da condição de um node `if` — `left`/`right` reaproveitam o
- * mesmo campo de texto livre que já serve pra colar uma referência
- * `{{nodes.<id>...}}` copiada de `VariablesSection` logo abaixo (mesmo
- * padrão de campo simples, sem autocomplete rico de path JSON). */
-function ConditionFields({ condition, onChange }: ConditionFieldsProps) {
+/** Condition operands accept literal values or mapped execution references. */
+export function ConditionFields({ condition, onChange }: ConditionFieldsProps) {
   const { t } = useLanguage()
 
   return (
@@ -1345,8 +1377,7 @@ function ConditionFields({ condition, onChange }: ConditionFieldsProps) {
   )
 }
 
-/** O backend exige nome não vazio: um campo apagado não é gravado até ter
- * texto de novo. */
+/** The backend requires a nonempty name; preserve an empty editing draft until text is entered again. */
 function InlineRequestNameField({ name, onChange }: { name: string; onChange: (name: string) => void }) {
   const { t } = useLanguage()
   const [draft, setDraft] = useState(name)
@@ -1365,10 +1396,8 @@ function InlineRequestNameField({ name, onChange }: { name: string; onChange: (n
 
 type SleepUnit = 'ms' | 's'
 
-/** Duração do `sleep`, guardada sempre em ms; a unidade é só de exibição. O
- * campo numérico não é controlado (`defaultValue` + `key` da unidade) para
- * aceitar estados intermediários de digitação como "1." sem perdê-los. */
-function SleepFields({ durationMs, onChange }: { durationMs: number; onChange: (durationMs: number) => void }) {
+/** Sleep durations are stored in milliseconds. Keep the numeric input uncontrolled so intermediate input such as 1. remains editable when switching display units. */
+export function SleepFields({ durationMs, onChange }: { durationMs: number; onChange: (durationMs: number) => void }) {
   const { t } = useLanguage()
   const [unit, setUnit] = useState<SleepUnit>(durationMs >= 1000 && durationMs % 1000 === 0 ? 's' : 'ms')
   const factor = unit === 's' ? 1000 : 1
@@ -1400,8 +1429,8 @@ function SleepFields({ durationMs, onChange }: { durationMs: number; onChange: (
   )
 }
 
-/** Lista editável das atribuições de um node `setVariables`. */
-function AssignmentFields({
+/** Editable assignments for a Set variables node. */
+export function AssignmentFields({
   assignments,
   onChange,
 }: {
@@ -1421,6 +1450,7 @@ function AssignmentFields({
           <div className="flow-inspector-assignment-header">
             <Input
               mono
+              data-flow-map="false"
               value={assignment.name}
               placeholder={t('flows.canvas.setVariablesNameLabel')}
               aria-label={t('flows.canvas.setVariablesNameLabel')}
@@ -1475,165 +1505,6 @@ function AssignmentFields({
         <PlusIcon size={12} />
         {t('flows.canvas.setVariablesAddButton')}
       </Button>
-    </div>
-  )
-}
-
-interface VariablesSectionProps {
-  ancestorRequests: AncestorRequestRef[]
-  localVariables: string[]
-  environmentVariables: EnvironmentVariableDto[]
-}
-
-interface VariableEntry {
-  reference: string
-  description: string
-}
-
-function VariablesSection({ ancestorRequests, localVariables, environmentVariables }: VariablesSectionProps) {
-  const { t } = useLanguage()
-  const { showToast } = useToast()
-  const [query, setQuery] = useState('')
-
-  const environmentEntries = useMemo<VariableEntry[]>(
-    () =>
-      environmentVariables.map((variable) => ({
-        reference: `{{${variable.name}}}`,
-        description: describeVariable(t, variable.name, environmentVariables),
-      })),
-    [environmentVariables, t],
-  )
-
-  const nodeEntries = useMemo<VariableEntry[]>(
-    () =>
-      ancestorRequests.flatMap((ancestor): VariableEntry[] => {
-        if (ancestor.output === 'mockServer') {
-          return [
-            {
-              reference: `{{nodes.${ancestor.nodeId}.server.url}}`,
-              description: `${ancestor.label} — ${t('flows.canvas.variableReferenceMockUrlLabel')}`,
-            },
-          ]
-        }
-        if (ancestor.output === 'mockRequest') {
-          return [
-            {
-              reference: `{{nodes.${ancestor.nodeId}.request.body}}`,
-              description: `${ancestor.label} — ${t('flows.canvas.variableReferenceMockBodyLabel')}`,
-            },
-            {
-              reference: `{{nodes.${ancestor.nodeId}.request.method}}`,
-              description: `${ancestor.label} — ${t('flows.canvas.variableReferenceMockMethodLabel')}`,
-            },
-          ]
-        }
-        return [
-          {
-            reference: `{{nodes.${ancestor.nodeId}.response.status}}`,
-            description: `${ancestor.label} — ${t('flows.canvas.variableReferenceStatusLabel')}`,
-          },
-          {
-            reference: `{{nodes.${ancestor.nodeId}.response.body}}`,
-            description: `${ancestor.label} — ${t('flows.canvas.variableReferenceBodyLabel')}`,
-          },
-        ]
-      }),
-    [ancestorRequests, t],
-  )
-
-  const localEntries = useMemo<VariableEntry[]>(
-    () => localVariables.map((name) => ({ reference: `{{${name}}}`, description: t('flows.canvas.variableLocalDescription') })),
-    [localVariables, t],
-  )
-
-  const needle = query.trim().toLowerCase()
-  const matches = (entry: VariableEntry) =>
-    !needle || entry.reference.toLowerCase().includes(needle) || entry.description.toLowerCase().includes(needle)
-
-  const filteredNodes = nodeEntries.filter(matches)
-  const filteredLocal = localEntries.filter(matches)
-  const filteredEnvironment = environmentEntries.filter(matches)
-
-  const copyReference = async (reference: string) => {
-    try {
-      await navigator.clipboard.writeText(reference)
-      showToast(t('toasts.nodeReferenceCopied'))
-    } catch {
-      // Clipboard indisponível — sem toast de sucesso.
-    }
-  }
-
-  return (
-    <div className="flow-inspector-variables">
-      <p className="flow-inspector-section-title">{t('flows.canvas.variablesSectionTitle')}</p>
-      <div className="flow-inspector-variables-search">
-        <SearchIcon size={11} />
-        <input
-          type="text"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t('flows.canvas.variablesSearchPlaceholder')}
-          aria-label={t('flows.canvas.variablesSearchAria')}
-        />
-      </div>
-
-      {filteredNodes.length > 0 && (
-        <div className="flow-inspector-variables-group">
-          <p className="flow-inspector-variables-group-label">{t('flows.canvas.variablesNodesGroup')}</p>
-          {filteredNodes.map((entry) => (
-            <button
-              key={entry.reference}
-              type="button"
-              className="flow-inspector-variable-row"
-              onClick={() => void copyReference(entry.reference)}
-              aria-label={t('flows.canvas.copyVariableAria', { reference: entry.reference })}
-            >
-              <span className="flow-inspector-variable-reference">{entry.reference}</span>
-              <span className="flow-inspector-variable-description">{entry.description}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {filteredLocal.length > 0 && (
-        <div className="flow-inspector-variables-group">
-          <p className="flow-inspector-variables-group-label">{t('flows.canvas.variablesLocalGroup')}</p>
-          {filteredLocal.map((entry) => (
-            <button
-              key={entry.reference}
-              type="button"
-              className="flow-inspector-variable-row"
-              onClick={() => void copyReference(entry.reference)}
-              aria-label={t('flows.canvas.copyVariableAria', { reference: entry.reference })}
-            >
-              <span className="flow-inspector-variable-reference">{entry.reference}</span>
-              <span className="flow-inspector-variable-description">{entry.description}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {filteredEnvironment.length > 0 && (
-        <div className="flow-inspector-variables-group">
-          <p className="flow-inspector-variables-group-label">{t('flows.canvas.variablesEnvironmentGroup')}</p>
-          {filteredEnvironment.map((entry) => (
-            <button
-              key={entry.reference}
-              type="button"
-              className="flow-inspector-variable-row"
-              onClick={() => void copyReference(entry.reference)}
-              aria-label={t('flows.canvas.copyVariableAria', { reference: entry.reference })}
-            >
-              <span className="flow-inspector-variable-reference">{entry.reference}</span>
-              <span className="flow-inspector-variable-description">{entry.description}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {filteredEnvironment.length === 0 && filteredNodes.length === 0 && filteredLocal.length === 0 && (
-        <p className="flow-inspector-variables-empty">{t('flows.canvas.variablesEmptyState')}</p>
-      )}
     </div>
   )
 }

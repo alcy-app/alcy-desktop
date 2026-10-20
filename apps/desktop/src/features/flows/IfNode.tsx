@@ -3,6 +3,7 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { ConditionView } from './ConditionView'
 import type { ConditionState } from './flows.types'
 import { FlowNodeCard } from './FlowNodeCard'
+import { QuickNodeEdit } from './QuickNodeEdit'
 import type { NodeRunStatus } from './use-flow-run'
 
 export type IfNodeType = Node<
@@ -10,6 +11,7 @@ export type IfNodeType = Node<
     condition: ConditionState
     runStatus: NodeRunStatus
     onOpenSettings: () => void
+    onConditionChange?: (condition: ConditionState) => void
     onDelete: () => void
     onDuplicate: () => void
     visited?: boolean
@@ -18,14 +20,7 @@ export type IfNodeType = Node<
   'if'
 >
 
-/** Node condicional (spec 0047): avalia `condition` em tempo de execução e
- * só o ramo correspondente roda — duas saídas nomeadas (`true`/`false`)
- * para que a edge que sai de cada uma carregue qual ramo representa
- * (`FlowEdgeState.sourceHandle`, ligado em `FlowCanvas.onConnect`/
- * `handlePaletteSelect*`). A condição em si é editada no
- * `NodeInspectorPanel`, não aqui. Novos nodes ligados a um ramo nascem
- * arrastando a conexão do handle até um espaço vazio do canvas
- * (`FlowCanvas.onConnectEnd`). */
+/** If nodes expose true/false outputs and preserve the selected branch in edge handles (spec 0047). Conditions are editable in the inspector and quick editor. */
 export function IfNode({ data }: NodeProps<IfNodeType>) {
   const { t } = useLanguage()
 
@@ -36,6 +31,7 @@ export function IfNode({ data }: NodeProps<IfNodeType>) {
       visited={data.visited}
       readOnly={data.readOnly}
       onOpenSettings={data.onOpenSettings}
+      headerActions={!data.readOnly && data.onConditionChange && <QuickNodeEdit config={{ kind: 'if', condition: data.condition }} onChange={(config) => { if (config.kind === 'if') data.onConditionChange?.(config.condition) }} />}
       onDuplicate={data.onDuplicate}
       onDelete={data.onDelete}
       outputs={[

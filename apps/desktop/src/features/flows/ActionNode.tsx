@@ -4,11 +4,12 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { FlowNodeCard } from './FlowNodeCard'
 import { formatSleepDuration } from './simple-node-types'
 import type { SimpleFlowNodeType, SimpleNodeData } from './simple-node-types'
+import { QuickNodeEdit } from './QuickNodeEdit'
+import { DisplayValue } from './DisplayValue'
 
 const MAX_ASSIGNMENTS_SHOWN = 4
 
-/** Cartão comum dos nodes de saída única da spec 0083 (Log, Display, Sleep,
- * Variáveis locais). */
+/** Shared card for single-output action nodes (spec 0083). */
 function ActionCard({ data, children }: { data: SimpleNodeData; children: ReactNode }) {
   return (
     <FlowNodeCard
@@ -17,6 +18,7 @@ function ActionCard({ data, children }: { data: SimpleNodeData; children: ReactN
       visited={data.visited}
       readOnly={data.readOnly}
       onOpenSettings={data.onOpenSettings}
+      headerActions={!data.readOnly && <QuickNodeEdit config={data.config} onChange={(config) => { if (config.kind !== 'if') data.onConfigChange(config) }} />}
       onDuplicate={data.onDuplicate}
       onDelete={data.onDelete}
     >
@@ -45,18 +47,13 @@ export function LogNode({ data }: NodeProps<SimpleFlowNodeType>) {
 const DISPLAY_VISIBLE_LINES = 10
 const DISPLAY_VISIBLE_CHARS = 400
 
-/** O valor não cabe na área do node (cortada, sem rolagem) — estimativa por
- * linhas e tamanho, sem medir o DOM. */
+/** Estimate whether the value exceeds the non-scrolling card preview without measuring the DOM. */
 function isLongDisplayValue(message: string | null): boolean {
   if (!message) return false
   return message.split('\n').length > DISPLAY_VISIBLE_LINES || message.length > DISPLAY_VISIBLE_CHARS
 }
 
-/** Mostra no próprio node o valor resolvido na última execução (o `message`
- * do evento `nodeCompleted`, já mascarado pelo backend). A área não rola:
- * uma área rolável dentro do canvas faz o WebKitGTK compor o viewport numa
- * camada rasterizada, e todos os nodes ficam borrados no zoom. O valor
- * completo fica no log do run. */
+/** Show the last backend-redacted result. Keep the scaled canvas free of scrolling areas to avoid WebKitGTK rasterization blur; inspect full available results in the inspector. */
 export function DisplayNode({ data }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   if (data.config.kind !== 'display') return null
@@ -73,7 +70,7 @@ export function DisplayNode({ data }: NodeProps<SimpleFlowNodeType>) {
       )}
       {runStatus.status === 'completed' ? (
         <>
-          <pre className="flow-node-display-value nodrag">{runStatus.message || t('common.empty')}</pre>
+          <DisplayValue value={runStatus.message ?? ''} format={data.displayFormat} compact />
           {isLongDisplayValue(runStatus.message) && <span className="flow-node-caption">{t('flows.canvas.displayTruncatedHint')}</span>}
         </>
       ) : (

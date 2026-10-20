@@ -62,6 +62,10 @@ use commands::history::{
     get_collection_run_history, get_flow_run_history, get_history_entry, list_history,
 };
 use commands::import_fetcher::ImportFetcher;
+use commands::inspect_flow_output::{
+    FlowOutputQueries, cancel_flow_output_query, inspect_flow_node_output,
+};
+use commands::inspect_load_dataset::inspect_load_dataset;
 use commands::load_dataset_assets::copy_load_dataset_asset;
 use commands::load_schema::load_schema;
 use commands::load_test_import::{analyze_load_test_import, commit_load_test_import};
@@ -215,6 +219,7 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(WorkspaceOperationCoordinator::default())
         .manage(FlowExecutionRegistry::default())
         .manage(FlowRunOutputs::default())
+        .manage(FlowOutputQueries::default())
         .manage(CollectionRunOutputs::default())
         .manage(ReqwestGraphqlExecutor::new())
         .manage(ReqwestRestExecutor::new())
@@ -387,6 +392,9 @@ pub fn run_with(extensions: Vec<Extension>) {
                 evaluate_value_monitors,
                 execute_flow,
                 get_flow_node_output,
+                inspect_flow_node_output,
+                inspect_load_dataset,
+                cancel_flow_output_query,
                 cancel_flow,
                 cancel_load_flow,
                 execute_collection_run,

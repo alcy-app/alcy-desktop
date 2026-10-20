@@ -3,17 +3,16 @@ use std::sync::{Mutex, MutexGuard};
 
 use alcy_app::CapturedRequest;
 use alcy_domain::{BodyEncoding, Response};
+use alcy_storage::FlowBodyCapture;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::execute_graphql_request::{ResponseBodyEncodingOutput, ResponseHeaderOutput};
 use crate::commands::response_body_cache::char_boundary_window;
 
-/// Teto do corpo retido por node: o log de um run só precisa mostrar o começo
-/// da saída, e isso mantém a memória (e o payload de IPC sob demanda) limitados
-/// mesmo para respostas de vários MB — o tamanho real segue em `size_bytes`.
+/// Bound the legacy per-node preview while preserving the true response size in size_bytes. Larger bodies are available through the separate archive inspector.
 pub const MAX_STORED_BODY_BYTES: usize = 256 * 1024;
 
-/// Saída de um node de requisição no último run do flow.
+/// Legacy request-output preview for the latest flow run.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowNodeOutput {
@@ -23,11 +22,9 @@ pub struct FlowNodeOutput {
     pub headers: Vec<ResponseHeaderOutput>,
     pub body: String,
     pub body_encoding: ResponseBodyEncodingOutput,
-    /// `true` quando `body` é só o começo do corpo (ou vazio, para binário).
+    /// True when body contains only a prefix, or is omitted for binary data.
     pub truncated: bool,
-    /// Presente quando a saída é a chamada recebida por um node
-    /// `MockWaitRequest` (spec 0121): `headers`/`body` são os da chamada e
-    /// `status_code`/`duration_ms` ficam zerados.
+    /// Captured Wait for call requests use their incoming headers and body; status and duration are zero (spec 0121).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<RequestLineOutput>,
 }
@@ -42,7 +39,7 @@ pub struct RequestLineOutput {
 impl FlowNodeOutput {
     pub(crate) fn from_response(response: &Response) -> Self {
         let (body, truncated) = match response.encoding {
-            // Truncar base64 no meio não produz nada legível.
+            // Partial base64 cannot be decoded into a useful preview.
             BodyEncoding::Base64 => (String::new(), response.size_bytes > 0),
             BodyEncoding::Text => {
                 let (window, next) = char_boundary_window(&response.body, 0, MAX_STORED_BODY_BYTES);
@@ -95,10 +92,11 @@ impl FlowNodeOutput {
 struct State {
     flow_execution_id: Option<String>,
     outputs: HashMap<String, FlowNodeOutput>,
+    revisions: HashMap<String, u64>,
+    archive: Option<FlowBodyCapture>,
 }
 
-/// Saídas do **último** run de flow, em memória e sem persistência: começar um
-/// run novo descarta as anteriores, então o custo fica limitado a um run.
+/// The latest run's in-memory previews and body capture. Starting another run releases previous session-only data; archived history remains available separately.
 #[derive(Default)]
 pub struct FlowRunOutputs {
     state: Mutex<State>,
@@ -109,22 +107,42 @@ impl FlowRunOutputs {
         let mut state = self.lock();
         state.flow_execution_id = Some(flow_execution_id.to_string());
         state.outputs.clear();
+        state.revisions.clear();
+        state.archive = None;
     }
 
-    pub fn store(&self, flow_execution_id: &str, node_id: &str, response: &Response) {
-        self.insert(
-            flow_execution_id,
-            node_id,
-            FlowNodeOutput::from_response(response),
-        );
+    pub fn attach_archive(&self, archive: FlowBodyCapture) {
+        self.lock().archive = Some(archive);
     }
 
-    pub fn store_request(&self, flow_execution_id: &str, node_id: &str, request: &CapturedRequest) {
-        self.insert(
-            flow_execution_id,
-            node_id,
-            FlowNodeOutput::from_captured_request(request),
-        );
+    pub fn archive(&self, execution_id: &str) -> Option<FlowBodyCapture> {
+        let state = self.lock();
+        if state.flow_execution_id.as_deref() != Some(execution_id) {
+            return None;
+        }
+        state.archive.clone()
+    }
+
+    pub fn store(
+        &self,
+        flow_execution_id: &str,
+        node_id: &str,
+        response: &Response,
+    ) -> FlowNodeOutput {
+        let preview = FlowNodeOutput::from_response(response);
+        self.insert(flow_execution_id, node_id, preview.clone());
+        preview
+    }
+
+    pub fn store_request(
+        &self,
+        flow_execution_id: &str,
+        node_id: &str,
+        request: &CapturedRequest,
+    ) -> FlowNodeOutput {
+        let preview = FlowNodeOutput::from_captured_request(request);
+        self.insert(flow_execution_id, node_id, preview.clone());
+        preview
     }
 
     fn insert(&self, flow_execution_id: &str, node_id: &str, output: FlowNodeOutput) {
@@ -132,7 +150,30 @@ impl FlowRunOutputs {
         if state.flow_execution_id.as_deref() != Some(flow_execution_id) {
             return;
         }
+        if let Some(revision) = state
+            .archive
+            .as_ref()
+            .and_then(|archive| archive.metadata(node_id))
+            .map(|metadata| metadata.revision)
+        {
+            state.revisions.insert(node_id.into(), revision);
+        }
         state.outputs.insert(node_id.to_string(), output);
+    }
+
+    pub fn snapshot(
+        &self,
+        execution_id: &str,
+        node_id: &str,
+    ) -> (Option<FlowNodeOutput>, Option<u64>) {
+        let state = self.lock();
+        if state.flow_execution_id.as_deref() != Some(execution_id) {
+            return (None, None);
+        }
+        (
+            state.outputs.get(node_id).cloned(),
+            state.revisions.get(node_id).copied(),
+        )
     }
 
     pub fn get(&self, flow_execution_id: &str, node_id: &str) -> Option<FlowNodeOutput> {
@@ -141,19 +182,6 @@ impl FlowRunOutputs {
             return None;
         }
         state.outputs.get(node_id).cloned()
-    }
-
-    /// Todas as saídas do run informado (vazio se ele não é mais o atual).
-    pub fn all(&self, flow_execution_id: &str) -> Vec<(String, FlowNodeOutput)> {
-        let state = self.lock();
-        if state.flow_execution_id.as_deref() != Some(flow_execution_id) {
-            return Vec::new();
-        }
-        state
-            .outputs
-            .iter()
-            .map(|(node_id, output)| (node_id.clone(), output.clone()))
-            .collect()
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -170,9 +198,7 @@ pub struct GetFlowNodeOutputInput {
     pub node_id: String,
 }
 
-/// Saída de um node do último run, buscada sob demanda (o evento de progresso
-/// não a carrega). `None` quando o run não é o mais recente ou o node não
-/// produziu resposta.
+/// Fetch a node preview separately from progress events; return None for a different run or a node without a response.
 #[tauri::command]
 pub fn get_flow_node_output(
     input: GetFlowNodeOutputInput,

@@ -19,8 +19,8 @@ import { useToast } from '../../shared/ui/use-toast'
 import { hasOpenModal } from '../../shared/ui/open-modals'
 import { comboFromEvent, comboFromMouseEvent, isShortcutFor } from '../../shared/shortcuts/shortcuts'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
-import { findRequest, requestMethodLabel } from '../request-workbench/collection-tree'
-import type { RequestSummary, TreeNode } from '../request-workbench/collection-tree'
+import { findRequest, findRequestPath, mergeScopedVariables, requestMethodLabel } from '../request-workbench/collection-tree'
+import type { RequestContent, RequestSummary, TreeNode } from '../request-workbench/collection-tree'
 import type { ConsoleEntryInput } from '../request-workbench/use-console-state'
 import { BlockPalette } from './BlockPalette'
 import type { PaletteKind } from './BlockPalette'
@@ -48,6 +48,12 @@ import { defaultMockStartNodeId, findMockRoute, mockRouteLabel, resolveMockStart
 import type { MockStartInfo } from './mock-nodes'
 import { useFlowMockServers } from './use-flow-mock-servers'
 import './flow-canvas.css'
+import './flow-studio.css'
+import { FlowMappingProvider } from './flow-mapping'
+import { FlowRequestEditor } from './FlowRequestEditor'
+import type { FlowVariableDefinition } from './FlowDataBrowser'
+import { availableNodePosition } from './new-node-position'
+import type { FlowDatasetSource } from './FlowDatasetFields'
 
 
 const DEFAULT_CONDITION: ConditionState = { left: '', operator: 'equals', right: '' }
@@ -99,9 +105,7 @@ function fromFlowEdges(edges: Edge[]): FlowEdgeState[] {
   }))
 }
 
-/** BFS reversa sobre as edges atuais — espelha, só para exibição, o conceito
- * de `ancestors` que já existe no backend (`crates/alcy-app/src/flow_graph.rs`).
- * A validação real de "é mesmo um ancestral" continua só no motor de execução. */
+/** Reverse BFS for presentation only; the execution engine remains responsible for validating ancestor references. */
 function computeAncestorIds(nodeId: string, edges: Edge[]): Set<string> {
   const incoming = new Map<string, string[]>()
   edges.forEach((edge) => {
@@ -125,7 +129,7 @@ function computeAncestorIds(nodeId: string, edges: Edge[]): Set<string> {
   return visited
 }
 
-/** Referências `{{nodes.<id>...}}` disponíveis: só nodes `request` ancestrais. */
+/** Referenceable outputs exposed by ancestor request and mock nodes. */
 function computeAncestorRequestRefs(ancestorIds: Set<string>, nodes: FlowNode[]): AncestorRequestRef[] {
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const refs: AncestorRequestRef[] = []
@@ -152,7 +156,7 @@ function computeAncestorRequestRefs(ancestorIds: Set<string>, nodes: FlowNode[])
   return refs
 }
 
-/** Variáveis locais (`{{nome}}`) definidas por nodes `setVariables` ancestrais. */
+/** Local variable names declared by ancestor Set variables nodes. */
 function computeAncestorLocalVariables(ancestorIds: Set<string>, nodes: FlowNode[]): string[] {
   const names = new Set<string>()
   for (const node of nodes) {
@@ -169,8 +173,7 @@ function isMockKind(kind: string): boolean {
   return kind.startsWith('mock')
 }
 
-/** Mock de um bloco de mock no canvas (spec 0121): o do próprio "Ligar mock"
- * ou o do bloco para onde os demais apontam. */
+/** Resolve the mock started by this node or referenced by a dependent mock node (spec 0121). */
 function mockStartFor(nodeId: string, config: SimpleNodeKindState, mockStarts: Record<string, MockStartInfo>): MockStartInfo | null {
   if (config.kind === 'mockStart') return mockStarts[nodeId] ?? null
   if ('startNodeId' in config) return mockStarts[config.startNodeId] ?? null
@@ -185,7 +188,7 @@ function selectedMockStart(selection: InspectorSelection, mockStarts: Record<str
 
 const NON_TEXT_INPUT_TYPES = new Set(['button', 'submit', 'reset', 'file', 'checkbox', 'radio', 'color', 'range'])
 
-/** Foco num campo de digitação — ali a tecla é do campo, não do atalho do canvas. */
+/** Text-entry controls own their keystrokes rather than triggering canvas shortcuts. */
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   if (target.isContentEditable) return true
@@ -195,15 +198,21 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 
 interface PaletteTrigger {
   anchor: DOMRect
-  /** `null` quando disparado pela toolbar ou pelo atalho no vazio do canvas (sem edge automática); presente quando disparado ao soltar uma conexão em espaço vazio do canvas. */
+  /** Absent for toolbar actions; present when a connection is released on the empty canvas. */
   sourceNodeId: string | null
-  /** Só presente quando a conexão saiu de uma das saídas nomeadas de um node `if` ou `request` — qual delas a edge automática deve carregar. */
+  /** The named output that the automatically created edge must preserve. */
   sourceHandle?: FlowSourceHandle
-  /** Posição (em coordenadas do flow) onde a conexão foi solta ou o atalho foi acionado — onde o novo node nasce. */
+  /** Connection drop or shortcut position in flow coordinates. */
   dropPosition?: { x: number; y: number }
 }
 
 interface FlowCanvasProps {
+  requestSaving?: boolean
+  requestDrafts?: Record<string, RequestContent>
+  onRequestDraftChange?: (nodeId: string, request: RequestSummary, content: RequestContent, inline: boolean) => void
+  onSaveRequestDrafts?: (updates: { nodeId: string; request: RequestSummary; inline: boolean }[], graph: { nodes: FlowNodeState[]; edges: FlowEdgeState[] }) => Promise<void>
+  onDiscardRequestDrafts?: (nodeIds: string[]) => void
+  onPrepareRun?: () => Promise<void>
   flow: FlowState
   collections: TreeNode[]
   onChange: (nodes: FlowNodeState[], edges: FlowEdgeState[]) => void
@@ -211,41 +220,31 @@ interface FlowCanvasProps {
   environmentVariables: EnvironmentVariableDto[]
   onEnvironmentChanges?: (changes: { name: string; value: string | null }[]) => void
   onScopedChanges?: (changes: ScopedVariableChange[]) => void
-  /** Chamado quando um run termina — o backend já gravou o histórico. */
+  /** Called after the backend has persisted a completed run. */
   onRunFinished?: () => void
-  /** Persiste o canvas antes de o preview/executor reler o flow por ID. */
+  /** Persist the canvas before the preview or executor reloads the flow by ID. */
   onPrepareLoadRun?: () => Promise<void>
-  /** Recurso experimental controlado pelo workbench. Sem a flag, um flow de
-   * carga persistido não pode disparar o executor pelo canvas. */
+  /** The workbench controls this experimental capability; persisted load flows cannot execute without it. */
   loadTestingEnabled?: boolean
-  /** Abre a requisição de um node avulso numa aba do workbench (spec 0086). */
+  /** Fallback action for opening an inline request in a workbench tab (spec 0086). */
   onEditInlineRequest?: (nodeId: string, request: RequestSummary) => void
-  /** Requisição avulsa salva pela aba do workbench enquanto este canvas está
-   * montado — aplicada no node quando `revision` muda, para que o próximo
-   * `onChange` não a sobrescreva com a versão antiga. */
+  /** An inline request saved elsewhere; apply each revision once to prevent subsequent graph updates from restoring stale content. */
   externalInlineRequest?: { nodeId: string; request: RequestSummary; revision: number }
   /** Abre o mock avulso de um bloco "Ligar mock" numa aba do workbench (spec 0121). */
   onEditInlineMockServer?: (nodeId: string, server: MockServerDto) => void
-  /** Mock avulso salvo pela aba do workbench — mesmo mecanismo de
-   * `externalInlineRequest`. */
+  /** Inline mock saved by a workbench tab; follows the same revision mechanism as inline requests. */
   externalInlineMockServer?: { nodeId: string; server: MockServerDto; revision: number }
-  /** Requisições de um item da árvore largado sobre este canvas (spec 0095),
-   * com o ponto de soltura em coordenadas de tela — aplicadas quando
-   * `revision` muda. */
+  /** Requests dropped from the collection tree, with screen coordinates; apply each revision once (spec 0095). */
   externalRequestChain?: { requestIds: string[]; clientPoint: { x: number; y: number }; revision: number }
   /** HAR recorder on: runs started now report each request node call to `onCallRecorded`. */
   recordingCalls?: boolean
   onCallRecorded?: (entry: ConsoleEntryInput) => void
 }
 
-/** Canvas de um flow (ADR 0013 para a lib de canvas; motor de execução na
- * spec 0043, ligado à UI aqui): criação/edição/persistência de nodes e
- * edges, e Run/Cancel sobre o grafo atual via `useFlowRun`. Espera ser
- * montado com `key={flow.id}` pelo chamador (`RequestWorkbench`), já que
- * `useNodesState`/`useEdgesState` só leem o valor inicial uma vez — trocar
- * de flow precisa de uma instância nova, não de sincronizar props depois da
- * montagem. */
+/** Flow graph editing and execution. Mount with key={flow.id}: React Flow state hooks consume initial values once, so switching flows requires a fresh instance. */
 export function FlowCanvas({
+  requestSaving = false,
+  requestDrafts = {}, onRequestDraftChange, onSaveRequestDrafts, onDiscardRequestDrafts, onPrepareRun,
   flow,
   collections,
   onChange,
@@ -273,12 +272,24 @@ export function FlowCanvas({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [logOpen, setLogOpen] = useState(false)
+  const [inspectorTab, setInspectorTab] = useState<'configuration' | 'data' | 'output'>('configuration')
+  const [pendingRun, setPendingRun] = useState(false)
+  const [runAfterSave, setRunAfterSave] = useState(false)
+  const [savingDrafts, setSavingDrafts] = useState(false)
+  const [executedSignature, setExecutedSignature] = useState<string | null>(null)
+  const [displayFormats, setDisplayFormats] = useState<Record<string, 'auto' | 'json' | 'text'>>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(`alcy:flows:${flow.id}:display-formats`) ?? '{}')
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {}
+      return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, 'auto' | 'json' | 'text'] => ['auto', 'json', 'text'].includes(String(entry[1]))))
+    } catch { return {} }
+  })
   const [loadPreview, setLoadPreview] = useState<LoadFlowPreviewDto | null>(null)
   const [loadingLoadPreview, setLoadingLoadPreview] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const reactFlowInstanceRef = useRef<ReactFlowInstance<FlowNode, FlowEdgeType> | null>(null)
 
-  // Blocos de mock (spec 0121): cada um enxerga o mock do "Ligar mock" a que se refere.
+  // Resolve each mock block against its Start mock node (spec 0121).
   const simpleConfigs = useMemo(
     () => nodes.filter(isSimpleFlowNode).map((node) => ({ id: node.id, config: node.data.config })),
     [nodes],
@@ -332,6 +343,11 @@ export function FlowCanvas({
   const isRunning = isLoadFlow ? loadRun.isRunning : standardRun.isRunning
   const cancel = isLoadFlow ? loadRun.cancel : standardRun.cancel
   const { statuses, traversedEdges, logEntries, runStartedAtMs, flowExecutionId, run } = standardRun
+  const outputVersions = useMemo(() => {
+    const versions: Record<string, number> = {}
+    for (const entry of logEntries) if (entry.finishedAtMs !== null) versions[entry.nodeId] = (versions[entry.nodeId] ?? 0) + 1
+    return versions
+  }, [logEntries])
 
   const onChangeRef = useRef(onChange)
   const latestGraphRef = useRef({ nodes, edges })
@@ -347,25 +363,18 @@ export function FlowCanvas({
     onChangeRef.current(fromFlowNodes(latestGraphRef.current.nodes), fromFlowEdges(latestGraphRef.current.edges))
   }, [])
 
-  // `deleteElements` (não filtrar `nodes`/`edges` na mão) porque já resolve
-  // corretamente as duas regras que o motor de arrastar/editar já depende:
-  // respeita `deletable: false` (o node `Start` nunca é removido por aqui) e
-  // remove em cascata as edges conectadas ao node.
+  // React Flow deletion respects non-deletable Start nodes and removes connected edges together with the node.
   const deleteNode = useCallback((nodeId: string) => {
     void reactFlowInstanceRef.current?.deleteElements({ nodes: [{ id: nodeId }] })
   }, [])
 
-  // Duplica um node `block`/`request` a partir do estado bruto (não de
-  // `renderNodes`), já que é a fonte da verdade — a cópia nasce deslocada
-  // e desconectada (sem clonar edges), como qualquer node novo adicionado
-  // pela paleta. `Start` nunca duplica (não passa por aqui: nenhum dos dois
-  // node components chama isso).
+  // Duplicate canonical node data with an offset and no edges. Start nodes never expose duplication.
   const duplicateNode = useCallback((nodeId: string) => {
     setNodes((current) => {
       const source = current.find((node) => node.id === nodeId)
       if (!source) return current
       const newId = crypto.randomUUID()
-      const position = { x: source.position.x + 40, y: source.position.y + 40 }
+      const position = availableNodePosition({ x: source.position.x + 40, y: source.position.y + 40 }, current)
       if (isSimpleFlowNode(source)) {
         return [...current, simpleFlowNode(newId, position, configOfSimpleNode(source))]
       }
@@ -428,10 +437,7 @@ export function FlowCanvas({
     })
   }, [setNodes])
 
-  // Chamado pelo `RequestPicker` (dentro do node ou do inspector) quando o
-  // usuário escolhe uma requisição: node recém-criado ainda vazio, correção de
-  // uma referência quebrada ou troca deliberada — só grava o `requestId`, a resolução em `request` continua
-  // acontecendo ao vivo em `renderNodes`.
+  // Request selection changes only requestId; renderNodes resolves the collection request live.
   const setRequestForNode = useCallback(
     (nodeId: string, request: RequestSummary) => {
       setNodes((current) =>
@@ -443,7 +449,7 @@ export function FlowCanvas({
     [setNodes],
   )
 
-  // Chamado pelo `NodeInspectorPanel` ao editar a condição de um node `if`.
+  // Apply an If condition edited in the inspector or quick editor.
   const setConditionForNode = useCallback(
     (nodeId: string, condition: ConditionState) => {
       setNodes((current) =>
@@ -453,8 +459,7 @@ export function FlowCanvas({
     [setNodes],
   )
 
-  // Configuração de um node simples (spec 0083) — inspector ou edição direta
-  // no node (texto da anotação).
+  // Update a simple node from the inspector or direct note editing (spec 0083).
   const setConfigForNode = useCallback(
     (nodeId: string, config: SimpleNodeKindState) => {
       setNodes((current) =>
@@ -477,18 +482,19 @@ export function FlowCanvas({
     [setNodes],
   )
 
-  // Abre a requisição avulsa no workbench com o conteúdo atual do node.
+  // Open the inline request in the inspector, with a workbench fallback for older consumers.
   const editInlineRequest = useCallback(
     (nodeId: string) => {
       const node = latestGraphRef.current.nodes.find((candidate) => candidate.id === nodeId)
       if (!node || !isSimpleFlowNode(node) || node.data.config.kind !== 'inlineRequest') return
       flushChange()
-      onEditInlineRequest?.(nodeId, node.data.config.request)
+      if (onRequestDraftChange) { setSelectedNodeId(nodeId); setInspectorTab('configuration') }
+      else onEditInlineRequest?.(nodeId, node.data.config.request)
     },
-    [flushChange, onEditInlineRequest],
+    [flushChange, onEditInlineRequest, onRequestDraftChange],
   )
 
-  // Abre o mock avulso no workbench com o conteúdo atual do node.
+  // Open the inline mock using its current node configuration.
   const editInlineMockServer = useCallback(
     (nodeId: string) => {
       const node = latestGraphRef.current.nodes.find((candidate) => candidate.id === nodeId)
@@ -499,17 +505,12 @@ export function FlowCanvas({
     [flushChange, onEditInlineMockServer],
   )
 
-  // `nodes` guarda só `requestId` para nodes de requisição; a referência é
-  // resolvida ao vivo aqui (não uma cópia estática) para refletir
-  // renomeações/edições feitas na coleção depois que o node foi criado.
-  // `onNodesChange`/drag continuam operando sobre `nodes` (a fonte da
-  // verdade), não sobre este array derivado. Status de execução só faz
-  // sentido em nodes de requisição/if — Start/Block nunca rodam de fato.
+  // Resolve collection requests live so renames and content edits appear immediately. Dragging updates canonical nodes; execution decorations belong only to this derived view.
   const renderNodes = useMemo<FlowNode[]>(
     () =>
       nodes.map((node): FlowNode => {
         const onDelete = () => deleteNode(node.id)
-        const onOpenSettings = () => setSelectedNodeId(node.id)
+        const onOpenSettings = () => { setSelectedNodeId(node.id); setInspectorTab('configuration') }
         const onDuplicate = () => duplicateNode(node.id)
         const visited = node.type === 'start' ? traversedEdges.size > 0 : isVisitedStatus(statuses[node.id])
         if (isSimpleFlowNode(node)) {
@@ -523,6 +524,7 @@ export function FlowCanvas({
               onDelete,
               onDuplicate,
               onConfigChange: (config: SimpleNodeKindState) => setConfigForNode(node.id, config),
+              displayFormat: displayFormats[node.id] ?? 'auto',
               ...(node.data.config.kind === 'inlineRequest'
                 ? { onEditRequest: () => editInlineRequest(node.id), environmentVariables }
                 : {}),
@@ -555,6 +557,7 @@ export function FlowCanvas({
             ...node,
             data: {
               condition: node.data.condition,
+              onConditionChange: (condition: ConditionState) => setConditionForNode(node.id, condition),
               runStatus: statuses[node.id] ?? { status: 'idle' },
               visited,
               onOpenSettings,
@@ -582,6 +585,8 @@ export function FlowCanvas({
       nodes,
       collections,
       environmentVariables,
+      displayFormats,
+      setConditionForNode,
       statuses,
       traversedEdges,
       deleteNode,
@@ -620,6 +625,11 @@ export function FlowCanvas({
   }, [renderNodes, t])
 
   const handleRun = useCallback(() => {
+    if (onPrepareRun && !isLoadFlow) {
+      setLoadingLoadPreview(true)
+      void onPrepareRun().then(() => { setLogOpen(true); run() }).catch((reason: unknown) => showToast(t('flows.canvas.runErrorToast', { message: reason instanceof Error ? reason.message : String(reason) }), 'error')).finally(() => setLoadingLoadPreview(false))
+      return
+    }
     if (flow.executionKind === 'load') {
       if (!loadTestingEnabled) return
       setLoadingLoadPreview(true)
@@ -641,7 +651,7 @@ export function FlowCanvas({
     }
     setLogOpen(true)
     run()
-  }, [flow.executionKind, flow.id, loadTestingEnabled, onPrepareLoadRun, rootPath, run, showToast, t])
+  }, [flow.executionKind, flow.id, loadTestingEnabled, onPrepareLoadRun, onPrepareRun, isLoadFlow, rootPath, run, showToast, t])
 
   const removeEdge = useCallback(
     (edgeId: string) => {
@@ -650,9 +660,7 @@ export function FlowCanvas({
     [setEdges],
   )
 
-  // Uma edge é "ativa" enquanto o node de destino está rodando de verdade —
-  // é o traço que representa a etapa em andamento durante um Run (só nodes
-  // `request` chegam a `running`; Start/Block nunca aparecem aqui).
+  // An edge is active while its target request node is executing.
   const renderEdges = useMemo<FlowEdgeType[]>(
     () =>
       edges.map((edge) => ({
@@ -667,8 +675,7 @@ export function FlowCanvas({
     [edges, statuses, traversedEdges, hoveredEdgeId, removeEdge],
   )
 
-  // Hover detectado pelo próprio xyflow (`pointer-events` na `<g>` da edge),
-  // não por um path invisível manual — ver comentário em `FlowEdge.tsx`.
+  // Use React Flow's edge hover events instead of a separate invisible path; see FlowEdge.tsx.
   const onEdgeMouseEnter = useCallback((_event: ReactMouseEvent, edge: FlowEdgeType) => setHoveredEdgeId(edge.id), [])
   const onEdgeMouseLeave = useCallback(() => setHoveredEdgeId(null), [])
 
@@ -690,6 +697,60 @@ export function FlowCanvas({
   const ancestorIds = useMemo(() => (selection ? computeAncestorIds(selection.id, edges) : new Set<string>()), [selection, edges])
   const ancestorRequests = useMemo(() => computeAncestorRequestRefs(ancestorIds, renderNodes), [ancestorIds, renderNodes])
   const ancestorLocalVariables = useMemo(() => computeAncestorLocalVariables(ancestorIds, renderNodes), [ancestorIds, renderNodes])
+  const selectedRequest = selection?.kind === 'request' ? selection.request : selection?.kind === 'inlineRequest' ? selection.request : null
+  const draftNodeIds = useMemo(() => Object.keys(requestDrafts).filter((id) => renderNodes.some((node) => node.id === id && (node.type === 'request' ? node.data.request !== null : isSimpleFlowNode(node) && node.data.config.kind === 'inlineRequest'))), [requestDrafts, renderNodes])
+  const effectiveVariables = useMemo(() => mergeScopedVariables(environmentVariables, collections, selection?.kind === 'request' ? selection.requestId : null), [environmentVariables, collections, selection])
+  const availableData = useMemo(() => {
+    const values: FlowVariableDefinition[] = []
+    const datasets: FlowDatasetSource[] = []
+    for (const node of fromFlowNodes(nodes)) {
+      if (!ancestorIds.has(node.id)) continue
+      if (node.kind === 'setVariables') for (const assignment of node.assignments) values.push({ name: assignment.name, value: assignment.operation === 'set' ? assignment.value : undefined, source: t('flows.studio.local') })
+      if (node.kind === 'load') {
+        try {
+          const settings = JSON.parse(node.config) as Record<string, unknown>
+          if (node.loadKind === 'dataset' && typeof settings.assetId === 'string') datasets.push({ nodeId: node.id, label: node.label, assetId: settings.assetId })
+          if (node.loadKind === 'extract' && typeof settings.name === 'string') values.push({ name: settings.name, source: node.label })
+          if (node.loadKind === 'configureSession' && settings.variables && typeof settings.variables === 'object') for (const [name, value] of Object.entries(settings.variables)) values.push({ name, value: String(value), source: node.label })
+          if ((node.loadKind === 'forEach' || node.loadKind === 'select') && typeof settings.variable === 'string') values.push({ name: settings.variable, source: node.label })
+          if (node.loadKind === 'dataset' && Array.isArray(settings.rows) && settings.rows[0] && typeof settings.rows[0] === 'object') for (const [name, value] of Object.entries(settings.rows[0] as object)) values.push({ name, value: String(value), source: node.label })
+        } catch { /* Invalid draft configuration is validated by the existing load preview. */ }
+      }
+    }
+    return { definitions: values.filter((value) => value.name.trim()), datasets }
+  }, [nodes, ancestorIds, t])
+  const { definitions, datasets } = availableData
+  const graphSignature = useMemo(() => JSON.stringify({ nodes: fromFlowNodes(nodes).map((node) => ({ ...node, position: undefined })), edges: fromFlowEdges(edges), requests: nodes.filter((node) => node.type === 'request').map((node) => findRequest(collections, (node.data as { requestId: string }).requestId)?.content), environmentVariables }), [nodes, edges, collections, environmentVariables])
+  const beginRun = () => {
+    if (draftNodeIds.length > 0) { setPendingRun(true); return }
+    setExecutedSignature(graphSignature)
+    handleRun()
+  }
+  const saveDrafts = async (ids: string[]) => {
+    const updates = ids.flatMap((nodeId) => {
+      const node = renderNodes.find((candidate) => candidate.id === nodeId)
+      const request = node?.type === 'request' ? node.data.request : node && isSimpleFlowNode(node) && node.data.config.kind === 'inlineRequest' ? node.data.config.request : null
+      return request && requestDrafts[nodeId] ? [{ nodeId, request: { ...request, content: requestDrafts[nodeId] }, inline: node?.type !== 'request' }] : []
+    })
+    const current = latestGraphRef.current
+    const applyUpdates = (currentNodes: FlowNode[]) => currentNodes.map((node) => {
+      const update = updates.find((candidate) => candidate.nodeId === node.id && candidate.inline)
+      return update && isSimpleFlowNode(node) && node.data.config.kind === 'inlineRequest' ? { ...node, data: { ...node.data, config: { kind: 'inlineRequest' as const, request: update.request } } } : node
+    })
+    await onSaveRequestDrafts?.(updates, { nodes: fromFlowNodes(applyUpdates(current.nodes)), edges: fromFlowEdges(current.edges) })
+    const next = applyUpdates(latestGraphRef.current.nodes)
+    setNodes(next)
+    onChange(fromFlowNodes(next), fromFlowEdges(latestGraphRef.current.edges))
+  }
+  useEffect(() => {
+    if (!runAfterSave || draftNodeIds.length > 0) return
+    const timer = window.setTimeout(() => {
+      setRunAfterSave(false)
+      setExecutedSignature(graphSignature)
+      handleRun()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [runAfterSave, draftNodeIds, graphSignature, handleRun])
 
   useEffect(() => {
     pendingChangeRef.current = true
@@ -697,8 +758,7 @@ export function FlowCanvas({
     return () => window.clearTimeout(timeout)
   }, [nodes, edges, flushChange])
 
-  // O canvas desmonta ao trocar de aba (ex.: abrir a requisição avulsa no
-  // workbench) — sem isto, uma edição dos últimos 300 ms se perderia.
+  // Flush before unmounting so switching tabs preserves edits from the final debounce interval.
   useEffect(() => flushChange, [flushChange])
 
   const appliedInlineMockRevisionRef = useRef(externalInlineMockServer?.revision)
@@ -717,7 +777,7 @@ export function FlowCanvas({
     setConfigForNode(nodeId, { kind: 'inlineRequest', request })
   }, [externalInlineRequest, setConfigForNode])
 
-  // Cadeia nasce no ponto do drop; liga ao Start só se ele ainda não tem saída.
+  // Create the chain at the drop point; connect Start only when it has no outgoing edge.
   const appliedChainRevisionRef = useRef(externalRequestChain?.revision)
   useEffect(() => {
     if (!externalRequestChain || externalRequestChain.revision === appliedChainRevisionRef.current) return
@@ -748,8 +808,7 @@ export function FlowCanvas({
         showToast(t('flows.canvas.connectDuplicateToast'), 'error')
         return
       }
-      // Recusa só o que esta conexão abriria — um corpo já aberto (ex.: edge
-      // removida) não bloqueia outras edições; o run aponta o problema.
+      // Reject only loop bodies that this connection would open; existing invalid bodies are reported at execution.
       const whileIds = nodes.filter((node) => node.type === 'while').map((node) => node.id)
       if (whileIds.length > 0 && connection.source && connection.target) {
         const current = fromFlowEdges(edges)
@@ -774,10 +833,7 @@ export function FlowCanvas({
     [nodes, edges, setEdges, showToast, t],
   )
 
-  // Conexão arrastada de um handle de saída e solta em espaço vazio (não
-  // sobre outro node/handle) abre a paleta ali mesmo; a edge e o node só são
-  // criados quando um bloco é escolhido. Soltar sobre um handle válido já é
-  // tratado por `onConnect`.
+  // Releasing a connection on empty space opens the block palette; create the edge only after selection. Valid target handles use onConnect.
   const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
     if (connectionState.isValid || connectionState.toNode) return
     const { fromNode, fromHandle } = connectionState
@@ -795,8 +851,7 @@ export function FlowCanvas({
     })
   }, [])
 
-  // Menu de blocos pelo atalho "Abrir menu de blocos" (spec 0088; padrão:
-  // botão direito num ponto vazio). O bloco escolhido nasce no ponto, sem edge.
+  // The block-menu shortcut opens the palette at the pointer without creating an edge (spec 0088).
   const openPaletteAt = useCallback((clientX: number, clientY: number) => {
     const instance = reactFlowInstanceRef.current
     if (!instance) return
@@ -812,10 +867,7 @@ export function FlowCanvas({
     [shortcutBindings],
   )
 
-  // Clique esquerdo no vazio: limpa a seleção e fecha a paleta. Se o atalho
-  // estiver no botão esquerdo, abre a paleta — mas, com algo selecionado, o
-  // clique só limpa a seleção (o xyflow desmarca logo depois deste handler,
-  // então `selected` ainda reflete o estado antes do clique).
+  // Left-click clears selection and closes the palette. A left-button palette shortcut opens only when no node is selected; React Flow deselects after this handler.
   const onPaneClick = useCallback(
     (event: ReactMouseEvent) => {
       const hadSelection = selectedNodeId !== null || nodes.some((node) => node.selected) || edges.some((edge) => edge.selected)
@@ -829,8 +881,7 @@ export function FlowCanvas({
     [selectedNodeId, nodes, edges, isPaletteClick, openPaletteAt],
   )
 
-  // Botão direito no vazio: o menu de contexto nativo só é suprimido quando
-  // o clique é o atalho.
+  // Suppress the native context menu only when the click matches the configured shortcut.
   const onPaneContextMenu = useCallback(
     (event: ReactMouseEvent | MouseEvent) => {
       if (!isPaletteClick(event)) return
@@ -840,8 +891,7 @@ export function FlowCanvas({
     [isPaletteClick, openPaletteAt],
   )
 
-  // Botão do meio no vazio — o xyflow não expõe esse clique no pane. O
-  // `auxclick` também chega para o botão direito, já tratado acima.
+  // Handle middle-button palette shortcuts through auxclick; right clicks are handled separately.
   const onCanvasAuxClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 1 || !(event.target instanceof Element) || !event.target.closest('.react-flow__pane')) return
     if (isPaletteClick(event)) {
@@ -852,9 +902,7 @@ export function FlowCanvas({
     }
   }
 
-  // Atalho de teclado: abre a paleta sob o cursor, se ele estiver sobre o
-  // canvas, ou no centro dele. Não age com o foco num campo de texto nem por
-  // trás de um modal.
+  // Open the palette at the pointer or canvas center, unless a text field or modal owns keyboard input.
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -873,9 +921,7 @@ export function FlowCanvas({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [shortcutBindings, openPaletteAt])
 
-  // Arrastar ou dar zoom no canvas fecha a paleta: ela fica presa à tela, e o
-  // ponto onde o bloco nasceria sairia de baixo dela. `event` é `null` em
-  // movimentos programáticos (ex.: `fitView`).
+  // Close the screen-anchored palette on canvas movement; programmatic movement such as fitView has no originating event.
   const onMove = useCallback((event: MouseEvent | TouchEvent | null) => {
     if (event) setPaletteTrigger(null)
   }, [])
@@ -889,38 +935,30 @@ export function FlowCanvas({
     [setNodes],
   )
 
-  // Novo node nasce perto do centro visível do canvas (não mais num offset
-  // fixo empilhado) — `screenToFlowPosition` espera coordenadas de tela
-  // (client), por isso o centro vem do próprio container, não do viewport
-  // interno do xyflow.
+  // Place toolbar-created nodes near the visible canvas center using screenToFlowPosition with screen coordinates.
   const newNodePosition = (): { x: number; y: number } => {
     const instance = reactFlowInstanceRef.current
-    const bounds = containerRef.current?.getBoundingClientRect()
+    const bounds = containerRef.current?.querySelector('.react-flow')?.getBoundingClientRect()
     if (!instance || !bounds) return { x: 260, y: 0 }
     return instance.screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 })
   }
 
-  // Disparado ao soltar uma conexão em espaço vazio: nasce onde o usuário
-  // soltou. Sem `dropPosition` (toolbar), nasce no centro visível do canvas.
-  // Se houver um node de origem sem posição de soltura, cai à direita dele,
-  // deslocado por ramo (`sourceHandle`) para não empilhar os dois ramos.
+  // Honor explicit drop positions. Otherwise place nodes to the right of their source with a branch offset, or at the visible center.
   const positionForNewNode = (sourceNodeId: string | null, sourceHandle?: FlowSourceHandle): { x: number; y: number } => {
     if (paletteTrigger?.dropPosition) return paletteTrigger.dropPosition
     if (sourceNodeId) {
       const source = nodes.find((node) => node.id === sourceNodeId)
       if (source) {
         const yOffset = sourceHandle === 'true' || sourceHandle === 'success' || sourceHandle === 'loop' ? -110 : sourceHandle ? 110 : 0
-        return { x: source.position.x + 360, y: source.position.y + yOffset }
+        return availableNodePosition({ x: source.position.x + (source.measured?.width ?? 288) + 96, y: source.position.y + yOffset }, nodes)
       }
     }
-    return newNodePosition()
+    return availableNodePosition(newNodePosition(), nodes)
   }
 
   const closePalette = () => setPaletteTrigger(null)
 
-  // Edge automática da conexão solta no canvas: carrega `sourceHandle` quando
-  // veio de uma saída nomeada de um node `if`/`request` — `undefined` para
-  // todo outro node de saída única.
+  // Preserve the named source output when creating an edge from a released connection.
   const addAutoEdge = (sourceNodeId: string, targetNodeId: string) => {
     setEdges((current) => [
       ...current,
@@ -934,7 +972,7 @@ export function FlowCanvas({
     ])
   }
 
-  // Anotação nunca se conecta: mesmo aberta a partir de um handle, nasce solta.
+  // Notes remain unconnected even when created from a handle.
   const handlePaletteSelectSimple = (config: SimpleNodeKindState) => {
     const sourceNodeId = config.kind === 'note' ? null : (paletteTrigger?.sourceNodeId ?? null)
     const newId = crypto.randomUUID()
@@ -951,8 +989,7 @@ export function FlowCanvas({
     else if (kind === 'inlineRequest') handlePaletteSelectSimple(newInlineRequest(t('flows.canvas.newInlineRequestName')))
     else if (isSimpleNodeKind(kind)) {
       const config = defaultSimpleNodeConfig(kind)
-      // Um bloco de mock novo já aponta para o "Ligar mock" de onde saiu — ou
-      // para o mesmo do bloco de mock de onde saiu, ou para o único do flow.
+      // New mock blocks inherit the source's Start mock reference, or the flow's sole Start mock.
       const sourceNodeId = paletteTrigger?.sourceNodeId ?? null
       const sourceConfig = simpleConfigs.find((node) => node.id === sourceNodeId)?.config
       const inherited = sourceConfig && 'startNodeId' in sourceConfig ? sourceConfig.startNodeId : sourceNodeId
@@ -1021,7 +1058,7 @@ export function FlowCanvas({
   }
 
   return (
-    <div className="flow-canvas-shell">
+    <FlowMappingProvider scopeKey={selectedNodeId ?? ''} references={[...effectiveVariables.map((variable) => `{{${variable.name}}}`), ...definitions.map((definition) => `{{${definition.name}}}`), ...ancestorRequests.flatMap((ancestor) => ancestor.output === 'mockServer' ? [`{{nodes.${ancestor.nodeId}.server.url}}`] : [`{{nodes.${ancestor.nodeId}.${ancestor.output === 'mockRequest' ? 'request' : 'response'}.body}}`, `{{nodes.${ancestor.nodeId}.${ancestor.output === 'mockRequest' ? 'request.method' : 'response.status'}}}`])]} onInsert={() => setInspectorTab('configuration')}><div className="flow-canvas-shell flow-studio">
     <div
       className="flow-canvas"
       ref={containerRef}
@@ -1041,6 +1078,7 @@ export function FlowCanvas({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
+        onNodeDoubleClick={(_event, node) => { setSelectedNodeId(node.id); setInspectorTab('configuration') }}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
@@ -1063,11 +1101,7 @@ export function FlowCanvas({
           <button
             type="button"
             className="ui-button ui-button--ghost ui-button--sm flow-add-menu-button"
-            // Evita que o mousedown chegue ao listener de "clique fora" do
-            // BlockPalette (mesmo padrão de `stopPropagation` no mousedown) — sem
-            // isso, clicar de novo neste botão fecharia (outside click) e
-            // reabriria (este onClick) no mesmo gesto, nunca fechando de
-            // fato por um segundo clique.
+            // Stop mousedown before the palette's outside-click listener so toggling this button cannot close and reopen the palette in one gesture.
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               const anchor = event.currentTarget.getBoundingClientRect()
@@ -1085,7 +1119,7 @@ export function FlowCanvas({
               {t('flows.runLog.title')}
             </Button>
           )}
-          <Button variant={isRunning ? 'danger' : 'primary'} onClick={isRunning ? cancel : handleRun} aria-busy={isRunning || loadingLoadPreview} disabled={loadingLoadPreview || (isLoadFlow && !loadTestingEnabled)}>
+          <Button variant={isRunning ? 'danger' : 'primary'} onClick={isRunning ? cancel : beginRun} aria-busy={isRunning || loadingLoadPreview} disabled={loadingLoadPreview || (!isRunning && requestSaving) || (isLoadFlow && !loadTestingEnabled)}>
             {(isRunning || loadingLoadPreview) && <Spinner size={13} />}
             {isRunning ? t('common.cancel') : t('flows.canvas.runButtonLabel')}
           </Button>
@@ -1116,10 +1150,24 @@ export function FlowCanvas({
 
       {selection && (
         <NodeInspectorPanel
+          outputVersions={outputVersions}
+          flowId={flow.id}
+          datasets={datasets}
+          rootPath={rootPath}
+          flowExecutionId={flowExecutionId}
+          activeTab={inspectorTab}
+          onTabChange={setInspectorTab}
+          nodeStatus={statuses[selection.id]}
+          load={isLoadFlow}
+          definitions={definitions}
+          outdated={executedSignature !== null && executedSignature !== graphSignature}
+          displayFormat={displayFormats[selection.id] ?? 'auto'}
+          onDisplayFormatChange={(format) => { const next = { ...displayFormats, [selection.id]: format }; setDisplayFormats(next); try { localStorage.setItem(`alcy:flows:${flow.id}:display-formats`, JSON.stringify(next)) } catch { /* Presentation preferences remain usable in memory. */ } }}
+          requestEditor={selectedRequest && onRequestDraftChange ? <FlowRequestEditor key={selection.kind === 'request' ? selectedRequest.id : selection.id} rootPath={rootPath} content={requestDrafts[selection.id] ?? selectedRequest.content} variables={effectiveVariables} dirty={Boolean(requestDrafts[selection.id])} busy={requestSaving} targetLabel={selection.kind === 'request' ? t('flows.studio.saveTargetLinked', { path: findRequestPath(collections, selectedRequest.id)?.join(' / ') ?? selectedRequest.name }) : t('flows.studio.saveTargetInline')} onChange={(content) => onRequestDraftChange(selection.id, selectedRequest, content, selection.kind !== 'request')} onSave={() => saveDrafts([selection.id])} onDiscard={() => onDiscardRequestDrafts?.([selection.id])} /> : undefined}
           selection={selection}
           ancestorRequests={ancestorRequests}
           ancestorLocalVariables={ancestorLocalVariables}
-          environmentVariables={environmentVariables}
+          environmentVariables={effectiveVariables}
           collections={collections}
           onLabelChange={handleLabelChange}
           onConditionChange={setConditionForNode}
@@ -1157,9 +1205,14 @@ export function FlowCanvas({
           )}
         </Modal>
       )}
+      {pendingRun && <Modal title={t('flows.studio.runPendingTitle')} closeAriaLabel={t('common.close')} onClose={() => setPendingRun(false)} className="ui-modal--form">
+        <p className="ui-modal-description">{t('flows.studio.runPendingDescription')}</p><div className="ui-modal-actions"><Button variant="ghost" disabled={savingDrafts} onClick={() => setPendingRun(false)}>{t('common.cancel')}</Button><Button variant="ghost" disabled={savingDrafts} onClick={() => { onDiscardRequestDrafts?.(draftNodeIds); setPendingRun(false); setRunAfterSave(true) }}>{t('flows.studio.discardAndRun')}</Button><Button variant="primary" disabled={savingDrafts} aria-busy={savingDrafts} onClick={() => { setSavingDrafts(true); void saveDrafts(draftNodeIds).then(() => { setPendingRun(false); setRunAfterSave(true) }).catch((reason: unknown) => showToast(t('flows.canvas.runErrorToast', { message: reason instanceof Error ? reason.message : String(reason) }), 'error')).finally(() => setSavingDrafts(false)) }}>{t('flows.studio.saveAndRun')}</Button></div>
+      </Modal>}
     </div>
     {logOpen && (
       <RunLogPanel
+        rootPath={rootPath}
+        onSelectNode={(nodeId) => { setSelectedNodeId(nodeId); setInspectorTab('output'); void reactFlowInstanceRef.current?.fitView({ nodes: [{ id: nodeId }], maxZoom: 1, duration: 200 }) }}
         key={runStartedAtMs ?? 0}
         entries={logEntries}
         nodeInfo={runLogNodeInfo}
@@ -1170,6 +1223,6 @@ export function FlowCanvas({
       />
     )}
     {loadRun.detail && <LoadRunResults key={loadRun.detail.id} rootPath={rootPath} detail={loadRun.detail} onClose={() => loadRun.setDetail(null)} />}
-    </div>
+    </div></FlowMappingProvider>
   )
 }

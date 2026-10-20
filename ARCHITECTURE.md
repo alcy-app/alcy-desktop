@@ -117,6 +117,16 @@ The mock server receives HTTP configurations persisted per workspace and only li
 
 Flows control mock servers through the `MockServerControl` port in `alcy-app`, implemented on top of the runtime in `src-tauri/src/mock_runtime/` (ADR 0056). Each running server keeps in memory, with a limit, the calls received per route for the "Wait for call" and "Verify calls" blocks; at the end, the run stops the mocks it started.
 
+### Flow editing and output inspection
+
+React owns the flow canvas, inspector sizing, data mapping and display-format preferences. The embedded request editor reuses the workbench components and its request-tab drafts. Explicit saves target either the linked collection request or the inline node; execution waits for pending edits to be saved or discarded. Inspector state and display formats do not change the persisted graph or execution semantics. Load flows expose their declared variables and aggregate results, without pretending to have a shared response across virtual users.
+
+`alcy-storage::FlowBodyCapture` captures the last textual output per node on a dedicated worker, with a two-entry nonblocking queue, a 64 MiB per-body limit and a 256 MiB per-run budget. Binary, oversized or unqueued bodies retain the existing bounded preview and an explicit availability state. Captures start in temporary storage; when response saving and history retention are enabled, completion moves them to `alcy-flow-runs/<run-id>.bodies/`. A versioned manifest maps node IDs to hashed filenames and output revisions. Standard history details now use v2 and still read v1; the load detail format remains v1. Retention removes body directories with their run, and stale temporary captures from interrupted sessions are cleaned in the background.
+
+The `alcy-app` output inspector uses a streaming JSON visitor rather than a response-sized object tree. Native commands schedule parsing and file reads on blocking workers, support cancellation and reject stale revisions and mismatched cursors. Typed bindings request one JSON level, scalar-value window or text window at a time, with at most 100 fields and a 64 KiB serialized IPC response. The history overview can omit output bodies entirely; individual outputs are fetched on demand. JSON pointers belong to inspection only: references inserted into fields retain the existing execution syntax and interpolation behavior, and unrepresentable paths cannot be mapped.
+
+Load dataset mapping queries column pages and examples from the first row through the same cancellable inspection registry. Parsing reuses the existing iteration-data limits in Rust; full datasets never cross IPC. Examples describe configured input data, not a captured virtual user's runtime state.
+
 ### OpenAPI
 
 Responsible for:

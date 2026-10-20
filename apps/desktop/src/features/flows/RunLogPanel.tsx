@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getFlowNodeOutput } from '../../bindings/get-flow-node-output'
 import type { FlowNodeOutputDto } from '../../bindings/get-flow-node-output'
 import { useLanguage } from '../../shared/i18n/use-language'
@@ -13,27 +13,29 @@ import { outputRoots, parseBody, referenceFor } from './output-tree'
 import { entryDurationMs } from './run-log'
 import type { RunLogEntry } from './run-log'
 import './run-log-panel.css'
+import { FlowOutputExplorer } from './FlowOutputExplorer'
 
-/** O que o log precisa saber de um node para nomeá-lo, já resolvido pelo canvas. */
+/** Canvas-resolved node metadata used to label execution log entries. */
 export interface RunLogNodeInfo {
   label: string
   kindLabel: string
-  /** `MÉTODO url` — só para nodes de requisição. */
+  /** METHOD URL for request nodes. */
   request?: string
-  /** Bloco "Aguardar chamada": a chamada recebida fica como output do node. */
+  /** Wait for call nodes expose the captured request as their output. */
   capturesRequest?: boolean
 }
 
 interface RunLogPanelProps {
+  rootPath?: string
+  onSelectNode?: (nodeId: string) => void
   entries: RunLogEntry[]
   nodeInfo: Record<string, RunLogNodeInfo>
   runStartedAtMs: number | null
   flowExecutionId: string | null
   isRunning: boolean
-  /** Sem `onClose` o painel não tem botão de fechar (run log de um snapshot). */
+  /** Historical snapshots omit onClose and cannot close their log panel. */
   onClose?: () => void
-  /** Saídas já carregadas por node (run do histórico); sem isso, buscam-se
-   * sob demanda no backend, do último run ao vivo. */
+  /** Legacy preloaded output previews; otherwise query the latest execution on demand. */
   outputs?: Record<string, FlowNodeOutputDto>
 }
 
@@ -44,7 +46,7 @@ function toneOf(entry: RunLogEntry): Tone {
   if (status.status === 'running') return 'running'
   if (status.status === 'failed') return 'error'
   if (status.status === 'success') return status.statusCode >= 400 ? 'error' : 'success'
-  // Cada iteração de um `while` é uma linha já fechada (o corpo vem logo abaixo).
+  // Each While iteration has a completed log entry, followed by its body.
   if (
     status.status === 'branched' ||
     status.status === 'completed' ||
@@ -97,13 +99,22 @@ function StatusIcon({ tone }: { tone: Tone }) {
   return <ClockIcon size={13} />
 }
 
-/** Log do último Run do flow (painel inferior do canvas): uma linha por node na
- * ordem em que o run o alcançou, com detalhe resumido ao selecionar. Só mostra
- * o que os eventos do motor já carregam — nada de corpo de resposta. Montar
- * com `key` do run para a seleção zerar a cada execução. */
-export function RunLogPanel({ entries, nodeInfo, runStartedAtMs, flowExecutionId, isRunning, onClose, outputs }: RunLogPanelProps) {
+/** Execution-ordered log entries with selected-node details. Mount with the run key to reset selection for each execution. */
+export function RunLogPanel({ entries, nodeInfo, runStartedAtMs, flowExecutionId, isRunning, onClose, outputs, rootPath, onSelectNode }: RunLogPanelProps) {
   const { t } = useLanguage()
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  const [viewport, setViewport] = useState({ top: 0, height: 260 })
+  const [rowHeight, setRowHeight] = useState(44)
+  const firstRow = useRef<HTMLLIElement | null>(null)
+  const start = Math.max(0, Math.floor(viewport.top / rowHeight) - 6)
+  const end = Math.min(entries.length, start + Math.ceil(viewport.height / rowHeight) + 12)
+  const hasEntries = entries.length > 0
+  useEffect(() => {
+    if (!firstRow.current || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => { if (entry.contentRect.height > 0) setRowHeight(entry.contentRect.height) })
+    observer.observe(firstRow.current)
+    return () => observer.disconnect()
+  }, [start, hasEntries])
   const selected = selectedIndex === null ? null : (entries[selectedIndex] ?? null)
 
   const infoFor = (nodeId: string): RunLogNodeInfo => nodeInfo[nodeId] ?? { label: nodeId.slice(0, 8), kindLabel: '' }
@@ -121,18 +132,20 @@ export function RunLogPanel({ entries, nodeInfo, runStartedAtMs, flowExecutionId
       </header>
 
       <div className="flow-run-log-body">
-        <ul className="flow-run-log-list">
+        <ul className="flow-run-log-list" onScroll={(event) => setViewport({ top: event.currentTarget.scrollTop, height: event.currentTarget.clientHeight || 260 })}>
           {entries.length === 0 && <li className="flow-run-log-empty">{t('flows.runLog.empty')}</li>}
-          {entries.map((entry, index) => {
+          {start > 0 && <li role="presentation" style={{ height: start * rowHeight }} />}
+          {entries.slice(start, end).map((entry, offset) => {
+            const index = start + offset
             const tone = toneOf(entry)
             const info = infoFor(entry.nodeId)
             return (
-              <li key={`${entry.nodeId}-${index}`}>
+              <li key={`${entry.nodeId}-${index}`} ref={index === start ? firstRow : undefined} aria-posinset={index + 1} aria-setsize={entries.length}>
                 <button
                   type="button"
                   className={`flow-run-log-row flow-run-log-row--${tone}${index === selectedIndex ? ' flow-run-log-row--selected' : ''}`}
                   aria-pressed={index === selectedIndex}
-                  onClick={() => setSelectedIndex(index)}
+                  onClick={() => { setSelectedIndex(index); onSelectNode?.(entry.nodeId) }}
                 >
                   <span className={`flow-run-log-icon flow-run-log-icon--${tone}`}>
                     <StatusIcon tone={tone} />
@@ -145,10 +158,11 @@ export function RunLogPanel({ entries, nodeInfo, runStartedAtMs, flowExecutionId
               </li>
             )
           })}
+          {end < entries.length && <li role="presentation" style={{ height: (entries.length - end) * rowHeight }} />}
         </ul>
 
         <div className="flow-run-log-detail">
-          {selected ? <EntryDetail entry={selected} info={infoFor(selected.nodeId)} flowExecutionId={flowExecutionId} outputs={outputs} /> : <p className="flow-run-log-empty">{t('flows.runLog.selectHint')}</p>}
+          {selected ? <EntryDetail entry={selected} info={infoFor(selected.nodeId)} flowExecutionId={flowExecutionId} outputs={outputs} rootPath={onSelectNode ? undefined : rootPath} hideOutput={Boolean(onSelectNode)} /> : <p className="flow-run-log-empty">{t('flows.runLog.selectHint')}</p>}
         </div>
       </div>
     </section>
@@ -160,11 +174,15 @@ function EntryDetail({
   info,
   flowExecutionId,
   outputs,
+  rootPath,
+  hideOutput,
 }: {
   entry: RunLogEntry
   info: RunLogNodeInfo
   flowExecutionId: string | null
   outputs?: Record<string, FlowNodeOutputDto>
+  rootPath?: string
+  hideOutput?: boolean
 }) {
   const { t } = useLanguage()
   const tone = toneOf(entry)
@@ -235,8 +253,9 @@ function EntryDetail({
           <dd className="flow-run-log-mono flow-run-log-message">{status.message || t('common.empty')}</dd>
         </>
       )}
-      {hasOutput && outputs && (
-        // Run reaberto do histórico: um node sem output é uma resposta que não foi guardada.
+      {hasOutput && !hideOutput && rootPath !== undefined && flowExecutionId && <div className="flow-run-explorer"><FlowOutputExplorer key={`${flowExecutionId}:${entry.nodeId}`} rootPath={rootPath} flowExecutionId={flowExecutionId} nodeId={entry.nodeId} scope={info.capturesRequest ? 'request' : 'response'} /></div>}
+      {hasOutput && !hideOutput && rootPath === undefined && outputs && (
+        // A historical node without an output preview had no response stored.
         <NodeOutputBody
           key={entry.nodeId}
           nodeId={entry.nodeId}
@@ -244,7 +263,7 @@ function EntryDetail({
           unavailableMessage={t('flows.runLog.outputNotStored')}
         />
       )}
-      {hasOutput && !outputs && flowExecutionId && (
+      {hasOutput && !hideOutput && rootPath === undefined && !outputs && flowExecutionId && (
         <NodeOutput key={`${flowExecutionId}-${entry.nodeId}`} flowExecutionId={flowExecutionId} nodeId={entry.nodeId} />
       )}
     </dl>
@@ -253,8 +272,7 @@ function EntryDetail({
 
 type OutputState = { key: string; output: FlowNodeOutputDto | null; failed: boolean }
 
-/** Output do node, buscado só quando ele é selecionado (nunca vem no evento
- * de progresso). O backend guarda apenas o começo do corpo do último run. */
+/** Legacy output preview requested only when selected, separately from progress events. */
 function NodeOutput({ flowExecutionId, nodeId }: { flowExecutionId: string; nodeId: string }) {
   const key = `${flowExecutionId}:${nodeId}`
   const [state, setState] = useState<OutputState | null>(null)
@@ -292,7 +310,7 @@ function NodeOutputBody({
 }: {
   nodeId: string
   state: OutputBodyState
-  /** Texto quando não há output; o padrão explica que só o último run é mantido. */
+  /** Empty-output text; the default explains the latest-run lifetime. */
   unavailableMessage?: string
 }) {
   const { t } = useLanguage()
@@ -306,7 +324,7 @@ function NodeOutputBody({
       await navigator.clipboard.writeText(referenceFor(nodeId, path, scope))
       showToast(t('toasts.nodeReferenceCopied'))
     } catch {
-      // Clipboard indisponível — a referência segue visível para copiar à mão.
+      // If clipboard access fails, leave the reference visible for manual copying.
     }
   }
 

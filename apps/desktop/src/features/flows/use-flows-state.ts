@@ -17,7 +17,7 @@ const SAVE_DEBOUNCE_MS = 500
 export const START_NODE_ID = 'start'
 
 export function flowNodeFromDto(node: FlowDto['nodes'][number]): FlowNodeState {
-  // Antes de `isSimpleNode`: no DTO a requisição tem outro formato.
+  // Handle inline requests before generic simple nodes because their DTO has a different request representation.
   if (node.kind === 'inlineRequest') {
     return { id: node.id, kind: 'inlineRequest', request: requestFromDto(node.request), position: { x: node.x, y: node.y } }
   }
@@ -44,7 +44,7 @@ export function dtoFromFlowNode(node: FlowNodeState): FlowDto['nodes'][number] {
     return { id: node.id, kind: 'inlineRequest', request: requestToDto(node.request), x: node.position.x, y: node.position.y }
   }
   if (isSimpleNode(node)) {
-    // `inlineRequest` já saiu acima; o estreitamento só não chega até `simpleNodeConfig`.
+    // Inline requests were handled above; explicitly narrow the remaining simple-node union.
     const config = simpleNodeConfig(node) as Exclude<SimpleNodeKindState, { kind: 'inlineRequest' }>
     return { id: node.id, ...config, x: node.position.x, y: node.position.y }
   }
@@ -82,9 +82,7 @@ function dtoFromEdge(edge: FlowEdgeState): FlowDto['edges'][number] {
 }
 
 function flowFromDto(dto: FlowDto): FlowState {
-  // A migração canônica (edge sem handle saindo de um `request` vira
-  // "success") é a de `flow_store.rs`; isto só impede que um estado inválido
-  // em memória seja rejeitado em silêncio pelo `save_flows`.
+  // Match flow_store.rs migration of unnamed request outputs to success so valid in-memory edges are not silently rejected during persistence.
   const requestNodeIds = new Set(dto.nodes.filter((node) => node.kind === 'request').map((node) => node.id))
   return {
     id: dto.id,
@@ -125,7 +123,7 @@ interface LoadFlowStarterLabels {
   request: string
 }
 
-/** Flow de carga mínimo, pronto para configurar e executar pelo canvas. */
+/** Minimal executable load flow, ready for configuration in the canvas. */
 export function createLoadFlow(
   name: string,
   labels: LoadFlowStarterLabels = { scenario: 'Cenário', request: 'Request' },
@@ -148,7 +146,7 @@ export function createLoadFlow(
   }
 }
 
-/** Flow novo com as requisições encadeadas a partir do Start (spec 0095). */
+/** Create a flow that chains the selected requests after Start (spec 0095). */
 export function createFlowFromRequests(name: string, requestIds: string[]): FlowState {
   const flow = createFlow(name)
   const chain = buildRequestChain(requestIds, { x: 360, y: 0 }, START_NODE_ID)
@@ -159,22 +157,19 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
   const { t } = useLanguage()
   const [flows, setFlows] = useState<FlowState[]>([])
   const [loaded, setLoaded] = useState(false)
-  // Arquivo que não foi lido (ex.: gravado por uma versão mais nova do app): enquanto houver erro,
-  // nada é salvo, para não trocar o conteúdo do disco pelo estado vazio mostrado na tela.
+  // Do not save after a failed load; an empty UI must never overwrite an unreadable or newer file.
   const [loadError, setLoadError] = useState<string | null>(null)
   const saveTimeoutRef = useRef<number | null>(null)
   const flowsRef = useRef(flows)
   const [reloadToken, setReloadToken] = useState(0)
-  // O efeito de salvar reage a `flows`/`loaded` juntos — sem isso, o próprio carregamento (que
-  // muda os dois no mesmo render) dispararia um save supérfluo, reescrevendo o arquivo no disco
-  // sem nenhuma edição real (o que já bastava para acender "modificado" indevidamente).
+  // Loading flows and the loaded flag together must not trigger a redundant write or falsely mark the file modified.
   const skipNextSaveRef = useRef(false)
 
   useEffect(() => {
     flowsRef.current = flows
   }, [flows])
 
-  /** Relê o arquivo do disco (ex.: depois de uma atualização do repositório remoto), descartando um save pendente que o sobrescreveria. */
+  /** Reload from disk and cancel pending saves that could overwrite externally updated content. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current)
@@ -246,15 +241,14 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     return flow.id
   }, [t])
 
-  /** O backend já persistiu a importação e devolveu seu flow canônico. A
-   * inclusão no estado evita esperar o próximo reload do workspace. */
+  /** The backend already persisted the imported graph; add its canonical result without waiting for workspace reload. */
   const addImportedFlow = useCallback((dto: FlowDto) => {
     const flow = flowFromDto(dto)
     setFlows((current) => [...current.filter((candidate) => candidate.id !== flow.id), flow])
     return flow.id
   }, [])
 
-  /** Reordena a lista de flows (arraste). A ordem é a do arquivo salvo. */
+  /** Reorder flows by drag; the persisted array determines display order. */
   const moveFlow = useCallback((draggedId: string, targetId: string, edge: SiblingEdge) => {
     setFlows((current) => moveById(current, draggedId, targetId, edge))
   }, [])
@@ -269,8 +263,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     )
   }, [])
 
-  /** Grava a requisição de um node avulso (salvar na aba do workbench). `false`
-   * quando o node não existe mais. */
+  /** Save an inline node request from its workbench tab; return false if the node was removed. */
   const updateInlineRequest = useCallback(
     (flowId: string, nodeId: string, request: RequestSummary): boolean => {
       const exists = flows.some(
@@ -293,8 +286,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     [flows],
   )
 
-  /** Grava o mock avulso de um bloco "Ligar mock" (salvar na aba do
-   * workbench). `false` quando o node não existe mais ou deixou de ser avulso. */
+  /** Save an inline Start mock from its workbench tab; return false if the node was removed or changed source kind. */
   const updateInlineMockServer = useCallback(
     (flowId: string, nodeId: string, server: MockServerDto): boolean => {
       const isInlineMock = (node: FlowNodeState) => node.id === nodeId && node.kind === 'mockStart' && node.source.type === 'inline'
@@ -321,9 +313,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     )
   }, [])
 
-  /** Cancela o debounce e persiste a versão mais recente antes de um command
-   * que relê o flow do disco. Retorna o erro ao chamador para que a execução
-   * jamais use um plano anterior sem avisar a pessoa. */
+  /** Flush the latest graph before native commands read it; propagate persistence failures so execution cannot silently use an older plan. */
   const saveNow = useCallback(async () => {
     if (!loaded) return
     if (loadError !== null) throw new Error(loadError)
@@ -333,6 +323,19 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     }
     const result = await saveFlows(workspaceRootPath, { flows: flowsRef.current.map(dtoFromFlow) })
     if (!result.ok) throw new Error(result.error.message)
+    onSaved?.()
+  }, [loaded, loadError, onSaved, workspaceRootPath])
+
+  /** Explicit node-request saves finish on disk before their shared draft is marked saved. */
+  const saveGraph = useCallback(async (id: string, nodes: FlowNodeState[], edges: FlowEdgeState[]) => {
+    if (!loaded || loadError !== null) throw new Error(loadError ?? 'Flows are not loaded')
+    const next = flowsRef.current.map((flow) => flow.id === id ? { ...flow, nodes, edges, updatedAtMs: Date.now() } : flow)
+    if (!next.some((flow) => flow.id === id)) throw new Error('Flow no longer exists')
+    if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
+    saveTimeoutRef.current = null
+    const result = await saveFlows(workspaceRootPath, { flows: next.map(dtoFromFlow) })
+    if (!result.ok) throw new Error(result.error.message)
+    setFlows(next)
     onSaved?.()
   }, [loaded, loadError, onSaved, workspaceRootPath])
 
@@ -349,6 +352,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     moveFlow,
     renameFlow,
     saveNow,
+    saveGraph,
     updateFlowGraph,
     updateInlineMockServer,
     updateInlineRequest,

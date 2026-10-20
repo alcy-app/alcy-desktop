@@ -1,4 +1,4 @@
-//! Persistência local do Alcy: arquivos versionados, escrita atômica.
+//! Alcy local persistence: versioned files and atomic writes.
 
 mod api_docs_store;
 mod collection_run_history_store;
@@ -7,6 +7,7 @@ mod collections_store;
 mod custom_ca_certificate_store;
 mod disk_workspace_files;
 mod environment_store;
+mod flow_body_archive;
 mod flow_run_history_store;
 mod flow_store;
 mod general_settings_store;
@@ -44,6 +45,10 @@ pub use custom_ca_certificate_store::{CustomCaCertificate, CustomCaCertificateSt
 pub use disk_workspace_files::DiskWorkspaceFiles;
 pub use environment_store::{
     EnvironmentStore, EnvironmentsSnapshot, LoadedEnvironments, UnreadableSecret,
+};
+pub use flow_body_archive::{
+    ArchivedFlowBody, FlowBodyCapture, MAX_FLOW_BODY_BYTES, archived_flow_body_path,
+    flow_body_directory, read_archived_flow_body,
 };
 pub use flow_run_history_store::{
     FlowRunHistoryStore, FlowRunKind, FlowRunRecord, FlowRunStatus, FlowRunSummary,

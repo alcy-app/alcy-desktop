@@ -31,6 +31,8 @@ pub mod grpc;
 pub(crate) mod grpc_test_server;
 pub mod history;
 pub mod import_fetcher;
+pub mod inspect_flow_output;
+pub mod inspect_load_dataset;
 pub mod load_dataset_assets;
 pub mod load_schema;
 pub mod load_test_import;
