@@ -17,6 +17,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Changed
 
+- Logs e backups passam a ficar ao lado do executável. Quando a instalação não permite escrita, ficam na pasta de dados do aplicativo; os arquivos antigos em Documentos são preservados.
 - Os menus de contexto mostram à direita o primeiro atalho configurado para cada ação.
 - As pastas dos flows começam fechadas ao abrir o módulo.
 - Os botões de expandir ou recolher tudo e localizar a requisição ativa ficam ao lado do menu de três pontos na barra de collections.

@@ -1,7 +1,8 @@
 //! Local Alcy logs.
 //!
-//! Lines go to `~/Documentos/Alcy/logs/alcy.log`, with rotation and removal
-//! of rotated files after an hour. Nothing leaves the machine.
+//! Lines go to `logs/alcy.log` beside the executable, falling back to the app
+//! data directory when the installation is not writable. Rotated files are
+//! removed after an hour. Nothing leaves the machine.
 //!
 //! Never log headers, bodies, tokens, keys, variable/secret values or query
 //! strings. URLs keep only scheme, host and path (`url_for_log`). Log IDs,
@@ -14,7 +15,7 @@ use log::LevelFilter;
 use tauri::{Manager, Runtime};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
-/// User-visible Alcy directories (`~/Documentos/Alcy/...`).
+/// Local runtime directories beside the executable, or in app data as a fallback.
 pub struct AlcyDirs {
     pub logs: PathBuf,
     /// Workspace backups made before each update (spec 0120).
@@ -29,17 +30,73 @@ const MAX_ROTATED_LOG_AGE: Duration = Duration::from_secs(60 * 60);
 /// Interval between expired-log cleanup passes while the app is open.
 const LOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-/// Resolve `~/Documentos/Alcy`, falling back to app data when the system
-/// has no documents directory.
+/// Resolve the actual installed binary, including the outer AppImage on Linux.
+/// Existing files in the former Documents location remain untouched.
 pub fn alcy_dirs<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<AlcyDirs> {
-    let base = match app.path().document_dir() {
-        Ok(documents) => documents.join("Alcy"),
-        Err(_) => app.path().app_data_dir()?,
-    };
-    Ok(AlcyDirs {
+    let binary = tauri::process::current_binary(&app.env()).ok();
+    let installation_dir = binary.as_deref().and_then(installation_directory);
+    Ok(resolve_dirs(installation_dir, &app.path().app_data_dir()?)?)
+}
+
+fn installation_directory(binary: &Path) -> Option<&Path> {
+    let directory = binary.parent()?;
+    // Keep runtime data outside signed macOS bundles, where updates would
+    // otherwise replace it along with the application.
+    let bundle = directory
+        .parent()
+        .filter(|contents| directory.ends_with("MacOS") && contents.ends_with("Contents"))
+        .and_then(Path::parent)
+        .filter(|bundle| {
+            bundle
+                .extension()
+                .is_some_and(|extension| extension == "app")
+        });
+    match bundle {
+        Some(bundle) => bundle.parent(),
+        None => Some(directory),
+    }
+}
+
+fn resolve_dirs(installation_dir: Option<&Path>, app_data_dir: &Path) -> std::io::Result<AlcyDirs> {
+    if let Some(installation_dir) = installation_dir
+        && let Ok(dirs) = prepare_dirs(installation_dir)
+    {
+        return Ok(dirs);
+    }
+    prepare_dirs(app_data_dir)
+}
+
+fn prepare_dirs(base: &Path) -> std::io::Result<AlcyDirs> {
+    let dirs = AlcyDirs {
         logs: base.join("logs"),
         backups: base.join("backups"),
-    })
+    };
+    for path in [&dirs.logs, &dirs.backups] {
+        std::fs::create_dir_all(path)?;
+        // Existing directories may be readable but not writable. Probe with a
+        // new empty file so neither current logs nor backups are modified.
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let probe = path.join(format!(".alcy-write-probe-{}-{stamp}", std::process::id()));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)?;
+        drop(file);
+        std::fs::remove_file(probe)?;
+    }
+    // A writable directory can still contain a read-only active log file.
+    match std::fs::OpenOptions::new()
+        .append(true)
+        .open(dirs.logs.join("alcy.log"))
+    {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(dirs)
 }
 
 /// Logging plugin: rotating file, plus stdout in debug builds.
@@ -268,6 +325,108 @@ pub fn error_summary<E: serde::Serialize>(error: &E) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "alcy-runtime-dirs-{label}-{}-{stamp}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn runtime_data_stays_outside_macos_application_bundles() {
+        let installation = Path::new("Applications");
+        assert_eq!(
+            installation_directory(&installation.join("Alcy.app/Contents/MacOS/alcy")),
+            Some(installation)
+        );
+        assert_eq!(
+            installation_directory(&installation.join("alcy")),
+            Some(installation)
+        );
+    }
+
+    #[test]
+    fn prefers_installation_directories_without_changing_existing_files() {
+        let root = temp_dir("installation");
+        let installation = root.join("installed-app");
+        let app_data = root.join("app-data");
+        std::fs::create_dir_all(installation.join("logs")).unwrap();
+        std::fs::create_dir_all(installation.join("backups")).unwrap();
+        std::fs::write(installation.join("logs/alcy.log"), "existing log").unwrap();
+        std::fs::write(
+            installation.join("backups/existing.json"),
+            "existing backup",
+        )
+        .unwrap();
+
+        let dirs = resolve_dirs(Some(&installation), &app_data).unwrap();
+
+        assert_eq!(dirs.logs, installation.join("logs"));
+        assert_eq!(dirs.backups, installation.join("backups"));
+        assert!(!app_data.exists());
+        assert_eq!(
+            std::fs::read_to_string(dirs.logs.join("alcy.log")).unwrap(),
+            "existing log"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dirs.backups.join("existing.json")).unwrap(),
+            "existing backup"
+        );
+        assert_eq!(std::fs::read_dir(&dirs.logs).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&dirs.backups).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn falls_back_for_both_directories_when_installation_cannot_store_backups() {
+        let root = temp_dir("fallback");
+        let installation = root.join("installed-app");
+        let app_data = root.join("app-data");
+        std::fs::create_dir_all(&installation).unwrap();
+        std::fs::write(installation.join("backups"), "existing file").unwrap();
+
+        let dirs = resolve_dirs(Some(&installation), &app_data).unwrap();
+
+        assert_eq!(dirs.logs, app_data.join("logs"));
+        assert_eq!(dirs.backups, app_data.join("backups"));
+        assert!(dirs.logs.is_dir());
+        assert!(dirs.backups.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(installation.join("backups")).unwrap(),
+            "existing file"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uses_app_data_when_the_binary_location_is_unknown() {
+        let root = temp_dir("unknown-binary");
+        let dirs = resolve_dirs(None, &root).unwrap();
+
+        assert_eq!(dirs.logs, root.join("logs"));
+        assert_eq!(dirs.backups, root.join("backups"));
+        assert!(dirs.logs.is_dir());
+        assert!(dirs.backups.is_dir());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn returns_an_error_when_both_locations_are_unavailable() {
+        let root = temp_dir("unavailable");
+        let installation = root.join("installed-app");
+        let app_data = root.join("app-data");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&installation, "installation is not a directory").unwrap();
+        std::fs::write(&app_data, "app data is not a directory").unwrap();
+
+        assert!(resolve_dirs(Some(&installation), &app_data).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn urls_lose_credentials_query_and_fragment() {

@@ -223,6 +223,15 @@ Responsible for:
 
 Canonical data and rebuildable data must stay separate.
 
+Application logs and pre-update workspace backups use `logs/` and `backups/`
+beside the installed executable. On Linux, AppImages use the outer AppImage
+location rather than their temporary mount; on macOS, directories stay beside
+the `.app` bundle rather than inside it. Startup checks both directories for
+write access and falls back to the existing application data directory if either
+is unavailable. Existing files in the former `Documents/Alcy/` location remain
+untouched; new writes use the selected location. Workspace locations and other
+application settings keep their existing paths.
+
 ### gRPC
 
 `alcy-grpc` calls any method of any service without generated code (spec

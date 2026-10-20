@@ -249,8 +249,8 @@ pub fn run_with(extensions: Vec<Extension>) {
                 .path()
                 .app_data_dir()
                 .is_ok_and(|dir| is_previous_install(&dir));
-            // Enable local rotating file logs in every build under
-            // the user Documents/Alcy/logs directory.
+            // Prefer logs and backups beside the installed binary, using app
+            // data when the installation does not allow writes.
             let alcy_dirs = logging::alcy_dirs(app)?;
             app.handle().plugin(logging::plugin(&alcy_dirs.logs))?;
             logging::spawn_expired_logs_cleanup(alcy_dirs.logs.clone());

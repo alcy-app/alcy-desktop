@@ -333,7 +333,7 @@ const en: Record<TranslationKey, string> = {
   'workbench.loadingWorkspace': 'Loading workspace {name}…',
   'workbench.resize.sidebar': 'Resize collections panel',
   'workbench.loadErrors.title': 'Part of this workspace could not be read.',
-  'workbench.loadErrors.body': 'To avoid overwriting the files, these areas will not be saved, and changes made in them will be lost. This usually happens when the workspace is opened in an older version of Alcy: update the app or restore a backup from Documents/Alcy/backups.',
+  'workbench.loadErrors.body': 'To avoid overwriting the files, these areas will not be saved, and changes made in them will be lost. This usually happens when the workspace is opened in an older version of Alcy: update the app or restore a backup from Alcy’s backups folder.',
   'workbench.loadErrors.area.collections': 'Collections',
   'workbench.loadErrors.area.environments': 'Environments',
   'workbench.loadErrors.area.flows': 'Flows',
