@@ -5,6 +5,7 @@ import type { FocusEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react
 import { EnvironmentsPanel } from '../../environments/EnvironmentsPanel'
 import '../../environments/environments.css'
 import { FlowsPanel } from '../../flows/FlowsPanel'
+import type { FlowTemplateId } from '../../flows/flow-templates'
 import { ValueMonitorsPanel, type ValueMonitorsPanelProps } from '../../value-monitors/ValueMonitorsPanel'
 import { SettingsMenu, type SettingsCategory } from '../../settings-menu/SettingsMenu'
 import type { BulkRow } from '../../../shared/bulk-edit'
@@ -138,6 +139,7 @@ interface FlowsPanelSlice {
   onMoveFolder: (id: string, targetId: string, edge: SiblingEdge) => void
   onMoveFlowToFolder: (flowId: string, folderId: string | null) => void
   onAddFlow: (folderId?: string) => string
+  onAddFlowFromTemplate: (templateId: FlowTemplateId, folderId?: string) => string
   onAddLoadFlow?: (folderId?: string) => string
   onImportLoadTest?: () => void
   onRenameFlow: (id: string, name: string) => void

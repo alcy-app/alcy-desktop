@@ -7,10 +7,11 @@ import { FlowsPanel } from './FlowsPanel'
 
 const flow: FlowState = { id: 'flow-1', name: 'Login', executionKind: 'standard', nodes: [], edges: [], createdAtMs: 0, updatedAtMs: 0 }
 
-function renderPanel() {
+function renderPanel({ loadTesting = false }: { loadTesting?: boolean } = {}) {
   const onRenameFlow = vi.fn()
   const onOpenFlow = vi.fn()
   const onRemoveFlow = vi.fn()
+  const onAddFlowFromTemplate = vi.fn(() => 'template-flow')
   render(
     <FlowsPanel
       folders={[]}
@@ -22,13 +23,15 @@ function renderPanel() {
       flows={[flow]}
       changeMarkers={new Map()}
       onAddFlow={() => 'flow-2'}
+      onAddFlowFromTemplate={onAddFlowFromTemplate}
+      onAddLoadFlow={loadTesting ? () => 'load-flow' : undefined}
       onRenameFlow={onRenameFlow}
       onRemoveFlow={onRemoveFlow}
       onMoveFlow={vi.fn()}
       onOpenFlow={onOpenFlow}
     />,
   )
-  return { onRenameFlow, onOpenFlow, onRemoveFlow }
+  return { onRenameFlow, onOpenFlow, onRemoveFlow, onAddFlowFromTemplate }
 }
 
 const flowItem = () => screen.getByText('Login').closest('button')!
@@ -39,6 +42,49 @@ function createFromToolbar(name: 'Novo flow em branco' | 'Criar pasta') {
 }
 
 describe('FlowsPanel', () => {
+  it('selects a template without creating it, then creates and opens exactly one flow', () => {
+    const { onAddFlowFromTemplate, onOpenFlow } = renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar flow ou pasta' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Templates' }))
+    const dialog = screen.getByRole('dialog', { name: 'Templates' })
+    const cards = within(dialog).getAllByRole('button', { pressed: false })
+    const blank = within(dialog).getByRole('button', { name: 'Flow em branco', pressed: true })
+    expect(blank).toHaveFocus()
+    expect(dialog.querySelector('.flow-templates-grid')?.firstElementChild).toContainElement(blank)
+    expect(cards).toHaveLength(4)
+    expect(within(dialog).queryByRole('button', { name: 'Teste de carga básico' })).not.toBeInTheDocument()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Encadeamento de requests' }))
+    expect(blank).toHaveAttribute('aria-pressed', 'false')
+    expect(onAddFlowFromTemplate).not.toHaveBeenCalled()
+    const create = within(dialog).getByRole('button', { name: 'Criar flow' })
+    fireEvent.click(create)
+    fireEvent.click(create)
+    expect(onAddFlowFromTemplate).toHaveBeenCalledExactlyOnceWith('chainedRequests', undefined)
+    expect(onOpenFlow).toHaveBeenCalledExactlyOnceWith('template-flow')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('cancels with Escape and returns focus to the toolbar without creating a flow', async () => {
+    const { onAddFlowFromTemplate } = renderPanel()
+    const trigger = screen.getByRole('button', { name: 'Adicionar flow ou pasta' })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Templates' }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(onAddFlowFromTemplate).not.toHaveBeenCalled()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('creates the initially selected blank flow and offers load templates only when enabled', () => {
+    const { onAddFlowFromTemplate } = renderPanel({ loadTesting: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar flow ou pasta' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Templates' }))
+    expect(screen.getByRole('button', { name: 'Teste de carga básico' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Criar flow' }))
+    expect(onAddFlowFromTemplate).toHaveBeenCalledExactlyOnceWith('blank', undefined)
+  })
+
   it('renames the focused flow with F2', () => {
     const { onRenameFlow, onOpenFlow } = renderPanel()
     fireEvent.click(flowItem())
@@ -81,6 +127,7 @@ describe('FlowsPanel', () => {
       flows={[first, second]}
         changeMarkers={new Map()}
         onAddFlow={() => 'flow-3'}
+        onAddFlowFromTemplate={vi.fn()}
         onRenameFlow={vi.fn()}
         onRemoveFlow={vi.fn()}
         onMoveFlow={vi.fn()}
@@ -119,10 +166,15 @@ describe('FlowsPanel', () => {
 })
 
 
-function FolderPanel({ count = 1 }: { count?: number }) {
+function FolderPanel({ count = 1, onOpenFlow = vi.fn() }: { count?: number; onOpenFlow?: (id: string) => void }) {
   const [folders, setFolders] = useState<FlowFolderDto[]>([{ id: 'folder', name: 'Checkout', flowIds: ['flow-1'] }])
   const [flows, setFlows] = useState<FlowState[]>(Array.from({ length: count }, (_, index) => ({ ...flow, id: index === 0 ? flow.id : 'flow-' + (index + 1), name: index === 0 ? flow.name : 'Flow ' + (index + 1) })))
   return <FlowsPanel flows={flows} folders={folders} changeMarkers={new Map()}
+    onAddFlowFromTemplate={(_templateId, folderId) => {
+      setFlows((current) => [...current, { ...flow, id: 'template-flow', name: 'Template criado' }])
+      setFolders((current) => current.map((folder) => folder.id === folderId ? { ...folder, flowIds: [...folder.flowIds, 'template-flow'] } : folder))
+      return 'template-flow'
+    }}
     onAddFlow={(folderId) => {
       setFlows((current) => [...current, { ...flow, id: 'created', name: 'Novo flow' }])
       setFolders((current) => current.map((folder) => folder.id === folderId ? { ...folder, flowIds: [...folder.flowIds, 'created'] } : folder))
@@ -132,10 +184,40 @@ function FolderPanel({ count = 1 }: { count?: number }) {
     onRenameFolder={(id, name) => setFolders((current) => current.map((folder) => folder.id === id ? { ...folder, name } : folder))}
     onRemoveFolder={(id) => setFolders((current) => current.filter((folder) => folder.id !== id))}
     onMoveFlowToFolder={(id, folderId) => setFolders((current) => current.map((folder) => ({ ...folder, flowIds: folder.id === folderId ? [...folder.flowIds.filter((member) => member !== id), id] : folder.flowIds.filter((member) => member !== id) })))}
-    onMoveFolder={vi.fn()} onRenameFlow={vi.fn()} onRemoveFlow={vi.fn()} onMoveFlow={vi.fn()} onOpenFlow={vi.fn()} />
+    onMoveFolder={vi.fn()} onRenameFlow={vi.fn()} onRemoveFlow={vi.fn()} onMoveFlow={vi.fn()} onOpenFlow={onOpenFlow} />
 }
 
 describe('flow folders', () => {
+  it('starts closed on entry and closes again when returning to the flows panel', () => {
+    function SwitchablePanel() {
+      const [visible, setVisible] = useState(true)
+      return <><button onClick={() => setVisible((current) => !current)}>Switch panel</button>{visible && <FolderPanel />}</>
+    }
+    render(<SwitchablePanel />)
+    expect(screen.getByRole('button', { name: 'Checkout' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Login')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Checkout' }))
+    expect(screen.getByText('Login')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Switch panel' }))
+    expect(screen.getByRole('button', { name: 'Checkout' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Login')).not.toBeInTheDocument()
+  })
+
+  it('creates from a collapsed folder gallery, expands the folder and opens the flow', () => {
+    const onOpenFlow = vi.fn()
+    render(<FolderPanel onOpenFlow={onOpenFlow} />)
+    const folder = screen.getByRole('button', { name: 'Checkout' })
+    expect(folder).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.contextMenu(folder)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Templates' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Repetição com intervalo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Criar flow' }))
+    expect(folder).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Template criado').closest('.flows-list-row')).toHaveClass('flows-list-row--nested')
+    expect(onOpenFlow).toHaveBeenCalledExactlyOnceWith('template-flow')
+  })
+
   it('creates and renames an empty folder with the keyboard', () => {
     render(<FolderPanel />)
     expect(screen.queryByRole('button', { name: 'Criar pasta' })).not.toBeInTheDocument()
@@ -143,7 +225,12 @@ describe('flow folders', () => {
     const menu = screen.getByRole('menu')
     const blankFlow = within(menu).getByRole('menuitem', { name: 'Novo flow em branco' })
     expect(blankFlow.querySelector('svg')).toBeInTheDocument()
+    const templates = within(menu).getByRole('menuitem', { name: 'Templates' })
+    const folder = within(menu).getByRole('menuitem', { name: 'Criar pasta' })
     expect(blankFlow.nextElementSibling).toHaveAttribute('role', 'separator')
+    expect(blankFlow.nextElementSibling?.nextElementSibling).toBe(templates)
+    expect(templates.querySelector('svg')).not.toBeInTheDocument()
+    expect(templates.nextElementSibling).toBe(folder)
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Criar pasta' }))
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     const input = screen.getByLabelText('Nome da pasta')
@@ -155,6 +242,9 @@ describe('flow folders', () => {
 
   it('collapses folders and reveals matching children during search', () => {
     render(<FolderPanel />)
+    expect(screen.queryByText('Login')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Checkout' }))
+    expect(screen.getByText('Login')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Checkout' }))
     expect(screen.queryByText('Login')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Buscar flows' }))
@@ -174,6 +264,7 @@ describe('flow folders', () => {
 
   it('moves flows to the root and back through the destination dialog', () => {
     render(<FolderPanel />)
+    fireEvent.click(screen.getByRole('button', { name: 'Checkout' }))
     const move = (destination: string) => {
       fireEvent.contextMenu(flowItem())
       fireEvent.click(screen.getByRole('menuitem', { name: 'Mover para pasta' }))
@@ -197,6 +288,7 @@ describe('flow folders', () => {
 
   it('bounds mounted rows and reveals new flows and folders outside the viewport', () => {
     render(<FolderPanel count={1000} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Checkout' }))
     expect(screen.getAllByRole('listitem').length).toBeLessThan(40)
     createFromToolbar('Novo flow em branco')
     expect(screen.getByLabelText('Nome do flow')).toHaveFocus()
@@ -207,6 +299,7 @@ describe('flow folders', () => {
 
   it('navigates beyond mounted rows with the keyboard', async () => {
     render(<FolderPanel count={1000} />)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Checkout' }), { key: 'ArrowRight' })
     fireEvent.keyDown(screen.getByRole('button', { name: 'Checkout' }), { key: 'End' })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Flow 1000' })).toHaveFocus())
     fireEvent.keyDown(screen.getByRole('button', { name: 'Flow 1000' }), { key: 'Home' })
@@ -220,6 +313,7 @@ describe('flow folders', () => {
     Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: hitTest })
     try {
       render(<FolderPanel />)
+      fireEvent.click(screen.getByRole('button', { name: 'Checkout' }))
       createFromToolbar('Criar pasta')
       fireEvent.keyDown(screen.getByLabelText('Nome da pasta'), { key: 'Enter' })
       hitTest.mockReturnValue(screen.getByRole('button', { name: 'Nova pasta' }))

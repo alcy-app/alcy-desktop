@@ -20,6 +20,8 @@ import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FlowIcon, FolderIcon, Imp
 import { VirtualizedList, type VirtualizedListHandle } from '../request-workbench/components/VirtualizedList'
 import type { FlowState } from './flows.types'
 import { RemoveFlowModal } from './RemoveFlowModal'
+import { FlowTemplatesModal } from './FlowTemplatesModal'
+import type { FlowTemplateId } from './flow-templates'
 import './flows-panel.css'
 
 interface FlowsPanelProps {
@@ -28,6 +30,7 @@ interface FlowsPanelProps {
   saveError?: string | null
   changeMarkers: Map<string, ItemChangeKind>
   onAddFlow: (folderId?: string) => string
+  onAddFlowFromTemplate: (templateId: FlowTemplateId, folderId?: string) => string
   onAddLoadFlow?: (folderId?: string) => string
   onImportLoadTest?: () => void
   onRenameFlow: (id: string, name: string) => void
@@ -66,7 +69,7 @@ function MoveFlowModal({ flow, folders, onMove, onCancel }: {
   )
 }
 
-export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow, onAddLoadFlow, onImportLoadTest, onRenameFlow, onRemoveFlow, onMoveFlow, onOpenFlow, onAddFolder, onRenameFolder, onRemoveFolder, onMoveFolder, onMoveFlowToFolder }: FlowsPanelProps) {
+export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow, onAddFlowFromTemplate, onAddLoadFlow, onImportLoadTest, onRenameFlow, onRemoveFlow, onMoveFlow, onOpenFlow, onAddFolder, onRenameFolder, onRemoveFolder, onMoveFolder, onMoveFlowToFolder }: FlowsPanelProps) {
   const { t } = useLanguage()
   const { bindings: shortcutBindings } = useShortcuts()
   const [renamingKey, setRenamingKey] = useState<string | null>(null)
@@ -74,9 +77,12 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
   const [pendingRemove, setPendingRemove] = useState<Row | null>(null)
   const [movingFlow, setMovingFlow] = useState<FlowState | null>(null)
   const [menuOpenKey, setMenuOpenKey] = useState<string | null>(null)
-  const [collapsed, setCollapsed] = useState(() => new Set<string>())
+  const [expanded, setExpanded] = useState(() => new Set<string>())
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [templateContext, setTemplateContext] = useState<{ folderId?: string } | null>(null)
+  const templateTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<VirtualizedListHandle>(null)
   const rowButtonsRef = useRef(new Map<string, HTMLButtonElement>())
 
@@ -102,13 +108,13 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
     const children = (childrenByFolder.get(folder.id) ?? []).filter((flow) => matches(folder.name) || matches(flow.name))
     if (isSearching && !matches(folder.name) && children.length === 0) continue
     rows.push({ kind: 'folder', item: folder })
-    if (isSearching || !collapsed.has(folder.id)) {
+    if (isSearching || expanded.has(folder.id)) {
       rows.push(...children.map((flow): Row => ({ kind: 'flow', item: flow, folderId: folder.id })))
     }
   }
   rows.push(...flows.filter((flow) => !folderByFlow.has(flow.id) && matches(flow.name)).map((flow): Row => ({ kind: 'flow', item: flow })))
 
-  const expand = (id: string) => setCollapsed((current) => { const next = new Set(current); next.delete(id); return next })
+  const expand = (id: string) => setExpanded((current) => new Set([...current, id]))
   const { draggedId, draggedKind, draggedLabel, dragOverId, dragOverEdge, position, startDrag } = usePointerDrag<'flow' | 'folder' | 'root'>({
     dropTargetAttribute: 'data-flow-drop-id',
     dropKindAttribute: 'data-flow-drop-kind',
@@ -144,10 +150,21 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
     setNameDraft(t('flows.newFolderName'))
     setRenamingKey(`folder:${onAddFolder()}`)
   }
+  const openTemplates = (folderId?: string) => {
+    templateTriggerRef.current = folderId
+      ? rowButtonsRef.current.get(`folder:${folderId}`) ?? null
+      : toolbarRef.current?.querySelector<HTMLButtonElement>('button[aria-haspopup="true"]') ?? null
+    setMenuOpenKey(null)
+    setTemplateContext({ folderId })
+  }
+  const cancelTemplates = () => {
+    setTemplateContext(null)
+    templateTriggerRef.current?.focus({ preventScroll: true })
+  }
 
   return (
     <div className="sidebar-panel-layout">
-      <div className="flows-toolbar sidebar-panel-toolbar">
+      <div ref={toolbarRef} className="flows-toolbar sidebar-panel-toolbar">
         {searchOpen ? (
           <div className="flows-search">
             <SearchIcon size={12} className="flows-search-icon" />
@@ -171,6 +188,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
             >
               <MenuItem icon={<FlowIcon size={13} />} label={t('flows.newBlankFlowMenuItem')} onSelect={() => addFlow()} />
               <MenuSeparator />
+              <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates()} />
               <MenuItem label={t('flows.addFolderAria')} onSelect={addFolder} />
             </OptionsMenu>
           </>
@@ -191,7 +209,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
           const isRenaming = key === renamingKey
           const label = item.name || t('common.unnamed')
           const changeKind = kind === 'flow' ? changeMarkers.get(item.id) : undefined
-          const open = isSearching || !collapsed.has(item.id)
+          const open = isSearching || expanded.has(item.id)
           return (
             <div className={['flows-list-row', row.kind === 'flow' && row.folderId ? 'flows-list-row--nested' : '', draggedId === item.id ? 'flows-list-row--dragging' : '', dragOverId === item.id && dragOverEdge ? `flows-list-row--drop-${dragOverEdge}` : ''].filter(Boolean).join(' ')} data-flow-drop-id={item.id} data-flow-drop-kind={kind}
               onContextMenu={(event) => { event.preventDefault(); setMenuOpenKey(key) }}
@@ -203,7 +221,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 onClick={(event) => {
                   event.currentTarget.focus()
                   if (kind === 'flow') onOpenFlow(item.id)
-                  else if (!isSearching) setCollapsed((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next })
+                  else if (!isSearching) setExpanded((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next })
                 }}
                 onKeyDown={(event) => {
                   if (event.target !== event.currentTarget) return
@@ -213,7 +231,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                   else if (kind === 'folder' && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
                     event.preventDefault()
                     if (event.key === 'ArrowRight') expand(item.id)
-                    else setCollapsed((current) => new Set([...current, item.id]))
+                    else setExpanded((current) => { const next = new Set(current); next.delete(item.id); return next })
                   } else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
                     event.preventDefault()
                     const index = rows.findIndex((candidate) => rowKey(candidate) === key)
@@ -235,6 +253,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
               <OptionsMenu label={t('flows.moreOptionsAria', { name: label })} wrapperClassName="flows-menu-wrapper" menuClassName="flows-menu" menuPlacement="auto" menuBoundarySelector=".env-sidebar" isOpen={menuOpenKey === key} onToggle={() => setMenuOpenKey((current) => current === key ? null : key)} onClose={() => setMenuOpenKey(null)}>
                 {kind === 'folder' && <MenuItem label={t('flows.addButtonAria')} onSelect={() => addFlow(item.id)} />}
                 {kind === 'folder' && onAddLoadFlow && <MenuItem label={t('flows.addLoadFlowAria')} onSelect={() => addFlow(item.id, true)} />}
+                {kind === 'folder' && <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates(item.id)} />}
                 <MenuItem label={t('flows.renameMenuItem')} onSelect={() => rename(row)} />
                 {row.kind === 'flow' && <MenuItem label={t('flows.moveToFolder')} onSelect={() => { setMovingFlow(row.item); setMenuOpenKey(null) }} />}
                 <MenuItem label={t('common.remove')} danger onSelect={() => { setPendingRemove(row); setMenuOpenKey(null) }} />
@@ -244,6 +263,13 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
         }} />
       )}
       <DragPreview label={draggedLabel} position={position} />
+      {templateContext && <FlowTemplatesModal loadTestingEnabled={!!onAddLoadFlow} onCancel={cancelTemplates} onCreate={(templateId) => {
+        const id = onAddFlowFromTemplate(templateId, templateContext.folderId)
+        closeSearch()
+        if (templateContext.folderId) expand(templateContext.folderId)
+        setTemplateContext(null)
+        onOpenFlow(id)
+      }} />}
       {pendingRemove?.kind === 'flow' && <RemoveFlowModal name={pendingRemove.item.name || t('common.unnamed')} onRemove={() => { onRemoveFlow(pendingRemove.item.id); setPendingRemove(null) }} onCancel={() => setPendingRemove(null)} />}
       {pendingRemove?.kind === 'folder' && <ConfirmDialog title={t('flows.removeFolderTitle')} description={t('flows.removeFolderDescription', { name: pendingRemove.item.name })} confirmLabel={t('common.remove')} cancelLabel={t('common.cancel')} closeAriaLabel={t('collections.closeModalAria')} onConfirm={() => { onRemoveFolder(pendingRemove.item.id); setPendingRemove(null) }} onCancel={() => setPendingRemove(null)} />}
       {movingFlow && <MoveFlowModal flow={movingFlow} folders={folders} onMove={(folderId) => { onMoveFlowToFolder(movingFlow.id, folderId); if (folderId) expand(folderId); setMovingFlow(null) }} onCancel={() => setMovingFlow(null)} />}

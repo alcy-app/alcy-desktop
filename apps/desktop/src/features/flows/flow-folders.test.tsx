@@ -19,6 +19,26 @@ beforeEach(() => {
 })
 
 describe('workspace flow folder persistence', () => {
+  it('persists a template in its folder and reloads inline requests and references intact', async () => {
+    const first = renderHook(() => useFlowsState('/workspace'), { wrapper })
+    await waitFor(() => expect(first.result.current.loaded).toBe(true))
+    let id = ''
+    act(() => { id = first.result.current.addFlowFromTemplate('authentication', 'folder') })
+    const created = first.result.current.flows.find((item) => item.id === id)!
+    await act(() => first.result.current.saveNow())
+    const saved = vi.mocked(saveFlows).mock.lastCall![1]
+    expect(saved.folders).toEqual([{ ...folder, flowIds: ['flow', id] }])
+    expect(saved.flows.find((item) => item.id === id)?.nodes).toContainEqual(expect.objectContaining({
+      id: 'profile', kind: 'inlineRequest', request: expect.objectContaining({ authentication: { type: 'bearer', token: '{{nodes.login.response.body.token}}' } }),
+    }))
+    first.unmount()
+    vi.mocked(listFlows).mockResolvedValueOnce({ ok: true, value: saved })
+    const reloaded = renderHook(() => useFlowsState('/workspace'), { wrapper })
+    await waitFor(() => expect(reloaded.result.current.loaded).toBe(true))
+    expect(reloaded.result.current.flows.find((item) => item.id === id)).toEqual(created)
+    expect(reloaded.result.current.folders).toEqual(saved.folders)
+  })
+
   it('loads folders without rewriting the file and preserves them on explicit graph saves', async () => {
     const { result } = renderHook(() => useFlowsState('/workspace'), { wrapper })
     await waitFor(() => expect(result.current.loaded).toBe(true))

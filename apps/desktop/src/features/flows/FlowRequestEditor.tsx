@@ -46,11 +46,24 @@ export function FlowRequestEditor({ content, rootPath, variables: environmentVar
   const variables = [...environmentVariables, ...known.filter((name) => !environmentVariables.some((variable) => variable.name === name)).map((name) => ({ name, value: t('flows.studio.unresolved'), sensitive: false }))]
   const [tab, setTab] = useState<'body' | 'headers' | 'params' | 'auth' | 'scripts'>('body')
   const [body, setBody] = useState(() => toBodyState(content.body))
+  const [bodySource, setBodySource] = useState(content.body)
   const [params, setParams] = useState(() => parseQueryParams(content.endpointUrl).map((param) => ({ ...param, id: crypto.randomUUID(), enabled: true })))
+  const [paramsSource, setParamsSource] = useState(content.endpointUrl)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  if (JSON.stringify(toRestBodyInput(body)) !== JSON.stringify(content.body)) setBody(toBodyState(content.body))
-  if (JSON.stringify(params.filter((param) => param.enabled && param.name).map(({ name, value }) => ({ name, value }))) !== JSON.stringify(parseQueryParams(content.endpointUrl))) setParams(parseQueryParams(content.endpointUrl).map((param) => ({ ...param, id: crypto.randomUUID(), enabled: true })))
+  // Consume each incoming change once; a serialized round trip may differ in property order or omit unnamed query parameters.
+  if (bodySource !== content.body) {
+    setBodySource(content.body)
+    const next = toBodyState(content.body)
+    if (JSON.stringify(toRestBodyInput(body)) !== JSON.stringify(toRestBodyInput(next))) setBody(next)
+  }
+  if (paramsSource !== content.endpointUrl) {
+    setParamsSource(content.endpointUrl)
+    const next = parseQueryParams(content.endpointUrl)
+    if (JSON.stringify(params.filter((param) => param.enabled && param.name).map(({ name, value }) => ({ name, value }))) !== JSON.stringify(next)) {
+      setParams(next.map((param) => ({ ...param, id: crypto.randomUUID(), enabled: true })))
+    }
+  }
   const patch = (changes: Partial<RequestContent>) => onChange({ ...content, ...changes })
   const updateBody = (changes: Partial<BodyState>) => {
     const next = { ...body, ...changes }

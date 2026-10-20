@@ -101,6 +101,42 @@ describe('flow output explorer', () => {
 })
 
 describe('embedded flow request editor', () => {
+  it('opens templated requests with differently ordered raw body fields and previews their variables', () => {
+    const content = { ...emptyRequestContent('rest'), endpointUrl: '{{baseUrl}}/users', body: { type: 'raw' as const, rawLanguage: 'json' as const, content: '{"id":"{{userId}}"}' } }
+    render(<StudioProviders><FlowRequestEditor rootPath="/workspace" content={content} variables={[{ name: 'baseUrl', value: 'https://api.test', sensitive: false }]} targetLabel="Inline request" dirty={false} onChange={vi.fn()} onSave={vi.fn()} onDiscard={vi.fn()} /></StudioProviders>)
+    const variable = document.querySelector('.var-token--known')!
+    fireEvent.mouseEnter(variable)
+    fireEvent.click(variable)
+    expect(screen.getByText('https://api.test')).toHaveClass('var-preview-value')
+    expect(screen.getByLabelText('Endpoint')).toHaveValue('{{baseUrl}}/users')
+  })
+
+  it('opens URLs with empty query names and synchronizes external endpoint changes without looping', () => {
+    const base = { ...emptyRequestContent('rest'), endpointUrl: '{{baseUrl}}/users?=value&&page=2&' }
+    const onChange = vi.fn()
+    const editor = (content: typeof base) => <StudioProviders><FlowRequestEditor rootPath="/workspace" content={content} variables={[]} targetLabel="Inline request" dirty={false} onChange={onChange} onSave={vi.fn()} onDiscard={vi.fn()} /></StudioProviders>
+    const { rerender } = render(editor(base))
+    fireEvent.click(screen.getByRole('tab', { name: 'Parameters' }))
+    expect(screen.getAllByRole('textbox', { name: 'Name' }).map((field) => (field as HTMLInputElement).value)).toEqual(['', '', 'page', ''])
+    rerender(editor({ ...base, endpointUrl: '{{baseUrl}}/users?&limit=10' }))
+    expect(screen.getAllByRole('textbox', { name: 'Name' }).map((field) => (field as HTMLInputElement).value)).toEqual(['', 'limit'])
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('preserves row identity when equivalent body fields arrive in another order and updates changed external values', () => {
+    const base = { ...emptyRequestContent('rest'), body: { type: 'urlencoded' as const, fields: [{ name: 'userId', value: '{{userId}}', enabled: true }] } }
+    const editor = (content: typeof base) => <StudioProviders><FlowRequestEditor rootPath="/workspace" content={content} variables={[]} targetLabel="Inline request" dirty={false} onChange={vi.fn()} onSave={vi.fn()} onDiscard={vi.fn()} /></StudioProviders>
+    const { container, rerender } = render(editor(base))
+    const inputs = [...container.querySelectorAll('input')]
+    const reordered = { ...base, body: { type: 'urlencoded' as const, fields: [{ enabled: true, value: '{{userId}}', name: 'userId' }] } }
+    rerender(editor(reordered))
+    const updatedInputs = [...container.querySelectorAll('input')]
+    expect(updatedInputs).toHaveLength(inputs.length)
+    updatedInputs.forEach((field, index) => expect(field).toBe(inputs[index]))
+    rerender(editor({ ...base, body: { type: 'urlencoded', fields: [{ name: 'userId', value: 'updated', enabled: true }] } }))
+    expect(container.querySelector('input[value="updated"]')).toBeInTheDocument()
+  })
+
   it('shares an existing workbench draft and does not mark edits made during saving as saved', () => {
     const { result } = renderHook(() => useWorkbenchState([], '/workspace', []))
     const content = { ...emptyRequestContent('rest'), endpointUrl: 'https://api.test/a' }

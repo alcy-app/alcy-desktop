@@ -13,6 +13,7 @@ import { FLOW_GEOMETRY as G } from './flow-geometry'
 import type { RequestSummary } from '../request-workbench/collection-tree'
 import { defaultLoadNodeConfig } from './load-node-config'
 import type { MockServerDto } from '../../bindings/mock-servers'
+import { createFlowFromTemplate, type FlowTemplateId } from './flow-templates'
 
 const SAVE_DEBOUNCE_MS = 500
 export const START_NODE_ID = 'start'
@@ -243,6 +244,13 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     return flow.id
   }, [])
 
+  const addFlowFromTemplate = useCallback((templateId: FlowTemplateId, folderId?: string) => {
+    const flow = createFlowFromTemplate(templateId, t)
+    setFlows((current) => [...current, flow])
+    if (folderId) setFolders((current) => current.map((folder) => folder.id === folderId ? { ...folder, flowIds: [...folder.flowIds, flow.id] } : folder))
+    return flow.id
+  }, [t])
+
   const addLoadFlow = useCallback((folderId?: string) => {
     const flow = createLoadFlow(t('flows.newLoadFlowName'), {
       scenario: t('flows.loadNode.scenario.label'),
@@ -408,6 +416,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     addFlow,
     addLoadFlow,
     addFlowFromRequests,
+    addFlowFromTemplate,
     addImportedFlow,
     removeFlow,
     moveFlow,

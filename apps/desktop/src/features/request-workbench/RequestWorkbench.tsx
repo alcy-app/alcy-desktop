@@ -1420,6 +1420,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       onMoveFolder: flows.moveFolder,
       onMoveFlowToFolder: flows.moveFlowToFolder,
       onAddFlow: flows.addFlow,
+      onAddFlowFromTemplate: flows.addFlowFromTemplate,
       onAddLoadFlow: FEATURE_FLAGS.loadTesting ? flows.addLoadFlow : undefined,
       onImportLoadTest: FEATURE_FLAGS.loadTesting ? handleImportLoadTest : undefined,
       onRenameFlow: flows.renameFlow,
@@ -1427,7 +1428,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       onMoveFlow: flows.moveFlow,
       onOpenFlow: openFlow,
     }),
-    [flows.flows, flows.folders, flows.saveError, flows.addFolder, flows.renameFolder, flows.removeFolder, flows.moveFolder, flows.moveFlowToFolder, flows.addFlow, flows.addLoadFlow, flows.renameFlow, flows.moveFlow, handleImportLoadTest, handleRemoveFlow, openFlow],
+    [flows.flows, flows.folders, flows.saveError, flows.addFolder, flows.renameFolder, flows.removeFolder, flows.moveFolder, flows.moveFlowToFolder, flows.addFlow, flows.addFlowFromTemplate, flows.addLoadFlow, flows.renameFlow, flows.moveFlow, handleImportLoadTest, handleRemoveFlow, openFlow],
   )
 
   const activeFlow =
