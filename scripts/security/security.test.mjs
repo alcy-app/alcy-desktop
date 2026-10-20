@@ -1,7 +1,7 @@
 // Testes do harness de segurança: `node --test scripts/security/`.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, describe, test } from 'node:test'
@@ -343,7 +343,7 @@ describe('adaptador do hook do Codex', () => {
     assert.match(output.permissionDecisionReason, /não consegue abrir uma confirmação/)
   })
 
-  test('deixa commit para a confirmação nativa do Codex', () => {
+  test('leaves commits to the native Codex rules', () => {
     const decision = (command) => {
       const { stdout } = run({ tool_name: 'Bash', tool_input: { command } })
       return stdout ? JSON.parse(stdout).hookSpecificOutput.permissionDecision : null
@@ -353,6 +353,14 @@ describe('adaptador do hook do Codex', () => {
     assert.equal(decision('git commit -m x && git push'), 'deny')
     assert.equal(decision('git commit --no-verify -m x'), 'deny')
     assert.equal(decision('git commit -m x -m "Security-Review: Codex"'), 'deny')
+  })
+
+  test('native rules allow commits but keep publishing and skipping hooks gated', () => {
+    const rules = readFileSync(join(PROJECT, '.codex/rules/default.rules'), 'utf8').replace(/\s+/g, ' ')
+    assert.ok(rules.includes('pattern = ["git", ["add", "commit"]], decision = "allow"'))
+    assert.match(rules, /pattern = \["git", \["push", "tag", "rebase", "merge"[^\]]*\]\], decision = "prompt"/)
+    assert.ok(rules.includes('pattern = ["git", "push", ["--force", "--force-with-lease", "-f"]], decision = "forbidden"'))
+    assert.ok(rules.includes('pattern = ["git", "commit", ["--no-verify", "-n"]], decision = "forbidden"'))
   })
 
   test('libera alteração de manifesto de crate sem dependência externa nova', () => {

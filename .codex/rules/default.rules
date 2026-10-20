@@ -1,39 +1,48 @@
-# Defesa adicional para comandos que saem do sandbox. O hook PreToolUse aplica
-# a política completa; estas regras preservam as decisões mais importantes no
-# mecanismo nativo de execução do Codex.
+# Extra defense for commands that leave the sandbox. The PreToolUse hook applies
+# the full policy; these rules keep the most important decisions in Codex's
+# native execution mechanism.
+
+# Staging and committing run outside the sandbox (`.git` is read-only inside
+# it) without a native prompt, which sessions with approvals set to `never`
+# would reject. The agent still needs the person's consent in the conversation
+# (AGENTS.md), and the pre-commit and commit-msg hooks still run.
+prefix_rule(
+    pattern = ["git", ["add", "commit"]],
+    decision = "allow",
+)
 
 prefix_rule(
-    pattern = ["git", ["commit", "push", "tag", "rebase", "merge", "cherry-pick", "am", "revert", "filter-branch", "update-ref"]],
+    pattern = ["git", ["push", "tag", "rebase", "merge", "cherry-pick", "am", "revert", "filter-branch", "update-ref"]],
     decision = "prompt",
-    justification = "Operações que publicam ou reescrevem histórico exigem consentimento explícito.",
+    justification = "Operations that publish or rewrite history require explicit consent.",
 )
 
 prefix_rule(
     pattern = ["git", "push", ["--force", "--force-with-lease", "-f"]],
     decision = "forbidden",
-    justification = "Push forçado é proibido pela política do repositório.",
+    justification = "Force pushes are forbidden by the repository policy.",
 )
 
 prefix_rule(
     pattern = ["git", "commit", ["--no-verify", "-n"]],
     decision = "forbidden",
-    justification = "Os hooks do git não podem ser ignorados.",
+    justification = "Git hooks must not be skipped.",
 )
 
 prefix_rule(
     pattern = ["pnpm", ["add", "update", "up", "upgrade", "remove", "rm", "uninstall", "dlx", "link", "patch"]],
     decision = "prompt",
-    justification = "Mudanças de dependências exigem consentimento explícito.",
+    justification = "Dependency changes require explicit consent.",
 )
 
 prefix_rule(
     pattern = ["cargo", ["add", "update", "install", "remove", "rm"]],
     decision = "prompt",
-    justification = "Mudanças de dependências ou ferramentas Rust exigem consentimento explícito.",
+    justification = "Changes to Rust dependencies or tools require explicit consent.",
 )
 
 prefix_rule(
     pattern = [["sudo", "npx"]],
     decision = "prompt",
-    justification = "Elevação de privilégio ou execução de pacote do registro exige consentimento explícito.",
+    justification = "Privilege escalation or running a registry package requires explicit consent.",
 )

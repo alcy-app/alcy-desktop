@@ -1,16 +1,17 @@
 #!/usr/bin/env node
-// Adaptador do PreToolUse do Codex para a política compartilhada. O Codex não
-// aceita `ask` nesse evento, então ações que exigiriam confirmação são negadas.
+// Codex PreToolUse adapter for the shared policy. Codex does not accept `ask`
+// in this event, so actions that would need confirmation are denied.
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const fallbackProjectDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-// Mesmo prefixo de opções globais usado em `agent-guard.mjs`.
+// Same global-option prefix as `agent-guard.mjs`.
 const GIT_COMMIT = /\bgit(?:\s+-[cC]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+commit\b/g
 
-// Commits seguem para a confirmação nativa do Codex (`.codex/rules/default.rules`)
-// quando são a única parte do comando que exigiria confirmação.
+// Commits are left to Codex's native rules (`.codex/rules/default.rules`, which
+// allow them) when they are the only part of the command that would need
+// confirmation.
 function onlyCommitNeedsConfirmation(event, decide, projectDir) {
   if (event.tool_name !== 'Bash') return false
   const command = String(event.tool_input?.command ?? '')
