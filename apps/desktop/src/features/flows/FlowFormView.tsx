@@ -7,6 +7,7 @@ import { Checkbox } from '../../shared/ui/Checkbox'
 import { Input } from '../../shared/ui/Input'
 import { Select } from '../../shared/ui/Select'
 import { fieldError } from './form-model'
+import { CheckIcon } from '../../shared/ui/icons'
 import './flow-forms.css'
 
 export function FlowFormView({ form, answers, onChange, onSubmit, request, disabled = false, submitLabel }: { form: FlowForm; answers: FormAnswers; onChange: (answers: FormAnswers) => void; onSubmit: () => Promise<void>; request?: FlowFormRequest; disabled?: boolean; submitLabel?: string }) {
@@ -72,9 +73,15 @@ function ResultOptions({ field, request, value, onChange }: { field: FlowFormFie
   }, [flowExecutionId, nodeId, waitId, field.id, offset, key])
   const selected = Array.isArray(value) ? value : typeof value === 'number' ? [value] : []
   const selectRow = (index: number) => onChange(field.multiple ? selected.includes(index) ? selected.filter((i) => i !== index) : [...selected, index] : index)
+  const choice = (row: { index: number; cells: string[] }, label?: string) => <span className="flow-form-choice">
+    <input className="flow-form-choice-input" type={field.multiple ? 'checkbox' : 'radio'} name={prefix} aria-label={label} checked={selected.includes(row.index)} onChange={() => selectRow(row.index)} onClick={(event) => event.stopPropagation()} />
+    <span className="flow-form-choice-control" aria-hidden="true">{field.multiple && <CheckIcon size={12} className="flow-form-choice-check" />}</span>
+  </span>
   return <div className="flow-form-results">
     {!page ? <p role="status">{state?.key === key && state.error ? <>{t('flows.forms.loadFailed')} <Button size="sm" variant="ghost" onClick={() => setRetry((n) => n + 1)}>{t('common.retry')}</Button></> : t('flows.studio.loading')}</p> : page.total === 0 ? <p role="status">{t('flows.forms.emptyResults')}</p> : <>
-      {field.source?.view === 'list' ? <div className="flow-form-result-list" role="group" aria-label={field.label}><p className="flow-form-description">{t('flows.forms.selected', { count: selected.length })}</p>{page.rows.map((row) => <label className="flow-form-result-item" key={row.index}><input type={field.multiple ? 'checkbox' : 'radio'} name={prefix} checked={selected.includes(row.index)} onChange={() => selectRow(row.index)} /><span>{row.cells.map((cell, index) => index === 0 ? <strong key={index}>{cell}</strong> : <small key={index}>{cell}</small>)}</span></label>)}</div> : <div className="flow-form-table-scroll"><table><caption className="flow-form-description">{t('flows.forms.selected', { count: selected.length })}</caption><thead><tr><th scope="col">{field.label}</th>{field.source?.columns.map((column, index) => <th key={index} scope="col">{column.label}</th>)}</tr></thead><tbody>{page.rows.map((row) => <tr key={row.index} data-selected={selected.includes(row.index)} onClick={() => selectRow(row.index)}><td><input type={field.multiple ? 'checkbox' : 'radio'} name={prefix} aria-label={`${field.label}: ${row.cells.join(', ')}`} checked={selected.includes(row.index)} onChange={() => selectRow(row.index)} onClick={(event) => event.stopPropagation()} /></td>{row.cells.map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody></table></div>}
+      {field.source?.view === 'list'
+        ? <div className="flow-form-result-list" role="group" aria-label={field.label}><p className="flow-form-description">{t('flows.forms.selected', { count: selected.length })}</p>{page.rows.map((row) => <label className="flow-form-result-item" key={row.index}>{choice(row)}<span>{row.cells.map((cell, index) => index === 0 ? <strong key={index}>{cell}</strong> : <small key={index}>{cell}</small>)}</span></label>)}</div>
+        : <div className="flow-form-table-scroll"><table><caption className="flow-form-description">{t('flows.forms.selected', { count: selected.length })}</caption><thead><tr><th scope="col">{field.label}</th>{field.source?.columns.map((column, index) => <th key={index} scope="col">{column.label}</th>)}</tr></thead><tbody>{page.rows.map((row) => <tr key={row.index} data-selected={selected.includes(row.index)} onClick={() => selectRow(row.index)}><td>{choice(row, `${field.label}: ${row.cells.join(', ')}`)}</td>{row.cells.map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody></table></div>}
       <div className="flow-form-editor-actions flow-form-pagination"><Button size="sm" variant="ghost" disabled={previous.length === 0} onClick={() => { setOffset(previous.at(-1) ?? 0); setPrevious((items) => items.slice(0, -1)) }}>{t('flows.studio.previousPage')}</Button><span>{previous.length + 1}</span><Button size="sm" variant="ghost" disabled={page.nextOffset === null} onClick={() => { setPrevious((items) => [...items, offset]); setOffset(page.nextOffset ?? offset) }}>{t('flows.studio.nextPage')}</Button></div>
     </>}
   </div>
