@@ -14,6 +14,7 @@
 .flow-form-description { color: var(--text-muted); font-size: var(--font-size-sm); line-height: 1.5; margin: 0; }
 .flow-form-results { min-width: 0; }
 .flow-form-table-scroll { overflow: auto; max-height: 320px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.flow-form-pagination { margin-top: var(--space-3); }
 .flow-form-results table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
 .flow-form-results caption { text-align: left; padding: 8px; }
 .flow-form-results th, .flow-form-results td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; max-width: 260px; }
