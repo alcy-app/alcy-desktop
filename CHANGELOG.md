@@ -6,6 +6,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## Unreleased
 
+## [0.8.1] - 21/10/2026
+
 ### Fixed
 
 - Clicar com o botão direito em um bloco do flow agora abre o menu de ações daquele bloco.

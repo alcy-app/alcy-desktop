@@ -1,6 +1,6 @@
 [package]
 name = "alcy-desktop"
-version = "0.8.0"
+version = "0.8.1"
 description = "Alcy desktop shell (Tauri adapter and composition root)"
 edition = "2024"
 publish = false

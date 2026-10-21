@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "alcy-desktop"
-version = "0.7.0"
+version = "0.8.1"
 dependencies = [
  "alcy-app",
  "alcy-collection-import",
