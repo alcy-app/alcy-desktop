@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import { NodeResizer } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
 import { useLanguage } from '../../shared/i18n/use-language'
@@ -23,12 +24,17 @@ export function NoteNode({ data, selected, width, height }: NodeProps<SimpleFlow
   const size = { width: width ?? config.width, height: height ?? config.height }
   const resizer = !data.readOnly && <NodeResizer isVisible={selected} minWidth={MIN_WIDTH} minHeight={MIN_HEIGHT} />
   const edit = () => { if (!data.readOnly) setEditing(true) }
+  // Right-click anywhere on the note opens the same actions menu as the three-dot trigger.
+  const openActionsMenu = data.readOnly
+    ? undefined
+    : (event: ReactMouseEvent<HTMLDivElement>) => { event.preventDefault(); event.stopPropagation(); setMenuOpen(true) }
 
   return (
-    <OverlayMotionContext value={false}><FlowNodeSurface size={size} handles={resizer} onDoubleClick={edit}><div
+    <OverlayMotionContext value={false}><FlowNodeSurface size={size} handles={resizer} onDoubleClick={edit} onContextMenu={openActionsMenu}><div
       style={size}
       className="flow-node flow-node--note flow-node--tone-note"
       onDoubleClick={edit}
+      onContextMenu={openActionsMenu}
     >
       {isEditing ? (
         <textarea

@@ -62,4 +62,14 @@ describe('NoteNode', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Excluir este node' }))
     expect(onDelete).toHaveBeenCalledOnce()
   })
+
+  it('opens the actions from a right-click on the note', () => {
+    const onDuplicate = vi.fn()
+    const { container } = renderNote({ onDuplicate })
+
+    fireEvent.contextMenu(container.querySelector('.flow-node')!)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicar este node' }))
+
+    expect(onDuplicate).toHaveBeenCalledOnce()
+  })
 })

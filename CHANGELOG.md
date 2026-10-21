@@ -8,6 +8,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Fixed
 
+- Clicar com o botão direito em um bloco do flow agora abre o menu de ações daquele bloco.
+- Arrastar um bloco do flow pelo título agora move o bloco.
 - Ao renomear uma pasta ou um flow na lista, apertar espaço não fecha mais a edição.
 - Ao importar muitas collections de uma vez, os controles deixam de se sobrepor e o rodapé com o botão de importar permanece visível enquanto a lista rola.
 

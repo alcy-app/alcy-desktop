@@ -61,6 +61,16 @@ describe('FlowNodeCard', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
+  it('opens node actions from a right-click on the block', () => {
+    const onDuplicate = vi.fn()
+    const { container } = renderCard(<FlowNodeCard kind="sleep" onDuplicate={onDuplicate} onDelete={vi.fn()} />)
+
+    fireEvent.contextMenu(container.querySelector('.flow-node')!)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicar este node' }))
+
+    expect(onDuplicate).toHaveBeenCalledOnce()
+  })
+
   it('uses static hover hints and menus for node controls without removing their actions', () => {
     vi.useFakeTimers()
     try {
