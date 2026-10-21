@@ -39,6 +39,7 @@ interface FlowNodeCardProps {
 export function FlowNodeCard({ kind, title, subtitle, titleBadge, headerControls, runStatus = { status: 'idle' }, visited, readOnly, compact, hasInput = true, outputs = 'single', onOpenSettings, onDuplicate, onDelete, className, children }: FlowNodeCardProps) {
   const { t } = useLanguage()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [titlePointerInteraction, setTitlePointerInteraction] = useState(false)
   const chassisRef = useRef<HTMLDivElement>(null)
   const appearance = NODE_KIND_APPEARANCE[kind]
   const { Icon } = appearance
@@ -61,7 +62,18 @@ export function FlowNodeCard({ kind, title, subtitle, titleBadge, headerControls
       <div className="flow-node-heading">
         <div className="flow-node-title-row">
           {titleBadge}
-          {!readOnly && onOpenSettings ? <button type="button" className="flow-node-title flow-node-title-button nopan" title={resolvedTitle} aria-label={t('flows.canvas.openNodeSettingsAria')} onMouseDown={(event) => { event.stopPropagation(); startNodeDragFromChassis(chassisRef.current, event) }} onClick={(event) => { event.stopPropagation(); onOpenSettings() }}>{resolvedTitle}</button> : <span className="flow-node-title" title={resolvedTitle}>{resolvedTitle}</span>}
+          {!readOnly && onOpenSettings ? <button
+            type="button"
+            className="flow-node-title flow-node-title-button nopan"
+            title={resolvedTitle}
+            aria-label={t('flows.canvas.openNodeSettingsAria')}
+            data-pointer-interaction={titlePointerInteraction || undefined}
+            onPointerDown={() => setTitlePointerInteraction(true)}
+            onKeyDown={() => setTitlePointerInteraction(false)}
+            onBlur={() => setTitlePointerInteraction(false)}
+            onMouseDown={(event) => { event.stopPropagation(); startNodeDragFromChassis(chassisRef.current, event) }}
+            onClick={(event) => { event.stopPropagation(); onOpenSettings() }}
+          >{resolvedTitle}</button> : <span className="flow-node-title" title={resolvedTitle}>{resolvedTitle}</span>}
         </div>
         {compact && kind === 'start' && <span className="flow-node-subtitle">{subtitle ?? t(appearance.descriptionKey)}</span>}
       </div>
