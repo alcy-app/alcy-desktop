@@ -238,6 +238,12 @@ is unavailable. Existing files in the former `Documents/Alcy/` location remain
 untouched; new writes use the selected location. Workspace locations and other
 application settings keep their existing paths.
 
+The release publisher provides signed Windows EXE/MSI installers and raw Linux
+AppImages. The native updater retains TLS and system proxy support, with its
+legacy archive extraction feature disabled. ZIP and tar.gz update bundles,
+including macOS application bundles, are not supported by this configuration.
+Adding archive-based updates requires reviewing the extraction dependencies.
+
 ### gRPC
 
 `alcy-grpc` calls any method of any service without generated code (spec

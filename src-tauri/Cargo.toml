@@ -40,7 +40,9 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
-tauri-plugin-updater = "2"
+# Published updates use signed EXE/MSI installers and raw AppImages.
+# Disable legacy archive extraction to remove the vulnerable zip dependency.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tokio = { version = "1", features = ["macros", "sync", "fs"] }
 url = "2"
 percent-encoding = "2"
