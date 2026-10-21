@@ -196,6 +196,17 @@ describe('flow keyboard navigation and large execution logs', () => {
     expect(first).toHaveAttribute('tabindex', '-1')
   })
 
+  it('suppresses the tab focus ring for pointer interaction only', () => {
+    function Tabs() { const [tab, setTab] = useState('config'); return <FlowTabs items={[{ id: 'config', label: 'Configuration' }, { id: 'data', label: 'Data' }]} value={tab} onChange={setTab} label="Node" /> }
+    render(<Tabs />)
+    const list = screen.getByRole('tablist', { name: 'Node' })
+    const first = screen.getByRole('tab', { name: 'Configuration' })
+    fireEvent.pointerDown(first)
+    expect(list).toHaveAttribute('data-pointer-interaction')
+    fireEvent.keyDown(first, { key: 'ArrowRight' })
+    expect(list).not.toHaveAttribute('data-pointer-interaction')
+  })
+
   it('mounts a bounded window of execution entries', () => {
     const entries = Array.from({ length: 10_000 }, (_, index) => ({ nodeId: `node-${index}`, startedAtMs: 0, finishedAtMs: 1, status: { status: 'completed' as const, message: null } }))
     const { container } = render(<StudioProviders><RunLogPanel entries={entries} nodeInfo={{}} runStartedAtMs={0} flowExecutionId={null} isRunning={false} /></StudioProviders>)

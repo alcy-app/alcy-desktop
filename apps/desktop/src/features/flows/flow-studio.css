@@ -141,6 +141,8 @@
 .flow-studio-tabs > button:hover { color: var(--text); background: var(--control-hover-bg); }
 .flow-studio-tabs > button[aria-selected='true'] { color: var(--accent-strong); border-bottom-color: var(--accent); }
 .flow-studio-tabs > button:focus-visible { outline: var(--focus-ring); outline-offset: -3px; }
+/* WebKitGTK treats pointer clicks as :focus-visible; the ring is keyboard-only. */
+.flow-studio-tabs[data-pointer-interaction] > button:focus-visible { outline: none; }
 .flow-studio-workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .flow-studio-workspace [hidden] { display: none !important; }
 .flow-studio-inspector .flow-inspector-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-4); gap: var(--space-4); }
