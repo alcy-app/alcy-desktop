@@ -1,4 +1,5 @@
 import type { MockServerDto } from '../../bindings/mock-servers'
+import type { FlowForm, FlowPresentation } from '../../bindings/flow-forms'
 import type { RequestSummary } from '../request-workbench/collection-tree'
 
 export type ComparisonOperatorState = 'equals' | 'notEquals' | 'greaterThan' | 'lessThan'
@@ -9,8 +10,7 @@ export interface ConditionState {
   right: string
 }
 
-/** Mock ligado por um bloco `mockStart` (spec 0121): salvo (pelo id) ou
- * avulso (inteiro no flow, editado numa aba do workbench). */
+/** Mock source: a saved ID or a complete inline server edited in a workbench tab (spec 0121). */
 export type MockServerSourceState = { type: 'saved'; serverId: string } | { type: 'inline'; server: MockServerDto }
 
 export type MockCallCountOperatorState = 'equals' | 'atLeast' | 'atMost'
@@ -20,10 +20,9 @@ export type VariableAssignmentState = { name: string } & (
   | { operation: 'increment'; by: number }
 )
 
-/** Nodes cuja configuração inteira vive em `data.config` no canvas (spec
- * 0083) — convertidos de/para DTO e duplicados de forma genérica, em vez de
- * um ramo por campo como `block`/`request`/`if`. */
+/** Complete configuration lives in data.config; simple nodes share DTO conversion and duplication (spec 0083). */
 export type SimpleNodeKindState =
+  | { kind: 'humanAction'; form: FlowForm }
   | { kind: 'note'; text: string; width: number; height: number }
   | { kind: 'log'; message: string }
   | { kind: 'display'; template: string }
@@ -32,11 +31,9 @@ export type SimpleNodeKindState =
   | { kind: 'while'; condition: ConditionState; maxIterations: number }
   | { kind: 'break' }
   | { kind: 'continue' }
-  /** Requisição avulsa (spec 0086): a requisição inteira fica no flow, editada
-   * numa aba do workbench. */
+  /** Complete inline request stored in the flow and edited in a workbench tab (spec 0086). */
   | { kind: 'inlineRequest'; request: RequestSummary }
-  /** Blocos de mock server (spec 0121): os demais apontam para o bloco
-   * `mockStart` que ligou o mock (`startNodeId`). */
+  /** Dependent mock blocks reference the mockStart node that started their server (spec 0121). */
   | { kind: 'mockStart'; source: MockServerSourceState }
   | { kind: 'mockStop'; startNodeId: string }
   | { kind: 'mockWaitRequest'; startNodeId: string; routeId: string; timeoutMs: number }
@@ -46,6 +43,7 @@ export type SimpleNodeKindState =
 export type SimpleNodeKind = SimpleNodeKindState['kind']
 
 const SIMPLE_NODE_KINDS: readonly string[] = [
+  'humanAction',
   'note',
   'log',
   'display',
@@ -62,23 +60,23 @@ const SIMPLE_NODE_KINDS: readonly string[] = [
   'mockAssertCalls',
 ]
 
-/** Blocos de mock server: não entram em flows de carga. */
+/** Mock server blocks are unavailable in load flows. */
 export type MockNodeKind = 'mockStart' | 'mockStop' | 'mockWaitRequest' | 'mockSetResponse' | 'mockAssertCalls'
 
 export function isSimpleNodeKind(kind: string | undefined): kind is SimpleNodeKind {
   return kind !== undefined && SIMPLE_NODE_KINDS.includes(kind)
 }
 
-/** `node` (DTO ou estado) é de um tipo simples — estreita o union inteiro,
- * não só o campo `kind`. */
+/** Narrow the complete DTO/state union, including its configuration, to a simple node. */
 export function isSimpleNode<T extends { kind: string }>(node: T): node is Extract<T, SimpleNodeKindState> {
   return isSimpleNodeKind(node.kind)
 }
 
-/** Só os campos de configuração de um node simples — descarta `id`,
- * posição e o que mais vier junto (DTO ou estado). */
+/** Extract canonical configuration without identity or position. */
 export function simpleNodeConfig(node: SimpleNodeKindState): SimpleNodeKindState {
   switch (node.kind) {
+    case 'humanAction':
+      return { kind: 'humanAction', form: node.form }
     case 'note':
       return { kind: 'note', text: node.text, width: node.width, height: node.height }
     case 'log':
@@ -111,7 +109,7 @@ export function simpleNodeConfig(node: SimpleNodeKindState): SimpleNodeKindState
 }
 
 export type FlowNodeKindState =
-  | { kind: 'start' }
+  | { kind: 'start'; form?: FlowForm | null }
   | { kind: 'block'; label: string }
   | { kind: 'request'; requestId: string }
   | { kind: 'if'; condition: ConditionState }
@@ -145,7 +143,7 @@ export type FlowNodeState = FlowNodeKindState & {
 
 export type IfBranchHandle = 'true' | 'false'
 export type RequestOutcomeHandle = 'success' | 'failure'
-/** Saídas de um `while`: `loop` leva ao corpo, `done` segue depois do loop. */
+/** While outputs: loop enters the body; done continues after it. */
 export type WhileHandle = 'loop' | 'done'
 export type LoadScenarioHandle = 'iteration' | 'done'
 export type LoadThresholdHandle = 'passed' | 'failed'
@@ -162,14 +160,12 @@ export interface FlowEdgeState {
   id: string
   sourceNodeId: string
   targetNodeId: string
-  /** `undefined` para toda edge saindo de um node de saída única; `"true"`/
-   * `"false"` para as saídas de um node `if` (e dos blocos de mock
-   * `mockWaitRequest`/`mockAssertCalls`), `"success"`/`"failure"` para
-   * as de um node `request` e `"loop"`/`"done"` para as de um `while`. */
+  /** Absent for single-output nodes. If/mock checks use true/false, requests use success/failure and While uses loop/done. */
   sourceHandle?: FlowSourceHandle
 }
 
 export interface FlowState {
+  presentation?: FlowPresentation
   id: string
   name: string
   executionKind: FlowExecutionKindState

@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alcy_app::{
     CapturedRequest, FlowNodeOutcome, FlowNodeSkipReason, FlowRunError, FlowRunSink,
-    RequestCallDetails, execute_flow as run_flow,
+    RequestCallDetails,
 };
 use alcy_domain::{
     BodyEncoding, EnvironmentVariable, EnvironmentVariableError, Flow, HistoryRetention, Response,
@@ -36,6 +36,8 @@ use crate::mock_runtime::{FlowMockControl, MockServerRuntime};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteFlowInput {
+    #[serde(default)]
+    pub initial_answers: alcy_app::FormAnswers,
     pub flow_execution_id: String,
     pub root_path: String,
     /// Flow name labels historical runs only.
@@ -99,6 +101,13 @@ pub struct CallVariableDto {
     rename_all_fields = "camelCase"
 )]
 pub enum FlowRunEventDto {
+    NodeWaitingForHuman {
+        node_id: String,
+        wait_id: Option<String>,
+    },
+    NodeFormSubmitted {
+        node_id: String,
+    },
     NodeStarted {
         node_id: String,
     },
@@ -254,6 +263,7 @@ pub enum ExecuteFlowError {
 impl From<FlowRunError> for ExecuteFlowError {
     fn from(error: FlowRunError) -> Self {
         match error {
+            FlowRunError::InvalidForm(message) => Self::InvalidGraph { message },
             FlowRunError::MissingStartNode => Self::MissingStartNode,
             FlowRunError::CyclicGraph => Self::CyclicGraph,
             FlowRunError::InvalidLoopBody { while_node_id } => {
@@ -320,6 +330,25 @@ impl From<FlowNodeSkipReasonDto> for RecordedSkipReason {
 }
 
 impl FlowRunSink for ChannelSink<'_> {
+    fn node_waiting_for_human(&self, node_id: &str, wait_id: &str) {
+        self.emit(
+            node_id,
+            RecordedEventKind::WaitingForHuman,
+            FlowRunEventDto::NodeWaitingForHuman {
+                node_id: node_id.into(),
+                wait_id: Some(wait_id.into()),
+            },
+        );
+    }
+    fn node_form_submitted(&self, node_id: &str) {
+        self.emit(
+            node_id,
+            RecordedEventKind::FormSubmitted,
+            FlowRunEventDto::NodeFormSubmitted {
+                node_id: node_id.into(),
+            },
+        );
+    }
     fn node_output(&self, node_id: &str, response: &Response) {
         self.body_capture.capture(
             node_id,
@@ -502,6 +531,11 @@ impl FlowRunSink for ChannelSink<'_> {
 pub(crate) fn event_dto_from_recorded(event: &RecordedFlowEvent) -> FlowRunEventDto {
     let node_id = event.node_id.clone();
     match &event.kind {
+        RecordedEventKind::WaitingForHuman => FlowRunEventDto::NodeWaitingForHuman {
+            node_id,
+            wait_id: None,
+        },
+        RecordedEventKind::FormSubmitted => FlowRunEventDto::NodeFormSubmitted { node_id },
         RecordedEventKind::NodeStarted => FlowRunEventDto::NodeStarted { node_id },
         RecordedEventKind::CallResolved {
             request_url,
@@ -607,6 +641,10 @@ pub async fn execute_flow(
     mock_runtime: tauri::State<'_, MockServerRuntime>,
 ) -> Result<(), ExecuteFlowError> {
     let flow_execution_id = input.flow_execution_id.clone();
+    // Register before the first await so closing a tab also cancels preparation.
+    let (sender, receiver) = watch::channel(false);
+    flow_registry.register(flow_execution_id.clone(), sender);
+    let cancellation = WatchCancellation(receiver);
     let started = std::time::Instant::now();
     log::info!(
         target: "alcy::flow",
@@ -624,8 +662,10 @@ pub async fn execute_flow(
         &rest_executor,
         history.get(),
         &mock_runtime,
+        &cancellation,
     )
     .await;
+    flow_registry.remove(&flow_execution_id);
     match &result {
         Ok(()) => log::info!(
             target: "alcy::flow",
@@ -652,6 +692,7 @@ async fn execute_flow_inner(
     rest_executor: &ReqwestRestExecutor,
     history: HistoryPreferences,
     mock_runtime: &MockServerRuntime,
+    cancellation: &WatchCancellation,
 ) -> Result<(), ExecuteFlowError> {
     let environment_variables = input
         .environment_variables
@@ -701,10 +742,6 @@ async fn execute_flow_inner(
         message: error.to_string(),
     })?;
 
-    let (sender, receiver) = watch::channel(false);
-    flow_registry.register(input.flow_execution_id.clone(), sender);
-    let cancellation = WatchCancellation(receiver);
-
     let executor = ScriptingExecutor::new(
         ProtocolDispatchingExecutor {
             app,
@@ -717,7 +754,7 @@ async fn execute_flow_inner(
     );
     flow_outputs.begin(&input.flow_execution_id);
     let archive = alcy_storage::FlowBodyCapture::new();
-    flow_outputs.attach_archive(archive.clone());
+    flow_outputs.attach_archive(&input.flow_execution_id, archive.clone());
     let sink = ChannelSink {
         channel: on_event,
         outputs: flow_outputs,
@@ -737,14 +774,23 @@ async fn execute_flow_inner(
     );
 
     let started_at = SystemTime::now();
-    let result = run_flow(
+    let human = super::flow_human_input::HumanFormSession {
+        registry: &flow_registry.human,
+        execution_id: &input.flow_execution_id,
+        sink: &sink,
+    };
+    let result = alcy_app::execute_flow_interactive(
         &flow,
         &collections,
         &executor,
         &environment_variables,
         &sink,
-        &cancellation,
+        cancellation,
         &mocks,
+        alcy_app::FlowInteraction {
+            human: &human,
+            initial_answers: &input.initial_answers,
+        },
     )
     .await;
 
@@ -813,6 +859,7 @@ async fn execute_flow_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alcy_app::execute_flow as run_flow;
     use alcy_domain::{
         Authentication, Collection, Endpoint, ProtocolId, Request, RequestDocument, SavedRequest,
     };
@@ -919,7 +966,7 @@ mod tests {
         FlowNodeDto {
             id: id.to_string(),
             kind: match kind {
-                FlowNodeKindDtoForTest::Start => FlowNodeKindDto::Start,
+                FlowNodeKindDtoForTest::Start => FlowNodeKindDto::Start { form: None },
                 FlowNodeKindDtoForTest::Request(request_id) => {
                     FlowNodeKindDto::Request { request_id }
                 }

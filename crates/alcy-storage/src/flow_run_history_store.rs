@@ -10,7 +10,7 @@ use crate::storage_error::StorageError;
 
 /// The v2 index distinguishes standard and load runs. Read v1 entries as standard runs and upgrade on the next write.
 const MANIFEST_VERSION: u32 = 2;
-const DETAIL_VERSION: u32 = 2;
+const DETAIL_VERSION: u32 = 3;
 const LOAD_DETAIL_VERSION: u32 = 1;
 const MANIFEST_FILE_NAME: &str = "alcy-flow-runs.json";
 const DETAIL_DIR_NAME: &str = "alcy-flow-runs";
@@ -169,6 +169,8 @@ pub enum RecordedSkipReason {
     rename_all_fields = "camelCase"
 )]
 pub enum RecordedEventKind {
+    WaitingForHuman,
+    FormSubmitted,
     NodeStarted,
     CallResolved {
         request_url: String,
@@ -403,7 +405,7 @@ impl FlowRunHistoryStore {
         })?;
         let detail: PersistedDetail = serde_json::from_str(&raw)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
-        if !matches!(detail.version, 1 | DETAIL_VERSION) {
+        if !matches!(detail.version, 1 | 2 | DETAIL_VERSION) {
             return Err(StorageError::UnsupportedVersion(detail.version));
         }
 

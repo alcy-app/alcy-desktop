@@ -43,7 +43,8 @@ use commands::export_har::export_har;
 use commands::export_png::export_png;
 use commands::export_webclient::{export_webclient, preview_webclient_export};
 use commands::flow_execution_registry::FlowExecutionRegistry;
-use commands::flow_run_outputs::{FlowRunOutputs, get_flow_node_output};
+use commands::flow_human_input::{list_flow_form_options, submit_flow_form};
+use commands::flow_run_outputs::{FlowRunOutputs, get_flow_node_output, release_flow_run};
 use commands::flows::{list_flows, save_flows};
 use commands::general_settings::{
     HistoryPreferencesState, apply_saved_general_settings, get_general_settings,
@@ -391,7 +392,10 @@ pub fn run_with(extensions: Vec<Extension>) {
                 save_tab_session,
                 evaluate_value_monitors,
                 execute_flow,
+                submit_flow_form,
+                list_flow_form_options,
                 get_flow_node_output,
+                release_flow_run,
                 inspect_flow_node_output,
                 inspect_load_dataset,
                 cancel_flow_output_query,

@@ -5,17 +5,14 @@ use thiserror::Error;
 
 use crate::{MockServer, SavedRequest};
 
-/// Tipo de execução de um flow. Flows existentes continuam sendo `Standard`;
-/// `Load` habilita controladores e nós próprios de teste de carga.
+/// Standard retains existing flow behavior; Load enables load-testing controllers and nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowExecutionKind {
     Standard,
     Load,
 }
 
-/// Tipo fechado dos blocos de carga. A configuração de cada bloco é mantida
-/// como JSON validado pela capability de carga: o domínio preserva a forma do
-/// grafo sem conhecer detalhes de HTTP, métricas ou formatos importados.
+/// Closed load block kinds. The load capability validates canonical JSON; the domain preserves graph structure without HTTP, metric or import details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadNodeKind {
     Scenario,
@@ -61,9 +58,7 @@ impl LoadNodeKind {
     }
 }
 
-/// Um bloco de carga no canvas. `config` é JSON canônico, produzido pelo
-/// importador ou pelo inspector; nenhum conteúdo é executado ao ser salvo ou
-/// importado. A validação semântica cabe ao motor de carga.
+/// Canonical load configuration from importer or inspector. Saving/importing never executes it; semantic validation belongs to the load engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadNode {
     pub kind: LoadNodeKind,
@@ -71,18 +66,14 @@ pub struct LoadNode {
     pub config: String,
 }
 
-/// Posição de um node no canvas do flow — coordenadas livres, sem unidade
-/// de domínio (o significado de "pixel" é da camada de apresentação).
+/// Free canvas coordinates whose units belong to presentation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlowPosition {
     pub x: f64,
     pub y: f64,
 }
 
-/// Operador de comparação de uma `Condition` — conjunto fechado e pequeno de
-/// propósito (spec 0047): comparação simples entre dois valores já
-/// resolvíveis hoje (referência `{{nodes.<id>...}}` ou variável de
-/// ambiente), não uma linguagem de expressão genérica.
+/// Small comparison operator set for resolvable node references and environment variables (spec 0047).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonOperator {
     Equals,
@@ -91,12 +82,7 @@ pub enum ComparisonOperator {
     LessThan,
 }
 
-/// Condição de um node `If`: `left`/`right` são strings de template (podem
-/// conter `{{...}}`, resolvidas com a mesma máquina de substituição já usada
-/// para requisições) comparadas com `operator`. A avaliação em si
-/// (numérica quando os dois lados parseiam como número, textual caso
-/// contrário) é responsabilidade do motor de execução (`alcy-app`), não do
-/// domínio — este tipo só carrega os dados.
+/// If operands are templates. The application compares numerically when possible and textually otherwise; the domain only holds configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Condition {
     pub left: String,
@@ -104,37 +90,30 @@ pub struct Condition {
     pub right: String,
 }
 
-/// Operação de uma atribuição de um node `SetVariables` (spec 0083).
+/// SetVariables assignment operation (spec 0083).
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariableOperation {
-    /// Define a variável com `value` — um template (`{{...}}`) resolvido no
-    /// momento em que o node roda.
+    /// Set the variable to a template resolved at execution time.
     Set { value: String },
-    /// Soma `by` ao valor atual da variável (ausente conta como 0). Existe
-    /// para contadores sem introduzir uma linguagem de expressão.
+    /// Add to the current value, treating an absent variable as zero; supports counters without an expression language.
     Increment { by: f64 },
 }
 
-/// Uma atribuição de variável local de um run de flow. O nome não é
-/// validado aqui — um nome inválido faz o node falhar na execução, para que
-/// o flow continue salvável enquanto o usuário ainda está editando.
+/// Run-local assignment. Execution validates the name so incomplete configurations remain editable.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableAssignment {
     pub name: String,
     pub operation: VariableOperation,
 }
 
-/// Mock server ligado por um node `MockStart` (spec 0120): um mock salvo do
-/// workspace, resolvido ao vivo pelo id no momento da execução, ou um mock
-/// avulso definido no próprio flow (cópia completa, como `InlineRequest`).
+/// Saved mock resolved at execution time, or a complete inline server, started by MockStart (spec 0120).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MockServerSource {
     Saved { server_id: String },
     Inline { server: Box<MockServer> },
 }
 
-/// Comparação de um node `MockAssertCalls` entre as chamadas recebidas pela
-/// rota e o número esperado.
+/// Comparison between observed and expected route call counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MockCallCountOperator {
     Equals,
@@ -142,88 +121,67 @@ pub enum MockCallCountOperator {
     AtMost,
 }
 
-/// Tipo de um node do flow. Enum fechado (não uma string livre) para que
-/// adicionar tipos de node reais (ex.: requisição HTTP/GraphQL) no futuro
-/// seja uma migração versionada e deliberada, não um valor arbitrário
-/// vindo do frontend.
+/// Closed node-kind enum: executable kinds require deliberate versioned contract changes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FlowNodeKind {
-    /// Node inicial, único por flow, não removível pela UI.
+    /// Unique initial node, which the UI cannot delete.
     Start,
-    /// Bloco genérico sem comportamento de execução nesta etapa.
+    /// Start with an operator form, validated before running any effects.
+    StartForm { form: crate::FlowForm },
+    /// Pause this dependency branch until the operator submits the form.
+    HumanAction { form: crate::FlowForm },
+    /// Legacy generic block without executable behavior.
     Block { label: String },
-    /// Referência a uma requisição salva de uma coleção, resolvida ao vivo
-    /// pelo `request_id` no momento da execução (não uma cópia snapshot) —
-    /// para refletir renomeações/edições feitas na coleção depois que o
-    /// node foi criado (spec 0043). Tem duas saídas nomeadas — `"success"` (resposta com status < 400) e
-    /// `"failure"` (erro de transporte ou status >= 400).
+    /// Saved request resolved by request_id at execution time. Outputs are success for status below 400, failure for transport errors or status at least 400 (spec 0043).
     Request { request_id: String },
-    /// Ramifica a execução: avalia `condition` e só o ramo correspondente
-    /// (edges saindo deste node com `source_handle` `"true"`/`"false"`)
-    /// roda — o outro é pulado (spec 0047).
+    /// Evaluate the condition and follow only its true/false output, skipping the other branch (spec 0047).
     If { condition: Condition },
-    /// Anotação livre no canvas (spec 0083): não executa e não se conecta —
-    /// `Flow::new` rejeita edges que entram ou saem dela. `width`/`height`
-    /// são o tamanho da nota no canvas.
+    /// Unconnected, non-executable annotation with explicit dimensions. Flow::new rejects attached edges (spec 0083).
     Note {
         text: String,
         width: f64,
         height: f64,
     },
-    /// Escreve `message` (template) no log do run.
+    /// Write the resolved message template to the run log.
     Log { message: String },
-    /// Resolve `template` e mostra o valor no próprio node.
+    /// Resolve the template and display its value in this node.
     Display { template: String },
-    /// Espera `duration_ms` antes de seguir, sem bloquear ramos paralelos.
+    /// Wait asynchronously without blocking independent branches.
     Sleep { duration_ms: u64 },
-    /// Define variáveis locais do run, visíveis como `{{nome}}` para os
-    /// nodes seguintes e descartadas ao fim do run.
+    /// Run-local variables available as {{name}} and discarded at run completion.
     SetVariables {
         assignments: Vec<VariableAssignment>,
     },
-    /// Repete o corpo — nodes alcançáveis pelas edges `"loop"` — enquanto
-    /// `condition` for verdadeira, até `max_iterations`; depois segue pelas
-    /// edges `"done"` (spec 0084, ADR 0033).
+    /// Repeat the loop body while its condition holds, up to max_iterations, then take done (spec 0084, ADR 0033).
     While {
         condition: Condition,
         max_iterations: u32,
     },
-    /// Encerra o `While` mais interno que o contém: o que ainda não começou
-    /// no corpo é pulado e o loop sai por `"done"` (spec 0085). Sem saídas.
+    /// Exit the innermost While, skip unstarted body nodes and take done. Has no outputs (spec 0085).
     Break,
-    /// Encerra só a iteração atual do `While` mais interno: o que ainda não
-    /// começou no corpo é pulado e a condição é reavaliada. Sem saídas.
+    /// End this innermost While iteration, skip unstarted body nodes and reevaluate its condition. Has no outputs.
     Continue,
-    /// Requisição definida no próprio flow, sem coleção (spec 0086) — cópia
-    /// completa, editada no mesmo editor das requisições salvas. `id` e nome
-    /// vêm junto, mas o id não aponta para nenhuma coleção. Mesmas saídas
-    /// `"success"`/`"failure"` de `Request`.
+    /// Complete request stored in the flow, sharing the request editor and success/failure outputs. Its ID does not reference a collection (spec 0086).
     InlineRequest { request: Box<SavedRequest> },
-    /// Bloco do motor de carga. Só é aceito em flows `Load`.
+    /// Load-engine block, accepted only in load flows.
     Load { node: LoadNode },
-    /// Liga um mock server durante o run (spec 0120). Os demais nodes de
-    /// mock apontam para este node por `start_node_id`, não para o servidor,
-    /// para que salvo e avulso funcionem igual. Ao fim do run o motor
-    /// desliga o que este node ligou.
+    /// Start a mock for this run. Dependent nodes reference start_node_id for saved and inline sources. Execution stops servers it started (spec 0120).
     MockStart { source: MockServerSource },
-    /// Desliga o mock ligado pelo node `start_node_id`.
+    /// Stop the mock started by start_node_id.
     MockStop { start_node_id: String },
-    /// Espera a próxima chamada recebida pela rota `route_id` — saída
-    /// `"true"` quando chega, `"false"` quando `timeout_ms` se esgota.
+    /// Wait for a route call: true when received, false when timeout_ms expires.
     MockWaitRequest {
         start_node_id: String,
         route_id: String,
         timeout_ms: u64,
     },
-    /// Força a rota a responder com `response_id` (padrão ou alternativa)
-    /// até o fim do run; `None` volta às regras normais.
+    /// Force the route response until run completion; None restores normal rules.
     MockSetResponse {
         start_node_id: String,
         route_id: String,
         response_id: Option<String>,
     },
-    /// Compara as chamadas recebidas pela rota desde que o run ligou o mock
-    /// com `count` — saída `"true"` quando passa, `"false"` quando não.
+    /// Compare calls received since this run started the mock against count, taking true or false.
     MockAssertCalls {
         start_node_id: String,
         route_id: String,
@@ -252,13 +210,7 @@ pub struct FlowNode {
     pub position: FlowPosition,
 }
 
-/// `source_handle` distingue qual saída de um node de múltiplas saídas uma
-/// edge representa: `If` tem `Some("true")`/`Some("false")`, `Request` tem
-/// `Some("success")`/`Some("failure")`, `While` tem `Some("loop")`/
-/// `Some("done")` e `MockWaitRequest`/`MockAssertCalls` reaproveitam
-/// `Some("true")`/`Some("false")`; toda edge saindo de qualquer outro
-/// tipo de node é `None` (saída única, sem ambiguidade). Validado por
-/// `Flow::new` contra o `FlowNodeKind` do node de origem.
+/// Optional source output: true/false for If/mock checks, success/failure for requests, loop/done for While. Other nodes have one unnamed output. Flow::new validates compatibility.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlowEdge {
     pub id: String,
@@ -267,9 +219,7 @@ pub struct FlowEdge {
     pub source_handle: Option<String>,
 }
 
-/// Um flow: um diagrama nomeado de nodes conectados por edges, com posição
-/// livre no canvas. O resultado de uma execução não faz parte do flow — é
-/// reportado pelo motor (`alcy-app`) e gravado à parte no histórico.
+/// Named graph with freely positioned nodes. Execution results belong to the application and separate history records.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Flow {
     pub id: String,
@@ -277,12 +227,17 @@ pub struct Flow {
     execution_kind: FlowExecutionKind,
     nodes: Vec<FlowNode>,
     edges: Vec<FlowEdge>,
+    pub presentation: crate::FlowPresentation,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FlowError {
+    #[error("invalid panel layout")]
+    InvalidPresentation,
+    #[error("interactive node '{0}' is not supported in a load flow")]
+    InteractiveNodeInLoadFlow(String),
     #[error("nome do flow não pode ser vazio")]
     EmptyName,
     #[error("node '{0}' duplicado")]
@@ -356,6 +311,16 @@ impl Flow {
         {
             return Err(FlowError::MockNodeInLoadFlow(node.id.clone()));
         }
+        if execution_kind == FlowExecutionKind::Load
+            && let Some(node) = nodes.iter().find(|node| {
+                matches!(
+                    node.kind,
+                    FlowNodeKind::StartForm { .. } | FlowNodeKind::HumanAction { .. }
+                )
+            })
+        {
+            return Err(FlowError::InteractiveNodeInLoadFlow(node.id.clone()));
+        }
 
         let kind_by_id: HashMap<&str, &FlowNodeKind> = nodes
             .iter()
@@ -420,6 +385,7 @@ impl Flow {
             execution_kind,
             nodes,
             edges,
+            presentation: crate::FlowPresentation::default(),
             created_at,
             updated_at,
         })
@@ -439,6 +405,41 @@ impl Flow {
 
     pub fn edges(&self) -> &[FlowEdge] {
         &self.edges
+    }
+
+    pub fn set_presentation(
+        &mut self,
+        mut presentation: crate::FlowPresentation,
+    ) -> Result<(), FlowError> {
+        let mut ids = HashSet::new();
+        for panel in &presentation.panels {
+            if !ids.insert(&panel.node_id)
+                || panel.title.len() > 1024
+                || [panel.x, panel.y, panel.width, panel.height]
+                    .into_iter()
+                    .any(|n| !n.is_finite())
+                || !(0.0..=100_000.0).contains(&panel.x)
+                || !(0.0..=100_000.0).contains(&panel.y)
+                || !(280.0..=4096.0).contains(&panel.width)
+                || !(180.0..=4096.0).contains(&panel.height)
+            {
+                return Err(FlowError::InvalidPresentation);
+            }
+        }
+        // Removing a node or disabling its form also removes its panel.
+        presentation.panels.retain(|panel| {
+            self.nodes.iter().any(|node| {
+                node.id == panel.node_id
+                    && matches!(
+                        node.kind,
+                        FlowNodeKind::Display { .. }
+                            | FlowNodeKind::StartForm { .. }
+                            | FlowNodeKind::HumanAction { .. }
+                    )
+            })
+        });
+        self.presentation = presentation;
+        Ok(())
     }
 }
 

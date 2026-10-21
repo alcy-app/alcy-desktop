@@ -63,6 +63,8 @@ export const DEFAULT_NOTE_SIZE = { width: 260, height: 140 }
 /** Inline requests need a translated nonempty name; see newInlineRequest. */
 export function defaultSimpleNodeConfig(kind: Exclude<SimpleNodeKind, 'inlineRequest'>): SimpleNodeKindState {
   switch (kind) {
+    case 'humanAction':
+      return { kind: 'humanAction', form: { title: '', description: '', sections: [] } }
     case 'note':
       return { kind: 'note', text: '', ...DEFAULT_NOTE_SIZE }
     case 'log':
@@ -119,6 +121,7 @@ export function configOfSimpleNode(node: SimpleFlowNodeType): SimpleNodeKindStat
 }
 
 export const SIMPLE_NODE_LABEL_KEY: Record<SimpleNodeKind, TranslationKey> = {
+  humanAction: 'flows.forms.humanAction',
   note: 'flows.canvas.newNoteLabel',
   log: 'flows.canvas.newLogLabel',
   display: 'flows.canvas.newDisplayLabel',

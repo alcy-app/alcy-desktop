@@ -1,4 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FlowFormView } from './FlowFormView'
+import { FlowPanels } from './FlowPanels'
+import { FlowTabs } from './FlowTabs'
+import { initialFormAnswers } from './form-model'
+import { submitFlowForm } from '../../bindings/flow-forms'
+import type { FlowPresentation, FormAnswers } from '../../bindings/flow-forms'
+import { DisplayOutput } from './DisplayOutput'
+import { describeRunStatus } from './node-run-status'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ScopedVariableChange } from '../../bindings/execute-graphql-request'
 import { addEdge, Background, BackgroundVariant, ConnectionLineType, Controls, Panel, ReactFlow, useEdgesState, useNodesState } from '@xyflow/react'
@@ -72,7 +80,7 @@ function fromFlowNodes(nodes: FlowNode[]): FlowNodeState[] {
       return { id: node.id, ...configOfSimpleNode(node), position: node.position }
     }
     if (node.type === 'start') {
-      return { id: node.id, kind: 'start', position: node.position }
+      return { id: node.id, kind: 'start', ...(node.data.form ? { form: node.data.form } : {}), position: node.position }
     }
     if (node.type === 'request') {
       return {
@@ -168,7 +176,13 @@ function computeAncestorRequestRefs(ancestorIds: Set<string>, nodes: FlowNode[])
 function computeAncestorLocalVariables(ancestorIds: Set<string>, nodes: FlowNode[]): string[] {
   const names = new Set<string>()
   for (const node of nodes) {
-    if (!ancestorIds.has(node.id) || !isSimpleFlowNode(node) || node.data.config.kind !== 'setVariables') continue
+    if (!ancestorIds.has(node.id)) continue
+    const form = node.type === 'start' ? node.data.form : isSimpleFlowNode(node) && node.data.config.kind === 'humanAction' ? node.data.config.form : null
+    if (form) for (const field of form.sections.flatMap((section) => section.fields)) {
+      names.add(`nodes.${node.id}.form.${field.id}`)
+      if (field.kind === 'result') for (const column of field.source?.columns ?? []) if (column.path) names.add(`nodes.${node.id}.form.${field.id}.${field.multiple ? '0.' : ''}${column.path}`)
+    }
+    if (!isSimpleFlowNode(node) || node.data.config.kind !== 'setVariables') continue
     for (const assignment of node.data.config.assignments) {
       const name = assignment.name.trim()
       if (name) names.add(name)
@@ -215,6 +229,7 @@ interface PaletteTrigger {
 }
 
 interface FlowCanvasProps {
+  onPresentationChange?: (presentation: FlowPresentation) => void
   onRenameNode?: (previous: string, next: string) => void
   requestSaving?: boolean
   requestDrafts?: Record<string, RequestContent>
@@ -252,6 +267,7 @@ interface FlowCanvasProps {
 
 /** Flow graph editing and execution. Mount with key={flow.id}: React Flow state hooks consume initial values once, so switching flows requires a fresh instance. */
 export function FlowCanvas({
+  onPresentationChange,
   onRenameNode,
   requestSaving = false,
   requestDrafts = {}, onRequestDraftChange, onSaveRequestDrafts, onDiscardRequestDrafts, onPrepareRun,
@@ -283,6 +299,11 @@ export function FlowCanvas({
   const [mappingNodeId, setMappingNodeId] = useState<string | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [logOpen, setLogOpen] = useState(false)
+  const [initialFormOpen, setInitialFormOpen] = useState(false)
+  const pendingInitialAnswers = useRef<FormAnswers | undefined>(undefined)
+  const [humanFormNodeId, setHumanFormNodeId] = useState<string | null>(null)
+  const [presentation, setPresentation] = useState<FlowPresentation>(flow.presentation ?? { panels: [] })
+  const changePresentation = (next: FlowPresentation) => { setPresentation(next); onPresentationChange?.(next) }
   const [inspectorTab, setInspectorTab] = useState<'configuration' | 'data' | 'output'>('configuration')
   const [pendingRun, setPendingRun] = useState(false)
   const [runAfterSave, setRunAfterSave] = useState(false)
@@ -336,6 +357,7 @@ export function FlowCanvas({
     onCallRecorded(consoleEntryFromFlowCall(call, request))
   }
   const standardRun = useFlowRun({
+    flowId: flow.id,
     rootPath,
     flowName: flow.name,
     onRunFinished,
@@ -362,10 +384,10 @@ export function FlowCanvas({
   const isLoadFlow = flow.executionKind === 'load'
   const isRunning = isLoadFlow ? loadRun.isRunning : standardRun.isRunning
   const cancel = isLoadFlow ? loadRun.cancel : standardRun.cancel
-  const { statuses, traversedEdges, logEntries, runStartedAtMs, flowExecutionId, run } = standardRun
-  const [snapshotNodeIds, setSnapshotNodeIds] = useState<Record<string, string>>({})
-  const [snapshotRunId, setSnapshotRunId] = useState(flowExecutionId)
-  if (snapshotRunId !== flowExecutionId) { setSnapshotRunId(flowExecutionId); setSnapshotNodeIds({}) }
+  const { statuses: executionStatuses, traversedEdges, logEntries, runStartedAtMs, flowExecutionId, run } = standardRun
+  const { viewMode, setViewMode } = standardRun
+  const { snapshotNodeIds, setSnapshotNodeIds } = standardRun
+  const statuses = useMemo(() => ({ ...executionStatuses, ...Object.fromEntries(Object.entries(snapshotNodeIds).flatMap(([id, snapshot]) => executionStatuses[snapshot] ? [[id, executionStatuses[snapshot]]] : [])) }), [executionStatuses, snapshotNodeIds])
   const outputVersions = useMemo(() => {
     const versions: Record<string, number> = {}
     for (const entry of logEntries) if (entry.finishedAtMs !== null) versions[entry.nodeId] = (versions[entry.nodeId] ?? 0) + 1
@@ -608,7 +630,7 @@ export function FlowCanvas({
             },
           }
         }
-        return { ...node, data: { visited } }
+        return { ...node, data: { ...node.data, visited, onOpenSettings } }
       }),
     [
       nodes,
@@ -659,10 +681,16 @@ export function FlowCanvas({
     return info
   }, [renderNodes, t])
 
-  const handleRun = useCallback(() => {
+  const handleRun = useCallback((initialAnswers?: FormAnswers) => {
+    const start = fromFlowNodes(nodes).find((node) => node.kind === 'start')
+    if (!isLoadFlow && start?.kind === 'start' && start.form && initialAnswers === undefined) {
+      setInitialFormOpen(true)
+      return
+    }
+    setInitialFormOpen(false)
     if (onPrepareRun && !isLoadFlow) {
       setLoadingLoadPreview(true)
-      void onPrepareRun().then(() => { setLogOpen(true); run() }).catch((reason: unknown) => showToast(t('flows.canvas.runErrorToast', { message: reason instanceof Error ? reason.message : String(reason) }), 'error')).finally(() => setLoadingLoadPreview(false))
+      void onPrepareRun().then(() => { setLogOpen(viewMode !== 'panels'); run(initialAnswers) }).catch((reason: unknown) => showToast(t('flows.canvas.runErrorToast', { message: reason instanceof Error ? reason.message : String(reason) }), 'error')).finally(() => setLoadingLoadPreview(false))
       return
     }
     if (flow.executionKind === 'load') {
@@ -684,9 +712,9 @@ export function FlowCanvas({
       })()
       return
     }
-    setLogOpen(true)
-    run()
-  }, [flow.executionKind, flow.id, loadTestingEnabled, onPrepareLoadRun, onPrepareRun, isLoadFlow, rootPath, run, showToast, t])
+    setLogOpen(viewMode !== 'panels')
+    run(initialAnswers)
+  }, [nodes, viewMode, flow.executionKind, flow.id, loadTestingEnabled, onPrepareLoadRun, onPrepareRun, isLoadFlow, rootPath, run, showToast, t])
 
   const removeEdge = useCallback(
     (edgeId: string) => {
@@ -721,7 +749,7 @@ export function FlowCanvas({
     const node = renderNodes.find((current) => current.id === selectedNodeId)
     if (!node) return null
     if (isSimpleFlowNode(node)) return { id: node.id, ...configOfSimpleNode(node) }
-    if (node.type === 'start') return { id: node.id, kind: 'start' }
+    if (node.type === 'start') return { id: node.id, kind: 'start', form: node.data.form }
     if (node.type === 'block' && node.data.loadKind) {
       return { id: node.id, kind: 'load', loadKind: node.data.loadKind as LoadNodeKindState, label: node.data.label, config: node.data.loadConfig ?? '{}' }
     }
@@ -764,6 +792,7 @@ export function FlowCanvas({
   const mappingDefinitions = [...computeAncestorLocalVariables(mappingAncestors, renderNodes), ...(mappingTarget?.id === selectedNodeId ? definitions.map((definition) => definition.name) : [])]
   const graphSignature = useMemo(() => JSON.stringify({ nodes: fromFlowNodes(nodes).map((node) => ({ ...node, position: undefined })), edges: fromFlowEdges(edges), requests: nodes.filter((node) => node.type === 'request').map((node) => findRequest(collections, (node.data as { requestId: string }).requestId)?.content), environmentVariables }), [nodes, edges, collections, environmentVariables])
   const beginRun = () => {
+    pendingInitialAnswers.current = undefined
     if (draftNodeIds.length > 0) { setPendingRun(true); return }
     setExecutedSignature(graphSignature)
     handleRun()
@@ -789,7 +818,8 @@ export function FlowCanvas({
     const timer = window.setTimeout(() => {
       setRunAfterSave(false)
       setExecutedSignature(graphSignature)
-      handleRun()
+      handleRun(pendingInitialAnswers.current)
+      pendingInitialAnswers.current = undefined
     }, 0)
     return () => window.clearTimeout(timer)
   }, [runAfterSave, draftNodeIds, graphSignature, handleRun])
@@ -962,7 +992,7 @@ export function FlowCanvas({
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || hasOpenModal() || isTextEntryTarget(event.target)) return
+      if (viewMode === 'panels' || event.defaultPrevented || event.isComposing || hasOpenModal() || isTextEntryTarget(event.target)) return
       if (!isShortcutFor(shortcutBindings, 'openBlockPalette', comboFromEvent(event))) return
       const bounds = containerRef.current?.getBoundingClientRect()
       if (!bounds) return
@@ -975,7 +1005,7 @@ export function FlowCanvas({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [shortcutBindings, openPaletteAt])
+  }, [shortcutBindings, openPaletteAt, viewMode])
 
   // Close the screen-anchored palette on canvas movement; programmatic movement such as fitView has no originating event.
   const onMove = useCallback((event: MouseEvent | TouchEvent | null) => {
@@ -994,6 +1024,7 @@ export function FlowCanvas({
   const renameNode = (next: string) => {
     if (!selectedNodeId || standardRun.isRunning || loadRun.isRunning || requestSaving || savingDrafts || identifierError(next, selectedNodeId, nodes)) return
     const previous = selectedNodeId
+    changePresentation({ panels: presentation.panels.map((panel) => panel.nodeId === previous ? { ...panel, nodeId: next } : panel) })
     const graph = renameGraphNode(fromFlowNodes(nodes), fromFlowEdges(edges), previous, next)
     onRenameNode?.(previous, next)
     for (const node of renderNodes) {
@@ -1135,10 +1166,46 @@ export function FlowCanvas({
     closePalette()
   }
 
+  const initialStart = fromFlowNodes(nodes).find((node) => node.kind === 'start')
+  const initialForm = initialStart?.kind === 'start' ? initialStart.form : null
+  const waitingNodes = standardRun.runNodes.filter((node) => node.kind === 'humanAction' && statuses[node.id]?.status === 'waitingForHuman')
+  function renderHumanForm(nodeId: string) {
+    const node = standardRun.runNodes.find((node) => node.id === nodeId)
+    const status = statuses[nodeId]
+    if (node?.kind !== 'humanAction' || status?.status !== 'waitingForHuman' || !status.waitId || !flowExecutionId) return <p className="flow-form-description">{status?.status === 'failed' ? status.message : describeRunStatus(status ?? { status: 'idle' }, t)?.label ?? t('flows.panels.idle')}</p>
+    const request = { flowExecutionId, nodeId, waitId: status.waitId }
+    const answers = standardRun.formDrafts[status.waitId] ?? initialFormAnswers(node.form)
+    return <FlowFormView key={status.waitId} form={node.form} request={request} answers={answers} onChange={(values) => standardRun.setFormDrafts((drafts) => ({ ...drafts, [request.waitId]: values }))} onSubmit={async () => { await submitFlowForm(request, answers); setHumanFormNodeId(null) }} />
+  }
+  function renderInitialForm() {
+    if (!initialForm) return null
+    const answers = standardRun.formDrafts.initial ?? initialFormAnswers(initialForm)
+    return <FlowFormView form={initialForm} answers={answers} disabled={isRunning || loadingLoadPreview || requestSaving} submitLabel={t('flows.canvas.runButtonLabel')} onChange={(values) => standardRun.setFormDrafts((drafts) => ({ ...drafts, initial: values }))} onSubmit={async () => {
+      if (draftNodeIds.length > 0) { pendingInitialAnswers.current = answers; setInitialFormOpen(false); setPendingRun(true); return }
+      setExecutedSignature(graphSignature)
+      handleRun(answers)
+    }} />
+  }
+  function renderPanelContent(node: FlowNodeState) {
+    if (node.kind === 'start') return renderInitialForm()
+    if (node.kind === 'humanAction') return renderHumanForm(node.id)
+    if (node.kind !== 'display') return null
+    const status = statuses[node.id]
+    if (status?.status !== 'completed') return <p className="flow-form-description">{status?.status === 'failed' ? status.message : describeRunStatus(status ?? { status: 'idle' }, t)?.label ?? t('flows.panels.idle')}</p>
+    const sourceId = displayBodyNodeId(node.template)
+    return <DisplayOutput value={status.message ?? ''} format={displayFormats[node.id] ?? 'auto'} source={sourceId && flowExecutionId ? { rootPath, flowExecutionId, nodeId: snapshotNodeIds[sourceId] ?? sourceId, version: outputVersions[sourceId] ?? 0 } : undefined} />
+  }
+
   return (
     <FlowMappingProvider rootPath={rootPath} flowExecutionId={flowExecutionId} onTargetNodeChange={setMappingNodeId} scopeKey={mappingNodeId ?? selectedNodeId ?? ''} sources={mappingSources.filter((source) => source.output !== 'mockServer').map((source) => ({ nodeId: source.nodeId, snapshotNodeId: snapshotNodeIds[source.nodeId], label: source.label, scope: source.output === 'mockRequest' ? 'request' : 'response' }))} references={[...mappingVariables.map((variable) => `{{${variable.name}}}`), ...mappingDefinitions.map((name) => `{{${name}}}`), ...mappingSources.flatMap((source) => source.output === 'mockServer' ? [`{{nodes.${source.nodeId}.server.url}}`] : (source.output === 'mockRequest' ? ['request.body', 'request.method', 'request.path'] : ['response.body', 'response.status', 'response.headers']).map((path) => `{{nodes.${source.nodeId}.${path}}}`))]} onInsert={() => setInspectorTab('configuration')}><div className="flow-canvas-shell flow-studio" style={flowGeometryStyle}>
+    {!isLoadFlow && <div className="flow-mode-toolbar">
+      <FlowTabs items={[{ id: 'diagram', label: t('flows.panels.diagram') }, { id: 'panels', label: t('flows.panels.panels') }]} value={viewMode} onChange={setViewMode} label={t('flows.panels.panels')} />
+      {viewMode === 'panels' && <div className="flow-mode-toolbar-actions"><Button variant="ghost" size="sm" onClick={() => setLogOpen((value) => !value)}>{t('flows.runLog.title')}</Button><Button variant={isRunning ? 'danger' : 'primary'} disabled={loadingLoadPreview || (!isRunning && requestSaving)} onClick={isRunning ? cancel : beginRun}>{isRunning ? t('common.cancel') : t('flows.canvas.runButtonLabel')}</Button></div>}
+    </div>}
+    {waitingNodes.length > 0 && <div className="flow-human-notice" role="status"><span>{t('flows.forms.pending')}</span>{waitingNodes.map((node) => <Button variant="ghost" size="sm" key={node.id} onClick={() => setHumanFormNodeId(node.id)}>{node.kind === 'humanAction' && node.form.title || node.id} · {t('flows.forms.open')}</Button>)}</div>}
     <div
       className="flow-canvas"
+      style={{ display: viewMode === 'panels' ? 'none' : undefined }}
       ref={containerRef}
       data-drop-id={flow.id}
       data-drop-kind="flow"
@@ -1240,6 +1307,8 @@ export function FlowCanvas({
 
       {selection && (
         <NodeInspectorPanel
+          onStartFormChange={(id, form) => setNodes((nodes) => nodes.map((node) => node.id === id && node.type === 'start' ? { ...node, data: { ...node.data, form } } : node))}
+          humanForm={selection.kind === 'humanAction' ? renderHumanForm(selection.id) : undefined}
           snapshotNodeIds={snapshotNodeIds}
           nodeIdentifiers={nodes}
           onRenameNode={onRenameNode ? renameNode : undefined}
@@ -1303,6 +1372,9 @@ export function FlowCanvas({
         <p className="ui-modal-description">{t('flows.studio.runPendingDescription')}</p><div className="ui-modal-actions"><Button variant="ghost" disabled={savingDrafts} onClick={() => setPendingRun(false)}>{t('common.cancel')}</Button><Button variant="ghost" disabled={savingDrafts} onClick={() => { onDiscardRequestDrafts?.(draftNodeIds); setPendingRun(false); setRunAfterSave(true) }}>{t('flows.studio.discardAndRun')}</Button><Button variant="primary" disabled={savingDrafts} aria-busy={savingDrafts} onClick={() => { setSavingDrafts(true); void saveDrafts(draftNodeIds).then(() => { setPendingRun(false); setRunAfterSave(true) }).catch((reason: unknown) => showToast(t('flows.canvas.runErrorToast', { message: reason instanceof Error ? reason.message : String(reason) }), 'error')).finally(() => setSavingDrafts(false)) }}>{t('flows.studio.saveAndRun')}</Button></div>
       </Modal>}
     </div>
+    {viewMode === 'panels' && <FlowPanels nodes={fromFlowNodes(nodes)} presentation={presentation} onChange={changePresentation} statuses={statuses} renderContent={renderPanelContent} />}
+    {initialFormOpen && initialForm && <Modal title={t('flows.forms.start')} closeAriaLabel={t('common.cancel')} onClose={() => setInitialFormOpen(false)} className="ui-modal--form">{renderInitialForm()}</Modal>}
+    {humanFormNodeId && waitingNodes.some((node) => node.id === humanFormNodeId) && <Modal key={humanFormNodeId} title={t('flows.forms.humanAction')} closeAriaLabel={t('common.cancel')} onClose={() => setHumanFormNodeId(null)} className="ui-modal--form">{renderHumanForm(humanFormNodeId)}</Modal>}
     {logOpen && (
       <RunLogPanel
         rootPath={rootPath}

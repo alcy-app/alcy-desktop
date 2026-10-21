@@ -39,6 +39,7 @@ export interface NodeKindAppearance {
 
 /** Shared kind icons, colors and copy for canvas nodes and the block palette. */
 export const NODE_KIND_APPEARANCE: Record<FlowNodeKind, NodeKindAppearance> = {
+  humanAction: { tone: 'control', Icon: BellIcon, titleKey: 'flows.forms.humanAction', labelKey: 'flows.forms.humanAction', descriptionKey: 'flows.forms.humanDescription' },
   start: {
     tone: 'start',
     Icon: FlowIcon,

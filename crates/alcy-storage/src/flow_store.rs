@@ -17,9 +17,9 @@ use crate::storage_error::StorageError;
 // v2 gives unnamed request edges success semantics (spec 0048 / ADR 0016).
 // v3 adds load flows. v4 adds folders; older builds reject the file rather
 // than silently losing workspace organization.
-const CURRENT_VERSION: u32 = 4;
+const CURRENT_VERSION: u32 = 5;
 const LEGACY_VERSION: u32 = 1;
-const PREVIOUS_VERSION: u32 = 3;
+const PREVIOUS_VERSION: u32 = 4;
 const MANIFEST_FILE_NAME: &str = "alcy-flows.json";
 
 /// Complete workspace flow state, loaded and saved atomically.
@@ -48,6 +48,8 @@ struct PersistedFlowFolder {
 pub(crate) struct PersistedFlow {
     id: String,
     name: String,
+    #[serde(default)]
+    presentation: crate::FlowPresentationConfig,
     #[serde(default)]
     execution_kind: PersistedFlowExecutionKind,
     nodes: Vec<PersistedNode>,
@@ -93,7 +95,13 @@ struct PersistedCondition {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum PersistedNodeKind {
-    Start,
+    Start {
+        #[serde(default)]
+        form: Option<crate::FlowFormConfig>,
+    },
+    HumanAction {
+        form: crate::FlowFormConfig,
+    },
     Block {
         label: String,
     },
@@ -253,6 +261,7 @@ impl FlowStore {
 
         if persisted.version != CURRENT_VERSION
             && persisted.version != PREVIOUS_VERSION
+            && persisted.version != 3
             && persisted.version != 2
             && persisted.version != LEGACY_VERSION
         {
@@ -333,7 +342,12 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
             Ok(FlowNode {
                 id: node.id,
                 kind: match node.kind {
-                    PersistedNodeKind::Start => FlowNodeKind::Start,
+                    PersistedNodeKind::Start { form } => form.map_or(FlowNodeKind::Start, |form| {
+                        FlowNodeKind::StartForm { form: form.into() }
+                    }),
+                    PersistedNodeKind::HumanAction { form } => {
+                        FlowNodeKind::HumanAction { form: form.into() }
+                    }
                     PersistedNodeKind::Block { label } => FlowNodeKind::Block { label },
                     PersistedNodeKind::Request { request_id } => {
                         FlowNodeKind::Request { request_id }
@@ -486,6 +500,10 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
         UNIX_EPOCH + Duration::from_millis(persisted.created_at_ms),
         UNIX_EPOCH + Duration::from_millis(persisted.updated_at_ms),
     )
+    .and_then(|mut flow| {
+        flow.set_presentation(persisted.presentation.into())?;
+        Ok(flow)
+    })
     .map_err(|error| StorageError::Corrupted(error.to_string()))
 }
 
@@ -548,6 +566,7 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
     PersistedFlow {
         id: flow.id.clone(),
         name: flow.name().to_string(),
+        presentation: flow.presentation.clone().into(),
         execution_kind: match flow.execution_kind() {
             FlowExecutionKind::Standard => PersistedFlowExecutionKind::Standard,
             FlowExecutionKind::Load => PersistedFlowExecutionKind::Load,
@@ -558,7 +577,13 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
             .map(|node| PersistedNode {
                 id: node.id.clone(),
                 kind: match &node.kind {
-                    FlowNodeKind::Start => PersistedNodeKind::Start,
+                    FlowNodeKind::Start => PersistedNodeKind::Start { form: None },
+                    FlowNodeKind::StartForm { form } => PersistedNodeKind::Start {
+                        form: Some(form.clone().into()),
+                    },
+                    FlowNodeKind::HumanAction { form } => PersistedNodeKind::HumanAction {
+                        form: form.clone().into(),
+                    },
                     FlowNodeKind::Block { label } => PersistedNodeKind::Block {
                         label: label.clone(),
                     },
@@ -922,7 +947,7 @@ mod tests {
 
         store.save(&snapshot).unwrap();
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
-        assert!(raw.contains("\"version\": 4"));
+        assert!(raw.contains("\"version\": 5"));
 
         assert_eq!(store.load().unwrap(), snapshot);
 
@@ -974,7 +999,7 @@ mod tests {
 
         store.save(&snapshot).unwrap();
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
-        assert!(raw.contains("\"version\": 4"));
+        assert!(raw.contains("\"version\": 5"));
         assert!(raw.contains("\"execution_kind\": \"load\""));
         assert_eq!(store.load().unwrap(), snapshot);
 
@@ -1308,12 +1333,89 @@ mod tests {
     }
 
     #[test]
-    fn reads_all_older_versions_without_folders_and_saves_as_v4() {
+    fn round_trips_forms_and_independent_panel_positions_in_v5() {
+        use alcy_domain::{
+            FlowForm, FlowFormField, FlowFormFieldKind, FlowFormSection, FlowPanel,
+            FlowPresentation,
+        };
+        let root = temp_root();
+        let form = FlowForm {
+            title: "Input".into(),
+            sections: vec![FlowFormSection {
+                id: "main".into(),
+                title: "Details".into(),
+                collapsed: true,
+                fields: vec![FlowFormField {
+                    id: "quantity".into(),
+                    label: "Quantity".into(),
+                    kind: FlowFormFieldKind::Number,
+                    min: Some(1.0),
+                    step: Some(1.0),
+                    required: true,
+                    initial_value: "2".into(),
+                    ..Default::default()
+                }],
+            }],
+            ..Default::default()
+        };
+        let now = millis_now();
+        let mut flow = Flow::new(
+            "form-flow",
+            "Operator flow",
+            vec![
+                FlowNode {
+                    id: "start".into(),
+                    kind: FlowNodeKind::StartForm { form: form.clone() },
+                    position: FlowPosition { x: 0.0, y: 0.0 },
+                },
+                FlowNode {
+                    id: "human".into(),
+                    kind: FlowNodeKind::HumanAction { form },
+                    position: FlowPosition { x: 300.0, y: 0.0 },
+                },
+            ],
+            vec![FlowEdge {
+                id: "edge".into(),
+                source_node_id: "start".into(),
+                target_node_id: "human".into(),
+                source_handle: None,
+            }],
+            now,
+            now,
+        )
+        .unwrap();
+        flow.set_presentation(FlowPresentation {
+            panels: vec![FlowPanel {
+                node_id: "human".into(),
+                title: "Review".into(),
+                x: 40.0,
+                y: 80.0,
+                width: 500.0,
+                height: 450.0,
+            }],
+        })
+        .unwrap();
+        let expected = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
+        let store = FlowStore::new(root.clone());
+        store.save(&expected).unwrap();
+        assert_eq!(store.load().unwrap(), expected);
+        let serialized = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert!(serialized.contains("\"version\": 5"));
+        assert!(serialized.contains("humanAction"));
+        assert!(serialized.contains("initialValue"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reads_all_older_versions_without_folders_and_saves_as_v5() {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
         let store = FlowStore::new(root.clone());
         let snapshot = sample_snapshot();
-        for version in 1..=3 {
+        for version in 1..=4 {
             let legacy = serde_json::json!({
                 "version": version,
                 "flows": snapshot.flows.iter().map(persisted_from_flow).collect::<Vec<_>>(),
@@ -1325,7 +1427,7 @@ mod tests {
             let saved: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap())
                     .unwrap();
-            assert_eq!(saved["version"], 4);
+            assert_eq!(saved["version"], 5);
         }
         fs::remove_dir_all(root).ok();
     }

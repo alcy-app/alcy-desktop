@@ -5,35 +5,32 @@ use std::sync::{Mutex, MutexGuard};
 use alcy_app::FlowCancellation;
 use tokio::sync::watch;
 
-/// Irmã de `ExecutionRegistry` (spec 0005), mas com um payload diferente:
-/// cancelar um flow precisa alcançar N execuções de node em voo ao mesmo
-/// tempo, o que um `oneshot::Sender` (um único disparo) não permite —
-/// `watch::Sender<bool>` pode ser observado por quantos `Receiver` clonados
-/// forem necessários. Rastreia sinais por `flow_execution_id`; `cancel` e
-/// `remove` são idempotentes.
+/// Execution-scoped broadcast cancellation using watch::Sender<bool>, reaching all active nodes. Unlike oneshot, multiple receivers observe it. Cancellation and removal are idempotent.
 #[derive(Default)]
 pub struct FlowExecutionRegistry {
+    pub human: super::flow_human_input::HumanFormRegistry,
     senders: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 
 impl FlowExecutionRegistry {
+    pub fn is_running(&self, flow_execution_id: &str) -> bool {
+        self.lock_senders().contains_key(flow_execution_id)
+    }
     pub fn register(&self, flow_execution_id: String, sender: watch::Sender<bool>) {
         self.lock_senders().insert(flow_execution_id, sender);
     }
 
     pub fn remove(&self, flow_execution_id: &str) {
+        self.human.cancel_execution(flow_execution_id);
         self.lock_senders().remove(flow_execution_id);
     }
 
-    /// Idempotente: não faz nada se o id não existir ou já tiver sido
-    /// removido. Não remove a entrada — diferente de `ExecutionRegistry`,
-    /// um `watch::Sender` aceita mais de um sinal (`cancel_flow` chamado de
-    /// novo enquanto o run ainda está limpando é um no-op seguro, não um
-    /// erro).
+    /// Idempotent for unknown or removed IDs. Retain the sender until cleanup finishes so repeated cancellation is harmless.
     pub fn cancel(&self, flow_execution_id: &str) {
         if let Some(sender) = self.lock_senders().get(flow_execution_id) {
             let _ = sender.send(true);
         }
+        self.human.cancel_execution(flow_execution_id);
     }
 
     fn lock_senders(&self) -> MutexGuard<'_, HashMap<String, watch::Sender<bool>>> {
@@ -48,9 +45,7 @@ impl FlowExecutionRegistry {
     }
 }
 
-/// Implementação concreta de `FlowCancellation` sobre um
-/// `watch::Receiver<bool>` — o tipo concreto do tokio fica em `src-tauri`;
-/// `alcy-app` só conhece a porta (ver `execute_flow.rs`, spec 0043).
+/// Native FlowCancellation adapter around watch::Receiver<bool>; the application depends only on the port (spec 0043).
 pub(crate) struct WatchCancellation(pub(crate) watch::Receiver<bool>);
 
 impl FlowCancellation for WatchCancellation {
@@ -66,9 +61,7 @@ impl FlowCancellation for WatchCancellation {
                     return;
                 }
                 if receiver.changed().await.is_err() {
-                    // O sender foi descartado sem nunca cancelar (run
-                    // terminou normalmente) — nunca resolve, para não
-                    // vencer a corrida contra a execução em `execute_request`.
+                    // Normal completion drops the sender without cancelling; remain pending so this future cannot win the execution race.
                     std::future::pending::<()>().await;
                 }
             }

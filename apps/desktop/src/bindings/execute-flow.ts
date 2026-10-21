@@ -1,9 +1,11 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
+import type { FormAnswers } from './flow-forms'
 import type { FlowEdgeDto, FlowNodeDto } from './list-flows'
 import type { EnvironmentVariableDto } from './list-environments'
 import type { ConnectionInfo, Cookie, ResponseBodyEncoding, ResponseHeader, ScopedVariableChange } from './execute-graphql-request'
 
 export interface ExecuteFlowInput {
+  initialAnswers?: FormAnswers
   flowExecutionId: string
   rootPath: string
   /** Only labels the run in history. */
@@ -44,6 +46,8 @@ export interface FlowExchangeDto {
 }
 
 export type FlowRunEventDto =
+  | { type: 'nodeWaitingForHuman'; nodeId: string; waitId: string | null }
+  | { type: 'nodeFormSubmitted'; nodeId: string }
   | { type: 'nodeStarted'; nodeId: string }
   | { type: 'nodeCallResolved'; nodeId: string; requestUrl: string; resolvedUrl: string; variables: CallVariableDto[] }
   | { type: 'nodeSucceeded'; nodeId: string; statusCode: number; durationMs: number }

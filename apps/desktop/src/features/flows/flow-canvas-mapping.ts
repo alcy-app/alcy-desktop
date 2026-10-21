@@ -37,7 +37,7 @@ export function toFlowNodes(nodes: FlowNodeState[]): FlowNode[] {
         id: node.id,
         type: 'start',
         position: node.position,
-        data: {},
+        data: { form: node.form },
         deletable: false,
       }
     }

@@ -4,67 +4,46 @@ use alcy_domain::{Flow, FlowNodeKind};
 
 use crate::execute_flow::FlowRunError;
 
-/// Saída de um `While` que leva ao corpo do loop (ADR 0033).
+/// While output entering its loop body (ADR 0033).
 pub(crate) const LOOP_HANDLE: &str = "loop";
 
-/// Um sucessor de um node, junto do handle de origem da edge que os liga —
-/// `None` para toda edge saindo de um node de saída única;
-/// `Some("true"|"false")` para as edges de um `If`, `Some("success"|"failure")`
-/// para as de um `Request` e `Some("done")` para a saída de um `While`. O
-/// scheduler (`execute_flow.rs`) usa isso para só propagar a execução pelo
-/// ramo decidido, sem deixar o ramo não escolhido travado (grau de entrada
-/// nunca chegando a zero). As edges `"loop"` de um `While` não entram aqui —
-/// ver `FlowGraph::loop_bodies`.
+/// Successor and source handle for dependency scheduling. Only the selected branch propagates; untaken dependencies still resolve. While loop edges belong to loop_bodies instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Successor {
     pub(crate) target_node_id: String,
     pub(crate) source_handle: Option<String>,
 }
 
-/// Forma estrutural de um flow, pronta para um scheduler dinâmico decidir
-/// node a node o que despachar em seguida — nenhuma noção de "onda"/camada
-/// de execução. Puro/sem I/O — só depende da forma do grafo.
+/// Pure graph structure for dependency scheduling, without execution-layer barriers or I/O.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FlowGraph {
-    /// `source_node_id -> [Successor]`, a partir de todas as edges exceto as
-    /// `"loop"` de um `While` (o corpo é disparado pelo próprio `While`).
+    /// Successors by source ID, excluding While loop edges because While dispatches its body.
     pub(crate) successors: HashMap<String, Vec<Successor>>,
-    /// Grau de entrada inicial de cada node alcançável a partir do Start
-    /// (edges saindo do Start e edges `"loop"` não contam — o Start está
-    /// sempre resolvido antes de qualquer node real, e as entradas de um
-    /// corpo são disparadas pelo `While`). Um node do nível de cima (sem
-    /// dono em `loop_owners`) com grau 0 está pronto assim que o run começa.
+    /// Incoming degree excluding Start and loop edges. Top-level zero-degree nodes are ready at run start.
     pub(crate) initial_in_degree: HashMap<String, usize>,
-    /// Nodes sem caminho a partir do Start.
+    /// Nodes with no path from Start.
     pub(crate) unreachable: Vec<String>,
-    /// Predecessores reais (diretos ou transitivos, via edge) de cada node
-    /// alcançável — usado para validar que `{{nodes.<id>...}}` só resolve
-    /// para uma dependência de verdade, não qualquer node que já tenha
-    /// terminado.
+    /// Actual direct/transitive predecessors restricting references to dependencies, independent of completion timing.
     pub(crate) ancestors: HashMap<String, HashSet<String>>,
-    /// `While -> todos os nodes do corpo` (inclusive os de `While`s
-    /// aninhados): o que é alcançável pelas edges `"loop"` dele.
+    /// Nodes reachable through a While loop output, including nested loop bodies.
     pub(crate) loop_bodies: HashMap<String, HashSet<String>>,
-    /// `node -> While` mais interno cujo corpo o contém. Nodes do nível de
-    /// cima não aparecem.
+    /// Innermost While owning each body node; top-level nodes have no owner.
     pub(crate) loop_owners: HashMap<String, String>,
-    /// `While -> nodes` dos quais ele é o dono direto — os que precisam
-    /// concluir para uma iteração terminar.
+    /// Directly owned body nodes that must finish before the While iteration completes.
     pub(crate) loop_members: HashMap<String, Vec<String>>,
 }
 
-/// Calcula a forma do grafo via BFS (alcançabilidade a partir do Start)
-/// seguido do algoritmo de Kahn restrito ao subgrafo alcançável — arestas
-/// que saem do Start não contam para o grau de entrada de um node, já que o
-/// Start está sempre resolvido antes de qualquer node real ser despachado.
-/// Um node alcançável que sobra depois do algoritmo de Kahn terminar indica
-/// um ciclo alcançável a partir do Start. Depois, delimita o corpo de cada
-/// `While` e exige que seja fechado (ADR 0033).
+/// BFS determines reachability, then Kahn detects cycles and calculates ancestry with Start already resolved. Finally require closed While bodies (ADR 0033).
 pub(crate) fn build_flow_graph(flow: &Flow) -> Result<FlowGraph, FlowRunError> {
     let start_id = flow
         .nodes()
         .iter()
-        .find(|node| matches!(node.kind, FlowNodeKind::Start))
+        .find(|node| {
+            matches!(
+                node.kind,
+                FlowNodeKind::Start | FlowNodeKind::StartForm { .. }
+            )
+        })
         .map(|node| node.id.as_str())
         .ok_or(FlowRunError::MissingStartNode)?;
 
@@ -100,8 +79,7 @@ pub(crate) fn build_flow_graph(flow: &Flow) -> Result<FlowGraph, FlowRunError> {
         }
     }
 
-    // Anotações não se conectam (`Flow::new`) e não fazem parte da execução
-    // — ficam fora até da lista de inalcançáveis, para não gerar evento.
+    // Notes cannot connect or execute and do not generate unreachable events.
     let unreachable: Vec<String> = flow
         .nodes()
         .iter()
@@ -111,11 +89,9 @@ pub(crate) fn build_flow_graph(flow: &Flow) -> Result<FlowGraph, FlowRunError> {
         .map(str::to_string)
         .collect();
 
-    // Grau de entrada com todas as edges (inclusive `"loop"`) — só para o
-    // Kahn, que detecta ciclos e calcula ancestrais: os nodes antes de um
-    // `While` são ancestrais do corpo dele.
+    // Include loop edges for cycle detection and ancestry: While predecessors are ancestors of its body.
     let mut full_in_degree: HashMap<&str, usize> = reachable.iter().map(|&id| (id, 0)).collect();
-    // Grau de entrada do scheduler — sem as edges `"loop"`.
+    // Scheduler degree excludes loop edges.
     let mut in_degree: HashMap<&str, usize> = reachable.iter().map(|&id| (id, 0)).collect();
     for edge in flow.edges() {
         if edge.source_node_id == start_id {
@@ -136,8 +112,20 @@ pub(crate) fn build_flow_graph(flow: &Flow) -> Result<FlowGraph, FlowRunError> {
         }
     }
 
-    let mut ancestors: HashMap<&str, HashSet<&str>> =
-        reachable.iter().map(|&id| (id, HashSet::new())).collect();
+    // A form-bearing Start produces data; a plain Start remains scheduler-only.
+    let start_ancestors = if flow
+        .nodes()
+        .iter()
+        .any(|node| node.id == start_id && matches!(node.kind, FlowNodeKind::StartForm { .. }))
+    {
+        HashSet::from([start_id])
+    } else {
+        HashSet::new()
+    };
+    let mut ancestors: HashMap<&str, HashSet<&str>> = reachable
+        .iter()
+        .map(|&id| (id, start_ancestors.clone()))
+        .collect();
     let mut working_in_degree = full_in_degree;
     let mut ready: VecDeque<&str> = working_in_degree
         .iter()
@@ -220,11 +208,7 @@ pub(crate) fn build_flow_graph(flow: &Flow) -> Result<FlowGraph, FlowRunError> {
     })
 }
 
-/// Corpo de cada `While` alcançável: tudo o que é alcançável pelas edges
-/// `"loop"` dele. Rejeita um corpo aberto — uma edge saindo do corpo para
-/// fora dele, ou entrando nele por outro caminho que não a própria `"loop"`
-/// (ADR 0033). Com corpos fechados, corpos de `While`s diferentes são
-/// disjuntos ou aninhados.
+/// While bodies contain nodes reachable through their loop outputs. Reject external entries and escaping edges; closed bodies are disjoint or nested (ADR 0033).
 fn loop_bodies(
     flow: &Flow,
     successors: &HashMap<&str, Vec<(&str, Option<&str>)>>,
@@ -273,8 +257,7 @@ fn loop_bodies(
     Ok(bodies)
 }
 
-/// Dono de cada node dentro de algum corpo: o `While` de menor corpo que o
-/// contém — o mais interno, já que corpos são disjuntos ou aninhados.
+/// The smallest enclosing While body owns each node.
 fn loop_owners(loop_bodies: &HashMap<String, HashSet<String>>) -> HashMap<String, String> {
     let mut owners: HashMap<String, String> = HashMap::new();
     for (while_id, body) in loop_bodies {
@@ -570,7 +553,7 @@ mod tests {
         assert_eq!(graph.loop_owners["c"], "outer");
         assert_eq!(graph.loop_owners["b"], "inner");
         assert!(!graph.loop_owners.contains_key("d"));
-        // Edges `loop` não contam no grau de entrada nem viram sucessores.
+        // Loop edges do not contribute to scheduler degrees or successors.
         assert_eq!(graph.initial_in_degree["a"], 0);
         assert_eq!(graph.initial_in_degree["b"], 0);
         assert!(
@@ -578,7 +561,7 @@ mod tests {
                 .iter()
                 .all(|successor| successor.source_handle.as_deref() == Some("done"))
         );
-        // Mas o `While` e o que vem antes dele são ancestrais do corpo.
+        // While and its predecessors remain body ancestors.
         assert!(ancestors_of(&graph, "b").contains("outer"));
     }
 

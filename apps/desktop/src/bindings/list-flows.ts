@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { FlowForm, FlowPresentation } from './flow-forms'
 import type { SavedRequestDto } from './list-collections'
 import type { MockServerDto } from './mock-servers'
 
@@ -43,7 +44,8 @@ export type MockServerSourceDto = { type: 'saved'; serverId: string } | { type: 
 export type MockCallCountOperatorDto = 'equals' | 'atLeast' | 'atMost'
 
 export type FlowNodeKindDto =
-  | { kind: 'start' }
+  | { kind: 'start'; form?: FlowForm | null }
+  | { kind: 'humanAction'; form: FlowForm }
   | { kind: 'block'; label: string }
   | { kind: 'request'; requestId: string }
   | { kind: 'if'; condition: ConditionDto }
@@ -80,6 +82,7 @@ export interface FlowEdgeDto {
 }
 
 export interface FlowDto {
+  presentation?: FlowPresentation
   id: string
   name: string
   executionKind: FlowExecutionKindDto

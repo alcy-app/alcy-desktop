@@ -6,11 +6,13 @@ import { applyEventToLog, startLogEntry } from './run-log'
 import type { RunLogEntry } from './run-log'
 import type { NodeRunStatus } from './use-flow-run'
 
-/** Status que um evento define para o node, ou `null` quando ele não muda o
- * status (`nodeCallResolved` só alimenta o log). Compartilhado pelo run ao
- * vivo e pela reexecução de um run do histórico. */
+/** Status update defined by an event, or null for log-only events. Shared by live execution and history replay. */
 export function nodeStatusFromEvent(event: FlowRunEventDto): { nodeId: string; status: NodeRunStatus } | null {
   switch (event.type) {
+    case 'nodeWaitingForHuman':
+      return { nodeId: event.nodeId, status: { status: 'waitingForHuman', waitId: event.waitId } }
+    case 'nodeFormSubmitted':
+      return { nodeId: event.nodeId, status: { status: 'running' } }
     case 'nodeStarted':
       return { nodeId: event.nodeId, status: { status: 'running' } }
     case 'nodeSucceeded':
@@ -40,9 +42,7 @@ export interface ReplayedRun {
   logEntries: RunLogEntry[]
 }
 
-/** Reconstrói o estado final de um run gravado reaplicando seus eventos, na
- * ordem e com a hora em que chegaram, pelos mesmos passos do run ao vivo
- * (`useFlowRun`): status por node, edges percorridas e log. */
+/** Reconstruct recorded status, traversed edges and log entries using timestamped events and the live reducers. */
 export function replayRun(
   nodes: FlowNodeState[],
   edges: FlowEdgeState[],
@@ -60,7 +60,7 @@ export function replayRun(
   for (const { atMs, event } of events) {
     if (!receivedFirstEvent) {
       receivedFirstEvent = true
-      // O motor não reporta o Start: entra no log e acende suas edges junto do primeiro evento.
+      // The engine omits Start; its log entry and outgoing trail appear with the first event.
       startEdgeIds.forEach((id) => traversed.add(id))
       logEntries = startIds.reduce((entries, id) => [...entries, startLogEntry(id, runStartedAtMs)], logEntries)
     }

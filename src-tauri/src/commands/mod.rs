@@ -21,6 +21,7 @@ pub mod export_png;
 pub mod export_webclient;
 pub mod failure_cause;
 pub mod flow_execution_registry;
+pub mod flow_human_input;
 pub mod flow_run_outputs;
 pub mod flows;
 pub mod general_settings;

@@ -1,0 +1,17 @@
+.flow-mode-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.flow-mode-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.flow-panels { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.flow-panels-tools { padding: 8px 16px; display: flex; gap: 8px; }
+.flow-panels-chooser { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: var(--font-size-sm); max-height: 180px; overflow: auto; }
+.flow-panels-scroll { flex: 1; min-height: 0; overflow: auto; }
+.flow-panels-board { position: relative; }
+.flow-panels-empty { color: var(--text-muted); padding: 40px 24px; font-size: var(--font-size-base); }
+.flow-panel-card { position: absolute; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; box-sizing: border-box; }
+.flow-panel-card--arranging { border-style: dashed; border-color: var(--accent); }
+.flow-panel-header { min-height: 44px; padding: 10px 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); font-size: var(--font-size-base); }
+.flow-panel-header > strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-heading); }
+.flow-panel-header > .ui-input { min-width: 0; flex: 1; }
+.flow-panel-content { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+.flow-panel-move, .flow-panel-resize { background: transparent; border: 0; color: var(--text-muted); cursor: grab; touch-action: none; font-size: var(--font-size-xl); }
+.flow-panel-move:focus-visible, .flow-panel-resize:focus-visible { outline: var(--focus-ring); }
+.flow-panel-resize { position: absolute; right: 2px; bottom: 2px; width: 24px; height: 24px; cursor: nwse-resize; background: var(--surface); }

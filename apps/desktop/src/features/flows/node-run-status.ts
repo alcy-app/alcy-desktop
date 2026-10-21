@@ -3,28 +3,25 @@ import type { NodeRunStatus } from './use-flow-run'
 
 export type RunChipTone = 'neutral' | 'accent' | 'success' | 'warning' | 'error'
 
-/** Chip de status no cabeçalho do cartão (spec 0087). */
+/** Status chip in the node card header (spec 0087). */
 export interface RunStatusChip {
   tone: RunChipTone
   label: string
-  /** Texto secundário ao lado do rótulo (ex.: duração da requisição). */
+  /** Secondary text beside the label, such as request duration. */
   detail?: string
 }
 
 type Translate = (key: TranslationKey, params?: TranslationParams) => string
 
-/** Um único mapeamento de `NodeRunStatus` para o chip, compartilhado por
- * todos os tipos de node — cada status só é produzido pelos tipos que fazem
- * sentido (`branched` pelo `if`, `looping` pelo `while` etc.). A mensagem de
- * falha não entra aqui: vai para a faixa de erro do cartão. */
+/** Shared status-to-chip mapping. Failure details appear in the card error strip. */
 export function describeRunStatus(runStatus: NodeRunStatus, t: Translate): RunStatusChip | null {
   switch (runStatus.status) {
+    case 'waitingForHuman':
+      return { tone: 'warning', label: t('flows.forms.waiting') }
     case 'idle':
       return null
     case 'running':
-      // Sem spinner: uma animação de `transform` dentro do viewport faz o
-      // WebKitGTK compor o canvas inteiro numa camada rasterizada na escala
-      // 1, e todos os nodes ficam borrados no zoom até o canvas remontar.
+      // A transform-animated spinner makes WebKitGTK rasterize the whole viewport at scale 1, blurring zoomed nodes until remount.
       return { tone: 'accent', label: t('flows.canvas.nodeRunningLabel') }
     case 'success':
       return {
@@ -54,9 +51,7 @@ export function describeRunStatus(runStatus: NodeRunStatus, t: Translate): RunSt
   }
 }
 
-/** Classes de estado do cartão durante/depois de um run: em execução
- * (`running` ou uma iteração de `while`), pulado (esmaecido), com falha e
- * rastro (`visited`, a varredura de luz). */
+/** Card classes for active execution, skipped nodes, failures and the visited trail. */
 export function runStateClass(runStatus: NodeRunStatus, visited: boolean | undefined): string {
   if (runStatus.status === 'running' || runStatus.status === 'looping') return 'flow-node--active'
   if (runStatus.status === 'skipped') return 'flow-node--skipped'

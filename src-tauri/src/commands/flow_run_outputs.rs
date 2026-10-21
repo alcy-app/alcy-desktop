@@ -90,7 +90,6 @@ impl FlowNodeOutput {
 
 #[derive(Default)]
 struct State {
-    flow_execution_id: Option<String>,
     outputs: HashMap<String, FlowNodeOutput>,
     revisions: HashMap<String, u64>,
     archive: Option<FlowBodyCapture>,
@@ -99,28 +98,29 @@ struct State {
 /// The latest run's in-memory previews and body capture. Starting another run releases previous session-only data; archived history remains available separately.
 #[derive(Default)]
 pub struct FlowRunOutputs {
-    state: Mutex<State>,
+    state: Mutex<HashMap<String, State>>,
 }
 
 impl FlowRunOutputs {
     pub fn begin(&self, flow_execution_id: &str) {
-        let mut state = self.lock();
-        state.flow_execution_id = Some(flow_execution_id.to_string());
-        state.outputs.clear();
-        state.revisions.clear();
-        state.archive = None;
+        self.lock()
+            .insert(flow_execution_id.into(), State::default());
     }
 
-    pub fn attach_archive(&self, archive: FlowBodyCapture) {
-        self.lock().archive = Some(archive);
+    pub fn release(&self, execution_id: &str) {
+        self.lock().remove(execution_id);
+    }
+
+    pub fn attach_archive(&self, execution_id: &str, archive: FlowBodyCapture) {
+        if let Some(state) = self.lock().get_mut(execution_id) {
+            state.archive = Some(archive);
+        }
     }
 
     pub fn archive(&self, execution_id: &str) -> Option<FlowBodyCapture> {
-        let state = self.lock();
-        if state.flow_execution_id.as_deref() != Some(execution_id) {
-            return None;
-        }
-        state.archive.clone()
+        self.lock()
+            .get(execution_id)
+            .and_then(|state| state.archive.clone())
     }
 
     pub fn store(
@@ -146,10 +146,10 @@ impl FlowRunOutputs {
     }
 
     fn insert(&self, flow_execution_id: &str, node_id: &str, output: FlowNodeOutput) {
-        let mut state = self.lock();
-        if state.flow_execution_id.as_deref() != Some(flow_execution_id) {
+        let mut states = self.lock();
+        let Some(state) = states.get_mut(flow_execution_id) else {
             return;
-        }
+        };
         if let Some(revision) = state
             .archive
             .as_ref()
@@ -166,10 +166,10 @@ impl FlowRunOutputs {
         execution_id: &str,
         node_id: &str,
     ) -> (Option<FlowNodeOutput>, Option<u64>) {
-        let state = self.lock();
-        if state.flow_execution_id.as_deref() != Some(execution_id) {
+        let states = self.lock();
+        let Some(state) = states.get(execution_id) else {
             return (None, None);
-        }
+        };
         (
             state.outputs.get(node_id).cloned(),
             state.revisions.get(node_id).copied(),
@@ -177,14 +177,12 @@ impl FlowRunOutputs {
     }
 
     pub fn get(&self, flow_execution_id: &str, node_id: &str) -> Option<FlowNodeOutput> {
-        let state = self.lock();
-        if state.flow_execution_id.as_deref() != Some(flow_execution_id) {
-            return None;
-        }
-        state.outputs.get(node_id).cloned()
+        self.lock()
+            .get(flow_execution_id)
+            .and_then(|state| state.outputs.get(node_id).cloned())
     }
 
-    fn lock(&self) -> MutexGuard<'_, State> {
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, State>> {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -205,6 +203,20 @@ pub fn get_flow_node_output(
     outputs: tauri::State<'_, FlowRunOutputs>,
 ) -> Option<FlowNodeOutput> {
     outputs.get(&input.flow_execution_id, &input.node_id)
+}
+
+/// Release session data only after its execution has ended.
+#[tauri::command]
+pub fn release_flow_run(
+    flow_execution_id: String,
+    outputs: tauri::State<'_, FlowRunOutputs>,
+    registry: tauri::State<'_, super::flow_execution_registry::FlowExecutionRegistry>,
+) -> Result<(), String> {
+    if registry.is_running(&flow_execution_id) {
+        return Err("runActive".into());
+    }
+    outputs.release(&flow_execution_id);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -240,13 +252,15 @@ mod tests {
     }
 
     #[test]
-    fn a_new_run_discards_the_previous_outputs() {
+    fn parallel_runs_keep_separate_outputs_until_released() {
         let outputs = FlowRunOutputs::default();
         outputs.begin("run-1");
         outputs.store("run-1", "node-a", &response("x"));
 
         outputs.begin("run-2");
 
+        assert_eq!(outputs.get("run-1", "node-a").unwrap().body, "x");
+        outputs.release("run-1");
         assert_eq!(outputs.get("run-1", "node-a"), None);
         assert_eq!(outputs.get("run-2", "node-a"), None);
     }

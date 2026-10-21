@@ -1,16 +1,14 @@
 import type { CallVariableDto, FlowRunEventDto } from '../../bindings/execute-flow'
 import type { NodeRunStatus } from './use-flow-run'
 
-/** URL chamada por um node de requisição naquele run: a template como estava
- * salva, a enviada e o valor de cada variável no momento da chamada. */
+/** Request call details: saved URL template, resolved URL and variable values at dispatch. */
 export interface RunLogCall {
   requestUrl: string
   resolvedUrl: string
   variables: CallVariableDto[]
 }
 
-/** Uma linha do log de um Run: um node por entrada, na ordem em que o run o
- * alcançou. `finishedAtMs` é `null` enquanto o node ainda executa. */
+/** One entry per reached node, in execution order. finishedAtMs stays null while the node is active. */
 export interface RunLogEntry {
   nodeId: string
   startedAtMs: number
@@ -36,21 +34,23 @@ function finishedStatus(event: FlowRunEventDto): NodeRunStatus | null {
     case 'nodeCancelled':
       return { status: 'cancelled' }
     case 'nodeSkipped':
-      // Só entra no log o que o run de fato atravessou: nodes pulados (ramo não
-      // tomado, inalcançável, run cancelado antes de começar) não foram executados.
+      // Only reached nodes enter the log; untaken, unreachable and cancelled-before-start nodes did not run.
       return event.reason === 'notRunnable' ? { status: 'skipped', reason: 'notRunnable' } : null
     default:
       return null
   }
 }
 
-/** Entrada inicial do log para um node que o motor não reporta (o Start). */
+/** Initial entry for Start, which the engine does not report. */
 export function startLogEntry(nodeId: string, nowMs: number): RunLogEntry {
   return { nodeId, startedAtMs: nowMs, finishedAtMs: nowMs, status: { status: 'skipped', reason: 'notRunnable' } }
 }
 
-/** Aplica um evento do run ao log, sem mutar o array recebido. */
+/** Apply a run event without mutating the input array. */
 export function applyEventToLog(entries: RunLogEntry[], event: FlowRunEventDto, nowMs: number): RunLogEntry[] {
+  if (event.type === 'nodeWaitingForHuman' || event.type === 'nodeFormSubmitted') {
+    return entries.map((entry) => entry.nodeId === event.nodeId && entry.finishedAtMs === null ? { ...entry, status: event.type === 'nodeWaitingForHuman' ? { status: 'waitingForHuman', waitId: event.waitId } : { status: 'running' } } : entry)
+  }
   if (event.type === 'runFinished' || event.type === 'scriptsFinished') return entries
 
   if (event.type === 'nodeStarted') {
@@ -72,8 +72,7 @@ export function applyEventToLog(entries: RunLogEntry[], event: FlowRunEventDto, 
   return entries.map((entry, index) => (index === openIndex ? { ...entry, finishedAtMs: nowMs, status } : entry))
 }
 
-/** Duração exibida: a medida pelo motor quando há (resposta recebida), senão o
- * intervalo observado no frontend; `null` enquanto o node ainda executa. */
+/** Engine duration when available, otherwise the observed frontend interval; null while active. */
 export function entryDurationMs(entry: RunLogEntry): number | null {
   if (entry.status.status === 'success') return entry.status.durationMs
   if (entry.finishedAtMs === null) return null

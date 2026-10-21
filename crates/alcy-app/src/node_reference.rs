@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use alcy_domain::Response;
 use thiserror::Error;
@@ -7,32 +8,47 @@ use crate::json_path::{JsonPathError, evaluate_json_path};
 use crate::mock_control::CapturedRequest;
 
 /// Completed flow responses. References require real direct/transitive ancestry independently of timing. Mock nodes also record captured requests and server URLs.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct NodeRunHistory {
-    responses: HashMap<String, Response>,
-    requests: HashMap<String, CapturedRequest>,
+    forms: HashMap<String, Arc<serde_json::Value>>,
+    responses: HashMap<String, Arc<Response>>,
+    requests: HashMap<String, Arc<CapturedRequest>>,
     server_urls: HashMap<String, String>,
 }
 
 impl NodeRunHistory {
+    pub fn record_form(&mut self, node_id: String, values: crate::FormAnswers) {
+        self.forms
+            .insert(node_id, Arc::new(serde_json::Value::Object(values)));
+    }
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn record(&mut self, node_id: String, response: Response) {
-        self.responses.insert(node_id, response);
+        self.responses.insert(node_id, Arc::new(response));
     }
 
     pub fn get(&self, node_id: &str) -> Option<&Response> {
-        self.responses.get(node_id)
+        self.responses.get(node_id).map(AsRef::as_ref)
     }
 
     pub fn record_request(&mut self, node_id: String, request: CapturedRequest) {
-        self.requests.insert(node_id, request);
+        self.requests.insert(node_id, Arc::new(request));
     }
 
     pub fn record_server_url(&mut self, node_id: String, url: String) {
         self.server_urls.insert(node_id, url);
+    }
+
+    pub(crate) fn request_body(&self, node_id: &str) -> Option<&str> {
+        self.requests
+            .get(node_id)
+            .map(|request| request.body.as_str())
+    }
+
+    pub(crate) fn form_value(&self, node_id: &str) -> Option<&serde_json::Value> {
+        self.forms.get(node_id).map(AsRef::as_ref)
     }
 }
 
@@ -89,6 +105,18 @@ pub fn resolve_node_reference(
     let (node_id, rest1) = after_prefix
         .split_once('.')
         .ok_or_else(|| NodeReferenceError::MalformedReference(name.to_string()))?;
+    if let Some(path) = rest1.strip_prefix("form.") {
+        if !ancestors.contains(node_id) {
+            return Err(NodeReferenceError::ResponseUnavailable(node_id.into()));
+        }
+        let values = history
+            .forms
+            .get(node_id)
+            .ok_or_else(|| NodeReferenceError::ResponseUnavailable(node_id.into()))?;
+        let value = evaluate_json_path(values, path)
+            .map_err(|e| NodeReferenceError::JsonPathFailed(node_id.into(), e))?;
+        return Ok(stringify_extracted(value));
+    }
     if let Some(rest2) = rest1.strip_prefix("request.") {
         return resolve_request_reference(name, node_id, rest2, history, ancestors);
     }

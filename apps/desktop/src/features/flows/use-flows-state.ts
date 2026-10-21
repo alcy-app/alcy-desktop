@@ -27,7 +27,7 @@ export function flowNodeFromDto(node: FlowDto['nodes'][number]): FlowNodeState {
     return { id: node.id, ...simpleNodeConfig(node), position: { x: node.x, y: node.y } }
   }
   if (node.kind === 'start') {
-    return { id: node.id, kind: 'start', position: { x: node.x, y: node.y } }
+    return { id: node.id, kind: 'start', ...(node.form ? { form: node.form } : {}), position: { x: node.x, y: node.y } }
   }
   if (node.kind === 'request') {
     return { id: node.id, kind: 'request', requestId: node.requestId, position: { x: node.x, y: node.y } }
@@ -51,7 +51,7 @@ export function dtoFromFlowNode(node: FlowNodeState): FlowDto['nodes'][number] {
     return { id: node.id, ...config, x: node.position.x, y: node.position.y }
   }
   if (node.kind === 'start') {
-    return { id: node.id, kind: 'start', x: node.position.x, y: node.position.y }
+    return { id: node.id, kind: 'start', ...(node.form ? { form: node.form } : {}), x: node.position.x, y: node.position.y }
   }
   if (node.kind === 'request') {
     return { id: node.id, kind: 'request', requestId: node.requestId, x: node.position.x, y: node.position.y }
@@ -90,6 +90,7 @@ function flowFromDto(dto: FlowDto): FlowState {
     id: dto.id,
     name: dto.name,
     executionKind: dto.executionKind,
+    presentation: dto.presentation,
     nodes: dto.nodes.map(flowNodeFromDto),
     edges: dto.edges.map((edge) => {
       const state = edgeFromDto(edge)
@@ -107,11 +108,18 @@ function dtoFromFlow(flow: FlowState): FlowDto {
     id: flow.id,
     name: flow.name,
     executionKind: flow.executionKind,
+    presentation: flow.presentation,
     nodes: flow.nodes.map(dtoFromFlowNode),
     edges: flow.edges.map(dtoFromEdge),
     createdAtMs: flow.createdAtMs,
     updatedAtMs: flow.updatedAtMs,
   }
+}
+
+function presentationForNodes(flow: FlowState, nodes: FlowNodeState[]) {
+  if (!flow.presentation) return undefined
+  const eligible = new Set(nodes.filter((node) => node.kind === 'display' || node.kind === 'humanAction' || (node.kind === 'start' && node.form)).map((node) => node.id))
+  return { panels: flow.presentation.panels.filter((panel) => eligible.has(panel.nodeId)) }
 }
 
 function createFlow(name: string): FlowState {
@@ -368,9 +376,13 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     [flows],
   )
 
+  const updatePresentation = useCallback((id: string, presentation: import('../../bindings/flow-forms').FlowPresentation) => {
+    setFlows((current) => current.map((flow) => flow.id === id ? { ...flow, presentation, updatedAtMs: Date.now() } : flow))
+  }, [])
+
   const updateFlowGraph = useCallback((id: string, nodes: FlowNodeState[], edges: FlowEdgeState[]) => {
     setFlows((current) =>
-      current.map((flow) => (flow.id === id ? { ...flow, nodes, edges, updatedAtMs: Date.now() } : flow)),
+      current.map((flow) => (flow.id === id ? { ...flow, nodes, edges, presentation: presentationForNodes(flow, nodes), updatedAtMs: Date.now() } : flow)),
     )
   }, [])
 
@@ -391,7 +403,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
   /** Explicit node-request saves finish on disk before their shared draft is marked saved. */
   const saveGraph = useCallback(async (id: string, nodes: FlowNodeState[], edges: FlowEdgeState[]) => {
     if (!loaded || loadError !== null) throw new Error(loadError ?? 'Flows are not loaded')
-    const next = flowsRef.current.map((flow) => flow.id === id ? { ...flow, nodes, edges, updatedAtMs: Date.now() } : flow)
+    const next = flowsRef.current.map((flow) => flow.id === id ? { ...flow, nodes, edges, presentation: presentationForNodes(flow, nodes), updatedAtMs: Date.now() } : flow)
     if (!next.some((flow) => flow.id === id)) throw new Error('Flow no longer exists')
     if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
     saveTimeoutRef.current = null
@@ -424,6 +436,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     saveNow,
     saveGraph,
     updateFlowGraph,
+    updatePresentation,
     updateInlineMockServer,
     updateInlineRequest,
   }

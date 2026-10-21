@@ -72,7 +72,13 @@ pub enum LoadNodeKindDto {
     rename_all_fields = "camelCase"
 )]
 pub enum FlowNodeKindDto {
-    Start,
+    Start {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        form: Option<alcy_storage::FlowFormConfig>,
+    },
+    HumanAction {
+        form: alcy_storage::FlowFormConfig,
+    },
     Block {
         label: String,
     },
@@ -203,6 +209,7 @@ pub struct FlowEdgeDto {
 pub struct FlowDto {
     pub id: String,
     pub name: String,
+    pub presentation: alcy_storage::FlowPresentationConfig,
     pub execution_kind: FlowExecutionKindDto,
     pub nodes: Vec<FlowNodeDto>,
     pub edges: Vec<FlowEdgeDto>,
@@ -215,6 +222,8 @@ pub struct FlowDto {
 pub struct FlowInput {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub presentation: alcy_storage::FlowPresentationConfig,
     #[serde(default)]
     pub execution_kind: FlowExecutionKindDto,
     pub nodes: Vec<FlowNodeDto>,
@@ -372,7 +381,13 @@ fn node_to_dto(node: &FlowNode) -> FlowNodeDto {
     FlowNodeDto {
         id: node.id.clone(),
         kind: match &node.kind {
-            FlowNodeKind::Start => FlowNodeKindDto::Start,
+            FlowNodeKind::Start => FlowNodeKindDto::Start { form: None },
+            FlowNodeKind::StartForm { form } => FlowNodeKindDto::Start {
+                form: Some(form.clone().into()),
+            },
+            FlowNodeKind::HumanAction { form } => FlowNodeKindDto::HumanAction {
+                form: form.clone().into(),
+            },
             FlowNodeKind::Block { label } => FlowNodeKindDto::Block {
                 label: label.clone(),
             },
@@ -498,6 +513,7 @@ pub(crate) fn flow_to_dto(flow: &Flow) -> FlowDto {
     FlowDto {
         id: flow.id.clone(),
         name: flow.name().to_string(),
+        presentation: flow.presentation.clone().into(),
         execution_kind: execution_kind_to_dto(flow.execution_kind()),
         nodes: flow.nodes().iter().map(node_to_dto).collect(),
         edges: flow.edges().iter().map(edge_to_dto).collect(),
@@ -530,7 +546,12 @@ pub(crate) fn nodes_from_dto(nodes: Vec<FlowNodeDto>) -> Result<Vec<FlowNode>, S
             Ok(FlowNode {
                 id: node.id,
                 kind: match node.kind {
-                    FlowNodeKindDto::Start => FlowNodeKind::Start,
+                    FlowNodeKindDto::Start { form } => form.map_or(FlowNodeKind::Start, |form| {
+                        FlowNodeKind::StartForm { form: form.into() }
+                    }),
+                    FlowNodeKindDto::HumanAction { form } => {
+                        FlowNodeKind::HumanAction { form: form.into() }
+                    }
                     FlowNodeKindDto::Block { label } => FlowNodeKind::Block { label },
                     FlowNodeKindDto::Request { request_id } => FlowNodeKind::Request { request_id },
                     FlowNodeKindDto::If { condition } => FlowNodeKind::If {
@@ -676,6 +697,10 @@ fn flow_from_input(input: FlowInput) -> Result<Flow, FlowsError> {
         millis_to_system_time(input.created_at_ms),
         millis_to_system_time(input.updated_at_ms),
     )
+    .and_then(|mut flow| {
+        flow.set_presentation(input.presentation.into())?;
+        Ok(flow)
+    })
     .map_err(|error| FlowsError::Invalid {
         message: error.to_string(),
     })
@@ -884,12 +909,13 @@ mod tests {
 
     fn sample_flow_input() -> FlowInput {
         FlowInput {
+            presentation: Default::default(),
             id: "flow-1".to_string(),
             name: "My flow".to_string(),
             execution_kind: FlowExecutionKindDto::Standard,
             nodes: vec![FlowNodeDto {
                 id: "start".to_string(),
-                kind: FlowNodeKindDto::Start,
+                kind: FlowNodeKindDto::Start { form: None },
                 x: 0.0,
                 y: 0.0,
             }],

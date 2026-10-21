@@ -1,4 +1,4 @@
-import { DisplayNode, LogNode, SetVariablesNode, SleepNode } from './ActionNode'
+import { HumanActionNode, DisplayNode, LogNode, SetVariablesNode, SleepNode } from './ActionNode'
 import { BreakNode, ContinueNode } from './LoopControlNode'
 import { BlockNode } from './BlockNode'
 import { FlowEdge } from './FlowEdge'
@@ -11,6 +11,7 @@ import { StartNode } from './StartNode'
 import { WhileNode } from './WhileNode'
 
 export const nodeTypes = {
+  humanAction: HumanActionNode,
   start: StartNode,
   block: BlockNode,
   request: RequestNode,

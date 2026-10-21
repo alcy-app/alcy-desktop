@@ -48,6 +48,7 @@ function ResponsePages({ source, fallback, format, compact }: { source: DisplayB
         setState({ requestKey, result: next })
       } catch (reason) {
         if (!active) return
+        if (String(reason) === 'busy' && attempt < 20) { retry = window.setTimeout(() => { void load(attempt + 1) }, 250); return }
         if (String(reason) === 'staleRevision' && !cursor && attempt < 3) { retry = window.setTimeout(() => { void load(attempt + 1) }, 100); return }
         setState({ requestKey, error: true })
       }

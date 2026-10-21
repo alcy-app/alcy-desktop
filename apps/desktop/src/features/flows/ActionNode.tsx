@@ -27,6 +27,12 @@ function ActionCard({ data, children }: { data: SimpleNodeData; children: ReactN
   )
 }
 
+export function HumanActionNode({ data }: NodeProps<SimpleFlowNodeType>) {
+  const { t } = useLanguage()
+  if (data.config.kind !== 'humanAction') return null
+  return <ActionCard data={data}><span>{data.config.form.title || t('flows.forms.humanDescription')}</span></ActionCard>
+}
+
 export function LogNode({ data }: NodeProps<SimpleFlowNodeType>) {
   const { t } = useLanguage()
   if (data.config.kind !== 'log') return null

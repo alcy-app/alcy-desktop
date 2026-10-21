@@ -44,6 +44,7 @@ function ResponseBranch({ source, field, depth = 0, revision, onInvalidJson }: {
         setState({ requestKey, result: next })
       } catch (reason) {
         if (!active) return
+        if (String(reason) === 'busy' && attempt < 20) { retry = window.setTimeout(() => { void load(attempt + 1) }, 250); return }
         if (pointer === '' && String(reason) === 'invalidJson') { onInvalidJson(); return }
         setState({ requestKey, error: String(reason) })
       }

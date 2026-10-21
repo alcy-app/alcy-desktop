@@ -10,6 +10,8 @@ mod endpoint;
 mod environment;
 mod execution_error;
 mod flow;
+mod flow_form;
+pub use flow_form::*;
 mod flow_folder;
 mod general_settings;
 mod gitlab;

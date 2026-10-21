@@ -1,0 +1,27 @@
+.flow-form-editor, .flow-form-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.flow-form-editor-section, .flow-form-editor-field, .flow-form-section { border: 1px solid var(--border); border-radius: var(--radius-md); min-width: 0; overflow: hidden; }
+.flow-form-editor summary, .flow-form-section summary { padding: 12px; cursor: pointer; font-weight: var(--font-weight-semibold); color: var(--text); background: var(--surface-raised); }
+.flow-form-editor summary code, .flow-form-editor summary span { margin-left: 8px; font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); color: var(--text-muted); }
+.flow-form-editor-content, .flow-form-section-fields { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+.flow-form-editor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; }
+.flow-form-editor-row, .flow-form-editor-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-form-editor-row > .ui-field { flex: 1; min-width: 100px; }
+.flow-form-check { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--text); font-size: var(--font-size-sm); }
+.flow-runtime-form { padding: 4px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.flow-runtime-form h3 { margin: 0; color: var(--text); font-size: var(--font-size-lg); }
+.flow-form-description { color: var(--text-muted); font-size: var(--font-size-sm); line-height: 1.5; margin: 0; }
+.flow-form-results { min-width: 0; }
+.flow-form-table-scroll { overflow: auto; max-height: 320px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.flow-form-results table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.flow-form-results caption { text-align: left; padding: 8px; }
+.flow-form-results th, .flow-form-results td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; max-width: 260px; }
+.flow-form-results th { position: sticky; top: 0; background: var(--surface-raised); color: var(--text-muted); }
+.flow-form-results tr[data-selected="true"] { background: var(--accent-soft); }
+.flow-human-notice { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface-raised); color: var(--text); font-size: var(--font-size-sm); }
+.flow-human-notice > span { flex: 1; }
+.flow-form-result-list { display: flex; flex-direction: column; gap: var(--space-2); max-height: 320px; overflow: auto; }
+.flow-form-result-item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; }
+.flow-form-result-item:has(input:checked) { border-color: var(--accent); background: var(--accent-softer); }
+.flow-form-result-item > span { display: flex; flex-direction: column; gap: var(--space-1); overflow-wrap: anywhere; }
+.flow-form-result-item strong { font-weight: var(--font-weight-medium); color: var(--text); }
+.flow-form-result-item small { color: var(--text-muted); }

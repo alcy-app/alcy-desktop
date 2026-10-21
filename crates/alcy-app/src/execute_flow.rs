@@ -25,6 +25,8 @@ use crate::{RequestExecutor, Substitution, resolve_request_variables};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FlowRunError {
+    #[error("invalid initial form: {0}")]
+    InvalidForm(String),
     #[error("flow não tem um node Start")]
     MissingStartNode,
     #[error("flow contém um ciclo alcançável a partir do Start")]
@@ -78,7 +80,7 @@ pub enum FlowNodeOutcome {
     Skipped(FlowNodeSkipReason),
 }
 
-/// Maior espera aceita por um node `Sleep` (10 minutos).
+/// Maximum Sleep duration (10 minutes).
 pub const MAX_SLEEP_MS: u64 = 10 * 60 * 1000;
 
 /// Maximum accepted While iteration limit (ADR 0033).
@@ -97,14 +99,15 @@ pub struct RequestCallDetails {
 
 /// Progress port keeping application use cases independent of concrete IPC implementations.
 pub trait FlowRunSink: Sync {
+    fn node_waiting_for_human(&self, _node_id: &str, _wait_id: &str) {}
+    fn node_form_submitted(&self, _node_id: &str) {}
     fn node_started(&self, node_id: &str);
     fn node_finished(&self, node_id: &str, outcome: FlowNodeOutcome);
     /// Deliver responses before node_finished, separately from small progress events; optional for consumers that need no output.
     fn node_output(&self, _node_id: &str, _response: &Response) {}
     /// Deliver request URL details after node_started; optional like node_output.
     fn node_call(&self, _node_id: &str, _details: &RequestCallDetails) {}
-    /// Chamada recebida por um node `MockWaitRequest`, entregue antes de
-    /// `node_finished`. Optional, like `node_output`.
+    /// Captured MockWaitRequest input delivered before node_finished; optional like node_output.
     fn node_request(&self, _node_id: &str, _request: &CapturedRequest) {}
 }
 
@@ -117,6 +120,11 @@ pub trait FlowCancellation: Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlowRunSummary {
     pub cancelled: bool,
+}
+
+pub struct FlowInteraction<'a, H> {
+    pub human: &'a H,
+    pub initial_answers: &'a crate::FormAnswers,
 }
 
 /// Dispatch each node when its actual dependencies finish, without whole-layer barriers. While reenters closed bodies without graph cycles. Blocks/unreachable nodes resolve immediately; notes are excluded. Run variables override environment/scopes. Stop owned mocks on every exit.
@@ -135,7 +143,57 @@ where
     C: FlowCancellation,
     M: MockServerControl,
 {
+    execute_flow_interactive(
+        flow,
+        collections,
+        executor,
+        environment_variables,
+        sink,
+        cancellation,
+        mocks,
+        FlowInteraction {
+            human: &crate::NoHumanInteraction,
+            initial_answers: &crate::FormAnswers::new(),
+        },
+    )
+    .await
+}
+
+/// Interactive execution shares the standard scheduler and cancellation path.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_flow_interactive<E, S, C, M, H>(
+    flow: &Flow,
+    collections: &[Collection],
+    executor: &E,
+    environment_variables: &[EnvironmentVariable],
+    sink: &S,
+    cancellation: &C,
+    mocks: &M,
+    interaction: FlowInteraction<'_, H>,
+) -> Result<FlowRunSummary, FlowRunError>
+where
+    E: RequestExecutor,
+    S: FlowRunSink,
+    C: FlowCancellation,
+    M: MockServerControl,
+    H: crate::FlowHumanInteraction,
+{
     let graph = build_flow_graph(flow)?;
+
+    let mut history = NodeRunHistory::new();
+    for node in flow.nodes() {
+        if let FlowNodeKind::StartForm { form } = &node.kind {
+            crate::validate_form_definition(form, false).map_err(FlowRunError::InvalidForm)?;
+            let prepared = crate::PreparedFlowForm {
+                form: form.clone(),
+                sources: HashMap::new(),
+            };
+            let values = prepared
+                .validate_answers(interaction.initial_answers)
+                .map_err(FlowRunError::InvalidForm)?;
+            history.record_form(node.id.clone(), values);
+        }
+    }
 
     for node_id in &graph.unreachable {
         sink.node_finished(
@@ -151,7 +209,6 @@ where
             .map(|node| &node.kind)
     };
 
-    let mut history = NodeRunHistory::new();
     // Run variables are accessed only during synchronous dispatch; dispatch order resolves writes without parallel-branch races.
     let mut run_variables: Vec<EnvironmentVariable> = Vec::new();
     let mut scheduler = Scheduler::new(&graph);
@@ -232,7 +289,7 @@ where
             }
 
             match node_kind_by_id(&node_id) {
-                Some(FlowNodeKind::Start)
+                Some(FlowNodeKind::Start | FlowNodeKind::StartForm { .. })
                 | Some(FlowNodeKind::Block { .. })
                 | Some(FlowNodeKind::Note { .. })
                 | None => {
@@ -250,6 +307,22 @@ where
                         },
                     );
                     scheduler.complete(&node_id, true, None);
+                }
+                Some(FlowNodeKind::HumanAction { form }) => {
+                    let ancestors = graph.ancestors.get(&node_id).unwrap_or(&no_ancestors);
+                    sink.node_started(&node_id);
+                    in_flight.push(run_in_flight(
+                        node_id.clone(),
+                        InFlightWork::Human(Box::new(HumanPreparation {
+                            form: form.clone(),
+                            history: history.clone(),
+                            ancestors: ancestors.clone(),
+                        })),
+                        executor,
+                        cancellation,
+                        mocks,
+                        interaction.human,
+                    ));
                 }
                 Some(FlowNodeKind::If { condition }) => {
                     let ancestors = graph.ancestors.get(&node_id).unwrap_or(&no_ancestors);
@@ -322,6 +395,7 @@ where
                         executor,
                         cancellation,
                         mocks,
+                        interaction.human,
                     ));
                 }
                 Some(FlowNodeKind::InlineRequest { request: inline }) => {
@@ -352,6 +426,7 @@ where
                         executor,
                         cancellation,
                         mocks,
+                        interaction.human,
                     ));
                 }
                 Some(FlowNodeKind::Log { message: template })
@@ -417,6 +492,7 @@ where
                         executor,
                         cancellation,
                         mocks,
+                        interaction.human,
                     ));
                 }
                 Some(FlowNodeKind::MockStart { source }) => {
@@ -493,6 +569,7 @@ where
                                 executor,
                                 cancellation,
                                 mocks,
+                                interaction.human,
                             ));
                         }
                         Err(message) => {
@@ -603,7 +680,11 @@ where
             response,
             captured,
             taken_handle,
+            form_answers,
         } = completion;
+        if let Some(values) = form_answers {
+            history.record_form(node_id.clone(), values);
+        }
         if let Some(response) = response {
             sink.node_output(&node_id, &response);
             history.record(node_id.clone(), response);
@@ -613,8 +694,12 @@ where
             sink.node_request(&node_id, &request);
             history.record_request(node_id.clone(), request);
         }
+        let releases_successors = !matches!(
+            node_kind_by_id(&node_id),
+            Some(FlowNodeKind::HumanAction { .. })
+        ) || matches!(outcome, FlowNodeOutcome::Completed { .. });
         sink.node_finished(&node_id, outcome);
-        scheduler.complete(&node_id, true, taken_handle);
+        scheduler.complete(&node_id, releases_successors, taken_handle);
     }
 
     mock_session.cleanup(mocks);
@@ -626,7 +711,7 @@ where
 
 /// Next synchronous scheduler action.
 enum Work {
-    /// Node pronto para despachar (grau de entrada zerado).
+    /// Node ready to dispatch after its incoming degree reaches zero.
     Node(String),
     /// While whose body completed; reevaluate its condition.
     LoopCheck(String),
@@ -933,6 +1018,7 @@ fn request_taken_handle(outcome: &FlowNodeOutcome) -> Option<&'static str> {
 
 /// Asynchronous work raced against cancellation while independent branches run concurrently.
 enum InFlightWork {
+    Human(Box<HumanPreparation>),
     /// Inline requests have no request_id.
     Request {
         request_id: Option<String>,
@@ -949,29 +1035,77 @@ enum InFlightWork {
     },
 }
 
+struct HumanPreparation {
+    form: alcy_domain::FlowForm,
+    history: NodeRunHistory,
+    ancestors: HashSet<String>,
+}
+
+struct CancelPreparation(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for CancelPreparation {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// In-flight completion with its taken output; None for a single-output node.
 struct NodeCompletion {
+    form_answers: Option<crate::FormAnswers>,
     node_id: String,
     outcome: FlowNodeOutcome,
     response: Option<Response>,
-    /// Chamada recebida por um `MockWaitRequest`, com o `MockStart` dono.
+    /// Captured request together with its owning MockStart node.
     captured: Option<(String, CapturedRequest)>,
     taken_handle: Option<&'static str>,
 }
 
-async fn run_in_flight<E, C, M>(
+async fn run_in_flight<E, C, M, H>(
     node_id: String,
     work: InFlightWork,
     executor: &E,
     cancellation: &C,
     mocks: &M,
+    human: &H,
 ) -> NodeCompletion
 where
     E: RequestExecutor,
     C: FlowCancellation,
     M: MockServerControl,
+    H: crate::FlowHumanInteraction,
 {
     match work {
+        InFlightWork::Human(form) => {
+            let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let _guard = CancelPreparation(cancelled.clone());
+            let prepared = tokio::task::spawn_blocking(move || {
+                crate::prepare_flow_form(&form.form, &form.history, &form.ancestors, &cancelled)
+            });
+            let result = tokio::select! {
+                result = async {
+                    let form = prepared.await.map_err(|_| "Form preparation failed".to_string())??;
+                    human.request_input(&node_id, form).await
+                } => Some(result),
+                _ = cancellation.cancelled() => None,
+            };
+            let result = if cancellation.is_cancelled() {
+                None
+            } else {
+                result
+            };
+            let (outcome, form_answers) = match result {
+                Some(Ok(values)) => (FlowNodeOutcome::Completed { message: None }, Some(values)),
+                Some(Err(message)) => (FlowNodeOutcome::Failed { message }, None),
+                None => (FlowNodeOutcome::Cancelled, None),
+            };
+            NodeCompletion {
+                node_id,
+                outcome,
+                form_answers,
+                response: None,
+                captured: None,
+                taken_handle: None,
+            }
+        }
         InFlightWork::Request {
             request_id,
             request,
@@ -979,6 +1113,7 @@ where
             let (node_id, outcome, response) =
                 run_request_node(node_id, request_id, *request, executor, cancellation).await;
             NodeCompletion {
+                form_answers: None,
                 node_id,
                 taken_handle: request_taken_handle(&outcome),
                 outcome,
@@ -992,6 +1127,7 @@ where
                 _ = cancellation.cancelled() => FlowNodeOutcome::Cancelled,
             };
             NodeCompletion {
+                form_answers: None,
                 node_id,
                 outcome,
                 response: None,
@@ -1012,6 +1148,7 @@ where
                 _ = tokio::time::sleep(timeout) => None,
                 _ = cancellation.cancelled() => {
                     return NodeCompletion {
+                        form_answers: None,
                         node_id,
                         outcome: FlowNodeOutcome::Cancelled,
                         response: None,
@@ -1052,6 +1189,7 @@ where
                 ),
             };
             NodeCompletion {
+                form_answers: None,
                 node_id,
                 outcome,
                 response: None,
@@ -1070,8 +1208,7 @@ struct MockSession {
 }
 
 impl MockSession {
-    /// O mock do `MockStart` `start_node_id`, exigindo que ele seja um
-    /// ancestral real do node que pergunta e que ainda esteja ligado.
+    /// Resolve a running mock handle only for a real ancestor MockStart node.
     fn handle(
         &self,
         start_node_id: &str,
@@ -1174,8 +1311,7 @@ fn set_mock_response<M: MockServerControl>(
     })
 }
 
-/// `(passou, mensagem)` da contagem de chamadas da rota desde que o run
-/// ligou (ou reaproveitou) o mock.
+/// Pass flag and explanation for calls received since this run started or reused the mock.
 fn assert_mock_calls<M: MockServerControl>(
     session: &MockSession,
     mocks: &M,
@@ -1472,6 +1608,253 @@ mod tests {
     fn build_flow(nodes: Vec<FlowNode>, edges: Vec<FlowEdge>) -> Flow {
         let now = SystemTime::now();
         Flow::new("flow-1", "My flow", nodes, edges, now, now).unwrap()
+    }
+
+    #[tokio::test]
+    async fn initial_form_values_are_available_before_any_effects() {
+        let form = alcy_domain::FlowForm {
+            sections: vec![alcy_domain::FlowFormSection {
+                id: "main".into(),
+                fields: vec![alcy_domain::FlowFormField {
+                    id: "quantity".into(),
+                    label: "Quantity".into(),
+                    kind: alcy_domain::FlowFormFieldKind::Number,
+                    required: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::StartForm { form }),
+                log_node("result", "{{nodes.start.form.quantity}}"),
+            ],
+            vec![edge("a", "start", "result")],
+        );
+        let sink = RecordingSink::new();
+        let empty = crate::FormAnswers::new();
+        let result = execute_flow_interactive(
+            &flow,
+            &[],
+            &FailingExecutor,
+            &[],
+            &sink,
+            &NeverCancelled,
+            &NoMockServers,
+            FlowInteraction {
+                human: &crate::NoHumanInteraction,
+                initial_answers: &empty,
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(FlowRunError::InvalidForm(_))));
+        assert!(sink.events().is_empty());
+        let values = serde_json::Map::from_iter([("quantity".into(), serde_json::json!(3))]);
+        execute_flow_interactive(
+            &flow,
+            &[],
+            &FailingExecutor,
+            &[],
+            &sink,
+            &NeverCancelled,
+            &NoMockServers,
+            FlowInteraction {
+                human: &crate::NoHumanInteraction,
+                initial_answers: &values,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome_of(&sink.events(), "result"),
+            vec!["Completed { message: Some(\"3\") }"]
+        );
+    }
+
+    struct DelayedHuman<'a>(&'a RecordingSink);
+    impl crate::FlowHumanInteraction for DelayedHuman<'_> {
+        async fn request_input(
+            &self,
+            _node_id: &str,
+            _form: crate::PreparedFlowForm,
+        ) -> Result<crate::FormAnswers, String> {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while outcome_of(&self.0.events(), "parallel").is_empty() {
+                    sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(outcome_of(&self.0.events(), "after").is_empty());
+            Ok(serde_json::Map::from_iter([(
+                "approved".into(),
+                serde_json::json!(true),
+            )]))
+        }
+    }
+
+    #[tokio::test]
+    async fn human_input_pauses_only_its_branch_and_supplies_typed_references() {
+        let sink = RecordingSink::new();
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                node(
+                    "human",
+                    FlowNodeKind::HumanAction {
+                        form: alcy_domain::FlowForm::default(),
+                    },
+                ),
+                log_node("parallel", "independent"),
+                log_node("after", "{{nodes.human.form.approved}}"),
+            ],
+            vec![
+                edge("a", "start", "human"),
+                edge("b", "start", "parallel"),
+                edge("c", "human", "after"),
+            ],
+        );
+        execute_flow_interactive(
+            &flow,
+            &[],
+            &FailingExecutor,
+            &[],
+            &sink,
+            &NeverCancelled,
+            &NoMockServers,
+            FlowInteraction {
+                human: &DelayedHuman(&sink),
+                initial_answers: &crate::FormAnswers::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome_of(&sink.events(), "after"),
+            vec!["Completed { message: Some(\"true\") }"]
+        );
+    }
+
+    struct NeverHuman;
+    impl crate::FlowHumanInteraction for NeverHuman {
+        async fn request_input(
+            &self,
+            _node_id: &str,
+            _form: crate::PreparedFlowForm,
+        ) -> Result<crate::FormAnswers, String> {
+            pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_ends_human_wait_and_skips_its_successors() {
+        let sink = RecordingSink::new();
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                node(
+                    "human",
+                    FlowNodeKind::HumanAction {
+                        form: alcy_domain::FlowForm::default(),
+                    },
+                ),
+                log_node("after", "must not run"),
+            ],
+            vec![edge("a", "start", "human"), edge("b", "human", "after")],
+        );
+        let summary = execute_flow_interactive(
+            &flow,
+            &[],
+            &FailingExecutor,
+            &[],
+            &sink,
+            &CancelAfter::new(Duration::from_millis(20)),
+            &NoMockServers,
+            FlowInteraction {
+                human: &NeverHuman,
+                initial_answers: &crate::FormAnswers::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(summary.cancelled);
+        assert_eq!(
+            outcome_of(&sink.events(), "human"),
+            vec!["started", "Cancelled"]
+        );
+        assert_eq!(
+            outcome_of(&sink.events(), "after"),
+            vec!["Skipped(Cancelled)"]
+        );
+    }
+
+    struct CountingHuman(std::sync::atomic::AtomicUsize);
+    impl crate::FlowHumanInteraction for CountingHuman {
+        async fn request_input(
+            &self,
+            _node_id: &str,
+            _form: crate::PreparedFlowForm,
+        ) -> Result<crate::FormAnswers, String> {
+            let value = self.0.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(serde_json::Map::from_iter([(
+                "value".into(),
+                serde_json::json!(value),
+            )]))
+        }
+    }
+
+    #[tokio::test]
+    async fn each_loop_iteration_requests_new_input_and_replaces_the_previous_answer() {
+        let sink = RecordingSink::new();
+        let human = CountingHuman(std::sync::atomic::AtomicUsize::new(0));
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                set_variables_node("init", &[("i", "0")]),
+                while_node("loop", "{{i}}", ComparisonOperator::LessThan, "3", 5),
+                node(
+                    "human",
+                    FlowNodeKind::HumanAction {
+                        form: alcy_domain::FlowForm::default(),
+                    },
+                ),
+                increment_node("increment", "i"),
+                log_node("after", "{{nodes.human.form.value}}"),
+            ],
+            vec![
+                edge("a", "start", "init"),
+                edge("b", "init", "loop"),
+                handled_edge("c", "loop", "human", "loop"),
+                edge("d", "human", "after"),
+                edge("e", "after", "increment"),
+            ],
+        );
+        execute_flow_interactive(
+            &flow,
+            &[],
+            &FailingExecutor,
+            &[],
+            &sink,
+            &NeverCancelled,
+            &NoMockServers,
+            FlowInteraction {
+                human: &human,
+                initial_answers: &crate::FormAnswers::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(human.0.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            outcome_of(&sink.events(), "after"),
+            vec![
+                "Completed { message: Some(\"1\") }",
+                "Completed { message: Some(\"2\") }",
+                "Completed { message: Some(\"3\") }"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -2867,7 +3250,7 @@ mod tests {
         );
     }
 
-    /// Cancela `after` depois de criado — para cancelar no meio de um node.
+    /// Cancel after an interval to exercise cancellation during an active node.
     struct CancelAfter {
         at: tokio::time::Instant,
     }
@@ -4123,7 +4506,7 @@ mod tests {
                 "Failed { message: \"o bloco 'Ligar mock' 'mock' precisa vir antes deste node no flow\" }"
             ]
         );
-        // O run ainda desliga o mock que ligou.
+        // The run still stops the mock it started.
         assert_eq!(*mocks.stopped.lock().unwrap(), vec!["mock:mock"]);
     }
 }

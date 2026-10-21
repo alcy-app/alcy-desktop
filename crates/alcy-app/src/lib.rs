@@ -6,7 +6,12 @@ mod evaluate_condition;
 mod evaluate_value_monitors;
 mod execute_flow;
 mod execute_request;
+mod flow_form;
 mod flow_graph;
+pub use flow_form::{
+    FlowHumanInteraction, FormAnswers, FormOptionPage, NoHumanInteraction, PreparedFlowForm,
+    prepare_flow_form, validate_form_definition,
+};
 mod flow_output;
 mod iteration_data;
 mod json_path;
@@ -39,8 +44,9 @@ pub use evaluate_value_monitors::{
     MAX_MONITOR_CANDIDATES, MonitorCandidate, ValueFinding, evaluate_value_monitors,
 };
 pub use execute_flow::{
-    FlowCancellation, FlowNodeOutcome, FlowNodeSkipReason, FlowRunError, FlowRunSink,
-    FlowRunSummary, MAX_SLEEP_MS, MAX_WHILE_ITERATIONS, RequestCallDetails, execute_flow,
+    FlowCancellation, FlowInteraction, FlowNodeOutcome, FlowNodeSkipReason, FlowRunError,
+    FlowRunSink, FlowRunSummary, MAX_SLEEP_MS, MAX_WHILE_ITERATIONS, RequestCallDetails,
+    execute_flow, execute_flow_interactive,
 };
 pub use execute_request::execute_request;
 pub use flow_output::{

@@ -69,6 +69,7 @@ function statusLabel(entry: RunLogEntry, t: (key: TranslationKey, params?: Trans
 
 function statusLabelKey(entry: RunLogEntry): TranslationKey | null {
   const { status } = entry
+  if (status.status === 'waitingForHuman') return 'flows.forms.waiting'
   if (status.status === 'running') return 'flows.runLog.statusRunning'
   if (status.status === 'failed') return 'flows.canvas.nodeFailedLabel'
   if (status.status === 'cancelled') return 'flows.canvas.nodeCancelledLabel'

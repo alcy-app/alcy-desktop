@@ -13,7 +13,7 @@ const PALETTE_MAX_HEIGHT_PX = 440
 const VIEWPORT_MARGIN_PX = 8
 const GAP_PX = 6
 
-/** O node `block` não é mais criado pela paleta — só continua existindo nos flows antigos que já o têm. */
+/** Legacy block nodes remain readable but are no longer created by the palette. */
 export type PaletteKind = 'if' | 'request' | SimpleNodeKind | LoadNodeKindState
 
 type PaletteCategory = 'blocks' | 'output' | 'requests' | 'mock' | 'annotation' | 'load'
@@ -32,15 +32,14 @@ const CATEGORIES: { id: PaletteCategory; labelKey: TranslationKey }[] = [
   { id: 'load', labelKey: 'flows.canvas.paletteLoadCategory' },
 ]
 
-/** Na ordem das categorias — é também a ordem de navegação pelo teclado.
- * Ícone, cor, nome e descrição vêm de `NODE_KIND_APPEARANCE`, os mesmos do
- * cartão do node. */
+/** Category order defines keyboard navigation. Node cards and palette items share NODE_KIND_APPEARANCE. */
 const PALETTE_ITEMS: PaletteItem[] = [
   { kind: 'if', category: 'blocks' },
   { kind: 'while', category: 'blocks' },
   { kind: 'break', category: 'blocks' },
   { kind: 'continue', category: 'blocks' },
   { kind: 'sleep', category: 'blocks' },
+  { kind: 'humanAction', category: 'blocks' },
   { kind: 'setVariables', category: 'blocks' },
   { kind: 'log', category: 'output' },
   { kind: 'display', category: 'output' },
@@ -55,20 +54,14 @@ const PALETTE_ITEMS: PaletteItem[] = [
 ]
 
 interface BlockPaletteProps {
-  /** Retângulo do elemento que disparou a paleta (botão da toolbar ou "+" de um handle) — usado para ancorar o popover. */
+  /** Trigger bounds anchoring the palette beside a toolbar button or connection handle. */
   anchor: DOMRect
   executionKind: FlowExecutionKindState
   onClose: () => void
   onSelect: (kind: PaletteKind) => void
 }
 
-/** Seletor de blocos pesquisável e categorizado, renderizado num portal
- * (mesmo padrão de `Modal`/tooltip de `TemplateHighlightedField`) e ancorado
- * perto do gatilho, não centralizado na tela. A categoria "Requisições" tem
- * um único item ("Requisição de API"): o node nasce não configurado e a
- * escolha de coleção/requisição específica acontece dentro dele
- * (`RequestPicker`), não mais nesta lista achatada de todas as requisições
- * do workspace. */
+/** Searchable block picker rendered in a portal near its trigger. New request nodes choose a saved request through RequestPicker. */
 export function BlockPalette({ anchor, executionKind, onClose, onSelect }: BlockPaletteProps) {
   const { t } = useLanguage()
   const [query, setQuery] = useState('')
@@ -81,12 +74,7 @@ export function BlockPalette({ anchor, executionKind, onClose, onSelect }: Block
   }, [])
 
   useEffect(() => {
-    // Fase de captura: o canvas (pan/zoom do xyflow) interrompe a propagação
-    // do mousedown no pane, então um listener em bubble nunca veria o clique
-    // fora. O botão da toolbar e os cliques no vazio do canvas (atalho do
-    // menu e fechamento, tratados em `FlowCanvas`) fazem o próprio toggle,
-    // por isso são ignorados aqui — fechar já no mousedown faria o clique do
-    // atalho reabrir a paleta em seguida.
+    // Listen during capture because the canvas stops mousedown propagation. Toolbar and empty-pane clicks toggle themselves; handling them here would immediately reopen the palette.
     function onMouseDown(event: MouseEvent) {
       const target = event.target as Element
       if (

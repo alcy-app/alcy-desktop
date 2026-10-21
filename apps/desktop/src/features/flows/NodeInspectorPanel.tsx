@@ -35,9 +35,12 @@ import { FlowTabs } from './FlowTabs'
 import type { FlowDatasetSource } from './FlowDatasetFields'
 import { NodeIdentifierField } from './NodeIdentifierField'
 import { FlowTemplateTextarea } from './FlowTemplateTextarea'
+import { FlowFormEditor } from './FlowFormEditor'
+import { emptyFlowForm } from './form-model'
+import type { FlowForm } from '../../bindings/flow-forms'
 
 export type InspectorSelection =
-  | { id: string; kind: 'start' }
+  | { id: string; kind: 'start'; form?: FlowForm | null }
   | { id: string; kind: 'block'; label: string }
   | { id: string; kind: 'request'; requestId: string; request: RequestSummary | null }
   | { id: string; kind: 'if'; condition: ConditionState }
@@ -52,6 +55,8 @@ export interface AncestorRequestRef {
 }
 
 interface NodeInspectorPanelProps {
+  onStartFormChange?: (nodeId: string, form: FlowForm | null) => void
+  humanForm?: ReactNode
   snapshotNodeIds?: Record<string, string>
   nodeIdentifiers?: readonly { id: string }[]
   onRenameNode?: (id: string) => void
@@ -109,6 +114,7 @@ const OPERATOR_OPTIONS: { value: ComparisonOperatorState; labelKey: 'flows.canva
 ]
 
 export function NodeInspectorPanel({
+  onStartFormChange, humanForm,
   snapshotNodeIds = {},
   nodeIdentifiers = [], onRenameNode, renameDisabled,
   outputVersions = {},
@@ -176,7 +182,17 @@ export function NodeInspectorPanel({
       <div className="flow-inspector-body" role="tabpanel" aria-label={t('flows.studio.configuration')} data-flow-fields hidden={tab !== 'configuration'}>
         {onRenameNode && <NodeIdentifierField key={selection.id} nodeId={selection.id} nodes={nodeIdentifiers} disabled={renameDisabled} onRename={onRenameNode} />}
         <p className="flow-inspector-hint">{t('flows.studio.autocompleteFieldHint')}</p>
-        {selection.kind === 'start' && <p className="flow-inspector-hint">{t('flows.canvas.inspectorStartDescription')}</p>}
+        {selection.kind === 'start' && <>
+          <p className="flow-inspector-hint">{t('flows.canvas.inspectorStartDescription')}</p>
+          {!load && onStartFormChange && <>
+            <label className="flow-form-check"><input type="checkbox" checked={Boolean(selection.form)} disabled={renameDisabled} onChange={(e) => onStartFormChange(selection.id, e.target.checked ? emptyFlowForm() : null)} />{t('flows.forms.enable')}</label>
+            {selection.form && <FlowFormEditor key={selection.id} form={selection.form} disabled={renameDisabled} onChange={(form) => onStartFormChange(selection.id, form)} />}
+          </>}
+        </>}
+        {selection.kind === 'humanAction' && <>
+          {humanForm}
+          <FlowFormEditor key={selection.id} form={selection.form} allowResults disabled={renameDisabled} onChange={(form) => onConfigChange(selection.id, { kind: 'humanAction', form })} />
+        </>}
 
         {selection.kind === 'block' && (
           <div className="flow-inspector-field">

@@ -15,6 +15,7 @@ import type { RunStepDto } from '../../bindings/execute-collection-run'
 import type { LoadRunDetailDto } from '../../bindings/get-load-run-history'
 import { requestIdsForItem } from '../flows/request-chain'
 import { useFlowsState } from '../flows/use-flows-state'
+import { releaseClosedFlowSessions } from '../flows/flow-run-session'
 import {
   analyzeLoadTestImport,
   commitLoadTestImport,
@@ -340,6 +341,18 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const valueMonitors = useValueMonitorsState(workspace.rootPath, notifyLocalChange, FEATURE_FLAGS.valueMonitors)
   const [valueMonitorEnabled, setValueMonitorEnabled] = useState(loadPersistedValueMonitorEnabled)
   const openTabs = useOpenTabs(workbench, flows)
+  const openFlowSessionIds = openTabs.descriptors.filter((tab) => tab.kind === 'flow').map((tab) => tab.id)
+  const openFlowSessionKey = JSON.stringify(openFlowSessionIds)
+  useEffect(() => { releaseClosedFlowSessions(workspace.rootPath, JSON.parse(openFlowSessionKey) as string[]) }, [workspace.rootPath, openFlowSessionKey])
+  const sessionOwners = useRef(new Map<string, boolean>())
+  useEffect(() => {
+    const owners = sessionOwners.current
+    owners.set(workspace.rootPath, true)
+    return () => {
+      owners.set(workspace.rootPath, false)
+      queueMicrotask(() => { if (owners.get(workspace.rootPath) === false) { releaseClosedFlowSessions(workspace.rootPath, []); owners.delete(workspace.rootPath) } })
+    }
+  }, [workspace.rootPath])
   const consoleLog = useConsoleState()
   const recorder = useRecorderState()
   const { redactHarSensitiveData } = useSecurityPreferences()
@@ -1827,6 +1840,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               />
             ) : activeFlow ? (
               <FlowCanvas
+                onPresentationChange={(presentation) => flows.updatePresentation(activeFlow.id, presentation)}
                 requestSaving={savingFlowRequests}
                 onRenameNode={(previous, next) => { workbench.renameFlowNode(activeFlow.id, previous, next); openTabs.renameFlowNode(activeFlow.id, previous, next) }}
                 requestDrafts={Object.fromEntries([...flowDraftTabs].filter(([, tab]) => isTabDirty(tab)).map(([nodeId, tab]) => [nodeId, contentOf(tab)]))}
