@@ -57,15 +57,24 @@ describe('flow templates', () => {
     expect(repeat.edges.some((edge) => edge.targetNodeId === 'repeat' && edge.sourceNodeId !== 'initialize')).toBe(false)
   })
 
-  it('ships an order form whose request targets its own inline mock', () => {
+  it('ships an order form whose request targets its own inline mock and a human action that picks a catalog item', () => {
     const flow = createFlowFromTemplate('orderForm', t)
     const start = flow.nodes.find((node) => node.kind === 'start')
     const fields = start?.kind === 'start' ? start.form?.sections.flatMap((section) => section.fields) ?? [] : []
     expect(fields.map((field) => field.kind)).toEqual(expect.arrayContaining(['text', 'number', 'select', 'checkbox']))
     const mock = flow.nodes.find((node) => node.kind === 'mockStart')
     expect(mock?.kind === 'mockStart' ? mock.source.type : null).toBe('inline')
-    const request = flow.nodes.find((node) => node.kind === 'inlineRequest')
-    expect(request?.kind === 'inlineRequest' ? request.request.content.endpointUrl : null).toBe('{{nodes.mock.server.url}}/orders')
-    expect(request?.kind === 'inlineRequest' ? request.request.content.body : null).toEqual(expect.objectContaining({ content: expect.stringContaining('{{nodes.start.form.quantity}}') }))
+    const products = flow.nodes.find((node) => node.kind === 'inlineRequest' && node.id === 'products')
+    expect(products?.kind === 'inlineRequest' ? products.request.content.endpointUrl : null).toBe('{{nodes.mock.server.url}}/products')
+    const choose = flow.nodes.find((node) => node.kind === 'humanAction')
+    const product = choose?.kind === 'humanAction' ? choose.form.sections.flatMap((section) => section.fields).find((field) => field.id === 'product') : undefined
+    expect(product?.source?.reference).toBe('{{nodes.products.response.body.products}}')
+    expect(product?.multiple).toBe(false)
+    const order = flow.nodes.find((node) => node.kind === 'inlineRequest' && node.id === 'order')
+    expect(order?.kind === 'inlineRequest' ? order.request.content.endpointUrl : null).toBe('{{nodes.mock.server.url}}/orders')
+    const body = order?.kind === 'inlineRequest' ? order.request.content.body : null
+    expect(body).toEqual(expect.objectContaining({ content: expect.stringContaining('{{nodes.start.form.quantity}}') }))
+    expect(body).toEqual(expect.objectContaining({ content: expect.stringContaining('{{nodes.choose.form.product.id}}') }))
+    expect(flow.edges).toContainEqual(expect.objectContaining({ sourceNodeId: 'products', targetNodeId: 'choose', sourceHandle: 'success' }))
   })
 })

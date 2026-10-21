@@ -101,6 +101,23 @@ export function createFlowFromTemplate(templateId: FlowTemplateId, t: Translate)
         corsEnabled: true,
         routes: [{
           id: crypto.randomUUID(),
+          name: t('flows.templates.orderForm.productsRoute'),
+          enabled: true,
+          method: 'GET',
+          path: '/products',
+          defaultResponse: {
+            id: crypto.randomUUID(),
+            name: t('flows.templates.orderForm.productsResponse'),
+            enabled: true,
+            status: 200,
+            headers: [{ name: 'content-type', value: 'application/json' }],
+            body: '{\n  "products": [\n    { "id": "notebook", "name": "Notebook", "price": 4299 },\n    { "id": "monitor", "name": "Monitor", "price": 1899 },\n    { "id": "keyboard", "name": "Keyboard", "price": 499 }\n  ]\n}',
+            delayMs: 0,
+            condition: null,
+          },
+          alternatives: [],
+        }, {
+          id: crypto.randomUUID(),
           name: t('flows.templates.orderForm.route'),
           enabled: true,
           method: 'POST',
@@ -141,14 +158,37 @@ export function createFlowFromTemplate(templateId: FlowTemplateId, t: Translate)
       }
       nodes[0] = { id: 'start', kind: 'start', form, position: { x: 0, y: 0 } }
       nodes.push({ id: 'mock', kind: 'mockStart', source: { type: 'inline', server }, position: position(1) })
-      request('order', 'flows.templates.orderForm.request', '{{nodes.mock.server.url}}/orders', 2, {
+      request('products', 'flows.templates.orderForm.productsRequest', '{{nodes.mock.server.url}}/products', 2)
+      const chooseForm: FlowForm = {
+        title: t('flows.templates.orderForm.chooseTitle'),
+        description: t('flows.templates.orderForm.chooseDescription'),
+        sections: [
+          formSection('catalog', 'flows.templates.orderForm.productSection', [
+            formField('product', 'flows.templates.orderForm.product', 'result', {
+              required: true,
+              source: {
+                view: 'table',
+                reference: '{{nodes.products.response.body.products}}',
+                columns: [
+                  { path: 'name', label: t('flows.templates.orderForm.productName') },
+                  { path: 'price', label: t('flows.templates.orderForm.productPrice') },
+                ],
+              },
+            }),
+          ]),
+        ],
+      }
+      nodes.push({ id: 'choose', kind: 'humanAction', form: chooseForm, position: position(3) })
+      request('order', 'flows.templates.orderForm.request', '{{nodes.mock.server.url}}/orders', 4, {
         method: 'post',
         headers: [{ name: 'Content-Type', value: 'application/json', enabled: true }],
-        body: { type: 'raw', rawLanguage: 'json', content: '{\n  "customer": "{{nodes.start.form.customer}}",\n  "quantity": {{nodes.start.form.quantity}},\n  "priority": "{{nodes.start.form.priority}}",\n  "giftWrap": {{nodes.start.form.giftWrap}}\n}' },
+        body: { type: 'raw', rawLanguage: 'json', content: '{\n  "customer": "{{nodes.start.form.customer}}",\n  "quantity": {{nodes.start.form.quantity}},\n  "priority": "{{nodes.start.form.priority}}",\n  "giftWrap": {{nodes.start.form.giftWrap}},\n  "productId": "{{nodes.choose.form.product.id}}"\n}' },
       })
-      display('result', '{{nodes.order.response.body}}', 3)
+      display('result', '{{nodes.order.response.body}}', 5)
       connect('start', 'mock')
-      connect('mock', 'order')
+      connect('mock', 'products')
+      connect('products', 'choose', 'success')
+      connect('choose', 'order')
       connect('order', 'result', 'success')
       break
     }
