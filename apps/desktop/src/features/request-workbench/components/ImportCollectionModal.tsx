@@ -192,7 +192,7 @@ export function ImportCollectionModal({
   }
 
   return (
-    <Modal title={t('collections.importModalTitle')} closeAriaLabel={t('collections.closeModalAria')} onClose={onClose} className="ui-modal--form ui-modal--wide ui-modal--top import-modal">
+    <Modal title={t('collections.importModalTitle')} closeAriaLabel={t('collections.closeModalAria')} onClose={onClose} className={`ui-modal--form ui-modal--wide ui-modal--top import-modal${reviewing ? ' import-modal--review' : ''}`}>
       {!reviewing ? (
         <>
           <p className="ui-modal-description">{t('collections.importModalDescription')}</p>
@@ -252,6 +252,7 @@ export function ImportCollectionModal({
             <p className="ui-modal-description">{t('collections.importReviewDescription')}</p>
           </header>
           <div className="import-modal-cards">
+            {error && <InlineAlert className="import-modal-error">{error}</InlineAlert>}
             {items.map((item) => (
               <article className="import-modal-card" key={item.summary.id}>
                 <header className="import-modal-card-header">
@@ -309,7 +310,7 @@ export function ImportCollectionModal({
           </div>
         </div>
       )}
-      {error && <InlineAlert className="import-modal-error">{error}</InlineAlert>}
+      {!reviewing && error && <InlineAlert className="import-modal-error">{error}</InlineAlert>}
     </Modal>
   )
 }

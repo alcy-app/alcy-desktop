@@ -67,8 +67,7 @@
   min-height: 260px;
 }
 
-/* Aba URL: conteúdo curto (um campo só) — a modal encolhe para caber nele
-   em vez de manter a mesma altura de Arquivo/Código. */
+/* The URL tab shrinks to fit its single field. */
 .import-modal-panel--compact {
   min-height: 0;
 }
@@ -88,14 +87,25 @@
   width: min(720px, calc(100vw - 32px));
 }
 
+.import-modal--review {
+  max-height: calc(92vh - 32px);
+  overflow: hidden;
+}
+
+.import-modal--review > .ui-modal-header {
+  flex-shrink: 0;
+}
+
 .import-modal-review {
-  min-height: 400px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
 .import-modal-review-header {
+  flex-shrink: 0;
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--border);
 }
@@ -117,6 +127,7 @@
 }
 
 .import-modal-card {
+  flex-shrink: 0;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -220,6 +231,7 @@
 }
 
 .import-modal-review-actions {
+  flex-shrink: 0;
   margin-top: auto;
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
@@ -237,6 +249,10 @@
 
 .import-modal-error {
   white-space: pre-line;
+}
+
+.import-modal-cards > .import-modal-error {
+  flex-shrink: 0;
 }
 
 .import-modal-variables {
