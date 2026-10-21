@@ -36,10 +36,11 @@ export function FlowEdge({
   const { t } = useLanguage()
   const deleteTooltip = useTooltip(t('flows.canvas.deleteEdgeAria'))
 
+  // Keep the step inside the gap between the cards: a fixed offset folds the path back on itself when they are close.
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
     borderRadius: 4,
-    offset: 32,
+    offset: Math.max(0, Math.min(32, (targetX - sourceX) / 2)),
   })
   const sourceLane = data?.sourceLaneX ?? sourceX + 24
   const targetLane = data?.targetLaneX ?? targetX - 24

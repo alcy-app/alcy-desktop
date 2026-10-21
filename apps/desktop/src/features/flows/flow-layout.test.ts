@@ -67,6 +67,23 @@ describe('compact flow layout', () => {
     expect(flowEdgeRoutes({ nodes: [compact, large], edges: [{ source: 'small', target: 'large' }] })[0]?.sourceLaneX).toBeGreaterThan(large.width)
   })
 
+  it('keeps close forward connections direct instead of looping below the graph', () => {
+    const start = node('start', 'start', 0, 0), request = node('request', 'request', 184, 0)
+    expect(flowEdgeRoutes({ nodes: [start, request], edges: [{ source: 'start', target: 'request' }] })[0]).toBeUndefined()
+    const distant = node('distant', 'request', 0, 4000)
+    expect(flowEdgeRoutes({ nodes: [start, request, distant], edges: [{ source: 'start', target: 'request' }] })[0]).toBeUndefined()
+  })
+
+  it('detours only under the cards the exterior run crosses', () => {
+    const head = node('head', 'request', 0, 0), tail = node('tail', 'request', 704, 0)
+    const distant = node('distant', 'request', 0, 4000)
+    const route = flowEdgeRoutes({ nodes: [head, tail, distant], edges: [{ source: 'head', target: 'tail' }] })[0]!
+    expect(route.outsideY).toBeLessThan(distant.position.y)
+    const between = node('between', 'display', 352, 800)
+    const cleared = flowEdgeRoutes({ nodes: [head, tail, between], edges: [{ source: 'head', target: 'tail' }] })[0]!
+    expect(cleared.outsideY).toBeGreaterThan(between.position.y + between.height)
+  })
+
   it('handles empty graphs and long chains without recursive stack limits', () => {
     expect(layoutFlowGraph({ nodes: [], edges: [] })).toEqual({})
     const nodes = Array.from({ length: 3000 }, (_, index) => node(String(index)))

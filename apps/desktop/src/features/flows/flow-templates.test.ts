@@ -50,11 +50,22 @@ describe('flow templates', () => {
     expect(requests(second)[1].content.authentication).toEqual({ type: 'bearer', token: '{{nodes.login.response.body.token}}' })
   })
 
-  it('reaches the condition for successful and unsuccessful HTTP statuses and keeps repeat completion outside its body', () => {
-    const condition = createFlowFromTemplate('condition', t)
+  it('reaches the condition for successful and unsuccessful HTTP statuses and keeps repeat completion outside its body', () => {    const condition = createFlowFromTemplate('condition', t)
     expect(condition.edges.filter((edge) => edge.targetNodeId === 'status').map((edge) => edge.sourceHandle)).toEqual(['success', 'failure'])
     const repeat = createFlowFromTemplate('repeat', t)
     expect(repeat.edges).toContainEqual(expect.objectContaining({ sourceNodeId: 'repeat', targetNodeId: 'complete', sourceHandle: 'done' }))
     expect(repeat.edges.some((edge) => edge.targetNodeId === 'repeat' && edge.sourceNodeId !== 'initialize')).toBe(false)
+  })
+
+  it('ships an order form whose request targets its own inline mock', () => {
+    const flow = createFlowFromTemplate('orderForm', t)
+    const start = flow.nodes.find((node) => node.kind === 'start')
+    const fields = start?.kind === 'start' ? start.form?.sections.flatMap((section) => section.fields) ?? [] : []
+    expect(fields.map((field) => field.kind)).toEqual(expect.arrayContaining(['text', 'number', 'select', 'checkbox']))
+    const mock = flow.nodes.find((node) => node.kind === 'mockStart')
+    expect(mock?.kind === 'mockStart' ? mock.source.type : null).toBe('inline')
+    const request = flow.nodes.find((node) => node.kind === 'inlineRequest')
+    expect(request?.kind === 'inlineRequest' ? request.request.content.endpointUrl : null).toBe('{{nodes.mock.server.url}}/orders')
+    expect(request?.kind === 'inlineRequest' ? request.request.content.body : null).toEqual(expect.objectContaining({ content: expect.stringContaining('{{nodes.start.form.quantity}}') }))
   })
 })

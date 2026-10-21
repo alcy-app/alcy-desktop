@@ -11,6 +11,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Formulários nos flows**: o início do flow pode pedir dados antes de executar, com seções expansíveis, textos, quantidades, opções e checkboxes.
 - **Aguardar ação humana**: um bloco pausa o ramo até alguém preencher um formulário, que pode escolher itens retornados por blocos anteriores.
 - **Modo painéis**: esconde o diagrama e mostra os formulários e resultados escolhidos em cartões que podem ser posicionados livremente e acompanham a execução.
+- Template "Formulário com mock local": pede os dados de um pedido em um formulário e envia para um mock local, sem precisar configurar uma API.
 - Templates com uma galeria visual para criar flows em branco ou partir de exemplos prontos.
 - Pastas no módulo de flows para agrupar e organizar os flows do workspace.
 - O gravador de HAR também grava as requisições feitas pelos flows, com headers e resposta, para inspecionar e salvar junto com os envios manuais.
@@ -29,6 +30,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Fixed
 
+- As conexões entre blocos próximos deixam de descer até abaixo do flow inteiro e passam a ligá-los diretamente.
 - Variáveis não definidas no ambiente deixam de bloquear o envio; suas referências são mantidas na requisição.
 - A busca no schema GraphQL mostra primeiro os nomes exatos e os candidatos com comprimento mais próximo do termo buscado.
 - Os logs de erro passam a incluir as causas reconhecidas das falhas e os motivos encadeados dos erros da interface.

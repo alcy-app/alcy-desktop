@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '../../test-utils'
 import type { FlowFolderDto } from '../../bindings/list-flows'
 import type { FlowState } from './flows.types'
 import { FlowsPanel } from './FlowsPanel'
+import { FLOW_TEMPLATES } from './flow-templates'
 
 const flow: FlowState = { id: 'flow-1', name: 'Login', executionKind: 'standard', nodes: [], edges: [], createdAtMs: 0, updatedAtMs: 0 }
 
@@ -51,7 +52,7 @@ describe('FlowsPanel', () => {
     const blank = within(dialog).getByRole('button', { name: 'Flow em branco', pressed: true })
     expect(blank).toHaveFocus()
     expect(dialog.querySelector('.flow-templates-grid')?.firstElementChild).toContainElement(blank)
-    expect(cards).toHaveLength(4)
+    expect(cards).toHaveLength(FLOW_TEMPLATES.filter((template) => template.executionKind === 'standard').length - 1)
     expect(within(dialog).queryByRole('button', { name: 'Teste de carga básico' })).not.toBeInTheDocument()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Encadeamento de requests' }))

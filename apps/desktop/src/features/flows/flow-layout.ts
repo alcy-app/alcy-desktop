@@ -128,18 +128,23 @@ export function layoutFlowGraph({ nodes, edges }: LayoutGraph): FlowPositions {
   return positions
 }
 
-/** Long and backward connections use exterior lanes instead of crossing intermediate cards. */
+/** Long and backward connections use exterior lanes instead of crossing intermediate cards. Close forward connections stay direct: their offset shrinks to the available gap in the edge renderer. */
 export function flowEdgeRoutes({ nodes, edges }: LayoutGraph): (FlowEdgeRoute | undefined)[] {
   const executable = nodes.filter((node) => node.kind !== 'note')
   const byId = new Map(executable.map((node) => [node.id, node]))
   const columnRight = new Map<number, number>()
   for (const node of executable) columnRight.set(node.position.x, Math.max(columnRight.get(node.position.x) ?? -Infinity, node.position.x + node.width))
-  const bottom = executable.reduce((value, node) => Math.max(value, node.position.y + node.height), 0)
   let lane = 0
   return edges.map((edge) => {
     const source = byId.get(edge.source), target = byId.get(edge.target)
     if (!source || !target) return undefined
     const distance = target.position.x - source.position.x - source.width
-    return distance < 48 || distance > G.columnGap + G.width / 2 ? { outsideY: bottom + G.rowGap + lane++ * 12, sourceLaneX: columnRight.get(source.position.x)! + 24, targetLaneX: target.position.x - 24 } : undefined
+    if (distance >= 0 && distance <= G.columnGap + G.width / 2) return undefined
+    const sourceLaneX = columnRight.get(source.position.x)! + 24, targetLaneX = target.position.x - 24
+    // The horizontal run only crosses cards between the two lanes, so the detour clears those instead of the whole graph.
+    const left = Math.min(sourceLaneX, targetLaneX), right = Math.max(sourceLaneX, targetLaneX)
+    let bottom = Math.max(source.position.y + source.height, target.position.y + target.height)
+    for (const node of executable) if (node.position.x < right && node.position.x + node.width > left) bottom = Math.max(bottom, node.position.y + node.height)
+    return { outsideY: bottom + G.rowGap + lane++ * 12, sourceLaneX, targetLaneX }
   })
 }

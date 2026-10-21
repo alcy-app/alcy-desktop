@@ -1,4 +1,6 @@
 import type { TranslationKey } from '../../shared/i18n/translations'
+import type { MockServerDto } from '../../bindings/mock-servers'
+import type { FlowForm, FlowFormField, FlowFormSection } from '../../bindings/flow-forms'
 import { emptyRequestContent, type RequestContent } from '../request-workbench/collection-tree'
 import { FLOW_GEOMETRY as G } from './flow-geometry'
 import type { FlowEdgeState, FlowNodeState, FlowSourceHandle, FlowState } from './flows.types'
@@ -10,6 +12,7 @@ export const FLOW_TEMPLATES = [
   { id: 'chainedRequests', nameKey: 'flows.templates.chainedRequests.name', descriptionKey: 'flows.templates.chainedRequests.description', executionKind: 'standard' },
   { id: 'condition', nameKey: 'flows.templates.condition.name', descriptionKey: 'flows.templates.condition.description', executionKind: 'standard' },
   { id: 'repeat', nameKey: 'flows.templates.repeat.name', descriptionKey: 'flows.templates.repeat.description', executionKind: 'standard' },
+  { id: 'orderForm', nameKey: 'flows.templates.orderForm.name', descriptionKey: 'flows.templates.orderForm.description', executionKind: 'standard' },
   { id: 'load', nameKey: 'flows.templates.load.name', descriptionKey: 'flows.templates.load.description', executionKind: 'load' },
 ] as const satisfies readonly { id: string; nameKey: TranslationKey; descriptionKey: TranslationKey; executionKind: FlowState['executionKind'] }[]
 
@@ -35,6 +38,10 @@ export function createFlowFromTemplate(templateId: FlowTemplateId, t: Translate)
   const display = (id: string, template: string, column: number, row = 0) => {
     nodes.push({ id, kind: 'display', template, position: position(column, row) })
   }
+  const formField = (id: string, labelKey: TranslationKey, kind: FlowFormField['kind'], extra: Partial<FlowFormField> = {}): FlowFormField => ({
+    id, label: t(labelKey), description: '', kind, required: false, initialValue: '', min: null, max: null, step: null, options: [], source: null, multiple: false, ...extra,
+  })
+  const formSection = (id: string, titleKey: TranslationKey, fields: FlowFormField[], collapsed = false): FlowFormSection => ({ id, title: t(titleKey), collapsed, fields })
 
   switch (templateId) {
     case 'blank':
@@ -85,6 +92,66 @@ export function createFlowFromTemplate(templateId: FlowTemplateId, t: Translate)
       connect('pause', 'increment')
       connect('repeat', 'complete', 'done')
       break
+    case 'orderForm': {
+      // The inline mock keeps the example runnable without any external API.
+      const server: MockServerDto = {
+        id: crypto.randomUUID(),
+        name: t('flows.templates.orderForm.mockName'),
+        port: 3010,
+        corsEnabled: true,
+        routes: [{
+          id: crypto.randomUUID(),
+          name: t('flows.templates.orderForm.route'),
+          enabled: true,
+          method: 'POST',
+          path: '/orders',
+          defaultResponse: {
+            id: crypto.randomUUID(),
+            name: t('flows.templates.orderForm.response'),
+            enabled: true,
+            status: 201,
+            headers: [{ name: 'content-type', value: 'application/json' }],
+            body: '{\n  "id": "ord_1042",\n  "status": "confirmed"\n}',
+            delayMs: 0,
+            condition: null,
+          },
+          alternatives: [],
+        }],
+      }
+      const form: FlowForm = {
+        title: t('flows.templates.orderForm.formTitle'),
+        description: t('flows.templates.orderForm.formDescription'),
+        sections: [
+          formSection('order', 'flows.templates.orderForm.orderSection', [
+            formField('customer', 'flows.templates.orderForm.customer', 'text', { required: true, initialValue: 'Ada Lovelace' }),
+            formField('quantity', 'flows.templates.orderForm.quantity', 'number', { required: true, initialValue: '2', min: 1, max: 99, step: 1 }),
+            formField('priority', 'flows.templates.orderForm.priority', 'select', {
+              required: true, initialValue: 'standard',
+              options: [
+                { value: 'standard', label: t('flows.templates.orderForm.standard') },
+                { value: 'express', label: t('flows.templates.orderForm.express') },
+              ],
+            }),
+            formField('giftWrap', 'flows.templates.orderForm.giftWrap', 'checkbox', { initialValue: 'false' }),
+          ]),
+          formSection('notes', 'flows.templates.orderForm.notesSection', [
+            formField('notes', 'flows.templates.orderForm.notes', 'textarea'),
+          ], true),
+        ],
+      }
+      nodes[0] = { id: 'start', kind: 'start', form, position: { x: 0, y: 0 } }
+      nodes.push({ id: 'mock', kind: 'mockStart', source: { type: 'inline', server }, position: position(1) })
+      request('order', 'flows.templates.orderForm.request', '{{nodes.mock.server.url}}/orders', 2, {
+        method: 'post',
+        headers: [{ name: 'Content-Type', value: 'application/json', enabled: true }],
+        body: { type: 'raw', rawLanguage: 'json', content: '{\n  "customer": "{{nodes.start.form.customer}}",\n  "quantity": {{nodes.start.form.quantity}},\n  "priority": "{{nodes.start.form.priority}}",\n  "giftWrap": {{nodes.start.form.giftWrap}}\n}' },
+      })
+      display('result', '{{nodes.order.response.body}}', 3)
+      connect('start', 'mock')
+      connect('mock', 'order')
+      connect('order', 'result', 'success')
+      break
+    }
     case 'load':
       nodes.push({ id: 'scenario', kind: 'load', loadKind: 'scenario', label: t('flows.loadNode.scenario.label'), config: defaultLoadNodeConfig('scenario'), position: position(1) })
       nodes.push({ id: 'request', kind: 'load', loadKind: 'request', label: t('flows.loadNode.request.label'), config: defaultLoadNodeConfig('request'), position: position(2) })
