@@ -89,6 +89,11 @@
   outline: none;
 }
 
+/* Renaming swaps the row button for a plain container so Space types a space. */
+.flows-list-item--renaming {
+  cursor: default;
+}
+
 .flows-list-item-icon {
   flex-shrink: 0;
   color: var(--text-muted);

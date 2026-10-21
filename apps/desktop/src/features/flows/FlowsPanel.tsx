@@ -217,38 +217,53 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 if (event.button !== 0 || isSearching || isRenaming || (event.target as HTMLElement).closest('.flows-menu-wrapper, .ui-menu')) return
                 startDrag(item.id, kind, label, event)
               }}>
-              <button ref={(element) => { if (element) rowButtonsRef.current.set(key, element); else rowButtonsRef.current.delete(key) }} type="button" className="flows-list-item" aria-expanded={kind === 'folder' ? open : undefined}
-                onClick={(event) => {
-                  event.currentTarget.focus()
-                  if (kind === 'flow') onOpenFlow(item.id)
-                  else if (!isSearching) setExpanded((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next })
-                }}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) return
-                  const combo = comboFromEvent(event)
-                  if (isShortcutFor(shortcutBindings, 'renameItem', combo)) { event.preventDefault(); rename(row) }
-                  else if (isShortcutFor(shortcutBindings, 'deleteItem', combo)) { event.preventDefault(); setPendingRemove(row) }
-                  else if (kind === 'folder' && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
-                    event.preventDefault()
-                    if (event.key === 'ArrowRight') expand(item.id)
-                    else setExpanded((current) => { const next = new Set(current); next.delete(item.id); return next })
-                  } else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
-                    event.preventDefault()
-                    const index = rows.findIndex((candidate) => rowKey(candidate) === key)
-                    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))
-                    const nextKey = rowKey(rows[nextIndex])
-                    listRef.current?.scrollToKey(nextKey)
-                    requestAnimationFrame(() => rowButtonsRef.current.get(nextKey)?.focus())
-                  }
-                }}>
-                {kind === 'folder' && (open ? <ChevronDownIcon size={10} /> : <ChevronRightIcon size={10} />)}
-                {kind === 'folder' ? <FolderIcon size={13} className="flows-list-item-icon" /> : <FlowIcon size={13} className="flows-list-item-icon" />}
-                {isRenaming ? (
-                  <InlineEditInput value={nameDraft} autoFocus aria-label={t(kind === 'folder' ? 'flows.folderNameAria' : 'flows.nameInputAria')} onClick={(event) => event.stopPropagation()}
+              {isRenaming ? (
+                // Outside a <button>: the row button treats Space and clicks as activation,
+                // which moved focus away from the input and ended the edit.
+                <div className="flows-list-item flows-list-item--renaming">
+                  {kind === 'folder' && (open ? <ChevronDownIcon size={10} /> : <ChevronRightIcon size={10} />)}
+                  {kind === 'folder' ? <FolderIcon size={13} className="flows-list-item-icon" /> : <FlowIcon size={13} className="flows-list-item-icon" />}
+                  <InlineEditInput value={nameDraft} autoFocus aria-label={t(kind === 'folder' ? 'flows.folderNameAria' : 'flows.nameInputAria')}
                     onChange={(event) => { setNameDraft(event.target.value); if (event.target.value.trim()) (kind === 'folder' ? onRenameFolder : onRenameFlow)(item.id, event.target.value) }}
-                    onBlur={() => setRenamingKey(null)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setRenamingKey(null); event.currentTarget.closest('button')?.focus() } }} />
-                ) : <span className="flows-list-item-name" data-change-kind={changeKind}>{label}</span>}
-              </button>
+                    onBlur={() => setRenamingKey(null)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== 'Escape') return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setRenamingKey(null)
+                      requestAnimationFrame(() => rowButtonsRef.current.get(key)?.focus())
+                    }} />
+                </div>
+              ) : (
+                <button ref={(element) => { if (element) rowButtonsRef.current.set(key, element); else rowButtonsRef.current.delete(key) }} type="button" className="flows-list-item" aria-expanded={kind === 'folder' ? open : undefined}
+                  onClick={(event) => {
+                    event.currentTarget.focus()
+                    if (kind === 'flow') onOpenFlow(item.id)
+                    else if (!isSearching) setExpanded((current) => { const next = new Set(current); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next })
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return
+                    const combo = comboFromEvent(event)
+                    if (isShortcutFor(shortcutBindings, 'renameItem', combo)) { event.preventDefault(); rename(row) }
+                    else if (isShortcutFor(shortcutBindings, 'deleteItem', combo)) { event.preventDefault(); setPendingRemove(row) }
+                    else if (kind === 'folder' && (event.key === 'ArrowRight' || event.key === 'ArrowLeft')) {
+                      event.preventDefault()
+                      if (event.key === 'ArrowRight') expand(item.id)
+                      else setExpanded((current) => { const next = new Set(current); next.delete(item.id); return next })
+                    } else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+                      event.preventDefault()
+                      const index = rows.findIndex((candidate) => rowKey(candidate) === key)
+                      const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))
+                      const nextKey = rowKey(rows[nextIndex])
+                      listRef.current?.scrollToKey(nextKey)
+                      requestAnimationFrame(() => rowButtonsRef.current.get(nextKey)?.focus())
+                    }
+                  }}>
+                  {kind === 'folder' && (open ? <ChevronDownIcon size={10} /> : <ChevronRightIcon size={10} />)}
+                  {kind === 'folder' ? <FolderIcon size={13} className="flows-list-item-icon" /> : <FlowIcon size={13} className="flows-list-item-icon" />}
+                  <span className="flows-list-item-name" data-change-kind={changeKind}>{label}</span>
+                </button>
+              )}
               {changeKind && <ChangeMarker kind={changeKind} />}
               <OptionsMenu label={t('flows.moreOptionsAria', { name: label })} wrapperClassName="flows-menu-wrapper" menuClassName="flows-menu" menuPlacement="auto" menuPortal isOpen={menuOpenKey === key} onToggle={() => setMenuOpenKey((current) => current === key ? null : key)} onClose={() => setMenuOpenKey(null)}>
                 {kind === 'folder' && <MenuItem label={t('flows.addButtonAria')} onSelect={() => addFlow(item.id)} />}

@@ -263,6 +263,22 @@ describe('flow folders', () => {
     expect(screen.getByRole('button', { name: 'Payments' })).toBeInTheDocument()
   })
 
+  it('keeps the rename input outside the row button so typing spaces does not end the edit', async () => {
+    render(<FolderPanel />)
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Checkout' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
+    const input = screen.getByLabelText('Nome da pasta')
+
+    // Space and clicks on an input nested in a <button> activate the button, which ends the edit.
+    expect(input.closest('button')).toBeNull()
+    fireEvent.change(input, { target: { value: 'Check out' } })
+    fireEvent.keyDown(input, { key: ' ', code: 'Space' })
+    expect(screen.getByLabelText('Nome da pasta')).toBe(input)
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check out' })).toHaveFocus())
+  })
+
   it('collapses folders and reveals matching children during search', () => {
     render(<FolderPanel />)
     expect(screen.queryByText('Login')).not.toBeInTheDocument()

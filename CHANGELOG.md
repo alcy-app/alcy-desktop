@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## Unreleased
 
+### Fixed
+
+- Ao renomear uma pasta ou um flow na lista, apertar espaço não fecha mais a edição.
+
 ## [0.8.0] - 21/10/2026
 
 ### Added
