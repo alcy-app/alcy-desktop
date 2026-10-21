@@ -56,6 +56,21 @@ describe('flow forms', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledWith({ products: [0, 100] }))
   })
 
+  it('highlights and selects a catalog row by clicking anywhere in it', async () => {
+    vi.mocked(listFlowFormOptions).mockResolvedValue({ rows: [{ index: 0, cells: ['Notebook', '4299'] }, { index: 1, cells: ['Monitor', '1899'] }], total: 2, nextOffset: null })
+    const submit = vi.fn().mockResolvedValue(undefined)
+    const form = definition([field({ id: 'product', label: 'Product', kind: 'result', required: true, source: { reference: '{{nodes.fetch.response.body.products}}', columns: [{ path: 'name', label: 'Name' }, { path: 'price', label: 'Price' }] } })])
+    const { container } = render(<FormHarness form={form} submit={submit} />, { wrapper })
+    await screen.findByText('Monitor')
+    const rows = container.querySelectorAll('tbody tr')
+    fireEvent.click(rows[1])
+    expect(rows[1]).toHaveAttribute('data-selected', 'true')
+    expect(rows[0]).toHaveAttribute('data-selected', 'false')
+    expect(screen.getByRole('radio', { name: 'Product: Monitor, 1899' })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({ product: 1 }))
+  })
+
   it('preserves both forms through DTO conversion and rewrites result sources on node rename', () => {
     const form = definition([field({ kind: 'result', source: { reference: '{{nodes.fetch.response.body.items}}', columns: [{ path: 'id', label: 'ID' }] } })])
     const nodes: FlowNodeState[] = [{ id: 'start', kind: 'start', form: definition([field({})]), position: { x: 0, y: 0 } }, { id: 'fetch', kind: 'display', template: '', position: { x: 100, y: 0 } }, { id: 'human', kind: 'humanAction', form, position: { x: 200, y: 0 } }]
