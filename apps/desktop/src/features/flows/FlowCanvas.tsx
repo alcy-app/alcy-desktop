@@ -1373,8 +1373,8 @@ export function FlowCanvas({
       </Modal>}
     </div>
     {viewMode === 'panels' && <FlowPanels nodes={fromFlowNodes(nodes)} presentation={presentation} onChange={changePresentation} statuses={statuses} renderContent={renderPanelContent} />}
-    {initialFormOpen && initialForm && <Modal title={t('flows.forms.start')} closeAriaLabel={t('common.cancel')} onClose={() => setInitialFormOpen(false)} className="ui-modal--form">{renderInitialForm()}</Modal>}
-    {humanFormNodeId && waitingNodes.some((node) => node.id === humanFormNodeId) && <Modal key={humanFormNodeId} title={t('flows.forms.humanAction')} closeAriaLabel={t('common.cancel')} onClose={() => setHumanFormNodeId(null)} className="ui-modal--form">{renderHumanForm(humanFormNodeId)}</Modal>}
+    {initialFormOpen && initialForm && <Modal title={t('flows.forms.start')} closeAriaLabel={t('common.cancel')} onClose={() => setInitialFormOpen(false)} className="ui-modal--form flow-form-modal">{renderInitialForm()}</Modal>}
+    {humanFormNodeId && waitingNodes.some((node) => node.id === humanFormNodeId) && <Modal key={humanFormNodeId} title={t('flows.forms.humanAction')} closeAriaLabel={t('common.cancel')} onClose={() => setHumanFormNodeId(null)} className="ui-modal--form flow-form-modal">{renderHumanForm(humanFormNodeId)}</Modal>}
     {logOpen && (
       <RunLogPanel
         rootPath={rootPath}

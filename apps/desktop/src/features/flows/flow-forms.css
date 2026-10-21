@@ -1,4 +1,6 @@
 .flow-form-editor, .flow-form-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+/* Runtime forms open in a modal: sections and result tables need more room than the default 320px. */
+.flow-form-modal { width: 640px; }
 .flow-form-editor-section, .flow-form-editor-field, .flow-form-section { border: 1px solid var(--border); border-radius: var(--radius-md); min-width: 0; overflow: hidden; }
 .flow-form-editor summary, .flow-form-section summary { padding: 12px; cursor: pointer; font-weight: var(--font-weight-semibold); color: var(--text); background: var(--surface-raised); }
 .flow-form-editor summary code, .flow-form-editor summary span { margin-left: 8px; font-size: var(--font-size-xs); font-weight: var(--font-weight-normal); color: var(--text-muted); }
