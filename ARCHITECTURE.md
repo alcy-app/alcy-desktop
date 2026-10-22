@@ -177,6 +177,17 @@ uses existing runtime isolation: setup cookies and headers are not copied into
 VUs. Preview and commit compile the graph before success, and commit rechecks
 the source hash before saving assets.
 
+The k6 importer resolves bounded declarative constants and request arguments
+from the AST, including static JSON serialization, without executing the
+script. `__ENV` string references become `K6_ENV_*` flow variables in a leading
+setup session block. Its optional `requiredVariables` list defaults to empty
+for existing configurations. Import analysis and commit validate structure;
+execution preview and the runner require those values before any effects.
+Configured destinations are resolved for confirmation without running setup.
+The runner resolves each request URL in its VU state and validates HTTP/HTTPS
+before applying cookies or invoking transport. Native import commands offload
+analysis and persistence to blocking workers.
+
 JMeter import builds a bounded format-specific XML hierarchy from streaming
 events (2 MiB source, depth 128 and 50,000 nodes), then interprets each test
 element with its following sibling `hashTree`. This keeps logical ownership

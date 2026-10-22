@@ -137,6 +137,114 @@ fn metric(id: &str) -> LoadMetricPlan {
     }
 }
 
+fn environment_session(base: &str) -> LoadSessionPlan {
+    LoadSessionPlan {
+        node_id: "environment".into(),
+        headers: vec![],
+        cookies_enabled: None,
+        variables: BTreeMap::from([("K6_ENV_BASE_URL".into(), base.into())]),
+        required_variables: vec!["K6_ENV_BASE_URL".into()],
+    }
+}
+
+#[tokio::test]
+async fn required_configuration_is_checked_before_any_setup_effect() {
+    let mut p = plan(vec![LoadStep::Request(request("work", ""))]);
+    p.setup = Some(lifecycle(
+        "setup",
+        vec![
+            LoadStep::Request(request("must-not-run", "")),
+            LoadStep::ConfigureSession(environment_session("")),
+        ],
+    ));
+    assert!(
+        p.validate().is_ok(),
+        "incomplete configuration remains structurally valid"
+    );
+    let trace = Trace::default();
+    let error = execute_load_plan_report(&p, &trace, &Sink, &NeverCancel)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("K6_ENV_BASE_URL"));
+    assert!(trace.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn required_variable_names_survive_configuration_edits_and_remain_validated() {
+    let mut session = environment_session("https://example.test");
+    session.variables.clear();
+    let p = plan(vec![
+        LoadStep::ConfigureSession(session),
+        LoadStep::Request(request("work", "")),
+    ]);
+    assert!(
+        p.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("K6_ENV_BASE_URL")
+    );
+}
+
+#[tokio::test]
+async fn resolves_urls_before_cookies_and_preserves_vu_variable_isolation() {
+    let mut target = request("work", "{{__VU}}");
+    target.endpoint = Endpoint::new("{{K6_ENV_BASE_URL}}/vu/{{__VU}}").unwrap();
+    let mut p = plan(vec![LoadStep::Request(target)]);
+    let mut setup_target = request("setup-target", "");
+    setup_target.endpoint = Endpoint::new("{{K6_ENV_BASE_URL}}/setup").unwrap();
+    let mut teardown_target = request("teardown-target", "");
+    teardown_target.endpoint = Endpoint::new("{{K6_ENV_BASE_URL}}/teardown").unwrap();
+    p.setup = Some(lifecycle(
+        "setup",
+        vec![
+            LoadStep::ConfigureSession(environment_session("https://example.test")),
+            LoadStep::Request(setup_target),
+        ],
+    ));
+    p.teardown = Some(lifecycle(
+        "teardown",
+        vec![LoadStep::Request(teardown_target)],
+    ));
+    let trace = Trace::default();
+    execute_load_plan_report(&p, &trace, &Sink, &NeverCancel)
+        .await
+        .unwrap();
+    let recorded = trace.0.lock().unwrap();
+    assert_eq!(recorded.first().unwrap().0, "https://example.test/setup");
+    assert_eq!(recorded.last().unwrap().0, "https://example.test/teardown");
+    for vu in ["1", "2"] {
+        let calls = recorded
+            .iter()
+            .filter(|(url, _, _)| url == &format!("https://example.test/vu/{vu}"))
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|(_, body, _)| body == vu));
+    }
+}
+
+#[tokio::test]
+async fn invalid_or_unresolved_urls_never_reach_transport() {
+    for url in [
+        "{{missing}}/work",
+        "file:///tmp/work",
+        "grpc://example.test",
+        "https://",
+        "{{unclosed",
+    ] {
+        let mut target = request("target", "");
+        target.endpoint = Endpoint::new(url).unwrap();
+        let p = plan(vec![LoadStep::Request(target)]);
+        let trace = Trace::default();
+        assert!(
+            execute_load_plan_report(&p, &trace, &Sink, &NeverCancel)
+                .await
+                .is_err(),
+            "accepted {url}"
+        );
+        assert!(trace.0.lock().unwrap().is_empty());
+    }
+}
+
 #[tokio::test]
 async fn extract_reads_json_pointer_into_the_current_vu_variables() {
     let p = plan(vec![
@@ -437,6 +545,7 @@ async fn dynamic_control_values_fail_before_their_body_when_a_variable_is_missin
 async fn select_supports_negative_and_existence_conditions() {
     let p = plan(vec![
         LoadStep::ConfigureSession(LoadSessionPlan {
+            required_variables: Vec::new(),
             node_id: "session".into(),
             headers: vec![],
             cookies_enabled: None,
@@ -581,6 +690,7 @@ async fn lifecycle_and_nested_controls_preserve_vu_state_order_and_tag_scopes() 
         vec![
             LoadStep::Request(request("prepare", "")),
             LoadStep::ConfigureSession(LoadSessionPlan {
+                required_variables: Vec::new(),
                 node_id: "seed".into(),
                 headers: vec![],
                 cookies_enabled: None,
@@ -729,6 +839,7 @@ async fn timebox_discards_in_flight_request_then_continues_outside_body() {
     p.setup = Some(lifecycle(
         "setup",
         vec![LoadStep::ConfigureSession(LoadSessionPlan {
+            required_variables: Vec::new(),
             node_id: "seed".into(),
             headers: vec![],
             cookies_enabled: None,
@@ -892,6 +1003,7 @@ async fn session_headers_resolve_variables_and_reject_header_injection() {
     for value in ["valid", "bad\r\nInjected: yes"] {
         let p = plan(vec![
             LoadStep::ConfigureSession(LoadSessionPlan {
+                required_variables: Vec::new(),
                 node_id: "session".into(),
                 headers: vec![HeaderEntry::new("X-Token", "{{token}}", true).unwrap()],
                 cookies_enabled: None,

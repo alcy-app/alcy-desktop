@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use super::k6_values::{K6Resolver, K6Value};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, BindingPatternKind, Declaration, ExportDefaultDeclarationKind, Expression,
@@ -19,7 +20,8 @@ pub(super) struct K6Syntax {
     pub functions: BTreeMap<String, Range<usize>>,
     pub calls: Vec<K6StaticCall>,
     pub metrics: Vec<K6MetricDefinition>,
-    pub options: Option<Range<usize>>,
+    pub options: Option<(usize, K6Value)>,
+    pub required_variables: Vec<String>,
 }
 
 pub(super) struct K6StaticCall {
@@ -27,6 +29,7 @@ pub(super) struct K6StaticCall {
     pub offset: usize,
     pub argument_offset: usize,
     pub response_name: Option<String>,
+    pub arguments: Vec<K6Value>,
 }
 
 struct StaticBody<'a> {
@@ -79,6 +82,7 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
         calls: Vec::new(),
         metrics: Vec::new(),
         options: None,
+        required_variables: Vec::new(),
     };
     let mut bindings = BTreeMap::new();
     for statement in &parsed.program.body {
@@ -128,6 +132,7 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
     }
     diagnostics.extend(super::forbidden_k6_constructs(source, &syntax.imports));
 
+    let mut resolver = K6Resolver::new(source);
     let mut bodies = Vec::new();
     let mut declarations = BTreeSet::new();
     for statement in &parsed.program.body {
@@ -214,7 +219,10 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
                 continue;
             };
             let name = id.name.as_str();
-            if bindings.contains_key(name) || !declarations.insert(name.to_string()) {
+            if bindings.contains_key(name)
+                || matches!(name, "JSON" | "__ENV")
+                || !declarations.insert(name.to_string())
+            {
                 diagnostics.push(diag(
                     source,
                     offset,
@@ -226,19 +234,20 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
                 continue;
             };
             match init {
-                Expression::ObjectExpression(_)
-                    if name == "options"
-                        && exported
-                        && variables.kind == VariableDeclarationKind::Const =>
+                _ if name == "options"
+                    && exported
+                    && variables.kind == VariableDeclarationKind::Const =>
                 {
-                    if static_value(source, init, 0) {
-                        syntax.options = Some(init.span().start as usize..init.span().end as usize);
-                    } else {
-                        diagnostics.push(diag(
+                    match resolver.resolve(init) {
+                        Ok(value) if value.object().is_some() && !value.dynamic() => {
+                            resolver.values.insert(name.into(), value.clone());
+                            syntax.options = Some((init.span().start as usize, value));
+                        }
+                        _ => diagnostics.push(diag(
                             source,
                             init.span().start as usize,
-                            "options k6 exige somente valores literais sem expressões dinâmicas",
-                        ));
+                            "options k6 requires a static object without runtime variables",
+                        )),
                     }
                 }
                 Expression::NewExpression(metric) if !exported && name != "options" => {
@@ -251,16 +260,10 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
                         _ => "",
                     };
                     let metric_name = match metric.arguments.as_slice() {
-                        [Argument::StringLiteral(name)]
-                            if plain_string(
-                                source,
-                                name.span.start as usize,
-                                name.span.end as usize,
-                                name.value.as_str(),
-                            ) =>
-                        {
-                            Some(name.value.to_string())
-                        }
+                        [argument] => argument
+                            .as_expression()
+                            .and_then(|value| resolver.resolve(value).ok())
+                            .and_then(|value| value.string().map(str::to_string)),
                         _ => None,
                     };
                     if kind.is_empty()
@@ -285,6 +288,16 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
                         ));
                     }
                 }
+                _ if name != "options" && variables.kind == VariableDeclarationKind::Const => {
+                    match resolver.resolve(init) {
+                        Ok(value) => {
+                            resolver.values.insert(name.into(), value);
+                        }
+                        Err(message) => {
+                            diagnostics.push(diag(source, init.span().start as usize, message))
+                        }
+                    }
+                }
                 Expression::StringLiteral(_)
                 | Expression::NumericLiteral(_)
                 | Expression::BooleanLiteral(_)
@@ -306,11 +319,15 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
         {
             diagnostics.push(diag(source, body.offset, "funções k6 exigem corpo síncrono sem parâmetros; dados de setup ainda não são traduzidos"));
         }
-        let shadowed = body
-            .own_name
-            .as_ref()
-            .is_some_and(|name| bindings.contains_key(name) || !declarations.insert(name.clone()));
-        if shadowed || bindings.contains_key(&body.name) || !declarations.insert(body.name.clone())
+        let shadowed = body.own_name.as_ref().is_some_and(|name| {
+            bindings.contains_key(name)
+                || matches!(name.as_str(), "JSON" | "__ENV")
+                || !declarations.insert(name.clone())
+        });
+        if shadowed
+            || matches!(body.name.as_str(), "JSON" | "__ENV")
+            || bindings.contains_key(&body.name)
+            || !declarations.insert(body.name.clone())
         {
             diagnostics.push(diag(
                 source,
@@ -328,9 +345,11 @@ pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, Load
             &bindings,
             &declarations,
             &mut syntax,
+            &mut resolver,
             &mut diagnostics,
         );
     }
+    syntax.required_variables = resolver.required_variables.into_iter().collect();
     if diagnostics.is_empty() {
         Ok(syntax)
     } else {
@@ -352,8 +371,10 @@ fn read_body(
     bindings: &BTreeMap<String, String>,
     declarations: &BTreeSet<String>,
     syntax: &mut K6Syntax,
+    resolver: &mut K6Resolver<'_>,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) {
+    let global_values = resolver.values.clone();
     let mut locals = BTreeSet::new();
     for (index, statement) in body.statements.iter().enumerate() {
         let offset = statement.span().start as usize;
@@ -389,6 +410,7 @@ fn read_body(
                 };
                 let name = id.name.to_string();
                 if bindings.contains_key(&name)
+                    || matches!(name.as_str(), "JSON" | "__ENV")
                     || declarations.contains(&name)
                     || !locals.insert(name.clone())
                 {
@@ -406,6 +428,20 @@ fn read_body(
                     ));
                     continue;
                 };
+                if variables.kind == VariableDeclarationKind::Const
+                    && !matches!(init, Expression::CallExpression(call) if matches!(&call.callee,
+                        Expression::StaticMemberExpression(member) if identifier(&member.object) == Some("http")))
+                {
+                    match resolver.resolve(init) {
+                        Ok(value) => {
+                            resolver.values.insert(name, value);
+                        }
+                        Err(message) => {
+                            diagnostics.push(diag(source, init.span().start as usize, message))
+                        }
+                    }
+                    continue;
+                }
                 (init, Some(name))
             }
             _ => {
@@ -467,25 +503,28 @@ fn read_body(
             ));
             continue;
         }
-        let static_arguments = if callee == "check" {
-            matches!(call.arguments.as_slice(), [Argument::Identifier(_), Argument::ObjectExpression(object)]
+        let arguments = if callee == "check" {
+            let valid = matches!(call.arguments.as_slice(), [Argument::Identifier(_), Argument::ObjectExpression(object)]
             if object.properties.len() == 1 && object.properties.iter().all(|property| {
                 matches!(property, ObjectPropertyKind::ObjectProperty(property)
                     if !property.computed && !property.method && !property.shorthand
                         && static_key(source, &property.key).is_some_and(|key| key != "__proto__")
                         && matches!(&property.value, Expression::ArrowFunctionExpression(arrow) if arrow.expression && !arrow.r#async))
-            }))
+            }));
+            if !valid {
+                diagnostics.push(diag(source, offset, "unsupported k6 check arguments"));
+                continue;
+            }
+            Vec::new()
         } else {
-            call.arguments.iter().all(|argument| {
-                argument
-                    .as_expression()
-                    .is_some_and(|value| static_value(source, value, 0))
-            })
+            match resolver.arguments(&call.arguments) {
+                Ok(arguments) => arguments,
+                Err(message) => {
+                    diagnostics.push(diag(source, offset, message));
+                    continue;
+                }
+            }
         };
-        if !static_arguments {
-            diagnostics.push(diag(source, offset, "argumentos k6 exigem valores literais; templates, escapes e expressões dinâmicas ainda não são traduzidos"));
-            continue;
-        }
         let argument_offset = call
             .arguments
             .first()
@@ -495,54 +534,10 @@ fn read_body(
             offset: call.span.start as usize,
             argument_offset,
             response_name,
+            arguments,
         });
     }
-}
-
-/// The remaining value lowerers consume literal source text. Admit only
-/// values whose text preserves their AST value; never guess at JS evaluation.
-fn static_value(source: &str, value: &Expression<'_>, depth: usize) -> bool {
-    if depth > 32 {
-        return false;
-    }
-    match value {
-        Expression::StringLiteral(value) => plain_string(
-            source,
-            value.span.start as usize,
-            value.span.end as usize,
-            value.value.as_str(),
-        ),
-        Expression::NumericLiteral(_)
-        | Expression::BooleanLiteral(_)
-        | Expression::NullLiteral(_) => true,
-        Expression::UnaryExpression(unary)
-            if matches!(&unary.argument, Expression::NumericLiteral(_)) =>
-        {
-            source
-                .get(unary.span.start as usize..unary.argument.span().start as usize)
-                .is_some_and(|operator| matches!(operator.trim(), "-" | "+"))
-        }
-        Expression::ObjectExpression(object) => {
-            let mut keys = BTreeSet::new();
-            object.properties.iter().all(|property| {
-                let ObjectPropertyKind::ObjectProperty(property) = property else {
-                    return false;
-                };
-                !property.computed
-                    && !property.method
-                    && !property.shorthand
-                    && static_key(source, &property.key)
-                        .is_some_and(|key| key != "__proto__" && keys.insert(key.to_string()))
-                    && static_value(source, &property.value, depth + 1)
-            })
-        }
-        Expression::ArrayExpression(array) => array.elements.iter().all(|element| {
-            element
-                .as_expression()
-                .is_some_and(|value| static_value(source, value, depth + 1))
-        }),
-        _ => false,
-    }
+    resolver.values = global_values;
 }
 
 fn static_key<'a>(source: &str, key: &'a PropertyKey<'_>) -> Option<&'a str> {

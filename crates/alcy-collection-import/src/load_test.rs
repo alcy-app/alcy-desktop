@@ -15,8 +15,10 @@ use thiserror::Error;
 
 mod jmeter_syntax;
 mod k6_syntax;
+mod k6_values;
 use jmeter_syntax::{JmeterHttpSampler, JmeterThreadGroup, JmeterThreadGroupKind, parse_jmeter};
 use k6_syntax::{K6StaticCall, parse_k6_syntax};
+use k6_values::K6Value;
 
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REQUESTS: usize = 10_000;
@@ -53,6 +55,7 @@ pub struct LoadImportAnalysis {
     pub flow: Flow,
     pub requests: Vec<LoadImportRequest>,
     pub assets: Vec<String>,
+    pub required_variables: Vec<String>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -217,6 +220,7 @@ fn analyze_k6(
             (!setup_effects.is_empty()).then_some(&setup_effects),
             (!teardown_effects.is_empty()).then_some(&teardown_effects),
             &thresholds,
+            &syntax.required_variables,
             now,
         )?,
         requests: requests
@@ -224,6 +228,7 @@ fn analyze_k6(
             .map(|request| request.request.clone())
             .collect(),
         assets: vec!["source".to_string()],
+        required_variables: syntax.required_variables,
     })
 }
 
@@ -366,249 +371,133 @@ fn default_k6_scenarios() -> Vec<K6Scenario> {
 /// literal `exec`; dynamic options and expressions remain incompatible.
 fn parse_k6_scenario_options(
     source: &str,
-    options: Option<&std::ops::Range<usize>>,
+    options: Option<&(usize, K6Value)>,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Scenario> {
-    let Some(options) = options else {
+    let Some((offset, options)) = options else {
         return default_k6_scenarios();
     };
-    let offset = options.start;
-    let object_offset = options.start;
-    let after_equal = &source[options.clone()];
-    let Some((object, _)) = nested_js_object(source, object_offset) else {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options do k6 precisa ser um objeto estático",
-        ));
+    let Some(fields) = options.object() else {
         return default_k6_scenarios();
     };
-    let Some(fields) = static_object_fields(object) else {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "options do k6 tem propriedades inválidas",
-        ));
-        return default_k6_scenarios();
-    };
-    if fields.iter().any(|(key, _)| *key == "scenarios") {
-        return parse_k6_named_scenario(after_equal, source, offset, diagnostics);
-    }
-
-    let mut vus = None;
-    let mut iterations = None;
-    let mut duration_ms = None;
-    let mut max_duration_ms = None;
-    for (key, value) in fields {
-        match key {
-            "vus" => vus = value.parse::<u32>().ok(),
-            "iterations" => iterations = value.parse::<u64>().ok(),
-            "duration" => duration_ms = parse_k6_duration(value),
-            "maxDuration" => max_duration_ms = parse_k6_duration(value),
-            "thresholds" => {}
-            _ => diagnostics.push(diag(
-                source,
-                object_offset,
-                format!("opção k6 '{key}' ainda não é traduzida"),
-            )),
-        }
-        if matches!(key, "vus" | "iterations") && value.parse::<u64>().is_err()
-            || matches!(key, "duration" | "maxDuration") && parse_k6_duration(value).is_none()
+    if let Some(scenarios) = options.field("scenarios") {
+        if fields
+            .iter()
+            .any(|(key, _)| !matches!(key.as_str(), "scenarios" | "thresholds"))
         {
             diagnostics.push(diag(
                 source,
-                object_offset,
-                format!("opção k6 '{key}' precisa ser literal"),
+                *offset,
+                "options.scenarios can only be combined with thresholds",
+            ));
+        }
+        let Some(scenarios) = scenarios.object().filter(|values| !values.is_empty()) else {
+            diagnostics.push(diag(
+                source,
+                *offset,
+                "options.scenarios requires a nonempty static object",
+            ));
+            return default_k6_scenarios();
+        };
+        return scenarios
+            .iter()
+            .filter_map(|(name, value)| {
+                parse_k6_named_scenario_config(value, source, *offset, diagnostics).map(
+                    |(config, exec)| K6Scenario {
+                        name: name.clone(),
+                        config,
+                        exec,
+                    },
+                )
+            })
+            .collect();
+    }
+    for (key, _) in fields {
+        if !matches!(
+            key.as_str(),
+            "vus" | "iterations" | "duration" | "maxDuration" | "thresholds"
+        ) {
+            diagnostics.push(diag(
+                source,
+                *offset,
+                format!("unsupported k6 option '{key}'"),
             ));
         }
     }
-
-    match (vus, iterations, duration_ms, max_duration_ms) {
-        (Some(vus), Some(iterations), None, max_duration) => vec![K6Scenario {
-            name: "default".to_string(),
-            config: json!({
-                "sourceFormat": "k6",
-                "executor": "sharedIterations",
-                "vus": vus,
-                "iterations": iterations,
-                "maxDurationMs": max_duration,
-            }),
-            exec: "default".to_string(),
-        }],
-        (Some(vus), None, Some(duration_ms), None) => vec![K6Scenario {
-            name: "default".to_string(),
-            config: json!({
-                "sourceFormat": "k6",
-                "executor": "constantVus",
-                "vus": vus,
-                "durationMs": duration_ms,
-            }),
-            exec: "default".to_string(),
-        }],
+    let vus = options
+        .field("vus")
+        .and_then(K6Value::unsigned)
+        .and_then(|n| u32::try_from(n).ok());
+    let iterations = options.field("iterations").and_then(K6Value::unsigned);
+    let duration = options.field("duration").and_then(value_duration);
+    let max_duration = options.field("maxDuration").and_then(value_duration);
+    let valid_optional = ["iterations", "duration", "maxDuration"].iter().all(|key| {
+        options.field(key).is_none()
+            || match *key {
+                "iterations" => iterations.is_some(),
+                "duration" => duration.is_some(),
+                _ => max_duration.is_some(),
+            }
+    });
+    let config = match (vus, iterations, duration, valid_optional) {
+        (Some(vus), Some(iterations), None, true) => {
+            json!({"sourceFormat":"k6", "executor":"sharedIterations", "vus":vus, "iterations":iterations, "maxDurationMs":max_duration})
+        }
+        (Some(vus), None, Some(duration), true) if options.field("maxDuration").is_none() => {
+            json!({"sourceFormat":"k6", "executor":"constantVus", "vus":vus, "durationMs":duration})
+        }
         _ => {
             diagnostics.push(diag(
                 source,
-                offset,
-                "options do k6 exige vus+iterations (com maxDuration opcional) ou vus+duration",
+                *offset,
+                "options k6 requires valid vus+iterations or vus+duration",
             ));
-            default_k6_scenarios()
+            return default_k6_scenarios();
         }
-    }
+    };
+    vec![K6Scenario {
+        name: "default".into(),
+        config,
+        exec: "default".into(),
+    }]
 }
 
-fn parse_k6_named_scenario(
-    options: &str,
-    source: &str,
-    offset: usize,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Vec<K6Scenario> {
-    let Some(outer_start) = options.find('{') else {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options.scenarios precisa ser um objeto",
-        ));
-        return default_k6_scenarios();
-    };
-    let Some((outer, _)) = nested_js_object(options, outer_start) else {
-        diagnostics.push(diag(source, offset, "options do k6 tem objeto inválido"));
-        return default_k6_scenarios();
-    };
-    let Some(outer_fields) = static_object_fields(outer) else {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options do k6 tem propriedades inválidas",
-        ));
-        return default_k6_scenarios();
-    };
-    if outer_fields
-        .iter()
-        .any(|(key, _)| !matches!(*key, "scenarios" | "thresholds"))
-        || !outer_fields.iter().any(|(key, _)| *key == "scenarios")
-    {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options.scenarios só pode ser combinado com thresholds nesta etapa",
-        ));
-        return default_k6_scenarios();
-    }
-    let Some(scenarios_value) = outer_fields
-        .iter()
-        .find_map(|(key, value)| (*key == "scenarios").then_some(*value))
-    else {
-        return default_k6_scenarios();
-    };
-    let scenarios_value = scenarios_value.trim();
-    let Some((scenarios, after_scenarios)) = nested_js_object(scenarios_value, 0) else {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options.scenarios precisa ser um objeto",
-        ));
-        return default_k6_scenarios();
-    };
-    if !scenarios_value
-        .get(after_scenarios..)
-        .is_some_and(|tail| tail.trim().is_empty())
-    {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options.scenarios exige um objeto literal sem expressões adicionais",
-        ));
-        return default_k6_scenarios();
-    }
-    let Some(scenarios) = static_object_fields(scenarios) else {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "cenário nomeado tem propriedades inválidas",
-        ));
-        return default_k6_scenarios();
-    };
-    if scenarios.is_empty() {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "options.scenarios precisa ter ao menos um cenário",
-        ));
-        return default_k6_scenarios();
-    }
-    let mut imported = Vec::with_capacity(scenarios.len());
-    for (raw_name, scenario_value) in scenarios {
-        let Some(name) = k6_scenario_name(raw_name) else {
-            diagnostics.push(diag(
-                source,
-                offset,
-                "nome de cenário k6 precisa ser um identificador ou string literal",
-            ));
-            continue;
-        };
-        if imported
-            .iter()
-            .any(|scenario: &K6Scenario| scenario.name == name)
-        {
-            diagnostics.push(diag(
-                source,
-                offset,
-                format!("cenário k6 '{name}' foi definido mais de uma vez"),
-            ));
-            continue;
-        }
-        let Some((config, exec)) =
-            parse_k6_named_scenario_config(scenario_value, source, offset, diagnostics)
-        else {
-            continue;
-        };
-        imported.push(K6Scenario {
-            name: name.to_string(),
-            config,
-            exec,
-        });
-    }
-    if imported.is_empty() {
-        default_k6_scenarios()
+fn value_duration(value: &K6Value) -> Option<u64> {
+    duration_text(value.string()?)
+}
+
+fn duration_text(value: &str) -> Option<u64> {
+    let (raw, multiplier) = if let Some(raw) = value.strip_suffix("ms") {
+        (raw, 1)
+    } else if let Some(raw) = value.strip_suffix('s') {
+        (raw, 1_000)
+    } else if let Some(raw) = value.strip_suffix('m') {
+        (raw, 60_000)
+    } else if let Some(raw) = value.strip_suffix('h') {
+        (raw, 3_600_000)
     } else {
-        imported
-    }
-}
-
-fn k6_scenario_name(value: &str) -> Option<&str> {
-    let value = value.trim();
-    js_string_literal(value).or_else(|| is_js_identifier(value).then_some(value))
+        return None;
+    };
+    raw.parse::<u64>().ok()?.checked_mul(multiplier)
 }
 
 fn parse_k6_named_scenario_config(
-    scenario_value: &str,
+    scenario_value: &K6Value,
     source: &str,
     offset: usize,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Option<(serde_json::Value, String)> {
-    let Some((scenario, after_scenario)) = nested_js_object(scenario_value.trim(), 0) else {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "configuração do cenário precisa ser um objeto",
-        ));
-        return None;
-    };
-    if !scenario_value.get(after_scenario..)?.trim().is_empty() {
-        diagnostics.push(diag(source, offset, "configuração do cenário é inválida"));
-        return None;
-    }
-    let Some(fields) = static_object_fields(scenario) else {
-        diagnostics.push(diag(source, offset, "configuração do cenário é inválida"));
+    let Some(fields) = scenario_value.object() else {
+        diagnostics.push(diag(source, offset, "scenario requires a static object"));
         return None;
     };
     let field = |name| {
         fields
             .iter()
-            .find_map(|(key, value)| (*key == name).then_some(*value))
+            .find_map(|(key, value)| (key == name).then_some(value))
     };
     let exec = match field("exec") {
-        Some(value) => match js_string_literal(value).filter(|name| is_js_identifier(name)) {
+        Some(value) => match value.string().filter(|name| is_js_identifier(name)) {
             Some(name) => name.to_string(),
             None => {
                 diagnostics.push(diag(
@@ -621,20 +510,20 @@ fn parse_k6_named_scenario_config(
         },
         None => "default".to_string(),
     };
-    let executor = field("executor").and_then(js_string_literal);
+    let executor = field("executor").and_then(K6Value::string);
     let allows = |allowed: &[&str]| {
         fields
             .iter()
-            .all(|(key, _)| *key == "exec" || allowed.contains(key))
+            .all(|(key, _)| key == "exec" || allowed.contains(&key.as_str()))
     };
-    for (key, value) in &fields {
-        let valid = match *key {
+    for (key, value) in fields {
+        let valid = match key.as_str() {
             "vus" | "startVUs" | "rate" | "startRate" | "preAllocatedVUs" | "maxVUs" => {
-                value.parse::<u32>().is_ok()
+                value.unsigned().is_some_and(|n| u32::try_from(n).is_ok())
             }
-            "iterations" => value.parse::<u64>().is_ok(),
+            "iterations" => value.unsigned().is_some(),
             "maxDuration" | "duration" | "timeUnit" | "gracefulRampDown" => {
-                parse_k6_duration(value).is_some()
+                value_duration(value).is_some()
             }
             _ => true,
         };
@@ -649,10 +538,10 @@ fn parse_k6_named_scenario_config(
     }
     match executor {
         Some("shared-iterations") => {
-            let vus = field("vus").and_then(|value| value.trim().parse::<u32>().ok());
-            let iterations = field("iterations").and_then(|value| value.trim().parse::<u64>().ok());
-            let max_duration =
-                field("maxDuration").and_then(|value| parse_k6_duration(value.trim()));
+            let vus =
+                field("vus").and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let iterations = field("iterations").and_then(|value| value.unsigned());
+            let max_duration = field("maxDuration").and_then(value_duration);
             if !allows(&["executor", "vus", "iterations", "maxDuration"])
                 || vus.is_none()
                 || iterations.is_none()
@@ -674,8 +563,9 @@ fn parse_k6_named_scenario_config(
             ))
         }
         Some("constant-vus") => {
-            let vus = field("vus").and_then(|value| value.trim().parse::<u32>().ok());
-            let duration = field("duration").and_then(|value| parse_k6_duration(value.trim()));
+            let vus =
+                field("vus").and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let duration = field("duration").and_then(value_duration);
             if !allows(&["executor", "vus", "duration"]) || vus.is_none() || duration.is_none() {
                 diagnostics.push(diag(
                     source,
@@ -692,10 +582,10 @@ fn parse_k6_named_scenario_config(
             ))
         }
         Some("per-vu-iterations") => {
-            let vus = field("vus").and_then(|value| value.trim().parse::<u32>().ok());
-            let iterations = field("iterations").and_then(|value| value.trim().parse::<u64>().ok());
-            let max_duration =
-                field("maxDuration").and_then(|value| parse_k6_duration(value.trim()));
+            let vus =
+                field("vus").and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let iterations = field("iterations").and_then(|value| value.unsigned());
+            let max_duration = field("maxDuration").and_then(value_duration);
             let allowed = ["executor", "vus", "iterations", "maxDuration"];
             if !allows(&allowed) || vus.is_none() || iterations.is_none() {
                 diagnostics.push(diag(
@@ -717,12 +607,14 @@ fn parse_k6_named_scenario_config(
             ))
         }
         Some("constant-arrival-rate") => {
-            let rate = field("rate").and_then(|value| value.trim().parse::<u32>().ok());
-            let time_unit = field("timeUnit").and_then(|value| parse_k6_duration(value.trim()));
-            let duration = field("duration").and_then(|value| parse_k6_duration(value.trim()));
-            let pre_allocated_vus =
-                field("preAllocatedVUs").and_then(|value| value.trim().parse::<u32>().ok());
-            let max_vus = field("maxVUs").and_then(|value| value.trim().parse::<u32>().ok());
+            let rate = field("rate")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let time_unit = field("timeUnit").and_then(value_duration);
+            let duration = field("duration").and_then(value_duration);
+            let pre_allocated_vus = field("preAllocatedVUs")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let max_vus = field("maxVUs")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
             let allowed = [
                 "executor",
                 "rate",
@@ -758,10 +650,10 @@ fn parse_k6_named_scenario_config(
             ))
         }
         Some("ramping-vus") => {
-            let start_vus = field("startVUs").and_then(|value| value.trim().parse::<u32>().ok());
+            let start_vus = field("startVUs")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
             let stages = field("stages").and_then(parse_k6_stages);
-            let graceful_ramp_down =
-                field("gracefulRampDown").and_then(|value| parse_k6_duration(value.trim()));
+            let graceful_ramp_down = field("gracefulRampDown").and_then(value_duration);
             let allowed = ["executor", "startVUs", "stages", "gracefulRampDown"];
             if !allows(&allowed) || start_vus.is_none() || stages.is_none() {
                 diagnostics.push(diag(
@@ -783,12 +675,14 @@ fn parse_k6_named_scenario_config(
             ))
         }
         Some("ramping-arrival-rate") => {
-            let start_rate = field("startRate").and_then(|value| value.trim().parse::<u32>().ok());
-            let time_unit = field("timeUnit").and_then(|value| parse_k6_duration(value.trim()));
+            let start_rate = field("startRate")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let time_unit = field("timeUnit").and_then(value_duration);
             let stages = field("stages").and_then(parse_k6_stages);
-            let pre_allocated_vus =
-                field("preAllocatedVUs").and_then(|value| value.trim().parse::<u32>().ok());
-            let max_vus = field("maxVUs").and_then(|value| value.trim().parse::<u32>().ok());
+            let pre_allocated_vus = field("preAllocatedVUs")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
+            let max_vus = field("maxVUs")
+                .and_then(|value| value.unsigned().and_then(|n| u32::try_from(n).ok()));
             let allowed = [
                 "executor",
                 "startRate",
@@ -839,126 +733,43 @@ fn parse_k6_named_scenario_config(
 /// at the end of the run without sending individual samples over IPC.
 fn parse_k6_thresholds(
     source: &str,
-    options: Option<&std::ops::Range<usize>>,
+    options: Option<&(usize, K6Value)>,
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Threshold> {
-    let Some(options) = options else {
+    let Some((offset, options)) = options else {
         return Vec::new();
     };
-    let object_offset = options.start;
-    let Some((options, _)) = nested_js_object(source, object_offset) else {
+    let Some(thresholds) = options.field("thresholds") else {
         return Vec::new();
     };
-    let Some(options) = static_object_fields(options) else {
+    let Some(thresholds) = thresholds.object() else {
+        diagnostics.push(diag(source, *offset, "thresholds requires a static object"));
         return Vec::new();
     };
-    let Some(raw_thresholds) = options
-        .iter()
-        .find_map(|(key, value)| (*key == "thresholds").then_some(*value))
-    else {
-        return Vec::new();
-    };
-    let Some((thresholds, after_thresholds)) = nested_js_object(raw_thresholds.trim(), 0) else {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "options.thresholds precisa ser um objeto estático",
-        ));
-        return Vec::new();
-    };
-    if !raw_thresholds
-        .get(after_thresholds..)
-        .is_some_and(|tail| tail.trim().is_empty())
-    {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "options.thresholds tem sintaxe inválida",
-        ));
-        return Vec::new();
-    }
-    let Some(thresholds) = static_object_fields(thresholds) else {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "options.thresholds tem propriedades inválidas",
-        ));
-        return Vec::new();
-    };
-
     let mut imported = Vec::new();
-    for (raw_selector, raw_expressions) in thresholds {
-        let Some(selector) = js_string_literal(raw_selector)
-            .or_else(|| is_js_identifier(raw_selector).then_some(raw_selector))
-        else {
+    for (selector, expressions) in thresholds {
+        let parsed = parse_k6_metric_selector(selector).zip(expressions.array());
+        let Some(((metric, tags), expressions)) = parsed else {
             diagnostics.push(diag(
                 source,
-                object_offset,
-                "o nome da métrica em options.thresholds precisa ser literal",
+                *offset,
+                "invalid threshold selector or expressions",
             ));
             continue;
         };
-        let Some((metric, tags)) = parse_k6_metric_selector(selector) else {
-            diagnostics.push(diag(
-                source,
-                object_offset,
-                "seletor de threshold k6 inválido",
-            ));
-            continue;
-        };
-        let expressions = raw_expressions.trim();
-        let Some((expressions, after_expressions)) = nested_js_array(expressions, 0) else {
-            diagnostics.push(diag(
-                source,
-                object_offset,
-                "threshold k6 precisa ser um array de expressões literais",
-            ));
-            continue;
-        };
-        if !raw_expressions
-            .get(after_expressions..)
-            .is_some_and(|tail| tail.trim().is_empty())
-        {
-            diagnostics.push(diag(
-                source,
-                object_offset,
-                "threshold k6 tem sintaxe inválida",
-            ));
-            continue;
-        }
-        let Some(expressions) = static_js_array_items(expressions) else {
-            diagnostics.push(diag(
-                source,
-                object_offset,
-                "threshold k6 precisa ter expressões estáticas",
-            ));
-            continue;
-        };
-        for raw_expression in expressions {
-            let Some(expression) = js_string_literal(raw_expression) else {
-                diagnostics.push(diag(
-                    source,
-                    object_offset,
-                    "expressão de threshold k6 precisa ser uma string literal",
-                ));
-                continue;
-            };
-            let Some((statistic, comparison, target)) = parse_k6_threshold_expression(expression)
-            else {
-                diagnostics.push(diag(
-                    source,
-                    object_offset,
-                    "expressão de threshold k6 não é suportada",
-                ));
+        for expression in expressions {
+            let parsed = expression.string().and_then(parse_k6_threshold_expression);
+            let Some((statistic, comparison, target)) = parsed else {
+                diagnostics.push(diag(source, *offset, "unsupported k6 threshold expression"));
                 continue;
             };
             imported.push(K6Threshold {
-                metric: native_k6_metric_name(metric).to_string(),
+                metric: native_k6_metric_name(metric).into(),
                 tags: tags.clone(),
                 statistic,
                 comparison,
                 target,
-                label: format!("{selector} {expression}"),
+                label: format!("{selector} {}", expression.string().unwrap_or_default()),
             });
         }
     }
@@ -1043,75 +854,39 @@ fn parse_k6_metrics(
         else {
             continue;
         };
-        if let Some((value, tags)) =
-            parse_k6_metric_add(source, call.argument_offset, definition.kind)
-        {
-            metrics.push(K6Metric {
+        let value = call
+            .arguments
+            .first()
+            .and_then(|value| match value {
+                K6Value::Bool(value) if definition.kind == "rate" => Some(f64::from(*value)),
+                K6Value::Number(value)
+                    if definition.kind != "rate" || matches!(*value, 0.0 | 1.0) =>
+                {
+                    Some(*value)
+                }
+                _ => None,
+            })
+            .filter(|value| value.is_finite() && (definition.kind != "counter" || *value >= 0.0));
+        let tags = match call.arguments.get(1) {
+            Some(value) => value_string_map(value, false),
+            None => Some(BTreeMap::new()),
+        };
+        match value.zip(tags) {
+            Some((value, tags)) => metrics.push(K6Metric {
                 offset: call.offset,
                 name: definition.name.clone(),
                 kind: definition.kind,
                 value,
                 tags,
-            });
-        } else {
-            diagnostics.push(diag(
+            }),
+            None => diagnostics.push(diag(
                 source,
                 call.offset,
-                "metric.add do k6 exige valor e tags literais",
-            ));
+                "metric.add requires a compatible static value and tags",
+            )),
         }
     }
     metrics
-}
-
-fn parse_k6_metric_add(
-    source: &str,
-    argument_offset: usize,
-    kind: &str,
-) -> Option<(f64, BTreeMap<String, String>)> {
-    let remaining = source.get(argument_offset..)?.trim_start();
-    let value_end = remaining.find([',', ')'])?;
-    let value = parse_k6_metric_value(remaining.get(..value_end)?.trim(), kind)?;
-    let tail = remaining.get(value_end..)?.trim_start();
-    if tail.starts_with(')') {
-        return Some((value, BTreeMap::new()));
-    }
-    let tags_source = tail.strip_prefix(',')?.trim_start();
-    let (tags, after_tags) = nested_js_object(tags_source, 0)?;
-    if !tags_source
-        .get(after_tags..)
-        .is_some_and(|tail| tail.trim_start().starts_with(')'))
-    {
-        return None;
-    }
-    Some((value, parse_k6_tags(tags)?))
-}
-
-fn parse_k6_metric_value(raw: &str, kind: &str) -> Option<f64> {
-    match (kind, raw) {
-        ("rate", "true") | ("rate", "1") => Some(1.0),
-        ("rate", "false") | ("rate", "0") => Some(0.0),
-        ("rate", _) => None,
-        ("counter", _) => raw
-            .parse::<f64>()
-            .ok()
-            .filter(|value| value.is_finite() && *value >= 0.0),
-        _ => raw.parse::<f64>().ok().filter(|value| value.is_finite()),
-    }
-}
-
-fn parse_k6_tags(raw: &str) -> Option<BTreeMap<String, String>> {
-    let fields = static_object_fields(raw)?;
-    let mut tags = BTreeMap::new();
-    for (raw_key, raw_value) in fields {
-        let key =
-            js_string_literal(raw_key).or_else(|| is_js_identifier(raw_key).then_some(raw_key))?;
-        let value = key_value_literal(raw_value)?;
-        if tags.insert(key.to_string(), value).is_some() {
-            return None;
-        }
-    }
-    Some(tags)
 }
 
 fn key_value_literal(raw: &str) -> Option<String> {
@@ -1129,216 +904,12 @@ fn key_value_literal(raw: &str) -> Option<String> {
 /// Converts literal stages for ramping executors. The parser deliberately
 /// accepts only the declarative k6 form so a JavaScript expression cannot be
 /// mistaken for an equivalent workload.
-fn parse_k6_stages(value: &str) -> Option<Vec<serde_json::Value>> {
-    let value = value.trim();
-    let (array, after_array) = nested_js_array(value, 0)?;
-    if !value.get(after_array..)?.trim().is_empty() {
-        return None;
-    }
-    let stages = static_js_array_items(array)?;
-    if stages.is_empty() {
-        return None;
-    }
-
-    stages
-        .into_iter()
-        .map(|stage| {
-            let stage = stage.trim();
-            let (object, after_object) = nested_js_object(stage, 0)?;
-            if !stage.get(after_object..)?.trim().is_empty() {
-                return None;
-            }
-            let fields = static_object_fields(object)?;
-            if fields.len() != 2
-                || fields
-                    .iter()
-                    .any(|(key, _)| !matches!(*key, "duration" | "target"))
-            {
-                return None;
-            }
-            let duration_ms = fields
-                .iter()
-                .find_map(|(key, value)| (*key == "duration").then_some(*value))
-                .and_then(parse_k6_duration)?;
-            let target = fields
-                .iter()
-                .find_map(|(key, value)| (*key == "target").then_some(*value))
-                .and_then(|value| value.trim().parse::<u32>().ok())?;
-            Some(json!({ "target": target, "durationMs": duration_ms }))
-        })
-        .collect()
-}
-
-fn nested_js_object(source: &str, start: usize) -> Option<(&str, usize)> {
-    if source.as_bytes().get(start) != Some(&b'{') {
-        return None;
-    }
-    let bytes = source.as_bytes();
-    let mut quote = None;
-    let mut depth = 1_u32;
-    let mut index = start + 1;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-        } else if byte == b'{' {
-            depth = depth.saturating_add(1);
-        } else if byte == b'}' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return source
-                    .get(start + 1..index)
-                    .map(|content| (content, index + 1));
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-fn nested_js_array(source: &str, start: usize) -> Option<(&str, usize)> {
-    if source.as_bytes().get(start) != Some(&b'[') {
-        return None;
-    }
-    let bytes = source.as_bytes();
-    let mut quote = None;
-    let mut depth = 1_u32;
-    let mut index = start + 1;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-        } else if byte == b'[' {
-            depth = depth.saturating_add(1);
-        } else if byte == b']' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return source
-                    .get(start + 1..index)
-                    .map(|content| (content, index + 1));
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-fn static_js_array_items(array: &str) -> Option<Vec<&str>> {
-    let mut items = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    let mut depth = 0_u32;
-    for (index, byte) in array.bytes().enumerate() {
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-        } else if matches!(byte, b'{' | b'[') {
-            depth = depth.saturating_add(1);
-        } else if matches!(byte, b'}' | b']') {
-            depth = depth.checked_sub(1)?;
-        } else if byte == b',' && depth == 0 {
-            let item = array.get(start..index)?.trim();
-            if item.is_empty() {
-                return None;
-            }
-            items.push(item);
-            start = index + 1;
-        }
-    }
-    if quote.is_some() || depth != 0 {
-        return None;
-    }
-    let item = array.get(start..)?.trim();
-    if item.is_empty() {
-        return None;
-    }
-    items.push(item);
-    Some(items)
-}
-
-fn static_object_fields(object: &str) -> Option<Vec<(&str, &str)>> {
-    let mut fields = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    let mut depth = 0_u32;
-    for (index, byte) in object.bytes().enumerate() {
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(byte, b'\'' | b'"') {
-            quote = Some(byte);
-        } else if matches!(byte, b'{' | b'[') {
-            depth = depth.saturating_add(1);
-        } else if matches!(byte, b'}' | b']') {
-            depth = depth.checked_sub(1)?;
-        } else if byte == b',' && depth == 0 {
-            fields.push(object.get(start..index)?);
-            start = index + 1;
-        }
-    }
-    fields.push(object.get(start..)?);
-    fields
-        .into_iter()
-        .filter(|field| !field.trim().is_empty())
-        .map(|field| {
-            let mut quote = None;
-            let mut depth = 0_u32;
-            for (index, byte) in field.bytes().enumerate() {
-                if let Some(delimiter) = quote {
-                    if byte == delimiter {
-                        quote = None;
-                    }
-                    continue;
-                }
-                if matches!(byte, b'\'' | b'"') {
-                    quote = Some(byte);
-                } else if matches!(byte, b'{' | b'[') {
-                    depth = depth.saturating_add(1);
-                } else if matches!(byte, b'}' | b']') {
-                    depth = depth.checked_sub(1)?;
-                } else if byte == b':' && depth == 0 {
-                    return Some((field.get(..index)?.trim(), field.get(index + 1..)?.trim()));
-                }
-            }
-            None
-        })
-        .collect()
+fn parse_k6_stages(value: &K6Value) -> Option<Vec<serde_json::Value>> {
+    let stages = value.array().filter(|items| !items.is_empty())?;
+    stages.iter().map(|stage| {
+        if stage.object()?.iter().any(|(key, _)| !matches!(key.as_str(), "duration" | "target")) { return None; }
+        Some(json!({"durationMs":value_duration(stage.field("duration")?)?, "target":u32::try_from(stage.field("target")?.unsigned()?).ok()?}))
+    }).collect()
 }
 
 fn js_string_literal(value: &str) -> Option<&str> {
@@ -1353,24 +924,6 @@ fn js_string_literal(value: &str) -> Option<&str> {
         })
 }
 
-fn parse_k6_duration(value: &str) -> Option<u64> {
-    let value = js_string_literal(value)?;
-    let (raw, multiplier) = {
-        if let Some(raw) = value.strip_suffix("ms") {
-            (raw, 1_u64)
-        } else if let Some(raw) = value.strip_suffix('s') {
-            (raw, 1_000)
-        } else if let Some(raw) = value.strip_suffix('m') {
-            (raw, 60_000)
-        } else if let Some(raw) = value.strip_suffix('h') {
-            (raw, 3_600_000)
-        } else {
-            return None;
-        }
-    };
-    raw.parse::<u64>().ok()?.checked_mul(multiplier)
-}
-
 fn forbidden_k6_constructs(source: &str, imports: &[K6StaticImport]) -> Vec<LoadImportDiagnostic> {
     let forbidden = [
         ("eval(", "eval não é suportado"),
@@ -1381,10 +934,6 @@ fn forbidden_k6_constructs(source: &str, imports: &[K6StaticImport]) -> Vec<Load
         ("grpc.", "gRPC não é suportado"),
         ("browser.", "browser do k6 não é suportado"),
         ("handleSummary", "custom summary não é suportado"),
-        (
-            "__ENV",
-            "variáveis de execução do k6 exigem configuração explícita no flow",
-        ),
         ("group(", "group ainda não é traduzido para um bloco Group"),
         ("if (", "controle condicional ainda não é traduzido"),
         ("for (", "laços ainda não são traduzidos"),
@@ -1487,24 +1036,8 @@ fn parse_k6_requests(
 ) -> Vec<K6Request> {
     let mut requests = Vec::new();
     for call in calls.iter().filter(|call| call.callee.starts_with("http.")) {
-        let method = match call.callee.as_str() {
-            "http.get" => "GET",
-            "http.post" => "POST",
-            "http.put" => "PUT",
-            "http.patch" => "PATCH",
-            "http.del" => "DELETE",
-            "http.head" => "HEAD",
-            "http.options" => "OPTIONS",
-            _ => "",
-        };
-        let result = if call.callee == "http.request" {
-            parse_k6_generic_request(source, call.argument_offset, diagnostics)
-        } else {
-            parse_k6_call(source, call.argument_offset, method, diagnostics)
-                .map(|(url, body, options)| (method.to_string(), url, body, options))
-        };
-        if let Some((method, url, body, options)) = result {
-            requests.push(K6Request {
+        match lower_k6_request(call) {
+            Some((method, url, body, options)) => requests.push(K6Request {
                 request: LoadImportRequest {
                     method,
                     url,
@@ -1515,16 +1048,111 @@ fn parse_k6_requests(
                 offset: call.offset,
                 response_name: call.response_name.clone(),
                 options,
-            });
-        } else {
-            diagnostics.push(diag(
+            }),
+            None => diagnostics.push(diag(
                 source,
                 call.offset,
-                "a chamada HTTP do k6 exige método, URL, corpo e opções estáticos compatíveis",
-            ));
+                "k6 HTTP call requires a compatible method, URL, text body and request options",
+            )),
         }
     }
     requests
+}
+
+fn lower_k6_request(
+    call: &K6StaticCall,
+) -> Option<(String, String, Option<String>, K6RequestOptions)> {
+    let mut arguments = call.arguments.as_slice();
+    let method = if call.callee == "http.request" {
+        let (method, rest) = arguments.split_first()?;
+        arguments = rest;
+        method.string()?.to_ascii_uppercase()
+    } else {
+        match call.callee.as_str() {
+            "http.get" => "GET",
+            "http.post" => "POST",
+            "http.put" => "PUT",
+            "http.patch" => "PATCH",
+            "http.del" => "DELETE",
+            "http.head" => "HEAD",
+            "http.options" => "OPTIONS",
+            _ => return None,
+        }
+        .into()
+    };
+    if !matches!(
+        method.as_str(),
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+    ) {
+        return None;
+    }
+    let (url, rest) = arguments.split_first()?;
+    let url = url.text()?.to_string();
+    let allows_body = matches!(method.as_str(), "POST" | "PUT" | "PATCH");
+    let (body, options) = match rest {
+        [] => (None, K6RequestOptions::default()),
+        [body] if allows_body && body.text().is_some() => {
+            (Some(body.text()?.to_string()), K6RequestOptions::default())
+        }
+        [K6Value::Null] if allows_body || call.callee == "http.request" => {
+            (None, K6RequestOptions::default())
+        }
+        [options] if !allows_body || call.callee == "http.request" => {
+            (None, lower_k6_request_options(options)?)
+        }
+        [body, options] if allows_body || call.callee == "http.request" => {
+            let body = match body {
+                K6Value::Null => None,
+                value if allows_body => Some(value.text()?.to_string()),
+                _ => return None,
+            };
+            (body, lower_k6_request_options(options)?)
+        }
+        _ => return None,
+    };
+    Some((method, url, body, options))
+}
+
+fn lower_k6_request_options(value: &K6Value) -> Option<K6RequestOptions> {
+    let mut options = K6RequestOptions::default();
+    for (key, value) in value.object()? {
+        match key.as_str() {
+            "headers" => options.headers = value_string_map(value, true)?.into_iter().collect(),
+            "tags" => options.tags = value_string_map(value, false)?,
+            "cookies" => options.cookies = value_string_map(value, true)?,
+            "timeout" => options.timeout_ms = Some(value_duration(value).filter(|n| *n > 0)?),
+            _ => return None,
+        }
+    }
+    if !options.cookies.is_empty()
+        && options
+            .headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("cookie"))
+    {
+        return None;
+    }
+    Some(options)
+}
+
+fn value_string_map(value: &K6Value, allow_templates: bool) -> Option<BTreeMap<String, String>> {
+    value
+        .object()?
+        .iter()
+        .map(|(key, value)| {
+            if !allow_templates && value.dynamic() {
+                return None;
+            }
+            let value = match value {
+                K6Value::String(value) | K6Value::Template(value) => value.clone(),
+                K6Value::Number(value) => k6_values::number_text(*value),
+                K6Value::Bool(value) => value.to_string(),
+                K6Value::Null => "null".into(),
+                _ => return None,
+            };
+            Some((key.clone(), value))
+        })
+        .collect()
 }
 
 /// Converts `sleep(<literal seconds>)` into the runtime's fixed Timer. Only
@@ -1535,43 +1163,31 @@ fn parse_k6_timers(
     calls: &[K6StaticCall],
     diagnostics: &mut Vec<LoadImportDiagnostic>,
 ) -> Vec<K6Timer> {
-    let mut timers = Vec::new();
-    for call in calls.iter().filter(|call| call.callee == "sleep") {
-        let offset = call.offset;
-        let argument_offset = call.argument_offset;
-        let Some(remaining) = source.get(argument_offset..) else {
-            break;
-        };
-        let trimmed = remaining.trim_start();
-        let whitespace = remaining.len().saturating_sub(trimmed.len());
-        let number_offset = argument_offset + whitespace;
-        let length = trimmed
-            .bytes()
-            .take_while(|byte| byte.is_ascii_digit() || *byte == b'.')
-            .count();
-        let Some(raw_seconds) = trimmed.get(..length) else {
-            diagnostics.push(diag(source, number_offset, "sleep exige segundos literais"));
-            continue;
-        };
-        let Some(after_argument) = trimmed.get(length..) else {
-            diagnostics.push(diag(source, number_offset, "sleep tem sintaxe inválida"));
-            continue;
-        };
-        let milliseconds = literal_seconds_to_millis(raw_seconds);
-        if !after_argument.trim_start().starts_with(')') || milliseconds.is_none() {
-            diagnostics.push(diag(
-                source,
-                number_offset,
-                "sleep exige uma duração não negativa, literal e representável em milissegundos",
-            ));
-        } else if let Some(duration_ms) = milliseconds {
-            timers.push(K6Timer {
-                offset,
-                duration_ms,
-            });
-        }
-    }
-    timers
+    calls
+        .iter()
+        .filter(|call| call.callee == "sleep")
+        .filter_map(|call| {
+            let duration = call
+                .arguments
+                .first()
+                .and_then(K6Value::number)
+                .and_then(|value| literal_seconds_to_millis(&k6_values::number_text(value)));
+            match duration {
+                Some(duration_ms) => Some(K6Timer {
+                    offset: call.offset,
+                    duration_ms,
+                }),
+                None => {
+                    diagnostics.push(diag(
+                        source,
+                        call.offset,
+                        "sleep requires nonnegative seconds exactly representable in milliseconds",
+                    ));
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// Converts decimal seconds without floating-point arithmetic. Precision
@@ -1722,289 +1338,6 @@ fn parse_callback_argument(source: &str) -> Option<(String, &str)> {
     Some((argument, after_arrow))
 }
 
-/// Reads only the linear form the importer can preserve without executing
-/// JavaScript: a literal URL and, for methods with bodies, a literal body.
-/// Request options (headers, tags, redirects, etc.) need explicit AST
-/// conversion; rejecting unsupported options prevents silent partial imports.
-fn parse_k6_call(
-    source: &str,
-    offset: usize,
-    method: &str,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Option<(String, Option<String>, K6RequestOptions)> {
-    let (url, after_url) = parse_js_string(source, offset)?;
-    let remaining = source.get(after_url..)?.trim_start();
-    if remaining.starts_with(')') {
-        return Some((url, None, K6RequestOptions::default()));
-    }
-    if !remaining.starts_with(',') {
-        diagnostics.push(diag(
-            source,
-            after_url,
-            "a chamada HTTP do k6 tem sintaxe não suportada",
-        ));
-        return None;
-    }
-
-    let body_offset = k6_next_argument_offset(source, after_url)?;
-    if matches!(method, "GET" | "DELETE" | "HEAD" | "OPTIONS") {
-        let (options, after_options) = parse_k6_request_options(source, body_offset, diagnostics)?;
-        if !source
-            .get(after_options..)
-            .is_some_and(|remaining| remaining.trim_start().starts_with(')'))
-        {
-            diagnostics.push(diag(
-                source,
-                after_options,
-                "a chamada HTTP do k6 tem argumentos extras não suportados",
-            ));
-            return None;
-        }
-        return Some((url, None, options));
-    }
-
-    let (body, after_body) = match parse_js_string(source, body_offset) {
-        Some(value) => value,
-        None => {
-            diagnostics.push(diag(
-                source,
-                body_offset,
-                "o corpo da requisição k6 precisa ser uma string literal",
-            ));
-            return None;
-        }
-    };
-    let after_body_source = source.get(after_body..)?;
-    let tail = after_body_source.trim_start();
-    if tail.starts_with(')') {
-        return Some((url, Some(body), K6RequestOptions::default()));
-    }
-    if !tail.starts_with(',') {
-        diagnostics.push(diag(
-            source,
-            after_body,
-            "a chamada HTTP do k6 tem sintaxe não suportada",
-        ));
-        return None;
-    }
-    let comma_offset = after_body + after_body_source.len().saturating_sub(tail.len());
-    let options_offset = comma_offset + 1;
-    let (options, after_options) = parse_k6_request_options(source, options_offset, diagnostics)?;
-    if !source
-        .get(after_options..)
-        .is_some_and(|remaining| remaining.trim_start().starts_with(')'))
-    {
-        diagnostics.push(diag(
-            source,
-            after_options,
-            "a chamada HTTP do k6 tem argumentos extras não suportados",
-        ));
-        return None;
-    }
-    Some((url, Some(body), options))
-}
-
-fn parse_k6_generic_request(
-    source: &str,
-    offset: usize,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Option<(String, String, Option<String>, K6RequestOptions)> {
-    let (raw_method, after_method) = parse_js_string(source, offset)?;
-    let method = raw_method.to_ascii_uppercase();
-    if !matches!(
-        method.as_str(),
-        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
-    ) {
-        diagnostics.push(diag(
-            source,
-            offset,
-            "http.request usa método HTTP não suportado",
-        ));
-        return None;
-    }
-    let url_offset = k6_next_argument_offset(source, after_method)?;
-    let (url, after_url) = parse_js_string(source, url_offset)?;
-    let remaining = source.get(after_url..)?.trim_start();
-    if remaining.starts_with(')') {
-        return Some((method, url, None, K6RequestOptions::default()));
-    }
-    let argument_offset = k6_next_argument_offset(source, after_url)?;
-    let raw_argument = source.get(argument_offset..)?;
-    let argument = raw_argument.trim_start();
-    let argument_start = argument_offset + raw_argument.len().saturating_sub(argument.len());
-    let allows_body = !matches!(method.as_str(), "GET" | "DELETE" | "HEAD" | "OPTIONS");
-
-    if argument.starts_with('{') {
-        let (options, after_options) =
-            parse_k6_request_options(source, argument_offset, diagnostics)?;
-        return k6_request_options_end(source, after_options, diagnostics)
-            .then_some((method, url, None, options));
-    }
-    if argument.starts_with("null") {
-        let after_null = argument_start + "null".len();
-        let options = parse_k6_options_after_argument(source, after_null, diagnostics)?;
-        return Some((method, url, None, options));
-    }
-    if !allows_body {
-        diagnostics.push(diag(
-            source,
-            argument_offset,
-            "http.request com este método aceita somente null ou opções no terceiro argumento",
-        ));
-        return None;
-    }
-    let (body, after_body) = parse_js_string(source, argument_offset)?;
-    let options = parse_k6_options_after_argument(source, after_body, diagnostics)?;
-    Some((method, url, Some(body), options))
-}
-
-fn k6_next_argument_offset(source: &str, after_argument: usize) -> Option<usize> {
-    let remaining = source.get(after_argument..)?;
-    let trimmed = remaining.trim_start();
-    trimmed.strip_prefix(',')?;
-    Some(after_argument + remaining.len().saturating_sub(trimmed.len()) + 1)
-}
-
-fn parse_k6_options_after_argument(
-    source: &str,
-    after_argument: usize,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Option<K6RequestOptions> {
-    let remaining = source.get(after_argument..)?;
-    let trimmed = remaining.trim_start();
-    if trimmed.starts_with(')') {
-        return Some(K6RequestOptions::default());
-    }
-    let options_offset = k6_next_argument_offset(source, after_argument)?;
-    let (options, after_options) = parse_k6_request_options(source, options_offset, diagnostics)?;
-    k6_request_options_end(source, after_options, diagnostics).then_some(options)
-}
-
-fn k6_request_options_end(
-    source: &str,
-    after_options: usize,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> bool {
-    if source
-        .get(after_options..)
-        .is_some_and(|remaining| remaining.trim_start().starts_with(')'))
-    {
-        true
-    } else {
-        diagnostics.push(diag(
-            source,
-            after_options,
-            "a chamada HTTP do k6 tem argumentos extras não suportados",
-        ));
-        false
-    }
-}
-
-fn parse_k6_request_options(
-    source: &str,
-    offset: usize,
-    diagnostics: &mut Vec<LoadImportDiagnostic>,
-) -> Option<(K6RequestOptions, usize)> {
-    let remaining = source.get(offset..)?;
-    let trimmed = remaining.trim_start();
-    let object_offset = offset + remaining.len().saturating_sub(trimmed.len());
-    let Some((object, after_object)) = nested_js_object(source, object_offset) else {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "opções de request do k6 precisam ser um objeto literal",
-        ));
-        return None;
-    };
-    let Some(fields) = static_object_fields(object) else {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "opções de request do k6 são inválidas",
-        ));
-        return None;
-    };
-    let mut options = K6RequestOptions::default();
-    for (key, value) in fields {
-        match key {
-            "headers" => match parse_k6_string_map(value) {
-                Some(headers) => options.headers = headers.into_iter().collect(),
-                None => diagnostics.push(diag(
-                    source,
-                    object_offset,
-                    "headers da request k6 precisam ter chaves e valores literais",
-                )),
-            },
-            "tags" => match parse_k6_string_map(value) {
-                Some(tags) => options.tags = tags,
-                None => diagnostics.push(diag(
-                    source,
-                    object_offset,
-                    "tags da request k6 precisam ter chaves e valores literais",
-                )),
-            },
-            "cookies" => match parse_k6_string_map(value) {
-                Some(cookies) => options.cookies = cookies,
-                None => diagnostics.push(diag(
-                    source,
-                    object_offset,
-                    "cookies da request k6 precisam ser strings literais nesta etapa",
-                )),
-            },
-            "timeout" => match parse_k6_duration(value).filter(|duration| *duration > 0) {
-                Some(timeout_ms) => options.timeout_ms = Some(timeout_ms),
-                None => diagnostics.push(diag(
-                    source,
-                    object_offset,
-                    "timeout da request k6 precisa ser uma duração literal positiva",
-                )),
-            },
-            "redirects" => diagnostics.push(diag(
-                source,
-                object_offset,
-                format!("opção k6 '{key}' ainda não é executável pelo runtime de carga"),
-            )),
-            _ => diagnostics.push(diag(
-                source,
-                object_offset,
-                format!("opção de request k6 '{key}' ainda não é traduzida"),
-            )),
-        }
-    }
-    if !options.cookies.is_empty()
-        && options
-            .headers
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case("cookie"))
-    {
-        diagnostics.push(diag(
-            source,
-            object_offset,
-            "headers.Cookie e cookies da request k6 não podem ser combinados nesta etapa",
-        ));
-    }
-    Some((options, after_object))
-}
-
-fn parse_k6_string_map(value: &str) -> Option<BTreeMap<String, String>> {
-    let value = value.trim();
-    let (object, after_object) = nested_js_object(value, 0)?;
-    if !value.get(after_object..)?.trim().is_empty() {
-        return None;
-    }
-    let fields = static_object_fields(object)?;
-    let mut values = BTreeMap::new();
-    for (raw_key, raw_value) in fields {
-        let key =
-            js_string_literal(raw_key).or_else(|| is_js_identifier(raw_key).then_some(raw_key))?;
-        let value = key_value_literal(raw_value)?;
-        if values.insert(key.to_string(), value).is_some() {
-            return None;
-        }
-    }
-    Some(values)
-}
-
 fn analyze_jmeter(
     source: &str,
     now: SystemTime,
@@ -2051,6 +1384,7 @@ fn analyze_jmeter(
         flow: build_jmeter_flow(&scenarios, now)?,
         requests,
         assets: vec!["source".to_string()],
+        required_variables: Vec::new(),
     })
 }
 
@@ -2192,6 +1526,7 @@ fn build_k6_flow(
     setup_effects: Option<&K6Effects>,
     teardown_effects: Option<&K6Effects>,
     thresholds: &[K6Threshold],
+    required_variables: &[String],
     now: SystemTime,
 ) -> Result<Flow, LoadTestImportError> {
     let mut nodes = vec![FlowNode {
@@ -2200,8 +1535,36 @@ fn build_k6_flow(
         position: FlowPosition { x: 0.0, y: 0.0 },
     }];
     let mut edges = Vec::new();
-    if let Some(effects) = setup_effects {
-        add_k6_lifecycle(&mut nodes, &mut edges, "setup", effects, -180.0);
+    if setup_effects.is_some() || !required_variables.is_empty() {
+        add_k6_lifecycle(
+            &mut nodes,
+            &mut edges,
+            "setup",
+            setup_effects.unwrap_or(&K6Effects::default()),
+            -180.0,
+        );
+    }
+    if !required_variables.is_empty() {
+        for node in &mut nodes {
+            if node.id.starts_with("setup-") {
+                node.position.x += 280.0;
+            }
+        }
+        nodes.push(load_node("k6-environment", LoadNodeKind::ConfigureSession, "k6 environment",
+            json!({"variables": required_variables.iter().map(|name| (name.clone(), String::new())).collect::<BTreeMap<_, _>>(), "requiredVariables":required_variables}), 600.0, -180.0));
+        for edge in &mut edges {
+            if edge.source_node_id == "setup" && edge.source_handle.as_deref() == Some("iteration")
+            {
+                edge.source_node_id = "k6-environment".into();
+                edge.source_handle = None;
+            }
+        }
+        edges.push(edge(
+            "setup-environment",
+            "setup",
+            "k6-environment",
+            Some("iteration"),
+        ));
     }
     let mut bodies: Vec<(String, K6Effects, Vec<String>, usize)> = Vec::new();
     for (index, (scenario, effects)) in scenarios.iter().enumerate() {
@@ -2785,6 +2148,194 @@ mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
 
+    fn load_configs(analysis: &LoadImportAnalysis, kind: LoadNodeKind) -> Vec<serde_json::Value> {
+        analysis
+            .flow
+            .nodes()
+            .iter()
+            .filter_map(|node| match &node.kind {
+                FlowNodeKind::Load { node } if node.kind == kind => {
+                    Some(serde_json::from_str(&node.config).unwrap())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn imports_constants_templates_options_and_ordered_json_from_a_real_script() {
+        let source = include_str!("../tests/fixtures/load/static-values.js");
+        let analysis = analyze_load_test("static-values.js", source, UNIX_EPOCH).unwrap();
+        assert!(analysis.required_variables.is_empty());
+        let request = &analysis.requests[0];
+        assert_eq!(request.url, "https://api.example.test/items");
+        assert_eq!(
+            request.body.as_deref(),
+            Some(
+                "{\"2\":\"two\",\"10\":\"ten\",\"z\":\"line\\n\\\"quoted\\\"\",\"a\":[true,null,0,1e+21]}"
+            )
+        );
+        assert_eq!(
+            load_configs(&analysis, LoadNodeKind::Scenario)[0]["stages"],
+            json!([{"durationMs":1000,"target":2}])
+        );
+        assert_eq!(
+            load_configs(&analysis, LoadNodeKind::Timer)[0]["durationMs"],
+            125
+        );
+        assert_eq!(
+            load_configs(&analysis, LoadNodeKind::Metric)[0]["value"],
+            1.0
+        );
+        assert_eq!(
+            load_configs(&analysis, LoadNodeKind::Request)[0]["headers"],
+            json!([{"name":"Content-Type", "value":"application/json", "enabled":true}])
+        );
+    }
+
+    #[test]
+    fn imports_environment_templates_with_one_initial_configuration_before_setup() {
+        let source = include_str!("../tests/fixtures/load/environment-values.ts");
+        let analysis = analyze_load_test("environment-values.ts", source, UNIX_EPOCH).unwrap();
+        assert_eq!(
+            analysis.required_variables,
+            ["K6_ENV_BASE_URL", "K6_ENV_RUN_NAME"]
+        );
+        let sessions = load_configs(&analysis, LoadNodeKind::ConfigureSession);
+        assert_eq!(
+            sessions,
+            vec![
+                json!({"variables":{"K6_ENV_BASE_URL":"", "K6_ENV_RUN_NAME":""}, "requiredVariables":["K6_ENV_BASE_URL", "K6_ENV_RUN_NAME"]})
+            ]
+        );
+        assert!(
+            analysis
+                .flow
+                .edges()
+                .iter()
+                .any(|edge| edge.source_node_id == "setup"
+                    && edge.target_node_id == "k6-environment"
+                    && edge.source_handle.as_deref() == Some("iteration"))
+        );
+        assert!(
+            analysis
+                .flow
+                .edges()
+                .iter()
+                .any(|edge| edge.source_node_id == "k6-environment"
+                    && edge.target_node_id == "setup-request-1")
+        );
+        assert_eq!(
+            analysis
+                .requests
+                .iter()
+                .map(|request| request.url.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "{{K6_ENV_BASE_URL}}/setup",
+                "{{K6_ENV_BASE_URL}}/items",
+                "{{K6_ENV_BASE_URL}}/teardown"
+            ]
+        );
+    }
+
+    #[test]
+    fn creates_setup_for_environment_configuration_without_a_source_lifecycle() {
+        let source =
+            "import http from 'k6/http'; export default function(){http.get(__ENV.BASE_URL);}";
+        let analysis = analyze_load_test("environment.js", source, UNIX_EPOCH).unwrap();
+        assert_eq!(analysis.required_variables, ["K6_ENV_BASE_URL"]);
+        assert_eq!(
+            load_configs(&analysis, LoadNodeKind::Scenario)
+                .iter()
+                .filter(
+                    |config| config.get("phase").and_then(serde_json::Value::as_str)
+                        == Some("setup")
+                )
+                .count(),
+            1
+        );
+        assert!(
+            analysis
+                .flow
+                .edges()
+                .iter()
+                .any(|edge| edge.source_node_id == "setup"
+                    && edge.target_node_id == "k6-environment")
+        );
+    }
+
+    #[test]
+    fn preserves_escaped_strings_and_constant_concatenation() {
+        let source = r#"import http from 'k6/http'; const id='abc'; const token='value'; export default function(){http.get(`https://api.example.test/${id}`,{headers:{'X-Test':token}}); http.post('https://api.example.test/work','a'+'b'); http.post('https://api.example.test/work','a\nb');}"#;
+        let analysis = analyze_load_test("strings.js", source, UNIX_EPOCH).unwrap();
+        assert_eq!(analysis.requests[0].url, "https://api.example.test/abc");
+        assert_eq!(analysis.requests[1].body.as_deref(), Some("ab"));
+        assert_eq!(analysis.requests[2].body.as_deref(), Some("a\nb"));
+    }
+
+    #[test]
+    fn preserves_unicode_surrogate_pairs_and_literal_backslash_sequences() {
+        let source = r#"import http from 'k6/http'; export default function(){http.post('https://api.example.test', JSON.stringify({emoji:'\uD83D\uDE00', literal:'\\uD800'}));}"#;
+        let analysis = analyze_load_test("unicode.js", source, UNIX_EPOCH).unwrap();
+        assert_eq!(
+            analysis.requests[0].body.as_deref(),
+            Some("{\"emoji\":\"😀\",\"literal\":\"\\\\uD800\"}")
+        );
+    }
+
+    #[test]
+    fn rejects_non_declarative_constants_without_partial_import() {
+        for statement in [
+            "const url = later; const later = 'https://api.example.test';",
+            "let url = 'https://api.example.test'; http.get(url);",
+            "const data = {}; data.url = 'https://api.example.test';",
+            "const data = { get value(){return 'x';} };",
+            "const data = { value: Math.random() };",
+            "const data = JSON.stringify({value: __ENV.VALUE});",
+            "const data = JSON.stringify({}, null, 2);",
+            "const data = __ENV[key];",
+            "const data = __ENV.URL || 'https://api.example.test';",
+            "const data = {...other};",
+            "const data = [,,];",
+            "const JSON = http.get('https://api.example.test'); const data = JSON.stringify({});",
+            "const __ENV = {BASE_URL:'https://api.example.test'};",
+            r"const data = '\uD800';",
+            r"const data = `\uDC00`;",
+        ] {
+            let source = format!(
+                "import http from 'k6/http';\nexport default function() {{\n{statement}\nhttp.get('https://api.example.test');\n}}"
+            );
+            let Err(LoadTestImportError::Incompatible { diagnostics }) =
+                analyze_load_test("invalid.js", &source, UNIX_EPOCH)
+            else {
+                panic!("accepted {statement}");
+            };
+            assert!(diagnostics.iter().any(|diagnostic| diagnostic.line == 3));
+        }
+    }
+
+    #[test]
+    fn bounds_constant_expansion_and_nested_alias_depth() {
+        let mut source = "import http from 'k6/http'; const a0='abcdefgh';".to_string();
+        for index in 1..24 {
+            source.push_str(&format!("const a{index}=a{}+a{};", index - 1, index - 1));
+        }
+        source.push_str("export default function(){http.get('https://api.example.test');}");
+        assert!(
+            matches!(analyze_load_test("expansion.js", &source, UNIX_EPOCH), Err(LoadTestImportError::Incompatible { diagnostics }) if diagnostics.iter().any(|d| d.message.contains("limit")))
+        );
+        let mut source = "import http from 'k6/http'; const a0='x';".to_string();
+        for index in 1..40 {
+            source.push_str(&format!("const a{index}={{nested:a{}}};", index - 1));
+        }
+        source.push_str("export default function(){http.get('https://api.example.test');}");
+        assert!(matches!(
+            analyze_load_test("depth.js", &source, UNIX_EPOCH),
+            Err(LoadTestImportError::Incompatible { .. })
+        ));
+    }
+
     #[test]
     fn rejects_untranslated_statements_regardless_of_formatting() {
         for statement in [
@@ -2872,10 +2423,6 @@ mod tests {
     #[test]
     fn rejects_values_that_textual_lowering_would_silently_change() {
         for source in [
-            "import http from 'k6/http'; const id='abc'; export default function(){http.get(`https://api.example.test/${id}`);}",
-            "import http from 'k6/http'; const token='value'; export default function(){http.get('https://api.example.test/work',{headers:{'X-Test':token}});}",
-            "import http from 'k6/http'; export default function(){http.post('https://api.example.test/work','a'+'b');}",
-            "import http from 'k6/http'; export default function(){http.post('https://api.example.test/work','a\\nb');}",
             "import http from 'k6/http'; export const options={scenarios:{a:{executor:'per-vu-iterations',vus:1,iterations:1}}&&dynamicScenarios()}; export default function(){http.get('https://api.example.test/work');}",
             "import http from 'k6/http'; export const options={vus:1,vus:2,iterations:1}; export default function(){http.get('https://api.example.test/work');}",
         ] {
@@ -3246,7 +2793,7 @@ mod tests {
 
     #[test]
     fn rejects_k6_ramping_scenarios_with_dynamic_stages() {
-        let source = "import http from 'k6/http'; const stages = [{ duration: '1s', target: 4 }]; export const options = { scenarios: { ramp: { executor: 'ramping-vus', startVUs: 1, stages } } }; export default function () { http.get('https://api.example.test/a'); }";
+        let source = "import http from 'k6/http'; const stages = dynamicStages(); export const options = { scenarios: { ramp: { executor: 'ramping-vus', startVUs: 1, stages } } }; export default function () { http.get('https://api.example.test/a'); }";
         assert!(matches!(
             analyze_load_test("options.js", source, UNIX_EPOCH),
             Err(LoadTestImportError::Incompatible { .. })

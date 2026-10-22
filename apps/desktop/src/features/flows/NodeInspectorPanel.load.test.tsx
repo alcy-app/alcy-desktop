@@ -39,6 +39,17 @@ function renderLoadInspector(loadKind: 'forEach' | 'select' | 'repeat' | 'timeBo
 }
 
 describe('LoadNodeFields', () => {
+  it('preserves required imported variables while editing their values', () => {
+    const changes: string[] = []
+    renderLoadInspector('configureSession', '{"variables":{"K6_ENV_BASE_URL":""},"requiredVariables":["K6_ENV_BASE_URL"]}', (config) => changes.push(config))
+    expect(screen.getByText(/Fill these required variables before running: K6_ENV_BASE_URL/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Session variables'), { target: { value: 'K6_ENV_BASE_URL=https://api.example.test' } })
+    expect(JSON.parse(changes[0])).toEqual({ variables: { K6_ENV_BASE_URL: 'https://api.example.test' }, requiredVariables: ['K6_ENV_BASE_URL'] })
+    fireEvent.change(screen.getByLabelText('Session variables'), { target: { value: 'renamed=https://api.example.test' } })
+    expect(screen.getByText('Fill the required variables: K6_ENV_BASE_URL.')).toBeInTheDocument()
+    expect(JSON.parse(changes[1])).toEqual({ variables: { renamed: 'https://api.example.test' }, requiredVariables: ['K6_ENV_BASE_URL'] })
+  })
+
   it('edita a variável e o teto de um ForEach com array JSON', () => {
     const changes: string[] = []
     renderLoadInspector('forEach', '{"variable":"item","itemsVariable":"items","maxItems":2}', (config) => changes.push(config))

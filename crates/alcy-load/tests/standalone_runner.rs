@@ -448,6 +448,7 @@ async fn rejects_invalid_manual_plans_before_any_request() {
     p.scenarios[0].requests[0]
         .before
         .push(LoadIterationAction::ConfigureSession(LoadSessionPlan {
+            required_variables: Vec::new(),
             variables: BTreeMap::new(),
             node_id: "session".into(),
             headers: vec![HeaderEntry::new("Invalid Header", "v", true).unwrap()],

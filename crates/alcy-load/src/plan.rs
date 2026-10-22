@@ -1,4 +1,4 @@
-//! Plano tipado de carga, independente de grafos, IPC e persistência.
+//! Typed load plan independent of graphs, IPC and persistence.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -11,8 +11,8 @@ use thiserror::Error;
 
 use crate::{LoadMetricKind, LoadMetricStatistic, LoadRunLimits, LoadSchedule, LoadThreshold};
 
-/// Plano canônico, independente de Tauri, grafos e persistência. Consumidores
-/// podem construí-lo diretamente; o runner sempre valida antes de executar.
+/// Canonical plan independent of Tauri, graphs and persistence. Consumers
+/// can build it directly; the runner always validates before execution.
 #[derive(Debug, Clone)]
 pub struct LoadPlan {
     pub setup: Option<LoadLifecyclePlan>,
@@ -44,8 +44,74 @@ pub enum LoadPlanError {
 }
 
 impl LoadPlan {
-    /// Validação sem I/O: um plano inválido nunca inicia transporte, timers
-    /// ou escrita de amostras. Mesmo planos vindos de um compilador passam aqui.
+    /// Structural compilation permits incomplete user configuration. Check it
+    /// separately before previewing an execution or starting any effects.
+    pub fn validate_ready(&self) -> Result<(), LoadPlanError> {
+        fn session(value: &LoadSessionPlan) -> Result<(), LoadPlanError> {
+            for name in &value.required_variables {
+                if value
+                    .variables
+                    .get(name)
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(LoadPlanError::Scenario {
+                        id: value.node_id.clone(),
+                        message: format!(
+                            "fill required variable '{name}' in the session configuration"
+                        ),
+                    });
+                }
+            }
+            Ok(())
+        }
+        fn body(steps: &[LoadStep]) -> Result<(), LoadPlanError> {
+            for step in steps {
+                match step {
+                    LoadStep::ConfigureSession(value) => session(value)?,
+                    LoadStep::Request(request) => before(request)?,
+                    _ => {}
+                }
+                body(step.body())?;
+            }
+            Ok(())
+        }
+        fn before(request: &LoadRequestPlan) -> Result<(), LoadPlanError> {
+            for action in &request.before {
+                if let LoadIterationAction::ConfigureSession(value) = action {
+                    session(value)?;
+                }
+            }
+            Ok(())
+        }
+        for lifecycle in self.setup.iter().chain(&self.teardown) {
+            body(&lifecycle.body)?;
+        }
+        for scenario in &self.scenarios {
+            body(&scenario.body)?;
+            for request in &scenario.requests {
+                before(request)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Only unconditional leading configuration can be inspected without
+    /// executing setup requests or scripts.
+    pub fn configured_variables(&self) -> BTreeMap<String, String> {
+        let mut variables = BTreeMap::new();
+        if let Some(setup) = &self.setup {
+            for step in &setup.body {
+                let LoadStep::ConfigureSession(session) = step else {
+                    break;
+                };
+                variables.extend(session.variables.clone());
+            }
+        }
+        variables
+    }
+
+    /// Validate without I/O. Invalid plans never start transport, timers or
+    /// sample writes; compiler-produced plans also pass through this check.
     pub fn validate(&self) -> Result<(), LoadPlanError> {
         self.validate_with_limits(&LoadRunLimits::default())
     }
@@ -122,12 +188,6 @@ impl LoadPlan {
             validate_body(body, &mut standalone_metrics, false, &mut BTreeSet::new())?;
         }
         for request in &requests {
-            if request.endpoint.url().contains("{{") || request.endpoint.url().contains("}}") {
-                return Err(LoadPlanError::Request {
-                    id: request.node_id.clone(),
-                    message: "URLs dinâmicas ainda não são executáveis".into(),
-                });
-            }
             for check in &request.checks {
                 if check.name.trim().is_empty() || !(100..=599).contains(&check.expected_status) {
                     return Err(LoadPlanError::Request {
@@ -138,7 +198,7 @@ impl LoadPlan {
             }
             for action in &request.before {
                 if let LoadIterationAction::ConfigureSession(session) = action {
-                    validate_variables(&session.variables, &session.node_id)?;
+                    validate_session(session)?;
                 }
             }
             if request.timeout.is_some_and(|timeout| timeout.is_zero()) {
@@ -279,7 +339,7 @@ fn validate_body<'a>(
             }
             LoadStep::Metric(metric) => metrics.push(metric),
             LoadStep::ConfigureSession(session) => {
-                validate_variables(&session.variables, &session.node_id)?;
+                validate_session(session)?;
                 for header in &session.headers {
                     header
                         .validate_http()
@@ -400,6 +460,23 @@ fn validate_body<'a>(
     Ok(has_response)
 }
 
+fn validate_session(session: &LoadSessionPlan) -> Result<(), LoadPlanError> {
+    validate_variables(&session.variables, &session.node_id)?;
+    let mut names = BTreeSet::new();
+    for name in &session.required_variables {
+        if !is_valid_variable_name(name)
+            || !session.variables.contains_key(name)
+            || !names.insert(name)
+        {
+            return Err(LoadPlanError::Scenario {
+                id: session.node_id.clone(),
+                message: format!("required variable '{name}' must have a unique session entry"),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_variables(variables: &BTreeMap<String, String>, id: &str) -> Result<(), LoadPlanError> {
     if variables.keys().any(|key| !is_valid_variable_name(key)) {
         return Err(LoadPlanError::Scenario {
@@ -505,13 +582,13 @@ fn validate_extract_kind(extract: &LoadExtractPlan) -> Result<(), LoadPlanError>
 
 #[derive(Debug, Clone)]
 pub struct LoadScenarioPlan {
-    /// Identificador de origem para diagnósticos; não exige um nó de grafo.
-    /// O nome do campo é preservado para compatibilidade com planos existentes.
+    /// Source identifier for diagnostics; does not require a graph node.
+    /// The field name is retained for compatibility with existing plans.
     pub node_id: String,
     pub label: String,
     pub schedule: LoadSchedule,
     pub requests: Vec<LoadRequestPlan>,
-    /// Corpo estruturado. Não pode coexistir com a cadeia legada `requests`.
+    /// Structured body, mutually exclusive with the legacy `requests` chain.
     pub body: Vec<LoadStep>,
 }
 
@@ -522,8 +599,8 @@ pub struct LoadLifecyclePlan {
     pub timeout: Duration,
 }
 
-/// Instruções declarativas, sem acesso a filesystem, processos ou rede
-/// fora da porta de transporte. Os corpos não contêm arestas de grafo.
+/// Declarative instructions without filesystem, process or network access
+/// outside the transport port. Bodies contain no graph edges.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadStep {
     Request(LoadRequestPlan),
@@ -542,12 +619,12 @@ pub enum LoadStep {
     ForEach {
         node_id: String,
         variable: String,
-        /// Itens declarados no plano. Quando `items_variable` existe, esta
-        /// lista precisa ficar vazia e a fonte é um array JSON do estado do
-        /// VU, normalmente produzido por setup/Extract.
+        /// Items declared in the plan. With `items_variable`, this list must
+        /// be empty and the source is a JSON array in VU state, typically
+        /// produced by setup/Extract.
         items: Vec<String>,
-        /// Nome da variável que contém um array JSON. O teto explícito evita
-        /// que dados dinâmicos expandam uma iteração sem limite conhecido.
+        /// Variable containing a JSON array. The explicit cap prevents dynamic
+        /// data from expanding an iteration without a known bound.
         items_variable: Option<String>,
         max_items: Option<usize>,
         body: Vec<LoadStep>,
@@ -555,8 +632,8 @@ pub enum LoadStep {
     Select {
         node_id: String,
         variable: String,
-        /// Comparação declarativa; `Equals` preserva o formato dos flows
-        /// existentes que só possuem o campo `equals`.
+        /// Declarative comparison; `Equals` preserves existing flows that only
+        /// provide the `equals` field.
         operator: LoadSelectOperator,
         equals: String,
         body: Vec<LoadStep>,
@@ -574,18 +651,17 @@ pub enum LoadStep {
         node_id: String,
         name: String,
         tags: BTreeMap<String, String>,
-        /// Quando falso, a métrica-pai exclui o tempo gasto em Timer.
+        /// When false, the parent metric excludes time spent in Timer steps.
         include_timers: bool,
-        /// Quando falso, o agrupamento só delimita escopo/tags; não emite a
-        /// amostra `group_duration`.
+        /// When false, the group only delimits scope/tags and does not emit a
+        /// `group_duration` sample.
         emit_parent: bool,
         body: Vec<LoadStep>,
     },
 }
 
-/// Operadores seguros para decisão de um corpo. Eles não executam código nem
-/// convertem valores implicitamente: comparações usam as strings canônicas do
-/// estado isolado do VU.
+/// Safe body decision operators. They neither execute code nor implicitly
+/// coerce values: comparisons use canonical strings from isolated VU state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadSelectOperator {
     Equals,
@@ -647,26 +723,49 @@ pub(crate) fn collect_requests<'a>(body: &'a [LoadStep], requests: &mut Vec<&'a 
 pub struct LoadRequestPlan {
     pub node_id: String,
     pub method: HttpMethod,
-    /// Endpoint validado antes de o plano alcançar o scheduler.
+    /// Endpoint text; templates are resolved and validated before transport.
     pub endpoint: Endpoint,
     pub body: String,
-    /// Limite por request aplicado pelo runner, além de qualquer timeout
-    /// configurado pelo transporte concreto.
+    /// Per-request limit enforced by the runner in addition to any timeout
+    /// configured by the concrete transport.
     pub timeout: Option<Duration>,
-    /// Headers específicos da request. Têm precedência sobre os defaults de
-    /// sessão do VU e nunca são descartados pelo executor.
+    /// Request-specific headers override VU session defaults and are never
+    /// discarded by the executor.
     pub headers: Vec<HeaderEntry>,
-    /// Política aplicada pelo transporte HTTP a esta request, independente
-    /// da configuração global de proxy/timeout do consumidor.
+    /// HTTP redirect policy for this request, independent of the consumer's
+    /// global proxy/timeout configuration.
     pub redirect_policy: RedirectPolicy,
-    /// Tags estáticas anexadas às métricas automáticas desta request.
+    /// Static tags attached to this request's automatic metrics.
     pub tags: BTreeMap<String, String>,
     pub before: Vec<LoadIterationAction>,
     pub checks: Vec<LoadCheckPlan>,
     pub metrics: Vec<LoadMetricPlan>,
 }
 
-/// Ações declarativas que antecedem uma request em cada iteração do VU.
+impl LoadRequestPlan {
+    /// Validate the actual destination before constructing the transport request.
+    pub fn resolve_endpoint(
+        &self,
+        variables: &BTreeMap<String, String>,
+    ) -> Result<Endpoint, LoadPlanError> {
+        let invalid = || LoadPlanError::Request {
+            id: self.node_id.clone(),
+            message: "URL requires resolved variables and a valid HTTP/HTTPS destination".into(),
+        };
+        let value =
+            crate::runtime::resolve_template(self.endpoint.url(), variables).ok_or_else(invalid)?;
+        let url = url::Url::parse(&value).map_err(|_| invalid())?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || value.contains(['{', '}'])
+        {
+            return Err(invalid());
+        }
+        Endpoint::new(value).map_err(|_| invalid())
+    }
+}
+
+/// Declarative actions preceding a request in each VU iteration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadIterationAction {
     Timer(LoadTimerPlan),
@@ -679,8 +778,8 @@ pub struct LoadTimerPlan {
     pub kind: LoadTimerKind,
 }
 
-/// Distribuição declarativa de espera. A amostragem acontece no worker do VU
-/// com seu RNG isolado; o plano não carrega aleatoriedade nem relógio.
+/// Declarative delay distribution sampled in the VU worker with its isolated
+/// RNG; the plan carries neither randomness nor a clock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadTimerKind {
     Fixed(Duration),
@@ -701,8 +800,8 @@ pub enum LoadTimerKind {
 }
 
 impl LoadTimerPlan {
-    /// Limite conservador usado pelo orçamento pré-execução. Gaussian fica em
-    /// seis desvios; Poisson em vinte médias, sem limitar a amostra real.
+    /// Conservative pre-execution budget bound: six deviations for Gaussian
+    /// and twenty means for Poisson, without limiting the actual sample.
     pub fn maximum_duration(&self) -> Duration {
         match self.kind {
             LoadTimerKind::Fixed(duration) | LoadTimerKind::Pacing { period: duration } => duration,
@@ -719,14 +818,16 @@ impl LoadTimerPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadSessionPlan {
     pub node_id: String,
-    /// Headers de sessão; sua sintaxe HTTP é validada ao iniciar o plano.
+    /// Session headers; their HTTP syntax is validated before execution.
     pub headers: Vec<HeaderEntry>,
     pub cookies_enabled: Option<bool>,
     pub variables: BTreeMap<String, String>,
+    /// User-provided values required before any execution effects.
+    pub required_variables: Vec<String>,
 }
 
-/// Dados já resolvidos pelo consumidor. O runner nunca abre arquivos do
-/// workspace; as linhas são compartilhadas imutavelmente entre VUs.
+/// Data already resolved by the consumer. The runner never opens workspace
+/// files; rows are shared immutably between VUs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadDatasetPlan {
     pub node_id: String,
@@ -734,9 +835,9 @@ pub struct LoadDatasetPlan {
     pub recycle: bool,
 }
 
-/// Asserção funcional avaliada sobre a resposta imediatamente anterior.
-/// Outras expressões só entram quando tiverem uma semântica canônica e segura
-/// no runtime, em vez de receberem JavaScript arbitrário do importador.
+/// Functional assertion on the immediately preceding response. Additional
+/// expressions require safe canonical runtime semantics rather than arbitrary
+/// JavaScript supplied by an importer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadCheckPlan {
     pub node_id: String,
@@ -773,7 +874,7 @@ pub enum LoadExtractKind {
     },
 }
 
-/// Fase explícita do Script seguro. Ele só pode alterar variáveis do VU.
+/// Explicit safe Script phase; only VU variables can be changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadScriptPhase {
     PreRequest,
@@ -787,7 +888,7 @@ pub struct LoadScriptPlan {
     pub code: String,
 }
 
-/// Emissão declarativa de uma métrica customizada após a request anterior.
+/// Declarative custom metric emitted after the preceding request.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadMetricPlan {
     pub node_id: String,

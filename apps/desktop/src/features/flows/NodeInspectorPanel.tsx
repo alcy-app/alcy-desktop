@@ -540,11 +540,13 @@ function KeyValueLoadField({
   hint,
   values,
   onChange,
+  requiredVariables = [],
 }: {
   label: string
   hint: string
   values: unknown
   onChange: (values: Record<string, string>) => void
+  requiredVariables?: readonly string[]
 }) {
   const { t } = useLanguage()
   const [draft, setDraft] = useState(() => tagsToText(values))
@@ -565,7 +567,10 @@ function KeyValueLoadField({
             setError(t('flows.loadNode.tagsInvalid'))
             return
           }
-          setError(undefined)
+          const missing = requiredVariables.filter((name) => !parsed[name]?.trim())
+          setError(missing.length > 0
+            ? t('flows.loadNode.configureSession.missingVariables', { variables: missing.join(', ') })
+            : undefined)
           onChange(parsed)
         }}
       />}
@@ -683,13 +688,19 @@ function RequestLoadFields({ config, onChange }: { config: LoadConfig; onChange:
 
 function ConfigureSessionLoadFields({ config, onChange }: { config: LoadConfig; onChange: (config: LoadConfig) => void }) {
   const { t } = useLanguage()
+  const requiredVariables = Array.isArray(config.requiredVariables)
+    ? config.requiredVariables.filter((name): name is string => typeof name === 'string')
+    : []
   return (
     <div className="flow-inspector-condition">
       <HeadersLoadField headers={config.headers} onChange={(headers) => onChange({ ...config, headers })} />
       <KeyValueLoadField
         label={t('flows.loadNode.configureSession.variables')}
-        hint={t('flows.loadNode.configureSession.variablesHint')}
+        hint={requiredVariables.length > 0
+          ? t('flows.loadNode.configureSession.requiredVariables', { variables: requiredVariables.join(', ') })
+          : t('flows.loadNode.configureSession.variablesHint')}
         values={config.variables}
+        requiredVariables={requiredVariables}
         onChange={(variables) => onChange({ ...config, variables })}
       />
       <label className="flow-inspector-checkbox-row">

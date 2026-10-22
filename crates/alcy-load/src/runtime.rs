@@ -117,8 +117,8 @@ pub trait LoadRunSink: Sync {
     fn metrics(&self, _metrics: &[LoadMetricSnapshot]) {}
 }
 
-/// Estado interno pequeno, atualizado pelos workers e convertido em snapshot
-/// pelo coordenador no intervalo de progresso escolhido.
+/// Small internal state updated by workers and converted to snapshots by the
+/// coordinator at the selected progress interval.
 #[derive(Debug, Default)]
 pub struct LoadRunAccumulator {
     active_vus: u32,
@@ -337,6 +337,7 @@ where
     C: LoadCancellation,
 {
     plan.validate_with_limits(limits)?;
+    plan.validate_ready()?;
     let metrics = Arc::new(Mutex::new(LoadMetricRegistry::with_sample_budget(
         limits.max_trend_sample_bytes,
     )));
@@ -389,7 +390,7 @@ where
         total.merge_summary(summary);
         sink.scenario_finished(&scenario_id, summary);
     }
-    // Cancela futures pendentes antes de iniciar teardown, inclusive em erro.
+    // Drop pending futures before teardown, including on error.
     drop(scenarios);
     if !cancellation.is_cancelled()
         && let Some(teardown) = &plan.teardown
@@ -1450,8 +1451,9 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
         };
         let body = resolve_template(&request_plan.body, lock_vu_state(&self.state).variables())
             .ok_or_else(invalid_variables)?;
+        let endpoint = request_plan.resolve_endpoint(lock_vu_state(&self.state).variables())?;
         let mut request = Request::new(
-            request_plan.endpoint.clone(),
+            endpoint,
             RequestDocument::new(ProtocolId::Rest, body),
             "",
             request_plan.headers.clone(),
@@ -1868,7 +1870,10 @@ impl Drop for VariableScope {
     }
 }
 
-fn resolve_template(value: &str, variables: &BTreeMap<String, String>) -> Option<String> {
+pub(crate) fn resolve_template(
+    value: &str,
+    variables: &BTreeMap<String, String>,
+) -> Option<String> {
     let mut result = String::new();
     let mut remaining = value;
     while let Some(start) = remaining.find("{{") {

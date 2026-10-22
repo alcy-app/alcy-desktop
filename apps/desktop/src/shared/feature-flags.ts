@@ -1,30 +1,29 @@
 /**
- * Liga/desliga funcionalidades inteiras na interface sem remover o código.
- * Desligar uma flag esconde a funcionalidade e impede que ela rode sozinha.
+ * Enable or disable complete interface features without removing their code.
+ * Disabling a flag hides the feature and prevents automatic execution.
  */
 export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'notifications' | 'webclientExport' | 'loadTesting', boolean>> = {
-  /** Verificação, download e instalação de novas versões do app. */
+  /** Check for, download and install application updates. */
   updates: true,
   /**
-   * Integração com o GitLab: aba de versionamento da barra lateral, indicador
-   * na barra de status, categoria "GitLab" das configurações (visível, mas
-   * desabilitada) e verificação automática do workspace vinculado.
+   * GitLab integration: sidebar versioning tab, status bar indicator,
+   * the visible but disabled GitLab settings category, and automatic
+   * checks for the linked workspace.
    */
   gitlab: false,
-  /** Sino de notificações no canto direito da barra de status. */
+  /** Notification bell on the right side of the status bar. */
   notifications: true,
-  /** Monitor de valores: item "Monitores" da barra lateral, botão "Monitor" e destaques na resposta. */
+  /** Value monitors: sidebar entry, Monitor button and response highlights. */
   valueMonitors: true,
   /**
-   * Exportar coleção/pasta como webclient (spec 0113): submenu "Exportar" com
-   * "Formato Alcy" e "Como webclient", e o diálogo de exportação. Desligada,
-   * "Exportar" volta a exportar direto no formato Alcy, só em coleções.
+   * Collection/folder webclient export (spec 0113): format selection in the
+   * Export submenu and its dialog. When disabled, collections export directly
+   * in Alcy format and folders have no export action.
    */
   webclientExport: true,
   /**
-   * Criação, importação e execução visual de testes de carga. O runtime
-   * continua isolado no Rust, mas a interface permanece indisponível até o
-   * fechamento dos blocos e do lifecycle restantes.
+   * Visual creation, import and execution of load tests.
+   * The runtime remains isolated in Rust.
    */
-  loadTesting: false,
+  loadTesting: true,
 }

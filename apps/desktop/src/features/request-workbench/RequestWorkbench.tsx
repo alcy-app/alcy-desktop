@@ -1705,7 +1705,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               ? pendingLoadTestImport.preview.destinations.join(', ')
               : t('flows.importLoadTestNoDestination'),
             assets: pendingLoadTestImport.preview.assets.join(', ') || t('common.empty'),
-          })}
+          }) + (pendingLoadTestImport.preview.requiredVariables.length > 0
+            ? ` ${t('flows.importLoadTestRequiredVariables', { variables: pendingLoadTestImport.preview.requiredVariables.join(', ') })}`
+            : '')}
           confirmLabel={t('flows.importLoadTestConfirmButton')}
           cancelLabel={t('common.cancel')}
           closeAriaLabel={t('common.cancel')}

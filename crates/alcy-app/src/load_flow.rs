@@ -185,6 +185,8 @@ struct LoadSessionConfig {
     cookies_enabled: Option<bool>,
     #[serde(default)]
     variables: BTreeMap<String, String>,
+    #[serde(default)]
+    required_variables: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -244,6 +246,9 @@ pub fn preview_load_flow_with_datasets(
     datasets: &LoadDatasetAssets,
 ) -> Result<LoadFlowPreview, LoadFlowError> {
     let plan = plan_load_flow_with_datasets(flow, datasets)?;
+    plan.validate_ready()
+        .map_err(|error| plan_error_for_flow(flow, error))?;
+    let configured_variables = plan.configured_variables();
     let mut destinations = BTreeSet::new();
     let mut peak_vus = 0_u32;
     let mut peak_arrival_rate_per_second = 0.0_f64;
@@ -255,13 +260,25 @@ pub fn preview_load_flow_with_datasets(
         let mut requests = Vec::new();
         collect_body_requests(&lifecycle.body, &mut requests);
         for request in requests {
-            destinations.insert(request.endpoint.url().to_string());
+            destinations.insert(
+                request
+                    .resolve_endpoint(&configured_variables)
+                    .map_err(|error| plan_error_for_flow(flow, error))?
+                    .url()
+                    .to_string(),
+            );
         }
     }
 
     for scenario in plan.scenarios {
         for request in scenario.request_plans() {
-            destinations.insert(request.endpoint.url().to_string());
+            destinations.insert(
+                request
+                    .resolve_endpoint(&configured_variables)
+                    .map_err(|error| plan_error_for_flow(flow, error))?
+                    .url()
+                    .to_string(),
+            );
         }
         peak_vus = peak_vus.saturating_add(scenario.schedule.maximum_vus());
         if let Some(rate) = scenario.schedule.maximum_arrival_rate_per_second() {
@@ -1102,6 +1119,7 @@ fn parse_session(node_id: &str, raw: &str) -> Result<LoadSessionPlan, LoadFlowEr
         headers,
         cookies_enabled: config.cookies_enabled,
         variables: config.variables,
+        required_variables: config.required_variables,
     })
 }
 

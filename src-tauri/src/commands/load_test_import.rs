@@ -46,6 +46,7 @@ pub struct LoadTestImportAnalysisDto {
     pub destinations: Vec<String>,
     pub blocks: usize,
     pub assets: Vec<String>,
+    pub required_variables: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -81,7 +82,17 @@ impl From<LoadTestImportError> for LoadTestImportErrorDto {
 }
 
 #[tauri::command]
-pub fn analyze_load_test_import(
+pub async fn analyze_load_test_import(
+    input: AnalyzeLoadTestImportInput,
+) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
+    tauri::async_runtime::spawn_blocking(move || analyze_load_test_import_blocking(input))
+        .await
+        .map_err(|error| LoadTestImportErrorDto::InvalidSource {
+            message: error.to_string(),
+        })?
+}
+
+fn analyze_load_test_import_blocking(
     input: AnalyzeLoadTestImportInput,
 ) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
     crate::logging::logged_with(
@@ -106,7 +117,17 @@ pub fn analyze_load_test_import(
 /// confirming a source changed in an external editor. Stage assets until the
 /// flow is validated and saved, and remove them if persistence fails.
 #[tauri::command]
-pub fn commit_load_test_import(
+pub async fn commit_load_test_import(
+    input: CommitLoadTestImportInput,
+) -> Result<FlowDto, LoadTestImportErrorDto> {
+    tauri::async_runtime::spawn_blocking(move || commit_load_test_import_blocking(input))
+        .await
+        .map_err(|error| LoadTestImportErrorDto::Storage {
+            message: error.to_string(),
+        })?
+}
+
+fn commit_load_test_import_blocking(
     input: CommitLoadTestImportInput,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
     crate::logging::logged_with(
@@ -302,6 +323,7 @@ fn analysis_to_dto(
         destinations,
         blocks,
         assets: analysis.assets,
+        required_variables: analysis.required_variables,
     }
 }
 
@@ -316,6 +338,10 @@ fn diagnostic_to_dto(diagnostic: LoadImportDiagnostic) -> LoadImportDiagnosticDt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{
+        analyze_load_test_import_blocking as analyze_load_test_import,
+        commit_load_test_import_blocking as commit_load_test_import,
+    };
     use std::future::pending;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -494,6 +520,97 @@ mod tests {
     }
 
     struct RecordingExecutor(AtomicU64);
+
+    #[tokio::test]
+    async fn environment_configuration_round_trips_and_blocks_effects_until_filled() {
+        let source = include_str!(
+            "../../../crates/alcy-collection-import/tests/fixtures/load/environment-values.ts"
+        );
+        let path = temp_file("environment-round-trip.ts", source);
+        let root = path.with_extension("workspace");
+        let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+            source_path: path.to_string_lossy().into_owned(),
+        })
+        .unwrap();
+        assert_eq!(
+            preview.required_variables,
+            ["K6_ENV_BASE_URL", "K6_ENV_RUN_NAME"]
+        );
+        assert!(!root.exists());
+        let committed = commit_load_test_import(CommitLoadTestImportInput {
+            root_path: root.to_string_lossy().into_owned(),
+            source_path: path.to_string_lossy().into_owned(),
+            analysis_hash: preview.analysis_hash,
+        })
+        .unwrap();
+        let store = FlowStore::new(root.clone());
+        let mut snapshot = store.load().unwrap();
+        let flow = &snapshot.flows[0];
+        assert_eq!(flow.id, committed.id);
+        assert!(
+            alcy_app::preview_load_flow(flow)
+                .unwrap_err()
+                .to_string()
+                .contains("K6_ENV_BASE_URL")
+        );
+        let executor = LifecycleExecutor::default();
+        assert!(
+            execute_load_flow_report(flow, &executor, &SilentSink, &NeverCancelled)
+                .await
+                .is_err()
+        );
+        assert!(executor.calls.lock().unwrap().is_empty());
+        let mut nodes = flow.nodes().to_vec();
+        for flow_node in &mut nodes {
+            if flow_node.id == "k6-environment" {
+                let alcy_domain::FlowNodeKind::Load { node } = &mut flow_node.kind else {
+                    panic!("expected session");
+                };
+                let mut config: serde_json::Value = serde_json::from_str(&node.config).unwrap();
+                config["variables"]["K6_ENV_BASE_URL"] =
+                    serde_json::json!("https://api.example.test");
+                config["variables"]["K6_ENV_RUN_NAME"] = serde_json::json!("smoke");
+                node.config = config.to_string();
+            }
+        }
+        snapshot.flows[0] = alcy_domain::Flow::new_with_execution_kind(
+            flow.id.clone(),
+            flow.name(),
+            flow.execution_kind(),
+            nodes,
+            flow.edges().to_vec(),
+            UNIX_EPOCH,
+            UNIX_EPOCH,
+        )
+        .unwrap();
+        store.save(&snapshot).unwrap();
+        let reloaded = store.load().unwrap();
+        let flow = &reloaded.flows[0];
+        assert_eq!(
+            alcy_app::preview_load_flow(flow).unwrap().destinations,
+            [
+                "https://api.example.test/items",
+                "https://api.example.test/setup",
+                "https://api.example.test/teardown"
+            ]
+        );
+        let report = execute_load_flow_report(flow, &executor, &SilentSink, &NeverCancelled)
+            .await
+            .unwrap();
+        assert_eq!(report.summary.requests, 5);
+        let calls = executor.calls.lock().unwrap();
+        assert_eq!(calls.first().unwrap().0, "https://api.example.test/setup");
+        assert_eq!(calls.last().unwrap().0, "https://api.example.test/teardown");
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(url, _)| url.ends_with("/items"))
+                .count(),
+            3
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(path).unwrap();
+    }
 
     impl RequestExecutor for RecordingExecutor {
         async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {

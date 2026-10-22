@@ -14,6 +14,7 @@ export interface LoadTestImportAnalysisDto {
   destinations: string[]
   blocks: number
   assets: string[]
+  requiredVariables: string[]
 }
 
 export type LoadTestImportError =
@@ -28,7 +29,7 @@ export type AnalyzeLoadTestImportResult =
 
 export type CommitLoadTestImportResult = { ok: true; value: FlowDto } | { ok: false; error: LoadTestImportError }
 
-/** Analisa localmente a fonte sem gravar flow ou asset. */
+/** Analyze a local source without persisting a flow or assets. */
 export async function analyzeLoadTestImport(sourcePath: string): Promise<AnalyzeLoadTestImportResult> {
   try {
     const value = await invoke<LoadTestImportAnalysisDto>('analyze_load_test_import', { input: { sourcePath } })
@@ -38,7 +39,7 @@ export async function analyzeLoadTestImport(sourcePath: string): Promise<Analyze
   }
 }
 
-/** Confirma exatamente a análise exibida; o backend rejeita uma fonte que tenha mudado. */
+/** Commit the displayed analysis; native validation rejects a changed source. */
 export async function commitLoadTestImport(
   rootPath: string,
   sourcePath: string,
