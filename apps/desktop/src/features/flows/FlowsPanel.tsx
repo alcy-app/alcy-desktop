@@ -16,7 +16,7 @@ import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { Modal } from '../../shared/ui/Modal'
 import { Select } from '../../shared/ui/Select'
-import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FlowIcon, FolderIcon, ImportIcon, PlusIcon, RunnerIcon, SearchIcon } from '../../shared/ui/icons'
+import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FlowIcon, FolderIcon, ImportIcon, LoadTestIcon, PlusIcon, SearchIcon } from '../../shared/ui/icons'
 import { VirtualizedList, type VirtualizedListHandle } from '../request-workbench/components/VirtualizedList'
 import type { FlowState } from './flows.types'
 import { RemoveFlowModal } from './RemoveFlowModal'
@@ -174,8 +174,6 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
         ) : (
           <>
             <IconButton icon={<SearchIcon size={12} />} label={t('flows.searchAria')} onClick={() => setSearchOpen(true)} />
-            {onImportLoadTest && <IconButton icon={<ImportIcon size={12} />} label={t('flows.importLoadTestAria')} onClick={onImportLoadTest} />}
-            {onAddLoadFlow && <IconButton icon={<RunnerIcon size={12} />} label={t('flows.addLoadFlowAria')} onClick={() => addFlow(undefined, true)} />}
             <OptionsMenu
               icon={<PlusIcon size={12} />}
               label={t('flows.addMenuAria')}
@@ -187,10 +185,12 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
               menuPlacement="auto"
             >
               <MenuItem icon={<FlowIcon size={13} />} label={t('flows.newBlankFlowMenuItem')} onSelect={() => addFlow()} />
+              {onAddLoadFlow && <MenuItem icon={<LoadTestIcon size={13} />} label={t('flows.newBlankLoadTestMenuItem')} onSelect={() => addFlow(undefined, true)} />}
               <MenuSeparator />
               <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates()} />
               <MenuItem label={t('flows.addFolderAria')} onSelect={addFolder} />
             </OptionsMenu>
+            {onImportLoadTest && <IconButton icon={<ImportIcon size={12} />} label={t('flows.importLoadTestAria')} onClick={onImportLoadTest} />}
           </>
         )}
       </div>
@@ -210,6 +210,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
           const label = item.name || t('common.unnamed')
           const changeKind = kind === 'flow' ? changeMarkers.get(item.id) : undefined
           const open = isSearching || expanded.has(item.id)
+          const RowIcon = row.kind === 'folder' ? FolderIcon : row.item.executionKind === 'load' ? LoadTestIcon : FlowIcon
           return (
             <div className={['flows-list-row', row.kind === 'flow' && row.folderId ? 'flows-list-row--nested' : '', draggedId === item.id ? 'flows-list-row--dragging' : '', dragOverId === item.id && dragOverEdge ? `flows-list-row--drop-${dragOverEdge}` : ''].filter(Boolean).join(' ')} data-flow-drop-id={item.id} data-flow-drop-kind={kind}
               onContextMenu={(event) => { event.preventDefault(); setMenuOpenKey(key) }}
@@ -222,7 +223,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 // which moved focus away from the input and ended the edit.
                 <div className="flows-list-item flows-list-item--renaming">
                   {kind === 'folder' && (open ? <ChevronDownIcon size={10} /> : <ChevronRightIcon size={10} />)}
-                  {kind === 'folder' ? <FolderIcon size={13} className="flows-list-item-icon" /> : <FlowIcon size={13} className="flows-list-item-icon" />}
+                  <RowIcon size={13} className="flows-list-item-icon" />
                   <InlineEditInput value={nameDraft} autoFocus aria-label={t(kind === 'folder' ? 'flows.folderNameAria' : 'flows.nameInputAria')}
                     onChange={(event) => { setNameDraft(event.target.value); if (event.target.value.trim()) (kind === 'folder' ? onRenameFolder : onRenameFlow)(item.id, event.target.value) }}
                     onBlur={() => setRenamingKey(null)}
@@ -260,7 +261,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                     }
                   }}>
                   {kind === 'folder' && (open ? <ChevronDownIcon size={10} /> : <ChevronRightIcon size={10} />)}
-                  {kind === 'folder' ? <FolderIcon size={13} className="flows-list-item-icon" /> : <FlowIcon size={13} className="flows-list-item-icon" />}
+                  <RowIcon size={13} className="flows-list-item-icon" />
                   <span className="flows-list-item-name" data-change-kind={changeKind}>{label}</span>
                 </button>
               )}

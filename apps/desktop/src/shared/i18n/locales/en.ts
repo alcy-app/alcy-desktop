@@ -973,6 +973,7 @@ const en: Record<TranslationKey, string> = {
   'flows.searchEmptyState': 'No flows found.',
   'flows.addMenuAria': 'Add flow or folder',
   'flows.newBlankFlowMenuItem': 'New Blank Flow',
+  'flows.newBlankLoadTestMenuItem': 'New Blank Load Test',
   'flows.addFolderAria': 'Create folder',
   'flows.newFolderName': 'New folder',
   'flows.folderNameAria': 'Folder name',

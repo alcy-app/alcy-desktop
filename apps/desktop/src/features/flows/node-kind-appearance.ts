@@ -13,7 +13,7 @@ import {
   MockServerIcon,
   PencilIcon,
   RefreshIcon,
-  RunnerIcon,
+  LoadTestIcon,
   StopIcon,
   TerminalIcon,
   VariablesIcon,
@@ -120,7 +120,7 @@ export const NODE_KIND_APPEARANCE: Record<FlowNodeKind, NodeKindAppearance> = {
   /** Load blocks share the generic renderer and keep the kind mapping exhaustive. */
   load: {
     tone: 'control',
-    Icon: RunnerIcon,
+    Icon: LoadTestIcon,
     titleKey: 'flows.canvas.nodeTitle.load',
     labelKey: 'flows.canvas.nodeTitle.load',
     descriptionKey: 'flows.canvas.nodeDescription.load',

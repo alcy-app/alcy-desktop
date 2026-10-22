@@ -5,8 +5,8 @@ interface IconProps {
   className?: string
 }
 
-/** `width`/`height` ficam como fallback; o `style` aplica a escala de ícones
- * (`--icon-scale`, ajustável em Configurações) sem tocar nos usos. */
+/** `width`/`height` provide a fallback; styles apply the icon scale
+ * (`--icon-scale`, adjustable in Settings) without changing callers. */
 function svgProps({ size = 14, className }: IconProps) {
   const scaled = `calc(${size}px * var(--icon-scale, 1))`
   return {
@@ -64,7 +64,7 @@ export function PlusIcon(props: IconProps) {
   )
 }
 
-/** Dois nós de servidor com indicadores de estado; usado por mock servers. */
+/** Two server units with status indicators, used for mock servers. */
 export function MockServerIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -178,7 +178,7 @@ export function GlobeIcon(props: IconProps) {
   )
 }
 
-/** Escudo com um nó de rede: tráfego passando por um proxy. */
+/** A shield with a network node represents traffic passing through a proxy. */
 export function ProxyIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -189,7 +189,7 @@ export function ProxyIcon(props: IconProps) {
   )
 }
 
-/** Chaves representam o conjunto de variáveis que compõe um ambiente. */
+/** Braces represent the variables that make up an environment. */
 export function VariablesIcon(props: IconProps) {
   const base = svgProps(props)
   return (
@@ -247,7 +247,7 @@ export function ComponentsIcon(props: IconProps) {
   )
 }
 
-/** Monitor de valores: binóculos — os valores das respostas ficam sob observação. */
+/** Binoculars represent monitoring response values. */
 export function MonitorIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -304,7 +304,7 @@ export function FilterIcon(props: IconProps) {
   )
 }
 
-/** Linhas ordenadas por comprimento e seta para cima: a próxima ação ordena de A a Z. */
+/** Lines sorted by length and an up arrow indicate sorting from A to Z. */
 export function SortAscendingIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -314,7 +314,7 @@ export function SortAscendingIcon(props: IconProps) {
   )
 }
 
-/** Linhas ordenadas por comprimento e seta para baixo: a próxima ação ordena de Z a A. */
+/** Lines sorted by length and a down arrow indicate sorting from Z to A. */
 export function SortDescendingIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -370,7 +370,7 @@ export function DownloadIcon(props: IconProps) {
   )
 }
 
-/** Documento com uma seta entrando pela esquerda: trazer um arquivo externo para dentro do workspace. */
+/** A document with an incoming arrow represents importing an external file. */
 export function ImportIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -426,7 +426,7 @@ export function RefreshIcon(props: IconProps) {
   )
 }
 
-/** Recebe as alterações da branch remota. */
+/** Pull changes from the remote branch. */
 export function GitPullIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -437,7 +437,7 @@ export function GitPullIcon(props: IconProps) {
   )
 }
 
-/** Envia as alterações locais para a branch remota. */
+/** Push local changes to the remote branch. */
 export function GitPushIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -501,7 +501,7 @@ export function Spinner({ size = 14, className }: IconProps) {
   )
 }
 
-/** Ramificação de controle de versão (branch). */
+/** A version control branch. */
 export function GitIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -513,7 +513,7 @@ export function GitIcon(props: IconProps) {
   )
 }
 
-/** Estrela de favorito; `filled` marca o item como favorito. */
+/** Favorite star; `filled` marks the item as a favorite. */
 export function StarIcon({ filled = false, ...props }: IconProps & { filled?: boolean }) {
   return (
     <svg {...svgProps(props)} fill={filled ? 'currentColor' : 'none'}>
@@ -577,7 +577,18 @@ export function ShareIcon(props: IconProps) {
   )
 }
 
-/** Runner de coleções: um play diante de uma lista de requisições. */
+/** A speedometer represents load and performance testing. */
+export function LoadTestIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M3.5 12.5a6 6 0 1 1 9 0" />
+      <path d="M8 3.5v1M3 8.5h1M12 8.5h1M8 8.5l2.5-2.5" />
+      <circle cx="8" cy="8.5" r=".7" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+/** Collection runner: a play symbol beside a list of requests. */
 export function RunnerIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -603,7 +614,7 @@ export function StopIcon(props: IconProps) {
   )
 }
 
-/** Alça de arrastar (seis pontos). */
+/** Six-dot drag handle. */
 export function GripIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>

@@ -967,6 +967,7 @@ const ptBR = {
   'flows.searchEmptyState': 'Nenhum flow encontrado.',
   'flows.addMenuAria': 'Adicionar flow ou pasta',
   'flows.newBlankFlowMenuItem': 'Novo flow em branco',
+  'flows.newBlankLoadTestMenuItem': 'Novo teste de carga em branco',
   'flows.addFolderAria': 'Criar pasta',
   'flows.newFolderName': 'Nova pasta',
   'flows.folderNameAria': 'Nome da pasta',

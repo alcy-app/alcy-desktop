@@ -8,7 +8,13 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Changed
 
+- Os flows reúnem a criação de testes de carga em branco no menu "+", antes do botão de importar.
+- Testes de carga usam um ícone de velocímetro para facilitar sua identificação.
 - A importação de scripts k6 está disponível no editor de flows e aceita constantes, URLs montadas com templates, parâmetros reutilizáveis e corpos JSON. Variáveis do script podem ser preenchidas no flow antes de executar o teste.
+
+### Fixed
+
+- Removidas as transições ao passar o mouse pela lista de flows para evitar piscadas na tela.
 
 ## [0.8.1] - 21/10/2026
 

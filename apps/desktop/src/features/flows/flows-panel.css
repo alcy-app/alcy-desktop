@@ -60,10 +60,9 @@
   min-height: var(--control-height-sm);
   padding: 0 3px 0 5px;
   border-radius: var(--radius-md);
-  transition: background-color var(--duration-fast) var(--ease-out);
 }
 
-/* Focused items use the hover background. */
+/* Keep hover changes immediate: animating virtualized rows causes WebKitGTK repaint flicker. */
 .flows-list-row:hover,
 .flows-list-row:focus-within {
   background: var(--surface-raised);
@@ -140,7 +139,10 @@
   position: relative;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.flows-menu-wrapper > .ui-icon-button {
+  transition: none;
 }
 
 .flows-list-row:hover .flows-menu-wrapper,
