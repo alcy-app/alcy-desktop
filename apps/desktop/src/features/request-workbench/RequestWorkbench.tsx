@@ -419,7 +419,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     },
     [reloadCollections, reloadEnvironments, reloadFlows, reloadValueMonitors],
   )
-  const versionControl = useVersionControl(workspace.rootPath, handleWorkspaceFilesChanged, FEATURE_FLAGS.gitlab)
+  const versionControl = useVersionControl(workspace.rootPath, handleWorkspaceFilesChanged, FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive)
   useEffect(() => {
     notifyLocalChangeRef.current = versionControl.notifyLocalChange
   }, [versionControl.notifyLocalChange])
@@ -2267,7 +2267,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           </button>
           <div id="rw-import-statusbar-slot" className="rw-statusbar-import-slot" />
           <div className="rw-statusbar-end">
-            {FEATURE_FLAGS.gitlab && (
+            {(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && (
               <GitStatusButton
                 summary={versionControl.summary}
                 counts={versionControl.counts}

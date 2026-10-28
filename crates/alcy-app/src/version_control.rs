@@ -1549,8 +1549,31 @@ mod tests {
         }
     }
 
+    /// Remote without multi-file transactions (OneDrive, ADR 0063): applies
+    /// the first action and then fails, like a connection drop mid-push.
+    struct NonAtomicRemote(FakeRemote);
+
+    impl RemoteRepository for NonAtomicRemote {
+        async fn file_meta(&self, path: &str) -> Result<RemoteFileMeta, RemoteError> {
+            self.0.file_meta(path).await
+        }
+
+        async fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>, RemoteError> {
+            self.0.read_file(path).await
+        }
+
+        async fn commit(
+            &self,
+            message: &str,
+            actions: &[CommitAction],
+        ) -> Result<String, RemoteError> {
+            self.0.commit(message, &actions[..1]).await?;
+            Err(RemoteError::Network("connection reset".into()))
+        }
+    }
+
     fn link() -> WorkspaceLink {
-        WorkspaceLink::new("acc", 1, "eq/proj", "main", "", false).unwrap()
+        WorkspaceLink::gitlab("acc", 1, "eq/proj", "main", "", false).unwrap()
     }
 
     fn states(status: &VersionStatus) -> Vec<(String, FileState)> {
@@ -1588,6 +1611,26 @@ mod tests {
             status.link.base.get("alcy-collections.json"),
             Some(&content_hash(b"{}"))
         );
+    }
+
+    #[tokio::test]
+    async fn push_interrupted_midway_heals_the_files_already_sent() {
+        let files = FakeFiles::with(&[("alcy-collections.json", "{}")]);
+        let remote = NonAtomicRemote(FakeRemote::with(&[("alcy-collections.json", "{}")]));
+        let synced = version_status(&files, &remote, &link()).await.unwrap().link;
+        files.write("alcy-collections.json", b"{\"a\":1}").unwrap();
+        files.write("alcy-flows.json", b"[]").unwrap();
+
+        let pushed = push_changes(&files, &remote, &synced, "msg").await;
+        assert!(matches!(
+            pushed,
+            Err(VersionControlError::Remote(RemoteError::Network(_)))
+        ));
+
+        let status = version_status(&files, &remote, &synced).await.unwrap();
+        assert!(status.healed);
+        assert_eq!(state_of(&status, "alcy-collections.json"), FileState::Clean);
+        assert_eq!(state_of(&status, "alcy-flows.json"), FileState::LocalAdded);
     }
 
     #[tokio::test]

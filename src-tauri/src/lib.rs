@@ -5,12 +5,13 @@ mod window_state;
 
 use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
+use alcy_onedrive::OnedriveClient;
 use alcy_platform::KeyringCredentialStore;
 use alcy_rest::ReqwestRestExecutor;
 use alcy_storage::{
     ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitlabAccountsStore,
-    LocalSecrets, ProxySettingsStore, RecentWorkspacesStore, SchemaStore, SecuritySettingsStore,
-    TlsSettingsStore, UpdateSettingsStore,
+    LocalSecrets, OnedriveAccountsStore, ProxySettingsStore, RecentWorkspacesStore, SchemaStore,
+    SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore,
 };
 use commands::api_docs::get_request_docs;
 use commands::app_logs::{AppLogLocation, write_frontend_logs};
@@ -74,6 +75,10 @@ use commands::mock_servers::{
     MockServerRuntime, clear_mock_calls, delete_mock_server, get_mock_server, list_mock_calls,
     list_mock_servers, save_mock_server, start_mock_server, stop_mock_server,
 };
+use commands::onedrive::{
+    OnedriveProvider, begin_onedrive_login, get_onedrive_root, list_onedrive_accounts,
+    list_onedrive_folders, logout_onedrive, resolve_onedrive_share_link,
+};
 use commands::open_external_url::open_external_url;
 use commands::preview_load_flow::preview_load_flow;
 use commands::proxy_settings::{
@@ -82,6 +87,7 @@ use commands::proxy_settings::{
 };
 use commands::read_response_body_chunk::read_response_body_chunk;
 use commands::release_response_body::release_response_body;
+use commands::remote_command::RemoteHttpClients;
 use commands::remote_content_cache::VersionControlCaches;
 use commands::response_body_cache::ResponseBodyCache;
 use commands::save_response_body::save_response_body;
@@ -282,6 +288,10 @@ pub fn run_with(extensions: Vec<Extension>) {
             app.manage(GitlabAccountsStore::new(
                 app_data_dir.join("gitlab-accounts.json"),
             ));
+            app.manage(OnedriveProvider {
+                client: OnedriveClient::new(),
+                accounts: OnedriveAccountsStore::new(app_data_dir.join("onedrive-accounts.json")),
+            });
             app.manage(UpdateSettingsStore::new(
                 app_data_dir.join("update-settings.json"),
             ));
@@ -295,7 +305,10 @@ pub fn run_with(extensions: Vec<Extension>) {
                 &app.state::<ReqwestGraphqlExecutor>(),
                 &app.state::<ReqwestRestExecutor>(),
                 &app.state::<ImportFetcher>(),
-                &app.state::<GitlabClient>(),
+                RemoteHttpClients {
+                    gitlab: &app.state::<GitlabClient>(),
+                    onedrive: &app.state::<OnedriveProvider>().client,
+                },
             );
             app.manage(custom_ca_store);
             let tls_settings = TlsSettingsStore::new(app_data_dir.join("tls-settings.json"));
@@ -341,7 +354,10 @@ pub fn run_with(extensions: Vec<Extension>) {
                     &handle.state::<ReqwestGraphqlExecutor>(),
                     &handle.state::<ReqwestRestExecutor>(),
                     &handle.state::<ImportFetcher>(),
-                    &handle.state::<GitlabClient>(),
+                    RemoteHttpClients {
+                        gitlab: &handle.state::<GitlabClient>(),
+                        onedrive: &handle.state::<OnedriveProvider>().client,
+                    },
                 )
                 .await;
             });
@@ -432,6 +448,12 @@ pub fn run_with(extensions: Vec<Extension>) {
                 test_gitlab_connection,
                 list_gitlab_projects,
                 list_gitlab_branches,
+                list_onedrive_accounts,
+                begin_onedrive_login,
+                logout_onedrive,
+                get_onedrive_root,
+                list_onedrive_folders,
+                resolve_onedrive_share_link,
                 get_workspace_link,
                 link_workspace,
                 unlink_workspace,

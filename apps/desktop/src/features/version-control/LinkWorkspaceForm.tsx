@@ -131,6 +131,7 @@ export function LinkWorkspaceForm({ busy, error, onSubmit, onCancelBusy }: LinkW
   const submit = () => {
     if (!selected) return
     onSubmit({
+      provider: 'gitlab',
       accountId,
       projectId: selected.id,
       projectPath: selected.pathWithNamespace,

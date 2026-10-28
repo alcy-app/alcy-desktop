@@ -14,6 +14,7 @@ import { UiScaleProvider } from './shared/appearance/UiScaleProvider'
 import { SchemaAutocompleteProvider } from './shared/schema-autocomplete/SchemaAutocompleteProvider'
 import { LanguageProvider } from './shared/i18n/LanguageProvider'
 import { GitlabProvider } from './shared/gitlab/GitlabProvider'
+import { OnedriveProvider } from './shared/onedrive/OnedriveProvider'
 import { ProxyProvider } from './shared/proxy/ProxyProvider'
 import { SecurityPreferencesProvider } from './shared/security/SecurityPreferencesProvider'
 import { ShortcutsProvider } from './shared/shortcuts/ShortcutsProvider'
@@ -116,11 +117,13 @@ function App() {
                 <ShortcutsProvider>
                   <ProxyProvider>
                     <GitlabProvider>
-                      <UpdateProvider>
-                        <SchemaAutocompleteProvider>
-                          <AppScreens />
-                        </SchemaAutocompleteProvider>
-                      </UpdateProvider>
+                      <OnedriveProvider>
+                        <UpdateProvider>
+                          <SchemaAutocompleteProvider>
+                            <AppScreens />
+                          </SchemaAutocompleteProvider>
+                        </UpdateProvider>
+                      </OnedriveProvider>
                     </GitlabProvider>
                   </ProxyProvider>
                 </ShortcutsProvider>

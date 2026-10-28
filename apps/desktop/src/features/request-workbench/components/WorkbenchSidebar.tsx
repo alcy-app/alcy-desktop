@@ -346,7 +346,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
         { id: 'environments', label: t('environments.ariaLabel'), icon: <VariablesIcon size={19} /> },
         ...(FEATURE_FLAGS.valueMonitors ? [{ id: 'monitors' as const, label: t('monitors.title'), icon: <MonitorIcon size={19} /> }] : []),
         { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={19} /> },
-        ...(FEATURE_FLAGS.gitlab ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
+        ...(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
         ...EXTENSION_SIDEBAR_MODULES.map((module) => ({ id: module.id, label: module.label[language], icon: module.icon })),
       ] satisfies SidebarModuleNavigationItem[],
     [t, language],
@@ -562,7 +562,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
             )}
             {visibleActiveTab === 'environments' && <EnvironmentsPanel {...environments} />}
             {visibleActiveTab === 'monitors' && FEATURE_FLAGS.valueMonitors && <ValueMonitorsPanel {...valueMonitors} />}
-            {visibleActiveTab === 'git' && FEATURE_FLAGS.gitlab && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}
+            {visibleActiveTab === 'git' && (FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}
             {EXTENSION_SIDEBAR_MODULES.map((module) => visibleActiveTab === module.id && <module.Panel key={module.id} />)}
           </div>
         </aside>

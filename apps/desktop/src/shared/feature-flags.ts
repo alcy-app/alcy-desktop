@@ -2,7 +2,7 @@
  * Enable or disable complete interface features without removing their code.
  * Disabling a flag hides the feature and prevents automatic execution.
  */
-export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'notifications' | 'webclientExport' | 'loadTesting', boolean>> = {
+export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting', boolean>> = {
   /** Check for, download and install application updates. */
   updates: true,
   /**
@@ -11,6 +11,13 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * checks for the linked workspace.
    */
   gitlab: false,
+  /**
+   * OneDrive/SharePoint as a version control provider (ADR 0063): the
+   * Microsoft accounts settings category and the OneDrive option when
+   * linking a workspace. The versioning tab appears when this or `gitlab`
+   * is on.
+   */
+  onedrive: true,
   /** Notification bell on the right side of the status bar. */
   notifications: true,
   /** Value monitors: sidebar entry, Monitor button and response highlights. */

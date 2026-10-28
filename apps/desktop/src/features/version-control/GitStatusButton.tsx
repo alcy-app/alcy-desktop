@@ -3,6 +3,7 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { ChevronDownIcon, GitIcon, GitPullIcon, GitPushIcon, RefreshIcon, Spinner } from '../../shared/ui/icons'
 import { OptionsMenu } from '../../shared/ui/Menu'
 import type { WorkspaceLinkDto } from '../../bindings/gitlab-types'
+import { remoteLabel } from './remote-label'
 import type { VersionCounts, VersionSummary } from './version-summary'
 import type { VersionBusy } from './use-version-control'
 
@@ -21,7 +22,7 @@ interface GitStatusButtonProps {
 export function GitStatusButton({ summary, counts, link, checking, busy, onOpenPanel, onPull, onRefresh }: GitStatusButtonProps) {
   const { t } = useLanguage()
   const [open, setOpen] = useState(false)
-  const branch = link?.branch ?? ''
+  const branch = remoteLabel(link)
 
   const description = (() => {
     switch (summary) {

@@ -19,11 +19,12 @@ import { Modal } from '../../shared/ui/Modal'
 import { RangeSlider } from '../../shared/ui/RangeSlider'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Tooltip } from '../../shared/ui/Tooltip'
-import { AlertIcon, CheckIcon, ComponentsIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon } from '../../shared/ui/icons'
+import { AlertIcon, CheckIcon, ComponentsIcon, FolderIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon } from '../../shared/ui/icons'
 import { UpdatesSection } from '../updates/UpdatesSection'
 import { GeneralSection } from './GeneralSection'
 import { CustomCaCertificatesSection } from './CustomCaCertificatesSection'
 import { GitlabAccountSection } from './GitlabAccountSection'
+import { OnedriveAccountSection } from './OnedriveAccountSection'
 import { SensitiveSyncSection } from './SensitiveSyncSection'
 import { TlsVerificationSection } from './TlsVerificationSection'
 import { ShortcutsSection } from './ShortcutsSection'
@@ -115,7 +116,7 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
     <Modal title={t('settings.modalTitle')} closeAriaLabel={t('settings.close')} onClose={onClose} className="settings-modal">
       <div className="settings-layout">
         <nav ref={navigationRef} className="settings-navigation" aria-label={t('settings.categories')}>
-          {CATEGORIES.map(({ key, icon: Icon }) => {
+          {CATEGORIES.filter(({ key }) => !isCategoryHidden(key)).map(({ key, icon: Icon }) => {
             const disabled = isCategoryDisabled(key)
             const item = (
               <button
@@ -179,6 +180,7 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
           <div id={`${id}-network`} hidden={category !== 'network'}><ProxySection /><TlsVerificationSection /><CustomCaCertificatesSection /></div>
           <div id={`${id}-security`} hidden={category !== 'security'}><SecuritySection /></div>
           {FEATURE_FLAGS.gitlab && <div id={`${id}-gitlab`} hidden={category !== 'gitlab'}><GitlabAccountSection /></div>}
+          {FEATURE_FLAGS.onedrive && <div id={`${id}-onedrive`} hidden={category !== 'onedrive'}><OnedriveAccountSection /></div>}
           {FEATURE_FLAGS.updates && (
             <div id={`${id}-updates`} hidden={category !== 'updates'}>
               <UpdatesSection
@@ -235,16 +237,23 @@ const CATEGORIES = [
   { key: 'network', icon: ProxyIcon },
   { key: 'security', icon: LockIcon },
   { key: 'gitlab', icon: GitIcon },
+  { key: 'onedrive', icon: FolderIcon },
   { key: 'updates', icon: RefreshIcon },
 ] as const
 
 export type SettingsCategory = (typeof CATEGORIES)[number]['key']
 
-/** Categorias de funcionalidades desligadas aparecem no menu, mas desabilitadas. */
+/** Version control providers whose flag is off are left out of the menu. */
+function isCategoryHidden(key: SettingsCategory): boolean {
+  if (key === 'gitlab') return !FEATURE_FLAGS.gitlab
+  if (key === 'onedrive') return !FEATURE_FLAGS.onedrive
+  return false
+}
+
+/** Other disabled features stay in the menu, but disabled. */
 function isCategoryDisabled(key: SettingsCategory): boolean {
   if (key === 'updates') return !FEATURE_FLAGS.updates
-  if (key === 'gitlab') return !FEATURE_FLAGS.gitlab
-  return false
+  return isCategoryHidden(key)
 }
 
 function ProxySection() {
@@ -377,7 +386,7 @@ function SecuritySection() {
           )}
         </div>
       </section>
-      {FEATURE_FLAGS.gitlab && <SensitiveSyncSection />}
+      {(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && <SensitiveSyncSection />}
     </>
   )
 }

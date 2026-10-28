@@ -10,6 +10,8 @@ use serde::Serialize;
 use tauri::State;
 
 use super::import_fetcher::ImportFetcher;
+use super::onedrive::OnedriveProvider;
+use super::remote_command::RemoteHttpClients;
 
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
 
@@ -50,13 +52,13 @@ fn apply(
     graphql: &ReqwestGraphqlExecutor,
     rest: &ReqwestRestExecutor,
     import_fetcher: &ImportFetcher,
-    gitlab: &GitlabClient,
+    remotes: RemoteHttpClients<'_>,
 ) -> Result<(), ProxyError> {
     let pem_bundles: Vec<String> = certificates.iter().map(|item| item.pem.clone()).collect();
     graphql.set_custom_ca_certificates(&pem_bundles)?;
     rest.set_custom_ca_certificates(&pem_bundles)?;
     import_fetcher.set_custom_ca_certificates(&pem_bundles)?;
-    gitlab.set_custom_ca_certificates(&pem_bundles)
+    remotes.set_custom_ca_certificates(&pem_bundles)
 }
 
 pub fn apply_saved_custom_ca_certificates(
@@ -64,10 +66,10 @@ pub fn apply_saved_custom_ca_certificates(
     graphql: &ReqwestGraphqlExecutor,
     rest: &ReqwestRestExecutor,
     import_fetcher: &ImportFetcher,
-    gitlab: &GitlabClient,
+    remotes: RemoteHttpClients<'_>,
 ) {
     match store.load().and_then(|certificates| {
-        apply(&certificates, graphql, rest, import_fetcher, gitlab)
+        apply(&certificates, graphql, rest, import_fetcher, remotes)
             .map_err(|error| StorageError::Corrupted(error.to_string()))
     }) {
         Ok(()) => log::info!(target: "alcy::tls", "CAs personalizadas aplicadas"),
@@ -148,6 +150,7 @@ pub fn add_custom_ca_certificate(
     rest: State<'_, ReqwestRestExecutor>,
     import_fetcher: State<'_, ImportFetcher>,
     gitlab: State<'_, GitlabClient>,
+    onedrive: State<'_, OnedriveProvider>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
     crate::logging::logged_with("alcy::tls", "adicionar CA personalizada", || {
         let (name, pem) = read_pem(&path)?;
@@ -162,7 +165,17 @@ pub fn add_custom_ca_certificate(
             name,
             pem,
         });
-        apply(&certificates, &graphql, &rest, &import_fetcher, &gitlab).map_err(invalid)?;
+        apply(
+            &certificates,
+            &graphql,
+            &rest,
+            &import_fetcher,
+            RemoteHttpClients {
+                gitlab: &gitlab,
+                onedrive: &onedrive.client,
+            },
+        )
+        .map_err(invalid)?;
         store.save(&certificates).map_err(storage_error)?;
         Ok(certificates.iter().map(to_dto).collect())
     })
@@ -176,6 +189,7 @@ pub fn remove_custom_ca_certificate(
     rest: State<'_, ReqwestRestExecutor>,
     import_fetcher: State<'_, ImportFetcher>,
     gitlab: State<'_, GitlabClient>,
+    onedrive: State<'_, OnedriveProvider>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
     crate::logging::logged_with("alcy::tls", "remover CA personalizada", || {
         let mut certificates = store.load().map_err(storage_error)?;
@@ -186,7 +200,17 @@ pub fn remove_custom_ca_certificate(
                 message: "CA não encontrada".into(),
             });
         }
-        apply(&certificates, &graphql, &rest, &import_fetcher, &gitlab).map_err(invalid)?;
+        apply(
+            &certificates,
+            &graphql,
+            &rest,
+            &import_fetcher,
+            RemoteHttpClients {
+                gitlab: &gitlab,
+                onedrive: &onedrive.client,
+            },
+        )
+        .map_err(invalid)?;
         store.save(&certificates).map_err(storage_error)?;
         Ok(certificates.iter().map(to_dto).collect())
     })

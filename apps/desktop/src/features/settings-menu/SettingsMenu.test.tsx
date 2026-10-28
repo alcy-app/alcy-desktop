@@ -183,21 +183,17 @@ describe('SettingsMenu — categorias', () => {
     expect(screen.queryByTestId('update-settings')).not.toBeInTheDocument()
   })
 
-  it('desabilita a aba do GitLab com a feature flag desligada e some com a sincronização da segurança', async () => {
+  it('esconde as abas dos providers com as feature flags desligadas e some com a sincronização da segurança', async () => {
     flags.gitlab = false
     render(<SettingsMenu open initialCategory="gitlab" onOpenChange={() => {}} />)
-    const gitlab = screen.getByRole('button', { name: 'GitLab' })
-    expect(gitlab).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'GitLab' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'OneDrive' })).not.toBeInTheDocument()
     // Pedida como categoria inicial, cai em "Geral" em vez de abrir uma página vazia.
-    expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
-    fireEvent.mouseEnter(gitlab.parentElement!)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Funcionalidade desabilitada')
-    fireEvent.click(gitlab)
     expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByTestId('gitlab-settings')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
-    expect(screen.queryByText('Sincronização com o GitLab')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sincronização do workspace')).not.toBeInTheDocument()
     expect(getSecuritySettings).not.toHaveBeenCalled()
   })
 

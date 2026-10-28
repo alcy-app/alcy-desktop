@@ -5,6 +5,7 @@ import { GitStatusButton } from './GitStatusButton'
 import type { VersionSummary } from './version-summary'
 
 const link: WorkspaceLinkDto = {
+  provider: 'gitlab',
   accountId: 'a',
   projectId: 1,
   projectPath: 'eq/proj',

@@ -20,6 +20,7 @@ mod header;
 mod history_entry;
 mod http_method;
 mod mock_server;
+mod onedrive;
 mod proxy_settings;
 mod request;
 mod response;
@@ -28,6 +29,7 @@ mod update;
 mod value_monitor;
 mod variable_scope;
 mod workspace;
+mod workspace_link;
 
 pub use api_docs::{
     ApiDocsSource, ApiDocsSourceKind, BodyDoc, DocsRef, MediaDoc, ParameterDoc, ParameterLocation,
@@ -64,10 +66,7 @@ pub use general_settings::{
     MAX_HISTORY_RETENTION_DAYS, MAX_REQUEST_TIMEOUT_SECONDS, MAX_RESPONSE_SIZE_LIMIT_MB,
     RequestTimeout, RequestTimeoutError, ResponseSizeLimit, ResponseSizeLimitError,
 };
-pub use gitlab::{
-    API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, GitlabAccount, GitlabAccountError, MANIFEST_FILE,
-    VALUE_MONITORS_FILE, VERSIONED_FILES, WorkspaceLink, classify, normalize_instance_url,
-};
+pub use gitlab::{GitlabAccount, GitlabAccountError, normalize_instance_url};
 pub use grpc_call::{GrpcCall, GrpcSchemaSource};
 pub use header::{HeaderEntry, HeaderError};
 pub use history_entry::{HistoryEntry, HistoryFailureKind, HistoryOutcome};
@@ -76,6 +75,9 @@ pub use mock_server::{
     DEFAULT_MOCK_PORT, MAX_MOCK_BODY_BYTES, MAX_MOCK_DELAY_MS, MockCondition, MockConditionGroup,
     MockConditionOperator, MockConditionSource, MockMatchOperator, MockResponse, MockRoute,
     MockServer,
+};
+pub use onedrive::{
+    DEFAULT_ONEDRIVE_TENANT, OnedriveAccount, OnedriveAccountError, normalize_tenant,
 };
 pub use proxy_settings::{ProxySettings, ProxySettingsError};
 pub use request::{RedirectPolicy, Request, RouteParameter};
@@ -98,3 +100,7 @@ pub use variable_scope::{
     record_scoped_change, variable_scopes,
 };
 pub use workspace::{Workspace, WorkspaceError};
+pub use workspace_link::{
+    API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, MANIFEST_FILE, RemoteLocation,
+    VALUE_MONITORS_FILE, VERSIONED_FILES, WorkspaceLink, WorkspaceLinkError, classify,
+};

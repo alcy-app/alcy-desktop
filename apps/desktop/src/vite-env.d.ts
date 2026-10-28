@@ -2,6 +2,10 @@
 
 interface ImportMetaEnv {
   readonly VITE_GITLAB_COM_CLIENT_ID?: string
+  /** Application (client) ID registered in Microsoft Entra ID for OneDrive. */
+  readonly VITE_ONEDRIVE_CLIENT_ID?: string
+  /** Entra tenant for OneDrive login; empty means `common`. */
+  readonly VITE_ONEDRIVE_TENANT?: string
 }
 
 interface ImportMeta {

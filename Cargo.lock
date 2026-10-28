@@ -69,6 +69,7 @@ dependencies = [
  "alcy-graphql",
  "alcy-grpc",
  "alcy-http-proxy",
+ "alcy-onedrive",
  "alcy-openapi",
  "alcy-platform",
  "alcy-rest",
@@ -207,6 +208,26 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "alcy-onedrive"
+version = "0.1.0"
+dependencies = [
+ "alcy-app",
+ "alcy-domain",
+ "alcy-http-proxy",
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::import_fetcher::ImportFetcher;
+use super::onedrive::OnedriveProvider;
+use super::remote_command::RemoteHttpClients;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -136,12 +138,12 @@ fn apply_plan(
     graphql: &ReqwestGraphqlExecutor,
     rest: &ReqwestRestExecutor,
     import_fetcher: &ImportFetcher,
-    gitlab: &GitlabClient,
+    remotes: RemoteHttpClients<'_>,
 ) -> Result<(), ProxyError> {
     graphql.reconfigure_proxy(plan)?;
     rest.reconfigure_proxy(plan)?;
     import_fetcher.reconfigure_proxy(plan)?;
-    gitlab.reconfigure_proxy(plan)
+    remotes.reconfigure_proxy(plan)
 }
 
 /// Aplica a configuração salva na abertura do app. Falhas não impedem o
@@ -153,11 +155,11 @@ pub async fn apply_saved_settings(
     graphql: &ReqwestGraphqlExecutor,
     rest: &ReqwestRestExecutor,
     import_fetcher: &ImportFetcher,
-    gitlab: &GitlabClient,
+    remotes: RemoteHttpClients<'_>,
 ) {
     let outcome = match store.load() {
         Ok(settings) => match ProxyPlan::resolve(&settings).await {
-            Ok(plan) => apply_plan(&plan, graphql, rest, import_fetcher, gitlab)
+            Ok(plan) => apply_plan(&plan, graphql, rest, import_fetcher, remotes)
                 .map(|()| state.set_plan(plan)),
             Err(error) => Err(error),
         },
@@ -180,14 +182,14 @@ async fn save_settings(
     graphql: &ReqwestGraphqlExecutor,
     rest: &ReqwestRestExecutor,
     import_fetcher: &ImportFetcher,
-    gitlab: &GitlabClient,
+    remotes: RemoteHttpClients<'_>,
     input: &ProxySettingsDto,
 ) -> Result<ProxyStatusDto, ProxyCommandError> {
     let settings = from_dto(input).map_err(invalid)?;
     // Resolve e aplica antes de persistir: uma configuração que não funciona
     // (ex.: PAC inacessível) não substitui a anterior.
     let plan = ProxyPlan::resolve(&settings).await.map_err(pac_error)?;
-    apply_plan(&plan, graphql, rest, import_fetcher, gitlab).map_err(pac_error)?;
+    apply_plan(&plan, graphql, rest, import_fetcher, remotes).map_err(pac_error)?;
     store.save(&settings).map_err(storage_error)?;
     state.set(None);
     state.set_plan(plan);
@@ -213,6 +215,7 @@ pub fn get_proxy_settings(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn save_proxy_settings(
     input: ProxySettingsDto,
     store: State<'_, ProxySettingsStore>,
@@ -221,6 +224,7 @@ pub async fn save_proxy_settings(
     rest: State<'_, ReqwestRestExecutor>,
     import_fetcher: State<'_, ImportFetcher>,
     gitlab: State<'_, GitlabClient>,
+    onedrive: State<'_, OnedriveProvider>,
 ) -> Result<ProxyStatusDto, ProxyCommandError> {
     let result: Result<ProxyStatusDto, ProxyCommandError> = async {
         save_settings(
@@ -229,7 +233,10 @@ pub async fn save_proxy_settings(
             &graphql,
             &rest,
             &import_fetcher,
-            &gitlab,
+            RemoteHttpClients {
+                gitlab: &gitlab,
+                onedrive: &onedrive.client,
+            },
             &input,
         )
         .await
@@ -255,6 +262,7 @@ pub async fn test_proxy_settings(input: ProxySettingsDto) -> Result<(), ProxyCom
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alcy_onedrive::OnedriveClient;
     use std::path::PathBuf;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -291,12 +299,17 @@ mod tests {
     async fn saves_and_reports_invalid_pac_urls_without_persisting() {
         let (store, path) = temp_store();
         let state = ProxyApplyState::default();
-        let (graphql, rest, fetcher, gitlab) = (
+        let (graphql, rest, fetcher, gitlab, onedrive) = (
             ReqwestGraphqlExecutor::new(),
             ReqwestRestExecutor::new(),
             ImportFetcher::new(),
             GitlabClient::new(),
+            OnedriveClient::new(),
         );
+        let remotes = RemoteHttpClients {
+            gitlab: &gitlab,
+            onedrive: &onedrive,
+        };
 
         let saved = save_settings(
             &store,
@@ -304,7 +317,7 @@ mod tests {
             &graphql,
             &rest,
             &fetcher,
-            &gitlab,
+            remotes,
             &dto(ProxyModeDto::System, None),
         )
         .await
@@ -319,7 +332,7 @@ mod tests {
             &graphql,
             &rest,
             &fetcher,
-            &gitlab,
+            remotes,
             &dto(ProxyModeDto::Pac, Some("ftp://x")),
         )
         .await;
@@ -342,12 +355,17 @@ mod tests {
 
         let (store, path) = temp_store();
         let state = ProxyApplyState::default();
-        let (graphql, rest, fetcher, gitlab) = (
+        let (graphql, rest, fetcher, gitlab, onedrive) = (
             ReqwestGraphqlExecutor::new(),
             ReqwestRestExecutor::new(),
             ImportFetcher::new(),
             GitlabClient::new(),
+            OnedriveClient::new(),
         );
+        let remotes = RemoteHttpClients {
+            gitlab: &gitlab,
+            onedrive: &onedrive,
+        };
         let pac_url = format!("{}/p.pac", server.uri());
 
         let result = save_settings(
@@ -356,7 +374,7 @@ mod tests {
             &graphql,
             &rest,
             &fetcher,
-            &gitlab,
+            remotes,
             &dto(ProxyModeDto::Pac, Some(&pac_url)),
         )
         .await;
@@ -379,7 +397,10 @@ mod tests {
             &ReqwestGraphqlExecutor::new(),
             &ReqwestRestExecutor::new(),
             &ImportFetcher::new(),
-            &GitlabClient::new(),
+            RemoteHttpClients {
+                gitlab: &GitlabClient::new(),
+                onedrive: &OnedriveClient::new(),
+            },
         )
         .await;
 

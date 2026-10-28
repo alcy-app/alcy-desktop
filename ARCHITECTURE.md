@@ -255,6 +255,23 @@ legacy archive extraction feature disabled. ZIP and tar.gz update bundles,
 including macOS application bundles, are not supported by this configuration.
 Adding archive-based updates requires reviewing the extraction dependencies.
 
+### Version control providers
+
+Workspace sync compares three SHA-256 hashes per file (last synced base,
+local, remote) without a local repository. The use cases in `alcy-app` only
+know the `RemoteRepository` and `WorkspaceFiles` ports; `alcy-gitlab` and
+`alcy-onedrive` implement the remote side, and the composition root
+dispatches between them by the link's provider (ADR 0063).
+
+The link (`alcy-git-link.json`) records the provider's location and the base
+hashes. GitLab links keep format v1; OneDrive links use v2, tagged by
+provider, which older builds reject. GitLab commits several files atomically.
+Graph has no multi-file transaction, so OneDrive writes each file guarded by
+its eTag (`If-Match`); a push interrupted midway is reconciled by the next
+status, which adopts as base every file whose local and remote contents
+already match. Tokens live in the system keyring; OneDrive keeps only the
+refresh token there and the access token in memory.
+
 ### gRPC
 
 `alcy-grpc` calls any method of any service without generated code (spec
@@ -326,6 +343,7 @@ crates/alcy-domain/    # core types and rules
 crates/alcy-app/       # use cases and ports
 crates/alcy-collection-import/ # import of external collection formats
 crates/alcy-gitlab/    # GitLab client (OAuth PKCE and API v4)
+crates/alcy-onedrive/  # OneDrive/SharePoint client (Microsoft OAuth PKCE and Graph)
 crates/alcy-load/      # reusable load plan, scheduler, runtime and metrics
 crates/alcy-graphql/   # GraphQL capability
 crates/alcy-grpc/      # gRPC capability (reflection, .proto, streaming)

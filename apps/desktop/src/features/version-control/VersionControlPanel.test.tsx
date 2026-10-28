@@ -18,6 +18,10 @@ const commitAndPush = vi.fn()
 const pullChanges = vi.fn()
 const resolveConflict = vi.fn()
 const cancelGitlabOperation = vi.fn()
+const listOnedriveAccounts = vi.fn()
+const getOnedriveRoot = vi.fn()
+const listOnedriveFolders = vi.fn()
+const resolveOnedriveShareLink = vi.fn()
 
 vi.mock('../../bindings/list-gitlab-accounts', () => ({ listGitlabAccounts: (...a: unknown[]) => listGitlabAccounts(...a) }))
 vi.mock('../../bindings/get-workspace-link', () => ({ getWorkspaceLink: (...a: unknown[]) => getWorkspaceLink(...a) }))
@@ -35,12 +39,20 @@ vi.mock('../../bindings/resolve-conflict', () => ({ resolveConflict: (...a: unkn
 vi.mock('../../bindings/cancel-gitlab-operation', () => ({
   cancelGitlabOperation: (...a: unknown[]) => cancelGitlabOperation(...a),
 }))
+vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { gitlab: true, onedrive: true } }))
+vi.mock('../../bindings/list-onedrive-accounts', () => ({ listOnedriveAccounts: (...a: unknown[]) => listOnedriveAccounts(...a) }))
+vi.mock('../../bindings/get-onedrive-root', () => ({ getOnedriveRoot: (...a: unknown[]) => getOnedriveRoot(...a) }))
+vi.mock('../../bindings/list-onedrive-folders', () => ({ listOnedriveFolders: (...a: unknown[]) => listOnedriveFolders(...a) }))
+vi.mock('../../bindings/resolve-onedrive-share-link', () => ({
+  resolveOnedriveShareLink: (...a: unknown[]) => resolveOnedriveShareLink(...a),
+}))
 vi.mock('../../bindings/get-proxy-settings', () => ({
   getProxySettings: () => Promise.resolve({ ok: true, value: { mode: 'disabled', pacUrl: null, error: null } }),
 }))
 
 const account = { id: 'ana@gitlab.com', baseUrl: 'https://gitlab.com', clientId: 'cid', username: 'ana', name: 'Ana' }
 const link: WorkspaceLinkDto = {
+  provider: 'gitlab',
   accountId: account.id,
   projectId: 7,
   projectPath: 'equipe/api',
@@ -65,11 +77,13 @@ beforeEach(() => {
   for (const mock of [
     listGitlabAccounts, getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, unlinkWorkspace, listGitlabProjects,
     listGitlabBranches, getFileDiff, getStructuredFileChanges, commitAndPush, pullChanges, resolveConflict, cancelGitlabOperation,
-    onFilesChanged, onOpenSettings, onPull, onResolveConflict,
+    onFilesChanged, onOpenSettings, onPull, onResolveConflict, listOnedriveAccounts, getOnedriveRoot, listOnedriveFolders,
+    resolveOnedriveShareLink,
   ]) {
     mock.mockReset()
   }
   listGitlabAccounts.mockResolvedValue({ ok: true, value: [account] })
+  listOnedriveAccounts.mockResolvedValue({ ok: true, value: [] })
   getWorkspaceLink.mockResolvedValue({ ok: true, value: null })
   getLocalVersionStatus.mockResolvedValue({ ok: true, value: [] })
   getStructuredFileChanges.mockImplementation((_root: string, _operation: string, name: string) => Promise.resolve({
@@ -83,7 +97,7 @@ describe('VersionControlPanel — sem vínculo', () => {
     listGitlabAccounts.mockResolvedValue({ ok: true, value: [] })
     render(<Harness />)
 
-    expect(await screen.findByText('Nenhuma conta do GitLab conectada')).toBeInTheDocument()
+    expect(await screen.findByText('Nenhuma conta conectada')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Abrir configurações' }))
     expect(onOpenSettings).toHaveBeenCalled()
   })
@@ -163,7 +177,7 @@ describe('VersionControlPanel — sem vínculo', () => {
     listGitlabProjects.mockResolvedValue({ ok: false, error: { kind: 'unauthorized' } })
     render(<Harness />)
 
-    expect(await screen.findByText('Sessão expirada. Entre novamente no GitLab.')).toBeInTheDocument()
+    expect(await screen.findByText('Sessão expirada. Entre novamente na conta.')).toBeInTheDocument()
   })
 })
 
@@ -259,7 +273,7 @@ describe('VersionControlPanel — vinculado', () => {
     fireEvent.click(push)
 
     await waitFor(() => expect(commitAndPush).toHaveBeenCalledWith(ROOT, expect.any(String), 'Ajusta coleção', [expect.objectContaining({ name: 'alcy-collections.json', wholeFile: true })]))
-    expect(await screen.findByText('Enviado ao GitLab (1 arquivo(s)).')).toBeInTheDocument()
+    expect(await screen.findByText('Enviado (1 arquivo(s)).')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByLabelText('Mensagem do commit')).toHaveValue(''))
   })
 
@@ -488,5 +502,91 @@ describe('VersionControlPanel — vinculado', () => {
 
     expect(await screen.findByText('Vincular este workspace')).toBeInTheDocument()
     expect(unlinkWorkspace).toHaveBeenCalledWith(ROOT)
+  })
+})
+
+describe('VersionControlPanel — OneDrive', () => {
+  const onedriveAccount = { id: 'ana@contoso.com', tenant: 'common', clientId: 'cid', username: 'ana@contoso.com', name: 'Ana' }
+  const root = { driveId: 'b!d', id: 'ROOT', name: 'root', path: '/', childCount: 1 }
+  const team = { driveId: 'b!d', id: 'F1', name: 'Equipe', path: '/Equipe', childCount: 1 }
+  const alcy = { driveId: 'b!d', id: 'F2', name: 'Alcy', path: '/Equipe/Alcy', childCount: 0 }
+  const onedriveLink: WorkspaceLinkDto = {
+    provider: 'onedrive',
+    accountId: onedriveAccount.id,
+    driveId: 'b!d',
+    folderId: 'F2',
+    displayPath: '/Equipe/Alcy',
+    includeEnvironments: false,
+  }
+
+  beforeEach(() => {
+    listGitlabAccounts.mockResolvedValue({ ok: true, value: [] })
+    listOnedriveAccounts.mockResolvedValue({ ok: true, value: [onedriveAccount] })
+    getOnedriveRoot.mockResolvedValue({ ok: true, value: root })
+    listOnedriveFolders.mockImplementation(({ folderId }: { folderId: string }) => Promise.resolve({
+      ok: true,
+      value: { items: folderId === 'ROOT' ? [team] : folderId === 'F1' ? [alcy] : [], nextLink: null },
+    }))
+  })
+
+  it('vincula a uma pasta escolhida navegando no OneDrive, sem mensagem de commit', async () => {
+    linkWorkspace.mockResolvedValue({ ok: true, value: { link: onedriveLink, files: [] } })
+    getVersionStatus.mockResolvedValue({ ok: true, value: { link: onedriveLink, files: [] } })
+    render(<Harness />)
+
+    const submit = await screen.findByRole('button', { name: 'Vincular' })
+    // The drive root itself is not a valid target.
+    expect(submit).toBeDisabled()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Equipe' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Alcy' }))
+    expect(await screen.findByText('Pasta escolhida: /Equipe/Alcy')).toBeInTheDocument()
+    fireEvent.click(submit)
+
+    await waitFor(() =>
+      expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+        rootPath: ROOT,
+        provider: 'onedrive',
+        accountId: onedriveAccount.id,
+        driveId: 'b!d',
+        folderId: 'F2',
+        includeEnvironments: false,
+      })),
+    )
+    expect(await screen.findByText('/Equipe/Alcy')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Mensagem do commit')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enviar' })).toBeInTheDocument()
+  })
+
+  it('vincula a uma pasta compartilhada por link', async () => {
+    resolveOnedriveShareLink.mockResolvedValue({ ok: true, value: { driveId: 'b!team', id: 'S1', name: 'Alcy', path: 'Alcy', childCount: 0 } })
+    linkWorkspace.mockResolvedValue({ ok: true, value: { link: { ...onedriveLink, driveId: 'b!team', folderId: 'S1', displayPath: 'Alcy' }, files: [] } })
+    getVersionStatus.mockResolvedValue({ ok: true, value: { link: onedriveLink, files: [] } })
+    render(<Harness />)
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Link de compartilhamento' }))
+    fireEvent.change(screen.getByLabelText('Link da pasta'), { target: { value: 'https://contoso.sharepoint.com/:f:/s/team/abc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir' }))
+    expect(await screen.findByText('Pasta escolhida: Alcy')).toBeInTheDocument()
+    expect(resolveOnedriveShareLink).toHaveBeenCalledWith(expect.any(String), onedriveAccount.id, 'https://contoso.sharepoint.com/:f:/s/team/abc')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vincular' }))
+    await waitFor(() =>
+      expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({ provider: 'onedrive', driveId: 'b!team', folderId: 'S1' })),
+    )
+  })
+
+  it('oferece a escolha do provider quando há contas nos dois', async () => {
+    listGitlabAccounts.mockResolvedValue({ ok: true, value: [account] })
+    listGitlabProjects.mockResolvedValue({ ok: true, value: { items: [], nextPage: null } })
+    render(<Harness />)
+
+    const gitlab = await screen.findByRole('radio', { name: 'GitLab' })
+    expect(gitlab).toBeChecked()
+    expect(screen.getByRole('textbox', { name: 'Projeto' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'OneDrive' }))
+    expect(await screen.findByRole('radio', { name: 'Meu OneDrive' })).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Projeto' })).not.toBeInTheDocument()
   })
 })

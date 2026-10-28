@@ -173,7 +173,7 @@ const getProxySettings = vi.fn()
 const onFileDrop = vi.fn()
 let persistedTabSession: unknown = null
 
-const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, gitlab: true, notifications: true, webclientExport: true, loadTesting: false }))
+const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, gitlab: true, onedrive: false, notifications: true, webclientExport: true, loadTesting: false }))
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: featureFlags }))
 
 // Starts empty, like the public build; the extension tests fill it in.

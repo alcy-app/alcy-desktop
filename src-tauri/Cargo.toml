@@ -23,6 +23,7 @@ alcy-gitlab = { path = "../crates/alcy-gitlab" }
 alcy-graphql = { path = "../crates/alcy-graphql" }
 alcy-grpc = { path = "../crates/alcy-grpc" }
 alcy-http-proxy = { path = "../crates/alcy-http-proxy" }
+alcy-onedrive = { path = "../crates/alcy-onedrive" }
 alcy-openapi = { path = "../crates/alcy-openapi" }
 alcy-platform = { path = "../crates/alcy-platform" }
 alcy-rest = { path = "../crates/alcy-rest" }

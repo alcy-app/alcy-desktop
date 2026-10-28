@@ -1,14 +1,14 @@
 import { invokeResult, type CommandResult } from './invoke-result'
 import type { GitlabCommandError, VersionStatusDto } from './gitlab-types'
 
-export interface LinkWorkspaceInput {
+/** Onde vincular o workspace, por provider. */
+export type LinkTarget =
+  | { provider: 'gitlab'; accountId: string; projectId: number; projectPath: string; branch: string; directory: string }
+  | { provider: 'onedrive'; accountId: string; driveId: string; folderId: string }
+
+export type LinkWorkspaceInput = LinkTarget & {
   rootPath: string
   operationId: string
-  accountId: string
-  projectId: number
-  projectPath: string
-  branch: string
-  directory: string
   includeEnvironments: boolean
 }
 

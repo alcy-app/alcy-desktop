@@ -504,7 +504,7 @@ mod tests {
         )
         .unwrap();
 
-        let link = WorkspaceLink::new("acc", 1, "eq/proj", "main", "", false).unwrap();
+        let link = WorkspaceLink::gitlab("acc", 1, "eq/proj", "main", "", false).unwrap();
         WorkspaceLinkStore::new(PathBuf::from(&linked.root_path))
             .save(&link)
             .unwrap();

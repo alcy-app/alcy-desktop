@@ -394,3 +394,53 @@
   .vc-compare-grid { grid-template-columns: 1fr; }
   .vc-review-header.vc-resolver-header { align-items: flex-start; flex-direction: column; }
 }
+
+.vc-folder-trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--font-size-sm);
+}
+
+.vc-folder-trail-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-muted);
+}
+
+.vc-folder-trail-step button {
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.vc-folder-trail-step button:hover {
+  background: var(--surface-overlay);
+}
+
+.vc-folder-trail-step button[aria-current='location'] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.vc-folder-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.vc-share-link-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.vc-share-link-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}

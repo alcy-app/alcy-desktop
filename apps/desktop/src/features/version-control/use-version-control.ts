@@ -5,7 +5,7 @@ import type { ChangeSelectionDto, FileStatusDto, GitlabCommandError, ResolutionI
 import { getLocalVersionStatus } from '../../bindings/get-local-version-status'
 import { getVersionStatus } from '../../bindings/get-version-status'
 import { getWorkspaceLink } from '../../bindings/get-workspace-link'
-import { linkWorkspace, type LinkWorkspaceInput } from '../../bindings/link-workspace'
+import { linkWorkspace, type LinkTarget } from '../../bindings/link-workspace'
 import { pullChanges } from '../../bindings/pull-changes'
 import { resolveConflict } from '../../bindings/resolve-conflict'
 import { unlinkWorkspace } from '../../bindings/unlink-workspace'
@@ -22,7 +22,7 @@ const LOCAL_CHANGE_DEBOUNCE_MS = 1_000
 
 export type VersionBusy = 'link' | 'pull' | 'push' | 'resolve'
 
-export type LinkParams = Omit<LinkWorkspaceInput, 'rootPath' | 'operationId'>
+export type LinkParams = LinkTarget & { includeEnvironments: boolean }
 
 type ActionResult = { ok: true } | { ok: false; error: GitlabCommandError }
 export type StagedSelection = ChangeSelectionDto

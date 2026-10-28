@@ -49,7 +49,8 @@ export interface PageDto<T> {
   nextPage: number | null
 }
 
-export interface WorkspaceLinkDto {
+export interface GitlabWorkspaceLinkDto {
+  provider: 'gitlab'
   accountId: string
   projectId: number
   projectPath: string
@@ -57,6 +58,19 @@ export interface WorkspaceLinkDto {
   directory: string
   includeEnvironments: boolean
 }
+
+export interface OnedriveWorkspaceLinkDto {
+  provider: 'onedrive'
+  accountId: string
+  driveId: string
+  folderId: string
+  /** Caminho exibido; os ids endereçam a pasta. */
+  displayPath: string
+  includeEnvironments: boolean
+}
+
+/** Vínculo do workspace com o remoto, por provider. */
+export type WorkspaceLinkDto = GitlabWorkspaceLinkDto | OnedriveWorkspaceLinkDto
 
 export type FileState = 'clean' | 'localAdded' | 'localModified' | 'localDeleted' | 'remoteChanged' | 'conflict'
 

@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## Unreleased
 
+### Added
+
+- **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.
+
 ### Changed
 
 - Os flows reúnem a criação de testes de carga em branco no menu "+", antes do botão de importar.

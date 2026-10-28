@@ -5,6 +5,7 @@ import type { ChangedItemDto, FileState, FileStatusDto, StructuredFileChangesDto
 import { gitlabErrorMessage } from '../../shared/gitlab/gitlab-error-message'
 import { useGitlab } from '../../shared/gitlab/use-gitlab'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { useOnedrive } from '../../shared/onedrive/use-onedrive'
 import { Button } from '../../shared/ui/Button'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { BranchIcon, ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FlowIcon, FolderIcon, GitIcon, GitPullIcon, MonitorIcon, RefreshIcon, SendIcon, Spinner, VariablesIcon } from '../../shared/ui/icons'
@@ -12,15 +13,22 @@ import { IconButton } from '../../shared/ui/IconButton'
 import { Input } from '../../shared/ui/Input'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Modal } from '../../shared/ui/Modal'
+import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { useTooltip } from '../../shared/ui/use-tooltip'
 import { LinkWorkspaceForm } from './LinkWorkspaceForm'
+import { OnedriveLinkForm } from './OnedriveLinkForm'
 import { DiffView } from './DiffView'
 import { FILE_LABELS, itemKindLabelKey } from './file-labels'
+import { remoteLocation } from './remote-label'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
-import type { VersionControl } from './use-version-control'
+import type { LinkParams, VersionControl } from './use-version-control'
 import './version-control.css'
 
 const DETAIL_PAGE_SIZE = 200
+/** Required by the shared push command; the OneDrive provider ignores it. */
+const ONEDRIVE_PUSH_MESSAGE = 'Alcy'
+
+type Provider = 'gitlab' | 'onedrive'
 
 const STATE_MARKERS: Record<FileState, string> = { clean: '', localAdded: 'A', localModified: 'M', localDeleted: 'D', remoteChanged: '↓', conflict: '!' }
 
@@ -51,14 +59,20 @@ interface VersionControlPanelProps {
 
 export function VersionControlPanel(props: VersionControlPanelProps) {
   const { t } = useLanguage()
-  const { accounts, loaded: accountsLoaded } = useGitlab()
+  const gitlab = useGitlab()
+  const onedrive = useOnedrive()
+  const accountsLoaded = gitlab.loaded && onedrive.loaded
+  const providers: Provider[] = [
+    ...(FEATURE_FLAGS.gitlab && gitlab.accounts.length > 0 ? ['gitlab' as const] : []),
+    ...(FEATURE_FLAGS.onedrive && onedrive.accounts.length > 0 ? ['onedrive' as const] : []),
+  ]
   const body = !props.vc.linkLoaded || !accountsLoaded ? (
     <p className="vc-muted" role="status">{t('vc.panel.loading')}</p>
   ) : props.vc.link === null ? (
-    accounts.length === 0 ? (
+    providers.length === 0 ? (
       <EmptyState icon={<GitIcon size={28} />} title={t('vc.panel.noAccountTitle')} description={t('vc.panel.noAccountDescription')} action={<Button onClick={props.onOpenSettings}>{t('vc.panel.openSettings')}</Button>} />
     ) : (
-      <LinkWorkspaceForm busy={props.vc.busy === 'link'} error={props.vc.error ? gitlabErrorMessage(props.vc.error, t) : null} onSubmit={(params) => void props.vc.linkTo(params)} onCancelBusy={props.vc.cancel} />
+      <LinkWorkspaceChooser providers={providers} vc={props.vc} />
     )
   ) : <LinkedView {...props} />
 
@@ -69,6 +83,30 @@ export function VersionControlPanel(props: VersionControlPanelProps) {
     return <div className="vc-sidebar-panel sidebar-panel-layout">{linked ? body : <div className="sidebar-panel-scroll">{body}</div>}</div>
   }
   return <Modal title={t('vc.panel.title')} closeAriaLabel={t('vc.panel.close')} onClose={props.onClose ?? (() => {})} className="vc-modal">{body}</Modal>
+}
+
+/** Link form of the chosen provider; the choice only shows when both have accounts. */
+function LinkWorkspaceChooser({ providers, vc }: { providers: Provider[]; vc: VersionControl }) {
+  const { t } = useLanguage()
+  const [chosen, setChosen] = useState<Provider>(providers[0])
+  const provider = providers.includes(chosen) ? chosen : providers[0]
+  const formProps = {
+    busy: vc.busy === 'link',
+    error: vc.error ? gitlabErrorMessage(vc.error, t) : null,
+    onSubmit: (params: LinkParams) => void vc.linkTo(params),
+    onCancelBusy: vc.cancel,
+  }
+  return <div className="vc-link-form">
+    {providers.length > 1 && <SegmentedControl<Provider>
+      ariaLabel={t('vc.link.provider')}
+      value={provider}
+      onChange={setChosen}
+      layout="inline"
+      size="sm"
+      options={[{ value: 'gitlab', label: 'GitLab' }, { value: 'onedrive', label: 'OneDrive' }]}
+    />}
+    {provider === 'gitlab' ? <LinkWorkspaceForm {...formProps} /> : <OnedriveLinkForm {...formProps} />}
+  </div>
 }
 
 function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: VersionControlPanelProps) {
@@ -162,8 +200,10 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
     return !detail || detail.items.some((item) => !selection.itemIds.includes(item.id))
   })
   const working = vc.busy !== null
-  const canPush = vc.stagedSelections.length > 0 && conflicts.length === 0 && vc.message.trim() !== '' && !working
-  const push = () => vc.push(vc.message, vc.stagedSelections)
+  // A drive has nowhere to keep a commit message: OneDrive pushes without one.
+  const needsMessage = vc.link.provider === 'gitlab'
+  const canPush = vc.stagedSelections.length > 0 && conflicts.length === 0 && (!needsMessage || vc.message.trim() !== '') && !working
+  const push = () => vc.push(needsMessage ? vc.message : ONEDRIVE_PUSH_MESSAGE, vc.stagedSelections)
   const toggleSection = (kind: CollapsibleSection) => setCollapsed((current) => {
     const next = new Set(current)
     if (next.has(kind)) next.delete(kind)
@@ -199,19 +239,19 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
 
   return <div className="vc-linked">
     <div className="vc-repository">
-      <div className="vc-repository-name"><GitIcon size={15} /><span>{vc.link.projectPath}</span></div>
+      <div className="vc-repository-name">{vc.link.provider === 'gitlab' ? <GitIcon size={15} /> : <FolderIcon size={15} />}<span>{remoteLocation(vc.link)}</span></div>
       <div className="vc-repository-actions">
         <IconButton icon={vc.busy === 'pull' ? <Spinner size={13} /> : <GitPullIcon size={13} />} label={t('vc.action.pull')} disabled={working} onClick={onPull} />
         <IconButton icon={vc.checking ? <Spinner size={13} /> : <RefreshIcon size={13} />} label={t('vc.action.refresh')} disabled={working} onClick={() => void vc.refresh()} />
         <button className="vc-icon-button" type="button" aria-label={t('vc.action.more')} {...moreTooltip.triggerProps} onClick={() => setMenuOpen((value) => !value)}><EllipsisIcon /></button>{moreTooltip.tooltip}
         {menuOpen && <div className="vc-more-menu"><button type="button" onClick={() => void vc.unlink()}>{t('vc.action.unlink')}</button></div>}
       </div>
-      <div className="vc-branch"><BranchIcon size={13} />{vc.link.branch}</div>
+      {vc.link.provider === 'gitlab' && <div className="vc-branch"><BranchIcon size={13} />{vc.link.branch}</div>}
     </div>
 
     <div className="vc-linked-body">
-      <Input className="vc-commit-message" id="vc-commit-message" value={vc.message} aria-label={t('vc.commit.messageLabel')} placeholder={t('vc.commit.messagePlaceholder')} disabled={working} onChange={(event) => vc.setMessage(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canPush) void push() }} />
-      <Button className="vc-primary-action" isLoading={vc.busy === 'push'} disabled={!canPush} onClick={() => void push()}>{t('vc.action.commitAndPush')}</Button>
+      {needsMessage && <Input className="vc-commit-message" id="vc-commit-message" value={vc.message} aria-label={t('vc.commit.messageLabel')} placeholder={t('vc.commit.messagePlaceholder')} disabled={working} onChange={(event) => vc.setMessage(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canPush) void push() }} />}
+      <Button className="vc-primary-action" isLoading={vc.busy === 'push'} disabled={!canPush} onClick={() => void push()}>{needsMessage ? t('vc.action.commitAndPush') : t('vc.action.push')}</Button>
 
       {vc.error && <InlineAlert>{gitlabErrorMessage(vc.error, t)}</InlineAlert>}
       {loadError && Object.values(detailKeys).includes(loadError.key) && <InlineAlert>{loadError.message}</InlineAlert>}

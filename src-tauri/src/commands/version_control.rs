@@ -7,7 +7,7 @@ use alcy_app::{
     preview_pull as run_preview_pull, pull_changes as run_pull, push_selected_changes,
     resolve_conflict as run_resolve, structured_file_changes_from_content, version_status,
 };
-use alcy_domain::{FileState, WorkspaceLink};
+use alcy_domain::{FileState, RemoteLocation, WorkspaceLink};
 use alcy_gitlab::GitlabClient;
 use alcy_platform::KeyringCredentialStore;
 use alcy_storage::{
@@ -18,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::execution_registry::ExecutionRegistry;
-use super::gitlab::{GitlabCommandError, cancellable, find_account};
+use super::gitlab::find_account;
+use super::linked_remote::LinkedAccount;
+use super::onedrive::{OnedriveProvider, find_onedrive_account};
+use super::remote_command::{RemoteCommandError, cancellable};
 use super::remote_content_cache::{
     CachedRemoteRepository, VersionControlCaches, structured_cache_key,
 };
@@ -49,14 +52,25 @@ impl From<FileState> for FileStateDto {
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceLinkDto {
-    pub account_id: String,
-    pub project_id: u64,
-    pub project_path: String,
-    pub branch: String,
-    pub directory: String,
-    pub include_environments: bool,
+#[serde(tag = "provider", rename_all = "camelCase")]
+pub enum WorkspaceLinkDto {
+    #[serde(rename_all = "camelCase")]
+    Gitlab {
+        account_id: String,
+        project_id: u64,
+        project_path: String,
+        branch: String,
+        directory: String,
+        include_environments: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    Onedrive {
+        account_id: String,
+        drive_id: String,
+        folder_id: String,
+        display_path: String,
+        include_environments: bool,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -237,13 +251,34 @@ fn structured_changes_dto(
 }
 
 fn link_dto(link: &WorkspaceLink) -> WorkspaceLinkDto {
-    WorkspaceLinkDto {
-        account_id: link.account_id.clone(),
-        project_id: link.project_id,
-        project_path: link.project_path.clone(),
-        branch: link.branch.clone(),
-        directory: link.directory.clone(),
-        include_environments: link.include_environments,
+    let include_environments = link.include_environments;
+    match &link.location {
+        RemoteLocation::Gitlab {
+            account_id,
+            project_id,
+            project_path,
+            branch,
+            directory,
+        } => WorkspaceLinkDto::Gitlab {
+            account_id: account_id.clone(),
+            project_id: *project_id,
+            project_path: project_path.clone(),
+            branch: branch.clone(),
+            directory: directory.clone(),
+            include_environments,
+        },
+        RemoteLocation::Onedrive {
+            account_id,
+            drive_id,
+            folder_id,
+            display_path,
+        } => WorkspaceLinkDto::Onedrive {
+            account_id: account_id.clone(),
+            drive_id: drive_id.clone(),
+            folder_id: folder_id.clone(),
+            display_path: display_path.clone(),
+            include_environments,
+        },
     }
 }
 
@@ -311,7 +346,7 @@ impl VersionControlFiles {
     fn open(
         &self,
         root: PathBuf,
-    ) -> Result<SyncedWorkspaceFiles<DiskWorkspaceFiles>, GitlabCommandError> {
+    ) -> Result<SyncedWorkspaceFiles<DiskWorkspaceFiles>, RemoteCommandError> {
         let settings = self.settings.load()?;
         Ok(SyncedWorkspaceFiles::new(
             DiskWorkspaceFiles::new(root),
@@ -321,8 +356,8 @@ impl VersionControlFiles {
     }
 }
 
-fn load_link(store: &WorkspaceLinkStore) -> Result<WorkspaceLink, GitlabCommandError> {
-    store.load()?.ok_or(GitlabCommandError::NotLinked)
+fn load_link(store: &WorkspaceLinkStore) -> Result<WorkspaceLink, RemoteCommandError> {
+    store.load()?.ok_or(RemoteCommandError::NotLinked)
 }
 
 #[derive(Debug, Deserialize)]
@@ -343,14 +378,31 @@ pub struct OperationInput {
 pub struct LinkWorkspaceInput {
     pub root_path: String,
     pub operation_id: String,
-    pub account_id: String,
-    pub project_id: u64,
-    pub project_path: String,
-    pub branch: String,
-    #[serde(default)]
-    pub directory: String,
+    #[serde(flatten)]
+    pub target: LinkTargetInput,
     #[serde(default)]
     pub include_environments: bool,
+}
+
+/// Where to link the workspace, by provider (ADR 0063).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "provider", rename_all = "camelCase")]
+pub enum LinkTargetInput {
+    #[serde(rename_all = "camelCase")]
+    Gitlab {
+        account_id: String,
+        project_id: u64,
+        project_path: String,
+        branch: String,
+        #[serde(default)]
+        directory: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Onedrive {
+        account_id: String,
+        drive_id: String,
+        folder_id: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -443,8 +495,8 @@ pub struct PreviewConflictResolutionInput {
 pub async fn get_workspace_link(
     input: RootInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
-) -> Result<Option<WorkspaceLinkDto>, GitlabCommandError> {
-    let result: Result<Option<WorkspaceLinkDto>, GitlabCommandError> = async {
+) -> Result<Option<WorkspaceLinkDto>, RemoteCommandError> {
+    let result: Result<Option<WorkspaceLinkDto>, RemoteCommandError> = async {
         let root = PathBuf::from(input.root_path);
         let _workspace_guard = coordinator.read(&root).await;
         tauri::async_runtime::spawn_blocking(move || {
@@ -452,7 +504,7 @@ pub async fn get_workspace_link(
             Ok(store.load()?.as_ref().map(link_dto))
         })
         .await
-        .map_err(|error| GitlabCommandError::Files {
+        .map_err(|error| RemoteCommandError::Files {
             message: error.to_string(),
         })?
     }
@@ -465,8 +517,8 @@ pub async fn unlink_workspace(
     input: RootInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     caches: State<'_, VersionControlCaches>,
-) -> Result<(), GitlabCommandError> {
-    let result: Result<(), GitlabCommandError> = async {
+) -> Result<(), RemoteCommandError> {
+    let result: Result<(), RemoteCommandError> = async {
         let root = PathBuf::from(input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
         WorkspaceLinkStore::new(root).remove()?;
@@ -487,17 +539,17 @@ pub async fn get_local_version_status(
     input: RootInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
-) -> Result<Vec<FileStatusDto>, GitlabCommandError> {
-    let result: Result<Vec<FileStatusDto>, GitlabCommandError> = async {
+) -> Result<Vec<FileStatusDto>, RemoteCommandError> {
+    let result: Result<Vec<FileStatusDto>, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.read(&root).await;
         let files = files_view.open(root.clone())?;
         let statuses = tauri::async_runtime::spawn_blocking(move || {
             let link = load_link(&WorkspaceLinkStore::new(root))?;
-            local_file_status(&files, &link).map_err(GitlabCommandError::from)
+            local_file_status(&files, &link).map_err(RemoteCommandError::from)
         })
         .await
-        .map_err(|error| GitlabCommandError::Files {
+        .map_err(|error| RemoteCommandError::Files {
             message: error.to_string(),
         })??;
         Ok(statuses
@@ -514,9 +566,12 @@ pub async fn get_local_version_status(
     crate::logging::logged("alcy::vc", "verificar status local", result)
 }
 
-/// Vincula o workspace a um projeto e uma branch e já calcula o estado
-/// inicial (arquivos idênticos nos dois lados entram como sincronizados).
+/// Links the workspace to a remote location and computes the initial state
+/// (files identical on both sides start as synced). The location is checked
+/// again first: a GitLab branch must accept pushes and a OneDrive item must
+/// still be a reachable folder.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn link_workspace(
     input: LinkWorkspaceInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -525,33 +580,66 @@ pub async fn link_workspace(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<VersionStatusDto, GitlabCommandError> {
-    let result: Result<VersionStatusDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<VersionStatusDto, RemoteCommandError> {
+    let result: Result<VersionStatusDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
-        let account = find_account(&accounts, &input.account_id)?;
-        let link = WorkspaceLink::new(
-            input.account_id,
-            input.project_id,
-            input.project_path,
-            input.branch,
-            &input.directory,
-            input.include_environments,
-        )?;
-
-        let session = client.session(&account, &*credentials);
         let files = files_view.open(root.clone())?;
-        let status = cancellable(&registry, &input.operation_id, async {
-            let branch = session.branch(link.project_id, &link.branch).await?;
-            if !branch.can_push {
-                return Err(GitlabCommandError::BranchNotWritable);
+        let include_environments = input.include_environments;
+        let status = match input.target {
+            LinkTargetInput::Gitlab {
+                account_id,
+                project_id,
+                project_path,
+                branch,
+                directory,
+            } => {
+                let account = find_account(&accounts, &account_id)?;
+                let link = WorkspaceLink::gitlab(
+                    account_id,
+                    project_id,
+                    project_path,
+                    branch.clone(),
+                    &directory,
+                    include_environments,
+                )?;
+                let session = client.session(&account, &*credentials);
+                cancellable(&registry, &input.operation_id, async {
+                    if !session.branch(project_id, &branch).await?.can_push {
+                        return Err(RemoteCommandError::BranchNotWritable);
+                    }
+                    let remote = session.repository(project_id, &branch);
+                    version_status(&files, &remote, &link)
+                        .await
+                        .map_err(RemoteCommandError::from)
+                })
+                .await?
             }
-            let remote = session.repository(link.project_id, &link.branch);
-            version_status(&files, &remote, &link)
-                .await
-                .map_err(GitlabCommandError::from)
-        })
-        .await?;
+            LinkTargetInput::Onedrive {
+                account_id,
+                drive_id,
+                folder_id,
+            } => {
+                let account = find_onedrive_account(&onedrive.accounts, &account_id)?;
+                let session = onedrive.client.session(&account, &*credentials);
+                cancellable(&registry, &input.operation_id, async {
+                    let folder = session.folder(&drive_id, &folder_id).await?;
+                    let link = WorkspaceLink::onedrive(
+                        account_id,
+                        &folder.drive_id,
+                        &folder.id,
+                        folder.path,
+                        include_environments,
+                    )?;
+                    let remote = session.repository(&folder.drive_id, &folder.id);
+                    version_status(&files, &remote, &link)
+                        .await
+                        .map_err(RemoteCommandError::from)
+                })
+                .await?
+            }
+        };
 
         WorkspaceLinkStore::new(root).save(&status.link)?;
         Ok(status_dto(&status.link, status.files))
@@ -561,6 +649,7 @@ pub async fn link_workspace(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_version_status(
     input: OperationInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -569,22 +658,22 @@ pub async fn get_version_status(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<VersionStatusDto, GitlabCommandError> {
-    let result: Result<VersionStatusDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<VersionStatusDto, RemoteCommandError> {
+    let result: Result<VersionStatusDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let link = {
             let _workspace_guard = coordinator.read(&root).await;
             load_link(&WorkspaceLinkStore::new(root.clone()))?
         };
-        let account = find_account(&accounts, &link.account_id)?;
+        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
 
-        let session = client.session(&account, &*credentials);
-        let remote = session.repository(link.project_id, &link.branch);
+        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
         let files = files_view.open(root.clone())?;
         let status = cancellable(&registry, &input.operation_id, async {
             version_status(&files, &remote, &link)
                 .await
-                .map_err(GitlabCommandError::from)
+                .map_err(RemoteCommandError::from)
         })
         .await?;
 
@@ -593,7 +682,7 @@ pub async fn get_version_status(
         // escrita trocou o vínculo/snapshot enquanto a consulta estava em voo.
         let _workspace_guard = coordinator.write(&root).await;
         if load_link(&WorkspaceLinkStore::new(root.clone()))? != link {
-            return Err(GitlabCommandError::Cancelled);
+            return Err(RemoteCommandError::Cancelled);
         }
         if status.healed {
             WorkspaceLinkStore::new(root).save(&status.link)?;
@@ -615,16 +704,15 @@ pub async fn get_file_diff(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<FileDiffDto, GitlabCommandError> {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<FileDiffDto, RemoteCommandError> {
     let root = PathBuf::from(&input.root_path);
     let _workspace_guard = coordinator.read(&root).await;
     let link = load_link(&WorkspaceLinkStore::new(root.clone()))?;
-    let account = find_account(&accounts, &link.account_id)?;
-
-    let session = client.session(&account, &*credentials);
+    let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
     let target_path = link.remote_path(&input.file_name);
     let remote = CachedRemoteRepository::new(
-        session.repository(link.project_id, &link.branch),
+        account.remote(&link, &client, &onedrive.client, &*credentials)?,
         &caches.remote,
         target_path,
         input.expected_remote_revision.clone(),
@@ -633,7 +721,7 @@ pub async fn get_file_diff(
     let diff = cancellable(&registry, &input.operation_id, async {
         file_diff(&files, &remote, &link, &input.file_name)
             .await
-            .map_err(GitlabCommandError::from)
+            .map_err(RemoteCommandError::from)
     })
     .await?;
     Ok(diff_dto(diff))
@@ -650,7 +738,8 @@ pub async fn get_structured_file_changes(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<StructuredFileChangesDto, GitlabCommandError> {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<StructuredFileChangesDto, RemoteCommandError> {
     let root = PathBuf::from(&input.root_path);
     let _workspace_guard = coordinator.read(&root).await;
     let offset = input.offset.unwrap_or(0);
@@ -667,12 +756,11 @@ pub async fn get_structured_file_changes(
     }
 
     let link = load_link(&WorkspaceLinkStore::new(root.clone()))?;
-    let account = find_account(&accounts, &link.account_id)?;
-    let session = client.session(&account, &*credentials);
+    let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
     let target_path = link.remote_path(&input.file_name);
     let remote_path = target_path.clone();
     let remote = CachedRemoteRepository::new(
-        session.repository(link.project_id, &link.branch),
+        account.remote(&link, &client, &onedrive.client, &*credentials)?,
         &caches.remote,
         target_path,
         input.expected_remote_revision.clone(),
@@ -683,22 +771,22 @@ pub async fn get_structured_file_changes(
     let local_task = tauri::async_runtime::spawn_blocking(move || {
         local_files
             .read(&local_name)
-            .map_err(|message| GitlabCommandError::Files { message })
+            .map_err(|message| RemoteCommandError::Files { message })
     });
     let parse_name = input.file_name.clone();
     let changes = cancellable(&registry, &input.operation_id, async {
         let remote_bytes = remote.read_file(&remote_path).await?;
         let local = local_task
             .await
-            .map_err(|error| GitlabCommandError::Files {
+            .map_err(|error| RemoteCommandError::Files {
                 message: error.to_string(),
             })??;
         tauri::async_runtime::spawn_blocking(move || {
             structured_file_changes_from_content(&parse_name, local, remote_bytes)
-                .map_err(GitlabCommandError::from)
+                .map_err(RemoteCommandError::from)
         })
         .await
-        .map_err(|error| GitlabCommandError::Files {
+        .map_err(|error| RemoteCommandError::Files {
             message: error.to_string(),
         })?
     })
@@ -719,6 +807,7 @@ pub async fn get_structured_file_changes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn commit_and_push(
     input: CommitAndPushInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -727,16 +816,16 @@ pub async fn commit_and_push(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<PushResultDto, GitlabCommandError> {
-    let result: Result<PushResultDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<PushResultDto, RemoteCommandError> {
+    let result: Result<PushResultDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = find_account(&accounts, &link.account_id)?;
+        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
 
-        let session = client.session(&account, &*credentials);
-        let remote = session.repository(link.project_id, &link.branch);
+        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
         let files = files_view.open(root)?;
         let outcome = cancellable(&registry, &input.operation_id, async {
             let selections: Vec<_> = input
@@ -752,7 +841,7 @@ pub async fn commit_and_push(
                 .collect();
             push_selected_changes(&files, &remote, &link, &input.message, &selections)
                 .await
-                .map_err(GitlabCommandError::from)
+                .map_err(RemoteCommandError::from)
         })
         .await?;
 
@@ -770,6 +859,7 @@ pub async fn commit_and_push(
 /// revisar antes de aplicar (o frontend busca o diff de cada arquivo
 /// incoming com `get_file_diff`/`get_structured_file_changes`).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn preview_pull_changes(
     input: OperationInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -778,21 +868,21 @@ pub async fn preview_pull_changes(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<PullPreviewDto, GitlabCommandError> {
-    let result: Result<PullPreviewDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<PullPreviewDto, RemoteCommandError> {
+    let result: Result<PullPreviewDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = find_account(&accounts, &link.account_id)?;
+        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
 
-        let session = client.session(&account, &*credentials);
-        let remote = session.repository(link.project_id, &link.branch);
+        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
         let files = files_view.open(root)?;
         let preview = cancellable(&registry, &input.operation_id, async {
             run_preview_pull(&files, &remote, &link)
                 .await
-                .map_err(GitlabCommandError::from)
+                .map_err(RemoteCommandError::from)
         })
         .await?;
 
@@ -809,6 +899,7 @@ pub async fn preview_pull_changes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn pull_changes(
     input: OperationInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -817,21 +908,21 @@ pub async fn pull_changes(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<PullResultDto, GitlabCommandError> {
-    let result: Result<PullResultDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<PullResultDto, RemoteCommandError> {
+    let result: Result<PullResultDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = find_account(&accounts, &link.account_id)?;
+        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
 
-        let session = client.session(&account, &*credentials);
-        let remote = session.repository(link.project_id, &link.branch);
+        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
         let files = files_view.open(root)?;
         let outcome = cancellable(&registry, &input.operation_id, async {
             run_pull(&files, &remote, &link)
                 .await
-                .map_err(GitlabCommandError::from)
+                .map_err(RemoteCommandError::from)
         })
         .await?;
 
@@ -847,6 +938,7 @@ pub async fn pull_changes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn preview_conflict_resolution(
     input: PreviewConflictResolutionInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -855,12 +947,13 @@ pub async fn preview_conflict_resolution(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<ResolutionPreviewDto, GitlabCommandError> {
-    let result: Result<ResolutionPreviewDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<ResolutionPreviewDto, RemoteCommandError> {
+    let result: Result<ResolutionPreviewDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.read(&root).await;
         let link = load_link(&WorkspaceLinkStore::new(root.clone()))?;
-        let account = find_account(&accounts, &link.account_id)?;
+        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
         let items: Vec<_> = input
             .items
             .into_iter()
@@ -872,8 +965,7 @@ pub async fn preview_conflict_resolution(
                 },
             })
             .collect();
-        let session = client.session(&account, &*credentials);
-        let remote = session.repository(link.project_id, &link.branch);
+        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
         let files = files_view.open(root)?;
         let preview = cancellable(&registry, &input.operation_id, async {
             run_resolution_preview(
@@ -889,7 +981,7 @@ pub async fn preview_conflict_resolution(
                 },
             )
             .await
-            .map_err(GitlabCommandError::from)
+            .map_err(RemoteCommandError::from)
         })
         .await?;
         Ok(ResolutionPreviewDto {
@@ -912,6 +1004,7 @@ pub async fn preview_conflict_resolution(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn resolve_conflict(
     input: ResolveConflictInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
@@ -920,13 +1013,14 @@ pub async fn resolve_conflict(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<ResolveResultDto, GitlabCommandError> {
-    let result: Result<ResolveResultDto, GitlabCommandError> = async {
+    onedrive: State<'_, OnedriveProvider>,
+) -> Result<ResolveResultDto, RemoteCommandError> {
+    let result: Result<ResolveResultDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = find_account(&accounts, &link.account_id)?;
+        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts)?;
         let resolution = match input.resolution {
             ResolutionDto::KeepLocal => Resolution::KeepLocal,
             ResolutionDto::KeepRemote => Resolution::KeepRemote,
@@ -950,14 +1044,13 @@ pub async fn resolve_conflict(
             },
         };
 
-        let session = client.session(&account, &*credentials);
-        let remote = session.repository(link.project_id, &link.branch);
+        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
         let files = files_view.open(root)?;
         let (updated_link, local_file_changed) =
             cancellable(&registry, &input.operation_id, async {
                 run_resolve(&files, &remote, &link, &input.file_name, resolution)
                     .await
-                    .map_err(GitlabCommandError::from)
+                    .map_err(RemoteCommandError::from)
             })
             .await?;
 
@@ -974,7 +1067,7 @@ mod tests {
 
     #[test]
     fn status_serializes_camel_case_with_state_names() {
-        let link = WorkspaceLink::new("u@h", 7, "eq/proj", "main", "", false).unwrap();
+        let link = WorkspaceLink::gitlab("u@h", 7, "eq/proj", "main", "", false).unwrap();
         let dto = status_dto(
             &link,
             vec![alcy_app::FileStatus {
@@ -989,6 +1082,7 @@ mod tests {
             serde_json::to_value(dto).unwrap(),
             serde_json::json!({
                 "link": {
+                    "provider": "gitlab",
                     "accountId": "u@h", "projectId": 7, "projectPath": "eq/proj",
                     "branch": "main", "directory": "", "includeEnvironments": false
                 },
@@ -1030,7 +1124,7 @@ mod tests {
     fn unlinked_workspaces_report_not_linked() {
         let root = std::env::temp_dir().join("alcy-vc-command-test-unlinked");
         let store = WorkspaceLinkStore::new(root);
-        assert_eq!(load_link(&store), Err(GitlabCommandError::NotLinked));
+        assert_eq!(load_link(&store), Err(RemoteCommandError::NotLinked));
     }
 
     #[test]

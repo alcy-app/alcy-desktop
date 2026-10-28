@@ -69,6 +69,6 @@ describe('PullReviewModal', () => {
     const vc = fakeVersionControl()
     render(<PullReviewModal rootPath={ROOT} vc={vc} onClose={() => {}} />)
 
-    expect(await screen.findByText('Sessão expirada. Entre novamente no GitLab.')).toBeInTheDocument()
+    expect(await screen.findByText('Sessão expirada. Entre novamente na conta.')).toBeInTheDocument()
   })
 })

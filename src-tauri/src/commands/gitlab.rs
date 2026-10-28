@@ -1,20 +1,19 @@
-use std::future::Future;
 use std::time::Duration;
 
-use alcy_app::{CredentialStore, RemoteError, VersionControlError};
+use alcy_app::CredentialStore;
 use alcy_domain::{GitlabAccount, GitlabAccountError};
 use alcy_gitlab::{
     GitlabBranch, GitlabClient, GitlabProject, OAuthError, PkceChallenge, account_id,
     authorization_url, credential_key, generate_state, save_tokens,
 };
-use alcy_platform::{CallbackError, CallbackServer, KeyringCredentialStore};
-use alcy_storage::{GitlabAccountsStore, StorageError};
+use alcy_platform::{CallbackServer, KeyringCredentialStore};
+use alcy_storage::GitlabAccountsStore;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
-use tokio::sync::oneshot;
 
 use super::execution_registry::ExecutionRegistry;
+use super::remote_command::{RemoteCommandError, cancellable};
 use super::remote_content_cache::VersionControlCaches;
 
 /// Tempo que o usuário tem para autorizar o Alcy no navegador.
@@ -53,45 +52,7 @@ pub struct PageDto<T> {
     pub next_page: Option<u32>,
 }
 
-/// Erro comum aos comandos de GitLab e de controle de versão. Nunca carrega
-/// tokens, códigos ou URLs de autorização.
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum GitlabCommandError {
-    Invalid { message: String },
-    Storage { message: String },
-    Credentials { message: String },
-    Unauthorized,
-    Network { message: String },
-    Rejected { message: String },
-    NotFound { message: String },
-    Conflict,
-    TooLarge,
-    Files { message: String },
-    Conflicts { files: Vec<String> },
-    NothingToCommit,
-    EmptyMessage,
-    IncompleteResolution { file: String },
-    NotLinked,
-    AccountMissing,
-    BranchNotWritable,
-    Denied { message: String },
-    Login { message: String },
-    Timeout,
-    PortBusy { port: u16 },
-    Browser { message: String },
-    Cancelled,
-}
-
-impl From<StorageError> for GitlabCommandError {
-    fn from(error: StorageError) -> Self {
-        Self::Storage {
-            message: error.to_string(),
-        }
-    }
-}
-
-impl From<GitlabAccountError> for GitlabCommandError {
+impl From<GitlabAccountError> for RemoteCommandError {
     fn from(error: GitlabAccountError) -> Self {
         Self::Invalid {
             message: error.to_string(),
@@ -99,55 +60,7 @@ impl From<GitlabAccountError> for GitlabCommandError {
     }
 }
 
-impl From<RemoteError> for GitlabCommandError {
-    fn from(error: RemoteError) -> Self {
-        match error {
-            RemoteError::Unauthorized => Self::Unauthorized,
-            RemoteError::NotFound(message) => Self::NotFound { message },
-            RemoteError::Conflict => Self::Conflict,
-            RemoteError::Network(message) => Self::Network { message },
-            RemoteError::Rejected(message) => Self::Rejected { message },
-            RemoteError::TooLarge => Self::TooLarge,
-            RemoteError::Credentials(message) => Self::Credentials { message },
-        }
-    }
-}
-
-impl From<VersionControlError> for GitlabCommandError {
-    fn from(error: VersionControlError) -> Self {
-        match error {
-            VersionControlError::Remote(error) => error.into(),
-            VersionControlError::Files(message) => Self::Files { message },
-            VersionControlError::Conflicts(files) => Self::Conflicts { files },
-            VersionControlError::NothingToCommit => Self::NothingToCommit,
-            VersionControlError::EmptyMessage => Self::EmptyMessage,
-            VersionControlError::NotTracked(_)
-            | VersionControlError::NotInConflict(_)
-            | VersionControlError::ManifestRemoval
-            | VersionControlError::InvalidStructuredFile(_)
-            | VersionControlError::PartialResolutionUnsupported(_) => Self::Invalid {
-                message: error.to_string(),
-            },
-            VersionControlError::StaleSelection => Self::Conflict,
-            VersionControlError::IncompleteResolution(file) => Self::IncompleteResolution { file },
-        }
-    }
-}
-
-impl From<CallbackError> for GitlabCommandError {
-    fn from(error: CallbackError) -> Self {
-        match error {
-            CallbackError::PortBusy { port } => Self::PortBusy { port },
-            CallbackError::Denied(message) => Self::Denied { message },
-            CallbackError::Timeout => Self::Timeout,
-            other => Self::Login {
-                message: other.to_string(),
-            },
-        }
-    }
-}
-
-impl From<OAuthError> for GitlabCommandError {
+impl From<OAuthError> for RemoteCommandError {
     fn from(error: OAuthError) -> Self {
         match error {
             OAuthError::Network(message) => Self::Network { message },
@@ -184,32 +97,15 @@ fn branch_dto(branch: GitlabBranch) -> GitlabBranchDto {
     }
 }
 
-/// Executa `future` até o fim ou até `cancel_gitlab_operation` com o mesmo
-/// `operation_id` (a operação em andamento é descartada).
-pub async fn cancellable<T>(
-    registry: &ExecutionRegistry,
-    operation_id: &str,
-    future: impl Future<Output = Result<T, GitlabCommandError>>,
-) -> Result<T, GitlabCommandError> {
-    let (sender, receiver) = oneshot::channel::<()>();
-    registry.register(operation_id.to_string(), sender);
-    let result = tokio::select! {
-        result = future => result,
-        _ = receiver => Err(GitlabCommandError::Cancelled),
-    };
-    registry.remove(operation_id);
-    result
-}
-
 pub fn find_account(
     store: &GitlabAccountsStore,
     account_id: &str,
-) -> Result<GitlabAccount, GitlabCommandError> {
+) -> Result<GitlabAccount, RemoteCommandError> {
     store
         .load()?
         .into_iter()
         .find(|account| account.id == account_id)
-        .ok_or(GitlabCommandError::AccountMissing)
+        .ok_or(RemoteCommandError::AccountMissing)
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,7 +126,7 @@ async fn complete_login(
     credentials: &dyn CredentialStore,
     accounts: &GitlabAccountsStore,
     open_browser: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<GitlabAccount, GitlabCommandError> {
+) -> Result<GitlabAccount, RemoteCommandError> {
     // Valida a URL e o client_id antes de abrir qualquer coisa.
     let pending = GitlabAccount::new("pending", &input.instance_url, &input.client_id, "", "")?;
 
@@ -245,7 +141,7 @@ async fn complete_login(
         &pkce.challenge,
     )?;
 
-    open_browser(&url).map_err(|message| GitlabCommandError::Browser { message })?;
+    open_browser(&url).map_err(|message| RemoteCommandError::Browser { message })?;
     let code = server.wait_for_code(&state, LOGIN_TIMEOUT).await?;
 
     let tokens = client
@@ -281,7 +177,7 @@ async fn complete_login(
 #[tauri::command]
 pub fn list_gitlab_accounts(
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<Vec<GitlabAccountDto>, GitlabCommandError> {
+) -> Result<Vec<GitlabAccountDto>, RemoteCommandError> {
     Ok(accounts.load()?.iter().map(account_dto).collect())
 }
 
@@ -293,8 +189,8 @@ pub async fn begin_gitlab_login(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<GitlabAccountDto, GitlabCommandError> {
-    let result: Result<GitlabAccountDto, GitlabCommandError> = async {
+) -> Result<GitlabAccountDto, RemoteCommandError> {
+    let result: Result<GitlabAccountDto, RemoteCommandError> = async {
         let server = CallbackServer::bind().await?;
         let operation_id = input.operation_id.clone();
 
@@ -338,11 +234,11 @@ pub async fn logout_gitlab(
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
     caches: State<'_, VersionControlCaches>,
-) -> Result<(), GitlabCommandError> {
-    let result: Result<(), GitlabCommandError> = async {
+) -> Result<(), RemoteCommandError> {
+    let result: Result<(), RemoteCommandError> = async {
         credentials
             .delete(&credential_key(&input.account_id))
-            .map_err(|error| GitlabCommandError::Credentials {
+            .map_err(|error| RemoteCommandError::Credentials {
                 message: error.to_string(),
             })?;
         accounts.remove(&input.account_id)?;
@@ -361,8 +257,8 @@ pub async fn test_gitlab_connection(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<GitlabAccountDto, GitlabCommandError> {
-    let result: Result<GitlabAccountDto, GitlabCommandError> = async {
+) -> Result<GitlabAccountDto, RemoteCommandError> {
+    let result: Result<GitlabAccountDto, RemoteCommandError> = async {
         let account = find_account(&accounts, &input.account_id)?;
         let user = client
             .session(&account, &*credentials)
@@ -405,8 +301,8 @@ pub async fn list_gitlab_projects(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<PageDto<GitlabProjectDto>, GitlabCommandError> {
-    let result: Result<PageDto<GitlabProjectDto>, GitlabCommandError> = async {
+) -> Result<PageDto<GitlabProjectDto>, RemoteCommandError> {
+    let result: Result<PageDto<GitlabProjectDto>, RemoteCommandError> = async {
         let account = find_account(&accounts, &input.account_id)?;
         let page = client
             .session(&account, &*credentials)
@@ -438,8 +334,8 @@ pub async fn list_gitlab_branches(
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
-) -> Result<PageDto<GitlabBranchDto>, GitlabCommandError> {
-    let result: Result<PageDto<GitlabBranchDto>, GitlabCommandError> = async {
+) -> Result<PageDto<GitlabBranchDto>, RemoteCommandError> {
+    let result: Result<PageDto<GitlabBranchDto>, RemoteCommandError> = async {
         let account = find_account(&accounts, &input.account_id)?;
         let page = client
             .session(&account, &*credentials)
@@ -612,7 +508,7 @@ mod tests {
         )
         .await;
 
-        assert!(matches!(result, Err(GitlabCommandError::Login { .. })));
+        assert!(matches!(result, Err(RemoteCommandError::Login { .. })));
         assert!(accounts.load().unwrap().is_empty());
         assert!(credentials.0.lock().unwrap().is_empty());
         let _ = std::fs::remove_file(accounts_path);
@@ -634,7 +530,7 @@ mod tests {
             panic!("não deve abrir o navegador com dados inválidos")
         })
         .await;
-        assert!(matches!(result, Err(GitlabCommandError::Invalid { .. })));
+        assert!(matches!(result, Err(RemoteCommandError::Invalid { .. })));
 
         let gitlab = MockServer::start().await;
         let server = CallbackServer::bind_in(&[0]).await.unwrap();
@@ -649,7 +545,7 @@ mod tests {
         .await;
         assert_eq!(
             result,
-            Err(GitlabCommandError::Browser {
+            Err(RemoteCommandError::Browser {
                 message: "sem navegador".into()
             })
         );
@@ -680,50 +576,8 @@ mod tests {
         };
         let (result, ()) = tokio::join!(cancellable(&registry, "login-1", login), cancelling);
 
-        assert_eq!(result, Err(GitlabCommandError::Cancelled));
+        assert_eq!(result, Err(RemoteCommandError::Cancelled));
         assert!(!registry.is_registered("login-1"));
         let _ = std::fs::remove_file(accounts_path);
-    }
-
-    #[test]
-    fn errors_serialize_with_a_kind_and_never_leak_payloads() {
-        assert_eq!(
-            serde_json::to_value(GitlabCommandError::Unauthorized).unwrap(),
-            serde_json::json!({"kind": "unauthorized"})
-        );
-        assert_eq!(
-            serde_json::to_value(GitlabCommandError::PortBusy { port: 53682 }).unwrap(),
-            serde_json::json!({"kind": "portBusy", "port": 53682})
-        );
-        assert_eq!(
-            serde_json::to_value(GitlabCommandError::BranchNotWritable).unwrap(),
-            serde_json::json!({"kind": "branchNotWritable"})
-        );
-        assert_eq!(
-            serde_json::to_value(GitlabCommandError::Conflicts {
-                files: vec!["a".into()]
-            })
-            .unwrap(),
-            serde_json::json!({"kind": "conflicts", "files": ["a"]})
-        );
-        assert_eq!(
-            GitlabCommandError::from(VersionControlError::Remote(RemoteError::Conflict)),
-            GitlabCommandError::Conflict
-        );
-        assert_eq!(
-            serde_json::to_value(GitlabCommandError::IncompleteResolution {
-                file: "alcy-collections.json".into()
-            })
-            .unwrap(),
-            serde_json::json!({"kind": "incompleteResolution", "file": "alcy-collections.json"})
-        );
-        assert_eq!(
-            GitlabCommandError::from(VersionControlError::IncompleteResolution(
-                "alcy-collections.json".into()
-            )),
-            GitlabCommandError::IncompleteResolution {
-                file: "alcy-collections.json".into()
-            }
-        );
     }
 }
