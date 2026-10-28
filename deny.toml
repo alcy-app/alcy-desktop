@@ -19,6 +19,12 @@ ignore = [
   { id = "RUSTSEC-2025-0081", reason = "tabelas Unicode estáticas, transitivas" },
   { id = "RUSTSEC-2025-0098", reason = "tabelas Unicode estáticas, transitivas" },
   { id = "RUSTSEC-2025-0100", reason = "tabelas Unicode estáticas, transitivas" },
+  # zvariant/zvariant_derive/zbus_names: unmaintained since they moved into zbus 6;
+  # pulled through zbus 5 by keyring (Linux Secret Service) and
+  # tauri-plugin-opener, neither of which supports zbus 6 yet.
+  { id = "RUSTSEC-2026-0370", reason = "zbus 5 subcrate, transitive via keyring and tauri-plugin-opener" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus 5 subcrate, transitive via keyring and tauri-plugin-opener" },
+  { id = "RUSTSEC-2026-0372", reason = "zbus 5 subcrate, transitive via keyring and tauri-plugin-opener" },
 ]
 
 [licenses]

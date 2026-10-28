@@ -1,9 +1,10 @@
 packages:
   - apps/*
 
-# Correções de advisories em dependências transitivas de desenvolvimento
-# (GHSA-2v37-7h3g-55p8, GHSA-3wwx-pv8p-q78v). Remover quando vite/postcss e
-# jsdom exigirem versões corrigidas.
+# Advisory fixes in transitive development dependencies
+# (GHSA-2v37-7h3g-55p8, GHSA-3wwx-pv8p-q78v, and the undici 8.12.2 batch such
+# as GHSA-4qv8-2p9j-2685). Remove once vite/postcss and jsdom require the
+# fixed versions.
 overrides:
   nanoid@<3.3.18: ^3.3.18
-  undici@>=8.1.0 <8.10.2: ^8.10.2
+  undici@>=8.1.0 <8.12.2: ^8.12.2
