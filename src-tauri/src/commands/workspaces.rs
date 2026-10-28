@@ -8,7 +8,7 @@ use alcy_storage::{
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-const WORKSPACES_FOLDER_NAME: &str = "Alcy Workspaces";
+pub(super) const WORKSPACES_FOLDER_NAME: &str = "Alcy Workspaces";
 const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
 const MAX_NAME_ATTEMPTS: u32 = 1000;
 
@@ -114,12 +114,23 @@ fn storage_error(error: StorageError) -> WorkspaceCommandError {
     }
 }
 
-fn workspace_to_dto(workspace: &Workspace, root_path: String) -> WorkspaceDto {
+pub(super) fn workspace_to_dto(workspace: &Workspace, root_path: String) -> WorkspaceDto {
     WorkspaceDto {
         id: workspace.id.clone(),
         name: workspace.name().to_string(),
         root_path,
     }
+}
+
+/// `record_recent` on the blocking pool, ordered with the other workspace
+/// operations.
+pub(super) async fn record_recent_in_order(
+    recent_store: &RecentWorkspacesStore,
+    root_path: PathBuf,
+    name: String,
+) -> Result<(), WorkspaceCommandError> {
+    let recent_store = RecentWorkspacesStore::clone(recent_store);
+    run_blocking(move || record_recent(&recent_store, root_path, name)).await
 }
 
 fn record_recent(
@@ -140,11 +151,19 @@ fn record_recent(
 fn next_available_workspace(
     workspaces_root: &std::path::Path,
 ) -> Result<(PathBuf, String), WorkspaceCommandError> {
+    next_available_path(workspaces_root, DEFAULT_WORKSPACE_NAME)
+}
+
+/// First free folder in `workspaces_root` named `base`, `base 2`, `base 3`...
+pub(super) fn next_available_path(
+    workspaces_root: &std::path::Path,
+    base: &str,
+) -> Result<(PathBuf, String), WorkspaceCommandError> {
     for attempt in 1..=MAX_NAME_ATTEMPTS {
         let name = if attempt == 1 {
-            DEFAULT_WORKSPACE_NAME.to_string()
+            base.to_string()
         } else {
-            format!("{DEFAULT_WORKSPACE_NAME} {attempt}")
+            format!("{base} {attempt}")
         };
         let path = workspaces_root.join(&name);
         if !path.exists() {

@@ -343,7 +343,7 @@ impl VersionControlFiles {
         Self { secrets, settings }
     }
 
-    fn open(
+    pub(super) fn open(
         &self,
         root: PathBuf,
     ) -> Result<SyncedWorkspaceFiles<DiskWorkspaceFiles>, RemoteCommandError> {

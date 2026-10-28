@@ -410,7 +410,7 @@ impl<'a> OnedriveSession<'a> {
         crate::OnedriveRepository::new(*self, drive_id, folder_id)
     }
 
-    async fn get_json<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         url: &str,
         select: &str,
@@ -534,7 +534,7 @@ impl<'a> OnedriveSession<'a> {
 
 /// Item → folder; `None` when it is not a folder. Without a drive id in the
 /// item, `fallback_drive` (the drive being listed) is used.
-fn to_folder(item: GraphItem, fallback_drive: Option<&str>) -> Option<DriveFolder> {
+pub(crate) fn to_folder(item: GraphItem, fallback_drive: Option<&str>) -> Option<DriveFolder> {
     let folder = item.folder?;
     let parent = item.parent_reference;
     let drive_id = parent

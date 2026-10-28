@@ -6,8 +6,8 @@ use std::time::Duration;
 use alcy_app::CredentialStore;
 use alcy_domain::{OnedriveAccount, OnedriveAccountError};
 use alcy_onedrive::{
-    DriveFolder, OAuthError, OnedriveClient, PkceChallenge, account_id, authorization_url,
-    credential_key, generate_state,
+    DriveFolder, FolderNameError, OAuthError, OnedriveClient, PkceChallenge, Team, account_id,
+    authorization_url, credential_key, generate_state, validate_folder_name,
 };
 use alcy_platform::{CallbackServer, KeyringCredentialStore};
 use alcy_storage::OnedriveAccountsStore;
@@ -50,6 +50,21 @@ pub struct DriveFolderDto {
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct TeamDto {
+    pub id: String,
+    pub name: String,
+}
+
+/// A team's library; `folder` is its `Alcy/` catalog, `None` while empty.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamCatalogDto {
+    pub drive_id: String,
+    pub folder: Option<DriveFolderDto>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct FolderPageDto {
     pub items: Vec<DriveFolderDto>,
     pub next_link: Option<String>,
@@ -57,6 +72,14 @@ pub struct FolderPageDto {
 
 impl From<OnedriveAccountError> for RemoteCommandError {
     fn from(error: OnedriveAccountError) -> Self {
+        Self::Invalid {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<FolderNameError> for RemoteCommandError {
+    fn from(error: FolderNameError) -> Self {
         Self::Invalid {
             message: error.to_string(),
         }
@@ -338,6 +361,94 @@ pub async fn resolve_onedrive_share_link(
     }
     .await;
     crate::logging::logged("alcy::onedrive", "abrir link de compartilhamento", result)
+}
+
+/// Teams the account belongs to: the groups whose workspaces it can see.
+#[tauri::command]
+pub async fn list_onedrive_teams(
+    input: FolderOperationInput,
+    registry: State<'_, ExecutionRegistry>,
+    onedrive: State<'_, OnedriveProvider>,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<Vec<TeamDto>, RemoteCommandError> {
+    let result: Result<Vec<TeamDto>, RemoteCommandError> = async {
+        let account = find_onedrive_account(&onedrive.accounts, &input.account_id)?;
+        let session = onedrive.client.session(&account, &*credentials);
+        let teams = cancellable(&registry, &input.operation_id, async {
+            Ok(session.list_teams().await?)
+        })
+        .await?;
+        Ok(teams
+            .into_iter()
+            .map(|Team { id, name }| TeamDto { id, name })
+            .collect())
+    }
+    .await;
+    crate::logging::logged("alcy::onedrive", "listar times", result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamInput {
+    pub operation_id: String,
+    pub account_id: String,
+    pub team_id: String,
+}
+
+/// The team's catalog folder; its subfolders are listed with
+/// `list_onedrive_folders`.
+#[tauri::command]
+pub async fn get_onedrive_team_catalog(
+    input: TeamInput,
+    registry: State<'_, ExecutionRegistry>,
+    onedrive: State<'_, OnedriveProvider>,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<TeamCatalogDto, RemoteCommandError> {
+    let result: Result<TeamCatalogDto, RemoteCommandError> = async {
+        let account = find_onedrive_account(&onedrive.accounts, &input.account_id)?;
+        let session = onedrive.client.session(&account, &*credentials);
+        let catalog = cancellable(&registry, &input.operation_id, async {
+            Ok(session.team_catalog(&input.team_id).await?)
+        })
+        .await?;
+        Ok(TeamCatalogDto {
+            drive_id: catalog.drive_id,
+            folder: catalog.folder.map(folder_dto),
+        })
+    }
+    .await;
+    crate::logging::logged("alcy::onedrive", "abrir workspaces do time", result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTeamWorkspaceInput {
+    pub operation_id: String,
+    pub account_id: String,
+    pub team_id: String,
+    pub name: String,
+}
+
+/// Creates the folder of a new workspace in the team's catalog.
+#[tauri::command]
+pub async fn create_onedrive_team_workspace(
+    input: CreateTeamWorkspaceInput,
+    registry: State<'_, ExecutionRegistry>,
+    onedrive: State<'_, OnedriveProvider>,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<DriveFolderDto, RemoteCommandError> {
+    let result: Result<DriveFolderDto, RemoteCommandError> = async {
+        let name = validate_folder_name(&input.name)?;
+        let account = find_onedrive_account(&onedrive.accounts, &input.account_id)?;
+        let session = onedrive.client.session(&account, &*credentials);
+        let folder = cancellable(&registry, &input.operation_id, async {
+            Ok(session.create_team_workspace(&input.team_id, &name).await?)
+        })
+        .await?;
+        Ok(folder_dto(folder))
+    }
+    .await;
+    crate::logging::logged("alcy::onedrive", "criar workspace do time", result)
 }
 
 #[cfg(test)]

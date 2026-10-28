@@ -22,6 +22,9 @@ const listOnedriveAccounts = vi.fn()
 const getOnedriveRoot = vi.fn()
 const listOnedriveFolders = vi.fn()
 const resolveOnedriveShareLink = vi.fn()
+const listOnedriveTeams = vi.fn()
+const getOnedriveTeamCatalog = vi.fn()
+const createOnedriveTeamWorkspace = vi.fn()
 
 vi.mock('../../bindings/list-gitlab-accounts', () => ({ listGitlabAccounts: (...a: unknown[]) => listGitlabAccounts(...a) }))
 vi.mock('../../bindings/get-workspace-link', () => ({ getWorkspaceLink: (...a: unknown[]) => getWorkspaceLink(...a) }))
@@ -43,6 +46,11 @@ vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { gitlab: true, on
 vi.mock('../../bindings/list-onedrive-accounts', () => ({ listOnedriveAccounts: (...a: unknown[]) => listOnedriveAccounts(...a) }))
 vi.mock('../../bindings/get-onedrive-root', () => ({ getOnedriveRoot: (...a: unknown[]) => getOnedriveRoot(...a) }))
 vi.mock('../../bindings/list-onedrive-folders', () => ({ listOnedriveFolders: (...a: unknown[]) => listOnedriveFolders(...a) }))
+vi.mock('../../bindings/list-onedrive-teams', () => ({ listOnedriveTeams: (...a: unknown[]) => listOnedriveTeams(...a) }))
+vi.mock('../../bindings/get-onedrive-team-catalog', () => ({ getOnedriveTeamCatalog: (...a: unknown[]) => getOnedriveTeamCatalog(...a) }))
+vi.mock('../../bindings/create-onedrive-team-workspace', () => ({
+  createOnedriveTeamWorkspace: (...a: unknown[]) => createOnedriveTeamWorkspace(...a),
+}))
 vi.mock('../../bindings/resolve-onedrive-share-link', () => ({
   resolveOnedriveShareLink: (...a: unknown[]) => resolveOnedriveShareLink(...a),
 }))
@@ -78,7 +86,7 @@ beforeEach(() => {
     listGitlabAccounts, getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, unlinkWorkspace, listGitlabProjects,
     listGitlabBranches, getFileDiff, getStructuredFileChanges, commitAndPush, pullChanges, resolveConflict, cancelGitlabOperation,
     onFilesChanged, onOpenSettings, onPull, onResolveConflict, listOnedriveAccounts, getOnedriveRoot, listOnedriveFolders,
-    resolveOnedriveShareLink,
+    resolveOnedriveShareLink, listOnedriveTeams, getOnedriveTeamCatalog, createOnedriveTeamWorkspace,
   ]) {
     mock.mockReset()
   }
@@ -573,6 +581,33 @@ describe('VersionControlPanel — OneDrive', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Vincular' }))
     await waitFor(() =>
       expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({ provider: 'onedrive', driveId: 'b!team', folderId: 'S1' })),
+    )
+  })
+
+  it('cria um workspace num time e vincula a ele', async () => {
+    const created = { driveId: 'b!team', id: 'W9', name: 'Novo', path: '/Alcy/Novo', childCount: 0 }
+    listOnedriveTeams.mockResolvedValue({ ok: true, value: [{ id: 'T1', name: 'Pagamentos' }] })
+    getOnedriveTeamCatalog.mockResolvedValue({ ok: true, value: { driveId: 'b!team', folder: null } })
+    createOnedriveTeamWorkspace
+      .mockResolvedValueOnce({ ok: false, error: { kind: 'conflict' } })
+      .mockResolvedValueOnce({ ok: true, value: created })
+    linkWorkspace.mockResolvedValue({ ok: true, value: { link: { ...onedriveLink, driveId: 'b!team', folderId: 'W9', displayPath: '/Alcy/Novo' }, files: [] } })
+    getVersionStatus.mockResolvedValue({ ok: true, value: { link: onedriveLink, files: [] } })
+    render(<Harness />)
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Time' }))
+    expect(await screen.findByText('Nenhum workspace neste time ainda.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Novo workspace no time'), { target: { value: 'Novo' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
+    expect(await screen.findByText('Já existe um workspace com esse nome no time.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
+    expect(await screen.findByText('Pasta escolhida: /Alcy/Novo')).toBeInTheDocument()
+    expect(createOnedriveTeamWorkspace).toHaveBeenLastCalledWith(expect.objectContaining({ accountId: onedriveAccount.id, teamId: 'T1', name: 'Novo' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vincular' }))
+    await waitFor(() =>
+      expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({ provider: 'onedrive', driveId: 'b!team', folderId: 'W9' })),
     )
   })
 

@@ -1,0 +1,50 @@
+.team-picker-muted {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.team-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.team-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-picker-option:hover,
+.team-picker-option[aria-pressed='true'] {
+  background: var(--surface-overlay);
+}
+
+.team-picker-option[aria-pressed='true'] {
+  font-weight: 600;
+}
+
+.team-picker-create {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.team-picker-create > :first-child {
+  flex: 1;
+  min-width: 0;
+}

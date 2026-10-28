@@ -8,6 +8,7 @@
 mod client;
 mod oauth;
 mod repository;
+mod teams;
 
 pub use client::{
     DriveFolder, FolderPage, OnedriveClient, OnedriveSession, OnedriveUser, account_id,
@@ -15,3 +16,4 @@ pub use client::{
 };
 pub use oauth::{LoginTokens, OAuthError, PkceChallenge, authorization_url, generate_state};
 pub use repository::OnedriveRepository;
+pub use teams::{CATALOG_FOLDER, FolderNameError, Team, TeamCatalog, validate_folder_name};

@@ -56,6 +56,7 @@ pub mod security_settings;
 pub mod send_history;
 pub mod session_cookies;
 pub mod tab_session;
+pub mod team_workspaces;
 pub mod tls_settings;
 pub mod updates;
 pub mod value_monitors;

@@ -6,6 +6,7 @@ import type { DriveFolderDto } from '../../bindings/onedrive-types'
 import { resolveOnedriveShareLink } from '../../bindings/resolve-onedrive-share-link'
 import { gitlabErrorMessage } from '../../shared/gitlab/gitlab-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { TeamWorkspacePicker } from '../../shared/onedrive/TeamWorkspacePicker'
 import { useOnedrive } from '../../shared/onedrive/use-onedrive'
 import { Button } from '../../shared/ui/Button'
 import { Checkbox } from '../../shared/ui/Checkbox'
@@ -17,7 +18,7 @@ import { Select } from '../../shared/ui/Select'
 import { ChevronRightIcon, FolderIcon } from '../../shared/ui/icons'
 import type { LinkParams } from './use-version-control'
 
-type Source = 'browse' | 'shareLink'
+type Source = 'browse' | 'shareLink' | 'team'
 
 interface FolderListing {
   key: string
@@ -37,8 +38,8 @@ const folderKey = (folder: DriveFolderDto) => `${folder.driveId}/${folder.id}`
 
 /**
  * Choice of the OneDrive/SharePoint folder that will hold the workspace files:
- * browse the account's own drive, or paste a sharing link for a folder shared
- * by someone else (including SharePoint and Teams).
+ * browse the account's own drive, pick or create a workspace in one of the
+ * account's Teams, or paste a sharing link for a folder shared by someone else.
  */
 export function OnedriveLinkForm({ busy, error, onSubmit, onCancelBusy }: OnedriveLinkFormProps) {
   const { t } = useLanguage()
@@ -51,6 +52,7 @@ export function OnedriveLinkForm({ busy, error, onSubmit, onCancelBusy }: Onedri
   const [shareLink, setShareLink] = useState('')
   const [shared, setShared] = useState<{ folder: DriveFolderDto | null; error: GitlabCommandError | null } | null>(null)
   const [resolving, setResolving] = useState(false)
+  const [teamWorkspace, setTeamWorkspace] = useState<DriveFolderDto | null>(null)
   const [includeEnvironments, setIncludeEnvironments] = useState(false)
 
   useEffect(() => {
@@ -114,7 +116,9 @@ export function OnedriveLinkForm({ busy, error, onSubmit, onCancelBusy }: Onedri
 
   // The drive root is not offered as a target: the workspace files would mix
   // with everything else in it.
-  const target = source === 'browse' ? (folders.length > 1 ? current : null) : shared?.folder ?? null
+  const target = source === 'browse'
+    ? (folders.length > 1 ? current : null)
+    : source === 'team' ? teamWorkspace : shared?.folder ?? null
   const canSubmit = target !== null && !busy
 
   const submit = () => {
@@ -141,6 +145,7 @@ export function OnedriveLinkForm({ busy, error, onSubmit, onCancelBusy }: Onedri
               onChange={(event) => {
                 setAccountId(event.target.value)
                 setShared(null)
+                setTeamWorkspace(null)
               }}
             >
               {accounts.map((account) => (
@@ -161,9 +166,17 @@ export function OnedriveLinkForm({ busy, error, onSubmit, onCancelBusy }: Onedri
         size="sm"
         options={[
           { value: 'browse', label: t('vc.onedrive.browse') },
+          { value: 'team', label: t('vc.onedrive.team') },
           { value: 'shareLink', label: t('vc.onedrive.shareLink') },
         ]}
       />
+
+      {source === 'team' && (
+        <>
+          <TeamWorkspacePicker accountId={accountId} selected={teamWorkspace} onSelect={setTeamWorkspace} allowCreate />
+          {teamWorkspace && <p className="vc-muted" role="status">{t('vc.onedrive.selected', { path: teamWorkspace.path })}</p>}
+        </>
+      )}
 
       {source === 'browse' && (
         <>

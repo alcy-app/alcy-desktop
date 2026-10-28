@@ -272,6 +272,13 @@ status, which adopts as base every file whose local and remote contents
 already match. Tokens live in the system keyring; OneDrive keeps only the
 refresh token there and the access token in memory.
 
+Team workspaces on OneDrive follow a convention, not an Alcy server: each
+Teams team's document library holds an `Alcy/` folder with one subfolder per
+workspace. Listing goes through the account's joined teams, so visibility is
+exactly SharePoint's permission on that library. Opening one creates the
+local copy, links it and pulls, or reuses a recent copy linked to the same
+folder.
+
 ### gRPC
 
 `alcy-grpc` calls any method of any service without generated code (spec

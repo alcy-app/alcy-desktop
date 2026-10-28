@@ -76,8 +76,9 @@ use commands::mock_servers::{
     list_mock_servers, save_mock_server, start_mock_server, stop_mock_server,
 };
 use commands::onedrive::{
-    OnedriveProvider, begin_onedrive_login, get_onedrive_root, list_onedrive_accounts,
-    list_onedrive_folders, logout_onedrive, resolve_onedrive_share_link,
+    OnedriveProvider, begin_onedrive_login, create_onedrive_team_workspace, get_onedrive_root,
+    get_onedrive_team_catalog, list_onedrive_accounts, list_onedrive_folders, list_onedrive_teams,
+    logout_onedrive, resolve_onedrive_share_link,
 };
 use commands::open_external_url::open_external_url;
 use commands::preview_load_flow::preview_load_flow;
@@ -97,6 +98,7 @@ use commands::session_cookies::{
     SessionCookies, clear_session_cookies, delete_session_cookie, list_session_cookies,
 };
 use commands::tab_session::{load_tab_session, save_tab_session};
+use commands::team_workspaces::open_onedrive_team_workspace;
 use commands::tls_settings::{apply_saved_tls_settings, get_tls_settings, save_tls_settings};
 use commands::updates::{
     PendingUpdate, cancel_update_operation, check_for_update, download_update, get_update_settings,
@@ -454,6 +456,10 @@ pub fn run_with(extensions: Vec<Extension>) {
                 get_onedrive_root,
                 list_onedrive_folders,
                 resolve_onedrive_share_link,
+                list_onedrive_teams,
+                get_onedrive_team_catalog,
+                create_onedrive_team_workspace,
+                open_onedrive_team_workspace,
                 get_workspace_link,
                 link_workspace,
                 unlink_workspace,

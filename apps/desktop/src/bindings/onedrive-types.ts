@@ -21,3 +21,15 @@ export interface FolderPageDto {
   /** Link opaco da próxima página do Microsoft Graph. */
   nextLink: string | null
 }
+
+/** Time do Teams de que a conta participa. */
+export interface TeamDto {
+  id: string
+  name: string
+}
+
+/** Biblioteca do time; `folder` é a pasta `Alcy/` com os workspaces, `null` enquanto vazia. */
+export interface TeamCatalogDto {
+  driveId: string
+  folder: DriveFolderDto | null
+}

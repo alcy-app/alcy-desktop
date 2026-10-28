@@ -13,8 +13,9 @@ use crate::client::OnedriveClient;
 /// Renews the access token when it has less than 60 s left.
 const EXPIRY_MARGIN_SECS: u64 = 60;
 /// `offline_access` returns a refresh token; `Files.ReadWrite.All` reaches
-/// folders shared by other people and SharePoint libraries.
-pub(crate) const SCOPES: &str = "offline_access User.Read Files.ReadWrite.All";
+/// folders shared by other people and SharePoint libraries;
+/// `Team.ReadBasic.All` lists the teams behind the team catalog.
+pub(crate) const SCOPES: &str = "offline_access User.Read Files.ReadWrite.All Team.ReadBasic.All";
 const MAX_ERROR_DESCRIPTION_CHARS: usize = 300;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

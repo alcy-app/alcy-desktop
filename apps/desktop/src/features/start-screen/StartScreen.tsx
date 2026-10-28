@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import type { WorkspaceDto } from '../../bindings/create-workspace'
+import { FEATURE_FLAGS } from '../../shared/feature-flags'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { useOnedrive } from '../../shared/onedrive/use-onedrive'
 import { Button } from '../../shared/ui/Button'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { TitleBar } from '../../shared/ui/TitleBar'
 import { workspaceErrorMessageKey } from '../../shared/workspace-command-error'
+import { TeamWorkspaceDialog } from './TeamWorkspaceDialog'
 import { useStartScreenState } from './use-start-screen-state'
 import alcyIcon from '../../assets/alcy-icon.svg'
 import './start-screen.css'
@@ -15,6 +19,9 @@ interface StartScreenProps {
 export function StartScreen({ onWorkspaceReady }: StartScreenProps) {
   const { t } = useLanguage()
   const { recentWorkspaces, busy, error, create, openPicked, openRecent } = useStartScreenState(onWorkspaceReady)
+  const { accounts: onedriveAccounts } = useOnedrive()
+  const [teamDialogOpen, setTeamDialogOpen] = useState(false)
+  const teamWorkspacesAvailable = FEATURE_FLAGS.onedrive && onedriveAccounts.length > 0
 
   return (
     <div className="start-screen-shell">
@@ -45,6 +52,17 @@ export function StartScreen({ onWorkspaceReady }: StartScreenProps) {
             >
               {busy === 'opening' ? t('startScreen.opening') : t('startScreen.openButton')}
             </Button>
+            {teamWorkspacesAvailable && (
+              <Button
+                variant="ghost"
+                size="md"
+                className="start-screen-action"
+                onClick={() => setTeamDialogOpen(true)}
+                disabled={busy !== 'idle'}
+              >
+                {t('startScreen.teamButton')}
+              </Button>
+            )}
             <Button variant="ghost" size="md" className="start-screen-action" disabled aria-disabled="true">
               {t('startScreen.importButton')}
             </Button>
@@ -80,6 +98,9 @@ export function StartScreen({ onWorkspaceReady }: StartScreenProps) {
 
           <p className="start-screen-footer">{t('startScreen.footerNote')}</p>
         </div>
+        {teamDialogOpen && (
+          <TeamWorkspaceDialog onClose={() => setTeamDialogOpen(false)} onWorkspaceReady={onWorkspaceReady} />
+        )}
       </div>
     </div>
   )
