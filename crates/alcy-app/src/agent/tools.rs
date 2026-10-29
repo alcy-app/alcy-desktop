@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 
 use super::chat_model::ToolDefinition;
+mod resources;
 
 /// How much the user has to be involved before a tool runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,12 @@ const TOOLS: &[ToolSpec] = &[
         name: "list_open_tabs",
         class: ToolClass::Read,
         description: "List the request tabs open in the workbench, with their id, name, protocol, method, URL, whether they have unsaved changes and which one is active.",
-        schema: no_arguments,
+        schema: || {
+            object(
+                json!({"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}}),
+                &[],
+            )
+        },
     },
     ToolSpec {
         name: "get_request",
@@ -44,7 +50,12 @@ const TOOLS: &[ToolSpec] = &[
         name: "get_response",
         class: ToolClass::Read,
         description: "Read the last response shown in a tab (status, time, size, headers and the start of the body). Without tabId, uses the active tab.",
-        schema: tab_target,
+        schema: || {
+            object(
+                json!({"tabId":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}}),
+                &[],
+            )
+        },
     },
     ToolSpec {
         name: "search_collections",
@@ -56,7 +67,12 @@ const TOOLS: &[ToolSpec] = &[
         name: "list_environments",
         class: ToolClass::Read,
         description: "List environments, the active one and their variable names. Values of sensitive variables are never returned. Use {{name}} in requests to reference a variable.",
-        schema: no_arguments,
+        schema: || {
+            object(
+                json!({"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}}),
+                &[],
+            )
+        },
     },
     ToolSpec {
         name: "highlight_in_editor",
@@ -85,7 +101,7 @@ const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "new_request_tab",
         class: ToolClass::Edit,
-        description: "Open a new unsaved request tab (REST or GraphQL) with the given fields and make it active. Returns the tab id.",
+        description: "Open a new unsaved request tab (REST, GraphQL or gRPC) with the given fields and make it active. Returns the tab id.",
         schema: new_request_arguments,
     },
     ToolSpec {
@@ -97,7 +113,25 @@ const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "send_request",
         class: ToolClass::SideEffect,
-        description: "Send the request of a tab (the active one without tabId) and return the response summary. The user approves it first.",
+        description: "Send the request of a tab (the active one without tabId). HTTP returns a response summary; gRPC starts asynchronously, with progress and messages available through get_response. The user approves it first.",
+        schema: tab_target,
+    },
+    ToolSpec {
+        name: "cancel_request",
+        class: ToolClass::SideEffect,
+        description: "Cancel an HTTP, GraphQL or gRPC request in progress in a tab.",
+        schema: tab_target,
+    },
+    ToolSpec {
+        name: "send_grpc_message",
+        class: ToolClass::SideEffect,
+        description: "Send the tab's current grpc.message on an accepting client-streaming or bidirectional call. Edit grpc.message with update_request first.",
+        schema: tab_target,
+    },
+    ToolSpec {
+        name: "close_grpc_send",
+        class: ToolClass::SideEffect,
+        description: "Finish the request side of an accepting gRPC stream, allowing the server to complete its response. Read get_response later.",
         schema: tab_target,
     },
     ToolSpec {
@@ -136,6 +170,7 @@ const TOOLS: &[ToolSpec] = &[
 pub fn agent_tool_catalog() -> Vec<ToolDefinition> {
     TOOLS
         .iter()
+        .chain(resources::TOOLS)
         .map(|tool| ToolDefinition {
             name: tool.name.into(),
             description: tool.description.into(),
@@ -148,6 +183,7 @@ pub fn agent_tool_catalog() -> Vec<ToolDefinition> {
 pub fn agent_tool_class(name: &str) -> Option<ToolClass> {
     TOOLS
         .iter()
+        .chain(resources::TOOLS)
         .find(|tool| tool.name == name)
         .map(|tool| tool.class)
 }
@@ -159,10 +195,6 @@ fn object(properties: Value, required: &[&str]) -> Value {
         "required": required,
         "additionalProperties": false,
     })
-}
-
-fn no_arguments() -> Value {
-    object(json!({}), &[])
 }
 
 fn tab_target() -> Value {
@@ -290,16 +322,17 @@ fn request_fields() -> serde_json::Map<String, Value> {
         },
         "body": {
             "type": "object",
-            "description": "REST body. type none clears it; raw takes content and language; urlencoded takes fields.",
+            "description": "REST body. type none clears it; raw takes content and language; urlencoded/formData take fields. File attachments must already have been selected by the user in the editor.",
             "properties": {
-                "type": { "type": "string", "enum": ["none", "raw", "urlencoded"] },
+                "type": { "type": "string", "enum": ["none", "raw", "urlencoded", "formData", "binary"] },
+                "filePath": { "type": "string" },
                 "content": { "type": "string" },
                 "language": { "type": "string", "enum": ["json", "text", "xml", "html", "javascript"] },
                 "fields": {
                     "type": "array",
                     "items": object(
-                        json!({ "name": { "type": "string" }, "value": { "type": "string" } }),
-                        &["name", "value"],
+                        json!({ "name": { "type": "string" }, "value": { "type": "string" }, "kind": { "type": "string", "enum": ["text", "file"] }, "enabled": { "type": "boolean" }, "filePath": { "type": "string" } }),
+                        &["name"],
                     ),
                 },
             },
@@ -309,16 +342,26 @@ fn request_fields() -> serde_json::Map<String, Value> {
         "variables": { "type": "string", "description": "GraphQL variables as a JSON string (GraphQL only)." },
         "preRequestScript": { "type": "string", "description": SCRIPT_DESCRIPTION },
         "postResponseScript": { "type": "string", "description": SCRIPT_DESCRIPTION },
+        "routeParams": { "type": "array", "items": object(json!({"name":{"type":"string"},"value":{"type":"string"}}), &["name","value"]) },
+        "grpc": object(json!({
+            "service":{"type":"string"},"method":{"type":"string"},"message":{"type":"string","description":"Request message as JSON."},
+            "deadlineMs":{"type":["integer","null"],"minimum":1},
+            "schemaSource":{"type":"object","description":"Reuse the schema source already selected in the editor; defaults to server reflection."}
+        }), &[]),
         "authentication": {
             "type": "object",
             "description": "inherit uses the collection's; bearer takes token; basic takes username and password; customHeader takes name and value. Prefer {{variables}} over literal secrets.",
             "properties": {
-                "type": { "type": "string", "enum": ["inherit", "none", "bearer", "basic", "customHeader"] },
+                "type": { "type": "string", "enum": ["inherit", "none", "bearer", "basic", "digest", "customHeader", "oauth2ClientCredentials"] },
                 "token": { "type": "string" },
                 "username": { "type": "string" },
                 "password": { "type": "string" },
                 "name": { "type": "string" },
                 "value": { "type": "string" },
+                "clientId": { "type": "string" },
+                "clientSecret": { "type": "string" },
+                "tokenUrl": { "type": "string" },
+                "scope": { "type": "string" },
             },
             "required": ["type"],
         },
@@ -333,7 +376,7 @@ fn new_request_arguments() -> Value {
     let mut properties = request_fields();
     properties.insert(
         "protocol".into(),
-        json!({ "type": "string", "enum": ["rest", "graphql"] }),
+        json!({ "type": "string", "enum": ["rest", "graphql", "grpc"] }),
     );
     properties.insert("name".into(), json!({ "type": "string" }));
     object(Value::Object(properties), &["protocol"])
@@ -352,7 +395,7 @@ mod tests {
     #[test]
     fn every_tool_has_an_object_schema_and_a_unique_name() {
         let catalog = agent_tool_catalog();
-        assert_eq!(catalog.len(), TOOLS.len());
+        assert_eq!(catalog.len(), TOOLS.len() + resources::TOOLS.len());
         for (index, tool) in catalog.iter().enumerate() {
             assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
             assert!(
@@ -379,5 +422,32 @@ mod tests {
         );
         assert_eq!(agent_tool_class("close_tab"), Some(ToolClass::Edit));
         assert_eq!(agent_tool_class("rm_rf"), None);
+        for name in [
+            "run_flow",
+            "run_runner",
+            "create_value_monitor",
+            "delete_flow",
+            "start_mock_server",
+            "cancel_request",
+            "send_grpc_message",
+            "close_grpc_send",
+        ] {
+            assert_eq!(
+                agent_tool_class(name),
+                Some(ToolClass::SideEffect),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_tool_has_a_frontend_card_in_both_languages() {
+        let english = include_str!("../../../../apps/desktop/src/shared/i18n/locales/en.ts");
+        let portuguese = include_str!("../../../../apps/desktop/src/shared/i18n/locales/pt-BR.ts");
+        for tool in agent_tool_catalog() {
+            let key = format!("'agent.tool.{}'", tool.name);
+            assert!(english.contains(&key), "{}", tool.name);
+            assert!(portuguese.contains(&key), "{}", tool.name);
+        }
     }
 }

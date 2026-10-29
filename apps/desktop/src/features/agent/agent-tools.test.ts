@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { emptyRequestContent, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
 import type { ExecutionState } from '../request-workbench/request-workbench.types'
 import type { AgentHostTab, WorkbenchAgentHost } from './agent-host'
-import { AGENT_SECRET_MASK, runAgentTool, toolNeedsApproval } from './agent-tools'
+import { AGENT_SECRET_MASK, applyRequestPatch, runAgentTool, toolNeedsApproval } from './agent-tools'
 
 function restContent(patch: Partial<RequestContent> = {}): RequestContent {
   return { ...emptyRequestContent('rest'), ...patch }
@@ -60,6 +60,40 @@ function fakeHost(tabs: AgentHostTab[], overrides: Partial<WorkbenchAgentHost> =
 const parse = (content: string) => JSON.parse(content) as Record<string, unknown>
 
 describe('runAgentTool', () => {
+  it('edits gRPC payloads and supports digest and OAuth credentials without losing masked values', () => {
+    const grpc = emptyRequestContent('grpc')
+    expect(applyRequestPatch(grpc, { grpc: { service: 'users.Users', method: 'Get', message: '{"id":1}', deadlineMs: 5000 } }).grpc).toMatchObject({ service: 'users.Users', method: 'Get', message: '{"id":1}', deadlineMs: 5000 })
+    const rest = restContent({ authentication: { type: 'digest', username: 'user', password: 'stored' } })
+    expect(applyRequestPatch(rest, { authentication: { type: 'digest', password: AGENT_SECRET_MASK } }).authentication).toEqual(rest.authentication)
+    expect(applyRequestPatch(restContent(), { authentication: { type: 'oauth2ClientCredentials', clientId: 'client', clientSecret: '{{secret}}', tokenUrl: '{{base}}/token', scope: 'read' } }).authentication).toMatchObject({ type: 'oauth2ClientCredentials', clientSecret: '{{secret}}' })
+  })
+
+  it('reuses user-selected attachments but rejects arbitrary filesystem paths', () => {
+    const content = restContent({ body: { type: 'binary', filePath: '/chosen/body.bin' } })
+    expect(applyRequestPatch(content, { body: { type: 'binary', filePath: '/chosen/body.bin' } }).body).toEqual(content.body)
+    expect(() => applyRequestPatch(content, { body: { type: 'binary', filePath: '/elsewhere/private.bin' } })).toThrow('Select the file')
+    expect(applyRequestPatch(restContent(), { body: { type: 'formData', fields: [{ name: 'name', kind: 'text', value: 'User' }] } }).body).toEqual({ type: 'formData', fields: [{ name: 'name', kind: 'text', value: 'User', enabled: true }] })
+  })
+
+  it('controls accepting gRPC streams and rejects stream actions on other protocols', async () => {
+    const controlGrpcStream = vi.fn(async () => true)
+    const host = fakeHost([tab('grpc', emptyRequestContent('grpc'))], { controlGrpcStream, cancelRequest: vi.fn(async () => true) })
+    expect((await runAgentTool('send_grpc_message', {}, host, 'x')).isError).toBe(false)
+    expect(controlGrpcStream).toHaveBeenCalledWith('grpc', false)
+    expect((await runAgentTool('close_grpc_send', {}, host, 'x')).isError).toBe(false)
+    expect(controlGrpcStream).toHaveBeenCalledWith('grpc', true)
+    expect((await runAgentTool('cancel_request', {}, host, 'x')).isError).toBe(false)
+    expect((await runAgentTool('send_grpc_message', {}, fakeHost([tab('rest', restContent())]), 'x')).isError).toBe(true)
+  })
+
+  it('returns useful gRPC output with masked metadata', async () => {
+    const execution: ExecutionState = { status: 'success', result: { status: { code: 0, codeName: 'OK', message: '' }, durationMs: 12, sizeBytes: 10, messageCount: 1, body: { kind: 'inline', body: '{"id":1}' }, headers: [{ name: 'Authorization', value: 'private' }], trailers: [] } }
+    const host = fakeHost([tab('grpc', emptyRequestContent('grpc'), execution)])
+    const result = await runAgentTool('get_response', {}, host, 'x')
+    expect(result.content).not.toContain('private')
+    expect(parse(result.content)).toMatchObject({ grpcStatus: { codeName: 'OK' }, grpcMessages: 1, body: '{"id":1}' })
+  })
+
   it('masks secrets in requests but keeps variable references', async () => {
     const host = fakeHost([
       tab(

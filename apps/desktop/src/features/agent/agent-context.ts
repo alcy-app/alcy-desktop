@@ -3,7 +3,7 @@ import type { TreeNode } from '../request-workbench/collection-tree'
 import type { EditorSelection, EditorSlot } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
 
-export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response' | 'selection'
+export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response' | 'selection' | 'flow' | 'monitor' | 'runner' | 'mock'
 
 export interface AgentContextOption extends AgentContextInput {
   kind: AgentContextKind
@@ -63,7 +63,10 @@ export function agentContextOptions(host: WorkbenchAgentHost, query: string): Ag
       label: environment.name,
       summary: `Variables: ${environment.variables.map((variable) => variable.name).slice(0, 40).join(', ') || 'none'}`,
     }))
-  return [...responseOptions, ...tabOptions, ...requestOptions, ...environmentOptions]
+  const resourceOptions = (host.resources?.context() ?? [])
+    .filter((option) => matches(query, option.label, option.summary))
+    .filter((option, index, all) => all.slice(0, index).filter((previous) => previous.kind === option.kind).length < MAX_OPTIONS_PER_KIND) as AgentContextOption[]
+  return [...responseOptions, ...tabOptions, ...requestOptions, ...environmentOptions, ...resourceOptions]
 }
 
 /** The `@query` being typed right before the caret, if any. */

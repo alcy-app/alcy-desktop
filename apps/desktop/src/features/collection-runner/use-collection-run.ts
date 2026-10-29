@@ -14,7 +14,7 @@ import type { CollectionRunState, RunPlanEntry } from './collection-run-state'
 
 export interface StartRunParams {
   scopeName: string
-  /** Requisições selecionadas, na ordem de execução. */
+  /** Selected requests in execution order. */
   plan: RunPlanEntry[]
   options: CollectionRunOptionsDto
   dataFilePath: string | null
@@ -24,19 +24,18 @@ export interface StartRunParams {
 
 interface UseCollectionRunParams {
   rootPath: string
-  /** Grava o save pendente das coleções: o backend lê as requisições do disco. */
+  /** Flush collection edits before the backend reloads the requests from disk. */
   onBeforeRun: () => Promise<void>
   onEnvironmentChanges: (changes: EnvironmentChange[]) => void
-  /** Variáveis de coleção/pasta gravadas pelos scripts (ADR 0031). */
+  /** Collection/folder variables written by scripts (ADR 0031). */
   onScopedChanges?: (changes: ScopedVariableChange[]) => void
   onRunFinished: () => void
-  /** Cada requisição terminada, quando os logs não estão desativados. */
+  /** Every finished request, unless logging is disabled. */
   onStepLogged?: (step: RunStepDto) => void
 }
 
-/** Estado de um run do runner de coleções. Os eventos do canal são
- * agrupados por frame antes de virar estado: um run longo emite milhares
- * de eventos e cada um re-renderizaria a lista inteira. */
+/** Batch channel events per animation frame so long runs do not rerender
+ * the entire result list for every individual event. */
 export function useCollectionRun({
   rootPath,
   onBeforeRun,
@@ -48,6 +47,7 @@ export function useCollectionRun({
   const [state, setState] = useState<CollectionRunState>(idleRunState)
   const [startError, setStartError] = useState<ExecuteCollectionRunError | null>(null)
   const runIdRef = useRef<string | null>(null)
+  const runningRef = useRef(false)
   const pendingRef = useRef<CollectionRunEventDto[]>([])
   const frameRef = useRef<number | null>(null)
   const callbacksRef = useRef({ onEnvironmentChanges, onScopedChanges, onRunFinished, onStepLogged })
@@ -69,16 +69,30 @@ export function useCollectionRun({
     [],
   )
 
+  useEffect(() => () => {
+    if (runningRef.current && runIdRef.current) void cancelCollectionRun(runIdRef.current)
+    runIdRef.current = null
+    runningRef.current = false
+  }, [rootPath])
+
   const start = useCallback(
     async ({ scopeName, plan, options, dataFilePath, environmentVariables, environmentName }: StartRunParams) => {
+      if (runningRef.current) throw new Error('This runner is already running.')
       const runId = crypto.randomUUID()
       runIdRef.current = runId
+      runningRef.current = true
       pendingRef.current = []
       setStartError(null)
       setState(startedRunState(runId, Date.now(), plan))
-      await onBeforeRun()
+      try { await onBeforeRun() } catch (error) {
+        runningRef.current = false
+        setState(idleRunState)
+        setStartError({ kind: 'storage', message: error instanceof Error ? error.message : String(error) })
+        throw error
+      }
+      if (runIdRef.current !== runId) throw new Error('The runner was closed before it started.')
 
-      const result = await executeCollectionRun(
+      const completion = executeCollectionRun(
         {
           runId,
           rootPath,
@@ -96,6 +110,7 @@ export function useCollectionRun({
           }
           pendingRef.current.push(event)
           if (event.type === 'runFinished') {
+            runningRef.current = false
             if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
             flush()
             if (event.environmentChanges.length > 0) {
@@ -108,11 +123,14 @@ export function useCollectionRun({
           if (frameRef.current === null) frameRef.current = requestAnimationFrame(flush)
         },
       )
-      if (!result.ok && runIdRef.current === runId) {
-        // Erro antes do run começar: nenhum evento chegou.
-        setStartError(result.error)
-        setState(idleRunState)
-      }
+      void completion.then((result) => {
+        if (!result.ok && runIdRef.current === runId) {
+          runningRef.current = false
+          setStartError(result.error)
+          setState(idleRunState)
+        }
+      })
+      return runId
     },
     [rootPath, onBeforeRun, flush],
   )

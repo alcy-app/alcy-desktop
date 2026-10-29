@@ -1,14 +1,19 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import type { AgentHostTab, WorkbenchAgentHost } from '../agent/agent-host'
 import type { useEnvironmentsState } from '../environments/use-environments-state'
-import { findNode, findRequest, type RequestContent } from './collection-tree'
+import { findNode, findRequest, insertFolder, insertRequest, updateRequestContent, type RequestContent } from './collection-tree'
 import { editorHighlighter, revealEditor, type EditorField, type EditorHighlighter, type EditorSlot } from './editor-bridge'
 import type { useCollectionsState } from './use-collections-state'
+import { requestToDto } from './use-collections-state'
+import type { useFlowsState } from '../flows/use-flows-state'
 import type { useOpenTabs } from './use-open-tabs'
 import { contentOf, isTabDirty, type useWorkbenchState } from './use-workbench-state'
 import type { RequestTabId, WorkbenchTab } from './request-workbench.types'
+import type { AgentResourceHost } from '../agent/use-agent-resources'
 
 interface AgentHostSources {
+  resources?: AgentResourceHost
+  flows?: ReturnType<typeof useFlowsState>
   workbench: ReturnType<typeof useWorkbenchState>
   openTabs: ReturnType<typeof useOpenTabs>
   collections: ReturnType<typeof useCollectionsState>
@@ -75,6 +80,7 @@ function toHostTab(tab: WorkbenchTab): AgentHostTab {
     isFlowNode: tab.flowNodeRef !== undefined,
     content: contentOf(tab),
     execution: tab.execution,
+    grpcStream: tab.grpcStream,
   }
 }
 
@@ -107,8 +113,9 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
     }
 
     const host: WorkbenchAgentHost = {
+      get resources() { return latest.current.resources },
       tabs: () => latest.current.workbench.tabs.map(toHostTab),
-      activeTabId: () => latest.current.workbench.activeTabId,
+      activeTabId: () => latest.current.openTabs.activeOpenTab?.id ?? latest.current.workbench.activeTabId,
       collections: () => latest.current.collections.collections,
       environments: () =>
         latest.current.environments.environments.map((environment) => ({
@@ -129,7 +136,7 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         return tab.id
       },
       async selectTab(tabId) {
-        if (!findTab(tabId)) return false
+        if (!latest.current.openTabs.descriptors.some((tab) => tab.id === tabId)) return false
         await show(tabId)
         return true
       },
@@ -143,7 +150,7 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         return tab.id
       },
       async closeTab(tabId) {
-        if (!findTab(tabId)) return false
+        if (!latest.current.openTabs.descriptors.some((tab) => tab.id === tabId)) return false
         latest.current.openTabs.closeOpenTab(tabId)
         await afterRender()
         return true
@@ -178,18 +185,46 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
       async send(tabId) {
         if (!findTab(tabId)) return null
         await show(tabId)
-        await latest.current.sendActive()
+        const completion = latest.current.sendActive()
+        if (findTab(tabId)?.protocol === 'grpc') void completion.catch(() => undefined)
+        else await completion
         await afterRender()
         return findTab(tabId)?.execution ?? null
+      },
+      async cancelRequest(tabId) {
+        if (findTab(tabId)?.execution.status !== 'loading') return false
+        await show(tabId)
+        latest.current.workbench.cancel()
+        await afterRender()
+        return true
+      },
+      async controlGrpcStream(tabId, close) {
+        if (!findTab(tabId)?.grpcStream?.accepting) return false
+        await show(tabId)
+        await latest.current.workbench.controlGrpcStream(close)
+        await afterRender()
+        return !findTab(tabId)?.grpcStream?.error
       },
       async saveTab(tabId, target) {
         const { workbench, collections } = latest.current
         const tab = findTab(tabId)
         if (!tab) return { ok: false, reason: 'notFound' }
-        if (tab.flowNodeRef) return { ok: false, reason: 'flowNode' }
+        if (tab.flowNodeRef) {
+          const ref = tab.flowNodeRef
+          const node = latest.current.flows?.flows.find((flow) => flow.id === ref.flowId)?.nodes.find((node) => node.id === ref.nodeId)
+          if (node?.kind !== 'inlineRequest' || !latest.current.resources) return { ok: false, reason: 'flowNode' }
+          const content = workbench.contentOfTab(tabId)
+          const result = await latest.current.resources.call('update_flow', { flowId: ref.flowId, upsertNodes: [{ id: ref.nodeId, request: requestToDto({ ...node.request, content }) }] })
+          if (result.isError) throw new Error(result.content)
+          latest.current.workbench.markContentSaved(tabId, content)
+          await afterRender()
+          return { ok: true, requestId: node.request.id, name: node.request.name }
+        }
         if (tab.requestId) {
           if (isTabDirty(tab)) {
-            collections.updateRequestContent(tab.requestId, workbench.contentOfTab(tabId))
+            const id = tab.requestId
+            const content = workbench.contentOfTab(tabId)
+            await collections.commitCollections((current) => updateRequestContent(current, id, content))
             workbench.markContentSaved(tabId)
             await afterRender()
           }
@@ -197,18 +232,38 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         }
         if (!target) return { ok: false, reason: 'needsParent' }
         if (!findNode(collections.collections, target.parentId)) return { ok: false, reason: 'unknownParent' }
-        const saved = collections.addRequest(target.parentId, target.name, tab.protocol, workbench.contentOfTab(tabId))
+        const saved = { id: crypto.randomUUID(), name: target.name, protocol: tab.protocol, content: workbench.contentOfTab(tabId) }
+        await collections.commitCollections((current) => insertRequest(current, target.parentId, saved))
         workbench.markSaved(tabId, saved.id, saved.name)
         await afterRender()
         return { ok: true, requestId: saved.id, name: saved.name }
       },
-      createCollection: (name) => latest.current.collections.addCollection(name),
-      createFolder(parentId, name) {
-        if (!findNode(latest.current.collections.collections, parentId)) return null
-        return latest.current.collections.addFolder(parentId, name)
+      async createCollection(name) {
+        const id = crypto.randomUUID()
+        await latest.current.collections.commitCollections((current) => insertFolder(current, null, { id, name, folders: [], requests: [], authentication: { type: 'none' }, variables: [] }))
+        await afterRender()
+        return id
       },
-      setVariable: (environmentId, name, value, sensitive) => latest.current.environments.upsertVariable(environmentId, name, value, sensitive),
-      setActiveEnvironment: (environmentId) => latest.current.environments.setActiveEnvironmentId(environmentId),
+      async createFolder(parentId, name) {
+        if (!findNode(latest.current.collections.collections, parentId)) return null
+        const id = crypto.randomUUID()
+        await latest.current.collections.commitCollections((current) => insertFolder(current, parentId, { id, name, folders: [], requests: [], authentication: { type: 'inherit' }, variables: [] }))
+        await afterRender()
+        return id
+      },
+      async setVariable(environmentId, name, value, sensitive) {
+        await latest.current.environments.commitEnvironments((current) => ({ ...current, environments: current.environments.map((environment) => {
+          if (environment.id !== environmentId) return environment
+          const existing = environment.variables.find((variable) => variable.name === name)
+          const variable = { id: existing?.id ?? crypto.randomUUID(), name, value, sensitive: sensitive ?? existing?.sensitive ?? false }
+          return { ...environment, variables: existing ? environment.variables.map((row) => row.name === name ? variable : row) : [...environment.variables, variable] }
+        }) }))
+        await afterRender()
+      },
+      async setActiveEnvironment(activeEnvironmentId) {
+        await latest.current.environments.commitEnvironments((current) => ({ ...current, activeEnvironmentId }))
+        await afterRender()
+      },
     }
     return host
   }, [])

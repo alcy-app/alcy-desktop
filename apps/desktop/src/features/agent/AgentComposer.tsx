@@ -19,16 +19,16 @@ interface AgentComposerProps {
   onStop: () => void
 }
 
-const CATEGORY_KINDS = ['tab', 'request', 'environment'] as const
+const CATEGORY_KINDS = ['tab', 'request', 'environment', 'flow', 'monitor', 'runner', 'mock'] as const
 type CategoryKind = (typeof CATEGORY_KINDS)[number]
 type ContextMenuEntry = { type: 'context'; option: AgentContextOption } | { type: 'category'; kind: CategoryKind; disabled: boolean }
-const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon }
+const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon, flow: FolderIcon, monitor: SelectionIcon, runner: SendIcon, mock: GlobeIcon }
 const SELECTION_PREVIEW_CHARS = 48
 
 function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
   return a !== null && b !== null && a.slot === b.slot && a.text === b.text
 }
-const CATEGORY_ICONS = { tab: PanelRightIcon, request: FolderIcon, environment: VariablesIcon }
+const CATEGORY_ICONS = CONTEXT_ICONS
 
 /** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items. */
 export function AgentComposer({ host, running, disabled, text, onTextChange: setText, textareaRef, footer, onSend, onStop }: AgentComposerProps) {

@@ -20,6 +20,16 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe('useEnvironmentsState', () => {
+  it('keeps autosaving manual edits after an explicit save with unchanged values', async () => {
+    const { result } = renderHook(() => useEnvironmentsState('/workspace'), { wrapper })
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+    await act(async () => result.current.commitEnvironments((current) => current))
+    expect(saveEnvironments).toHaveBeenCalledTimes(1)
+    act(() => result.current.upsertVariable('dev', 'baseUrl', 'https://changed.test'))
+    await waitFor(() => expect(saveEnvironments).toHaveBeenCalledTimes(2))
+    expect(saveEnvironments.mock.lastCall?.[1].environments[0].variables).toContainEqual({ name: 'baseUrl', value: 'https://changed.test', sensitive: false })
+  })
+
   beforeEach(() => {
     listEnvironments.mockReset().mockResolvedValue({
       ok: true,
@@ -32,12 +42,12 @@ describe('useEnvironmentsState', () => {
     saveEnvironments.mockReset().mockResolvedValue({ ok: true })
   })
 
-  it('salva o ambiente sem as linhas de variável ainda sem nome', async () => {
+  it('saves the environment without unnamed variable drafts', async () => {
     const { result } = renderHook(() => useEnvironmentsState('/workspace'), { wrapper })
     await waitFor(() => expect(result.current.activeEnvironment?.variables).toHaveLength(1))
 
     act(() => result.current.addVariable('dev'))
-    // A linha em branco continua na tabela para ser preenchida.
+    // The blank row remains available in the table for editing.
     expect(result.current.activeEnvironment?.variables).toHaveLength(2)
 
     await waitFor(() => expect(saveEnvironments).toHaveBeenCalled())
@@ -46,7 +56,7 @@ describe('useEnvironmentsState', () => {
     ])
   })
 
-  it('duplica um ambiente logo abaixo do original, com ids novos, e o ativa', async () => {
+  it('duplicates an environment below the original with new ids and selects it', async () => {
     listEnvironments.mockResolvedValue({
       ok: true,
       value: {
@@ -81,7 +91,7 @@ describe('useEnvironmentsState', () => {
     expect(copy.variables.map((variable) => variable.id)).not.toEqual(original.variables.map((variable) => variable.id))
     expect(result.current.activeEnvironmentId).toBe(copy.id)
 
-    // Editar a cópia não altera o original.
+    // Editing the copy does not change the original.
     act(() => result.current.updateVariable(copy.id, copy.variables[0].id, { value: 'https://copy.test' }))
     expect(result.current.environments[0].variables[0].value).toBe('https://api.test')
 
@@ -93,7 +103,7 @@ describe('useEnvironmentsState', () => {
     ])
   })
 
-  it('não salva por cima de um arquivo que não conseguiu ler', async () => {
+  it('does not overwrite a file that could not be read', async () => {
     listEnvironments.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'arquivo corrompido' } })
     const { result } = renderHook(() => useEnvironmentsState('/workspace'), { wrapper })
     await waitFor(() => expect(result.current.loadError).toBe('arquivo corrompido'))

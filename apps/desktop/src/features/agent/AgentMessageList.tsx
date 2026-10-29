@@ -6,10 +6,12 @@ import { IconButton } from '../../shared/ui/IconButton'
 import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, Spinner } from '../../shared/ui/icons'
 import { MarkdownView } from '../notifications/MarkdownView'
 import type { AgentChatItem } from './use-agent-session'
+import { RESOURCE_TOOL_NAMES } from './agent-resource-tools'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
 const KNOWN_TOOLS = new Set([
+  ...RESOURCE_TOOL_NAMES,
   'list_open_tabs',
   'get_request',
   'get_response',
@@ -20,6 +22,9 @@ const KNOWN_TOOLS = new Set([
   'new_request_tab',
   'update_request',
   'send_request',
+  'cancel_request',
+  'send_grpc_message',
+  'close_grpc_send',
   'save_request',
   'create_collection',
   'create_folder',

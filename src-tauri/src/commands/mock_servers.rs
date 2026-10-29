@@ -100,6 +100,11 @@ pub struct SaveMockServerInput {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ValidateMockServerInput {
+    pub server: MockServerDto,
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeleteMockServerInput {
     pub root_path: String,
     pub server_id: String,
@@ -115,11 +120,11 @@ pub struct MockCallsInput {
 #[derive(Debug, Serialize, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum MockServersError {
-    #[error("configuração inválida: {message}")]
+    #[error("invalid configuration: {message}")]
     Invalid { message: String },
-    #[error("falha no armazenamento: {message}")]
+    #[error("storage failure: {message}")]
     Storage { message: String },
-    #[error("mock server não encontrado")]
+    #[error("mock server not found")]
     NotFound,
 }
 impl From<StorageError> for MockServersError {
@@ -166,6 +171,12 @@ pub async fn get_mock_server(input: GetMockServerInput) -> Result<MockServerDto,
     .await
 }
 static SAVES: OrderedSaves = OrderedSaves::new();
+/// Validate an editor draft through the same domain conversion as persistence, without saving.
+#[tauri::command]
+pub async fn validate_mock_server(input: ValidateMockServerInput) -> Result<(), MockServersError> {
+    run(move || server_from_dto(input.server).map(|_| ())).await
+}
+
 #[tauri::command]
 pub async fn save_mock_server(
     input: SaveMockServerInput,
@@ -177,7 +188,7 @@ pub async fn save_mock_server(
         .running_port(&server.id)
         .is_some_and(|port| port != server.port)
     {
-        return Err(invalid("pare o servidor antes de alterar a porta"));
+        return Err(invalid("stop the server before changing its port"));
     }
     let saved = server.clone();
     run(move || {
@@ -346,10 +357,10 @@ fn condition_to_dto(value: MockCondition) -> MockConditionDto {
 }
 pub(crate) fn server_from_dto(value: MockServerDto) -> Result<MockServer, MockServersError> {
     if value.name.trim().is_empty() {
-        return Err(invalid("nome vazio"));
+        return Err(invalid("empty name"));
     }
     if value.port == 0 {
-        return Err(invalid("porta inválida"));
+        return Err(invalid("invalid port"));
     }
     Ok(MockServer {
         id: value.id,
@@ -365,7 +376,7 @@ pub(crate) fn server_from_dto(value: MockServerDto) -> Result<MockServer, MockSe
 }
 fn route_from_dto(value: MockRouteDto) -> Result<MockRoute, MockServersError> {
     if !value.path.starts_with('/') {
-        return Err(invalid("caminho da rota deve iniciar com /"));
+        return Err(invalid("route paths must start with /"));
     }
     Ok(MockRoute {
         id: value.id,
@@ -386,7 +397,7 @@ fn response_from_dto(value: MockResponseDto) -> Result<MockResponse, MockServers
         || value.delay_ms > 60_000
         || value.body.len() > 1024 * 1024
     {
-        return Err(invalid("resposta inválida"));
+        return Err(invalid("invalid response"));
     }
     Ok(MockResponse {
         id: value.id,
@@ -408,7 +419,7 @@ fn group_from_dto(value: MockConditionGroupDto) -> Result<MockConditionGroup, Mo
         operator: match value.operator.as_str() {
             "all" => MockConditionOperator::All,
             "any" => MockConditionOperator::Any,
-            _ => return Err(invalid("grupo inválido")),
+            _ => return Err(invalid("invalid group")),
         },
         conditions: value
             .conditions
@@ -447,7 +458,7 @@ fn method_from(value: &str) -> Result<HttpMethod, MockServersError> {
         "DELETE" => Ok(HttpMethod::Delete),
         "HEAD" => Ok(HttpMethod::Head),
         "OPTIONS" => Ok(HttpMethod::Options),
-        _ => Err(invalid("método inválido")),
+        _ => Err(invalid("invalid method")),
     }
 }
 fn source_to(value: MockConditionSource) -> &'static str {
@@ -466,7 +477,7 @@ fn source_from(value: &str) -> Result<MockConditionSource, MockServersError> {
         "header" => Ok(MockConditionSource::Header),
         "bodyText" => Ok(MockConditionSource::BodyText),
         "jsonPointer" => Ok(MockConditionSource::JsonPointer),
-        _ => Err(invalid("origem inválida")),
+        _ => Err(invalid("invalid source")),
     }
 }
 fn match_to(value: MockMatchOperator) -> &'static str {
@@ -485,6 +496,68 @@ fn match_from(value: &str) -> Result<MockMatchOperator, MockServersError> {
         "contains" => Ok(MockMatchOperator::Contains),
         "exists" => Ok(MockMatchOperator::Exists),
         "notExists" => Ok(MockMatchOperator::NotExists),
-        _ => Err(invalid("operador inválido")),
+        _ => Err(invalid("invalid operator")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server() -> MockServerDto {
+        MockServerDto {
+            id: "mock".into(),
+            name: "Example".into(),
+            port: 3001,
+            cors_enabled: true,
+            routes: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn validates_a_draft_without_a_workspace_or_runtime() {
+        assert!(
+            validate_mock_server(ValidateMockServerInput { server: server() })
+                .await
+                .is_ok()
+        );
+        let mut draft = server();
+        draft.port = 0;
+        assert!(matches!(
+            validate_mock_server(ValidateMockServerInput { server: draft }).await,
+            Err(MockServersError::Invalid { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_nested_response_conditions_before_publishing_a_draft() {
+        let draft = MockServerDto {
+            routes: vec![MockRouteDto {
+                id: "route".into(),
+                name: "Users".into(),
+                enabled: true,
+                method: "GET".into(),
+                path: "/users".into(),
+                alternatives: vec![],
+                default_response: MockResponseDto {
+                    id: "response".into(),
+                    name: "OK".into(),
+                    enabled: true,
+                    status: 200,
+                    headers: vec![],
+                    body: "{}".into(),
+                    delay_ms: 0,
+                    condition: Some(MockConditionGroupDto {
+                        operator: "invalid".into(),
+                        conditions: vec![],
+                    }),
+                },
+            }],
+            ..server()
+        };
+        assert!(matches!(
+            validate_mock_server(ValidateMockServerInput { server: draft }).await,
+            Err(MockServersError::Invalid { .. })
+        ));
     }
 }

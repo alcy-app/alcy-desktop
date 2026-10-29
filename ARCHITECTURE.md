@@ -300,6 +300,32 @@ applies edits to open tabs with a revert, and masks secrets before any value
 reaches the model. Every agent front end goes through the same bridge, so
 approval and masking hold for all of them.
 
+The tool catalog also exposes flows, value monitors, collection runners and
+loopback mock servers, together with collection and environment management.
+A workbench-owned editor bridge registers typed controllers for mounted
+canvases, runners and mock editors. Agent actions therefore use current
+drafts and the same execution controls as the interface. Runner settings
+remain session-only; no additional persisted resource format is introduced.
+Flow graph edits merge nodes and edges by identity, while explicit node
+renaming reuses reference rewriting and preserves linked request drafts.
+
+Explicit resource writes cancel pending debounced saves, await native
+validation/persistence and then publish their state. Concurrent manual
+edits win; an outdated approval or save returns a recoverable conflict.
+Mock drafts are validated through the existing native DTO conversion before
+being shown in the editor. Persisted mutations and executions keep the
+existing approval classes and automatic-approval option. Human forms are
+always completed by the user, and disabled features remain unavailable.
+
+Flow and runner execution tools return identifiers and starting states;
+progress and output are queried separately. Standard and load flow sessions
+survive canvas unmounts while their tab remains open, and closing a running
+tab cancels its execution. Structured pages and bounded native output
+inspection keep tool JSON below the transcript limit. Credential fields,
+including inline requests and serialized load configurations, are masked;
+partial updates restore masks from matching existing identities. Truncated
+values and masks without an original cannot be written back.
+
 The workbench editors (request body, GraphQL query and variables, scripts and
 the response body) register in a small editor bridge: the agent highlights
 text through each editor's search bar, and the latest selection goes with the

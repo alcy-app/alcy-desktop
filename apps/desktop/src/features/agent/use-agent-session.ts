@@ -77,7 +77,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   const [title, setTitle] = useState<string | null>(null)
   const runIdRef = useRef<string | null>(null)
   const approvalsRef = useRef(new Map<string, (approved: boolean) => void>())
-  const revertsRef = useRef(new Map<string, () => void>())
+  const revertsRef = useRef(new Map<string, () => void | boolean>())
   // Tools read the latest host and default name, not those of the render that started the turn.
   const hostRef = useRef(host)
   const defaultNameRef = useRef(defaultRequestName)
@@ -101,6 +101,8 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     async (event: Extract<AgentEventDto, { type: 'toolCallRequested' }>) => {
       const gated = event.class === 'sideEffect' || toolNeedsApproval(event.name, event.input, hostRef.current)
       const needsApproval = gated && !autoApproveRef.current
+      let fingerprint: string | undefined
+      try { if (needsApproval) fingerprint = hostRef.current.resources?.fingerprint(event.name, event.input) } catch { /* Invalid targets are reported by the executor. */ }
       setItems((current) => [
         ...current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item)),
         {
@@ -123,6 +125,15 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
           return
         }
         updateTool(event.callId, { state: 'running' })
+      }
+      if (fingerprint !== undefined) {
+        let current: string | undefined
+        try { current = hostRef.current.resources?.fingerprint(event.name, event.input) } catch { current = undefined }
+        if (current !== fingerprint) {
+          updateTool(event.callId, { state: 'failed' })
+          await submitAgentToolResult(event.waitId, 'The resource changed while awaiting approval. Read it again and propose an updated action.', true)
+          return
+        }
       }
       const outcome = await runAgentTool(event.name, event.input, hostRef.current, defaultNameRef.current)
       if (outcome.revert) revertsRef.current.set(event.callId, outcome.revert)
@@ -196,6 +207,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     const runId = runIdRef.current
     if (runId === null) return
     declinePendingApprovals()
+    hostRef.current.resources?.cancelReads?.()
     void cancelAgentTurn(runId)
   }, [declinePendingApprovals])
 
@@ -216,7 +228,11 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     (callId: string) => {
       const undo = revertsRef.current.get(callId)
       if (!undo) return
-      undo()
+      if (undo() === false) {
+        updateTool(callId, { canRevert: false })
+        revertsRef.current.delete(callId)
+        return
+      }
       revertsRef.current.delete(callId)
       updateTool(callId, { state: 'reverted', canRevert: false })
     },
@@ -298,6 +314,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     () => () => {
       const runId = runIdRef.current
       for (const resolve of approvalsRef.current.values()) resolve(false)
+      hostRef.current.resources?.cancelReads?.()
       if (runId !== null) void cancelAgentTurn(runId)
     },
     [rootPath],

@@ -25,6 +25,7 @@ import type { EnvironmentDto } from '../../bindings/list-environments'
 import { registerBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { pickExportFile } from '../../bindings/pick-export-file'
 import { saveCollections } from '../../bindings/save-collections'
+import { useCommittedState } from '../../shared/use-committed-state'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { useToast } from '../../shared/ui/use-toast'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
@@ -298,6 +299,23 @@ export function useCollectionsState(
       unregisterBeforeExit()
     }
   }, [workspaceRootPath, flushPendingSave])
+
+  const commitCollections = useCommittedState({
+    scope: workspaceRootPath,
+    value: collections, ready: loaded, error: loadError,
+    cancelPending: () => {
+      if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+      pendingSaveRef.current = null
+    },
+    persist: async (next) => {
+      const result = await saveCollections(workspaceRootPath, next.map(folderDtoFromNode))
+      if (!result.ok) throw new Error(result.error.message)
+      onSaved?.()
+    },
+    apply: (next) => { skipNextSaveRef.current = true; setCollections([...next]) },
+    restorePending: () => setCollections((current) => [...current]),
+  })
 
   const expand = useCallback((id: string) => {
     setExpandedIds((current) => new Set(current).add(id))
@@ -652,6 +670,7 @@ export function useCollectionsState(
   )
 
   return {
+    commitCollections,
     collections,
     loaded,
     loadError,

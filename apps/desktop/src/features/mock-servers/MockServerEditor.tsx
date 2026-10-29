@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useAgentResourceController, type AgentResourceBridge } from '../agent/agent-resource-bridge'
 import {
   clearMockCalls, deleteMockServer, getMockServer, listMockCalls, listMockServers,
   saveMockServer, startMockServer, stopMockServer,
@@ -30,15 +31,15 @@ type ResponseSection = 'body' | 'headers' | 'rules'
 type RulesMode = 'visual' | 'json'
 type Translate = (key: TranslationKey, params?: TranslationParams) => string
 
-/** Mock avulso de um bloco "Ligar mock" (spec 0121): vem do flow e "Salvar"
- * grava de volta no bloco. `server` é `null` quando o bloco não existe mais.
- * `onSave` devolve `false` quando não conseguiu gravar. */
+/** Inline mock from a flow's Start mock block (spec 0121). Saving writes back to the block.
+ * A null server means the block was removed; onSave returns false when saving fails. */
 export interface InlineMockServer {
   server: MockServerDto | null
   onSave: (server: MockServerDto) => boolean
 }
 
 interface MockServerEditorProps {
+  agentBridge?: AgentResourceBridge
   rootPath: string
   serverId: string
   active?: boolean
@@ -47,8 +48,7 @@ interface MockServerEditorProps {
   inline?: InlineMockServer
 }
 
-/** O que o backend rejeitaria ao salvar o flow — conferido antes de gravar o
- * mock avulso no bloco, já que o erro do flow só apareceria depois. */
+/** Check inline mock errors before updating its block, rather than waiting for the flow save. */
 function inlineMockError(server: MockServerDto, t: Translate): string | null {
   if (!server.name.trim()) return t('mockServers.error.nameRequired')
   if (!Number.isInteger(server.port) || server.port < 1 || server.port > 65535) return t('mockServers.error.invalidPort')
@@ -56,16 +56,19 @@ function inlineMockError(server: MockServerDto, t: Translate): string | null {
   return null
 }
 
-export function MockServerEditor({ rootPath, serverId, active = true, onTabChange, onDeleted, inline }: MockServerEditorProps) {
+export function MockServerEditor({ agentBridge, rootPath, serverId, active = true, onTabChange, onDeleted, inline }: MockServerEditorProps) {
   const { t } = useLanguage()
+  const changeOrigin = useId()
   const isInline = inline !== undefined
   const [server, setServer] = useState<MockServerDto | null>(inline?.server ?? null)
+  const latestServer = useRef(server)
+  useLayoutEffect(() => { latestServer.current = server }, [server])
   const [summary, setSummary] = useState<MockServerSummaryDto | null>(null)
   const [calls, setCalls] = useState<MockCallLogDto[]>([])
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  // Traduzidos na renderização: incluir `t` no efeito de carga recarregaria o servidor (e descartaria edições) ao trocar de idioma.
+  // Translate during rendering; including t in the load effect would discard drafts on language changes.
   const [loadError, setLoadError] = useState<MockServersError | null>(null)
   const [section, setSection] = useState<ServerSection>('routes')
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(inline?.server?.routes[0]?.id ?? null)
@@ -101,12 +104,27 @@ export function MockServerEditor({ rootPath, serverId, active = true, onTabChang
     onTabChange(serverId, { dirty: true })
   }
 
+  useEffect(() => {
+    if (isInline) return
+    let active = true
+    const refresh = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail?.origin === changeOrigin) return
+      void Promise.all([listMockServers(rootPath), listMockCalls(serverId)]).then(([servers, entries]) => {
+        if (!active) return
+        if (servers.ok) setSummary(servers.value.servers.find((item) => item.id === serverId) ?? null)
+        if (entries.ok) setCalls(entries.value)
+      })
+    }
+    window.addEventListener(MOCK_SERVERS_CHANGED_EVENT, refresh)
+    return () => { active = false; window.removeEventListener(MOCK_SERVERS_CHANGED_EVENT, refresh) }
+  }, [changeOrigin, isInline, rootPath, serverId])
+
   const save = useCallback(async () => {
-    if (!server || busy || Object.keys(invalidRules).length > 0) return
+    if (!server || busy || Object.keys(invalidRules).length > 0) throw new Error('The mock cannot be saved in its current state.')
     if (inline) {
       const error = inlineMockError(server, t)
-      if (error) { setMessage(error); return }
-      if (!inline.onSave(server)) { setMessage(t('mockServers.editor.inlineBlockMissing')); return }
+      if (error) { setMessage(error); throw new Error(error) }
+      if (!inline.onSave(server)) throw new Error(t('mockServers.editor.inlineBlockMissing'))
       setDirty(false)
       setMessage(t('mockServers.editor.savedToFlow'))
       onTabChange(serverId, { label: server.name, dirty: false })
@@ -115,18 +133,28 @@ export function MockServerEditor({ rootPath, serverId, active = true, onTabChang
     setBusy(true)
     const result = await saveMockServer(rootPath, server)
     setBusy(false)
-    if (!result.ok) { setMessage(mockErrorMessage(result.error, t)); return }
+    if (!result.ok) { const error = mockErrorMessage(result.error, t); setMessage(error); throw new Error(error) }
+    if (JSON.stringify(latestServer.current) !== JSON.stringify(server)) throw new Error('The mock changed while saving. Its newer draft is still unsaved.')
     setDirty(false)
     setMessage(t('mockServers.editor.saved'))
     onTabChange(serverId, { label: server.name, dirty: false })
-    window.dispatchEvent(new Event(MOCK_SERVERS_CHANGED_EVENT))
-  }, [busy, inline, invalidRules, onTabChange, rootPath, server, serverId, t])
+    window.dispatchEvent(new CustomEvent(MOCK_SERVERS_CHANGED_EVENT, { detail: { origin: changeOrigin } }))
+  }, [busy, changeOrigin, inline, invalidRules, onTabChange, rootPath, server, serverId, t])
+
+  useAgentResourceController(agentBridge, 'mock', serverId, {
+    read: () => ({ server, dirty, busy }),
+    replace: (next) => {
+      if (busy || Object.keys(invalidRules).length > 0) throw new Error('The mock editor has pending work or invalid rule drafts.')
+      update(() => next)
+    },
+    save,
+  })
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (active && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && dirty) {
         event.preventDefault()
-        void save()
+        void save().catch(() => undefined)
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -160,12 +188,12 @@ export function MockServerEditor({ rootPath, serverId, active = true, onTabChang
     if (!result.ok) { setMessage(mockErrorMessage(result.error, t)); return }
     setSummary({ id: server.id, name: server.name, port: server.port, routesCount: server.routes.length, running: !running })
     setMessage(running ? t('mockServers.editor.serverStopped') : t('mockServers.editor.serverStarted'))
-    window.dispatchEvent(new Event(MOCK_SERVERS_CHANGED_EVENT))
+    window.dispatchEvent(new CustomEvent(MOCK_SERVERS_CHANGED_EVENT, { detail: { origin: changeOrigin } }))
   }
   const remove = async () => {
     if (!confirm(t('mockServers.editor.confirmDelete', { name: server.name }))) return
     const result = await deleteMockServer(rootPath, server.id)
-    if (result.ok) { window.dispatchEvent(new Event(MOCK_SERVERS_CHANGED_EVENT)); onDeleted() }
+    if (result.ok) { window.dispatchEvent(new CustomEvent(MOCK_SERVERS_CHANGED_EVENT, { detail: { origin: changeOrigin } })); onDeleted() }
     else setMessage(mockErrorMessage(result.error, t))
   }
   const addRoute = () => {
@@ -210,7 +238,7 @@ export function MockServerEditor({ rootPath, serverId, active = true, onTabChang
         {!isInline && <Button variant={summary?.running ? 'danger' : 'success'} onClick={() => void toggleServer()} disabled={dirty || busy} title={dirty ? t('mockServers.editor.saveBeforeToggle') : undefined}>
           {summary?.running ? <StopIcon size={14} /> : <PlayIcon size={14} />}{summary?.running ? t('mockServers.editor.stop') : t('mockServers.editor.start')}
         </Button>}
-        <Button onClick={() => void save()} disabled={!dirty || busy || hasInvalidRules}><SaveIcon size={14} />{t('mockServers.editor.save')}</Button>
+        <Button onClick={() => { void save().catch(() => undefined) }} disabled={!dirty || busy || hasInvalidRules}><SaveIcon size={14} />{t('mockServers.editor.save')}</Button>
       </div>
     </header>
 
@@ -221,7 +249,7 @@ export function MockServerEditor({ rootPath, serverId, active = true, onTabChang
       tabs={[
         { id: 'routes', label: <><GlobeIcon size={14} />{t('mockServers.editor.routesTab')}</>, badge: server.routes.length },
         { id: 'settings', label: <><GearIcon size={14} />{t('mockServers.editor.settingsTab')}</> },
-        // O mock avulso só existe durante um run; as chamadas aparecem no log do run.
+        // Inline mocks only exist during a run; their calls appear in the run log.
         ...(isInline ? [] : [{ id: 'calls' as const, label: <><ClockIcon size={14} />{t('mockServers.editor.callsTab')}</>, badge: calls.length }]),
       ]}
     />
@@ -325,7 +353,7 @@ function RouteEditor({ route, invalidRules, ruleDrafts, onChange, onDelete, onIn
       updateResponse({ ...response, condition })
     } catch { onInvalidRule(response.id, text) }
   }
-  // JSON inválido só pode ser corrigido no próprio JSON; o editor visual fica indisponível até lá.
+  // Invalid JSON must be fixed in the text editor before visual editing becomes available.
   const invalidJson = invalidRules[response.id] !== undefined
   const mode: RulesMode = invalidJson ? 'json' : rulesMode
   const changeRulesMode = (next: RulesMode) => {

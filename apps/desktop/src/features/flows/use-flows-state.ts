@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCommittedState } from '../../shared/use-committed-state'
 import { moveById } from '../environments/reorder'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
 import { listFlows } from '../../bindings/list-flows'
@@ -83,7 +84,7 @@ function dtoFromEdge(edge: FlowEdgeState): FlowDto['edges'][number] {
   }
 }
 
-function flowFromDto(dto: FlowDto): FlowState {
+export function flowFromDto(dto: FlowDto): FlowState {
   // Match flow_store.rs migration of unnamed request outputs to success so valid in-memory edges are not silently rejected during persistence.
   const requestNodeIds = new Set(dto.nodes.filter((node) => node.kind === 'request').map((node) => node.id))
   return {
@@ -103,7 +104,7 @@ function flowFromDto(dto: FlowDto): FlowState {
   }
 }
 
-function dtoFromFlow(flow: FlowState): FlowDto {
+export function dtoFromFlow(flow: FlowState): FlowDto {
   return {
     id: flow.id,
     name: flow.name,
@@ -122,7 +123,7 @@ function presentationForNodes(flow: FlowState, nodes: FlowNodeState[]) {
   return { panels: flow.presentation.panels.filter((panel) => eligible.has(panel.nodeId)) }
 }
 
-function createFlow(name: string): FlowState {
+export function createFlow(name: string): FlowState {
   const now = Date.now()
   const startNode: FlowNodeState = { id: START_NODE_ID, kind: 'start', position: { x: 0, y: 0 } }
   return { id: crypto.randomUUID(), name, executionKind: 'standard', nodes: [startNode], edges: [], createdAtMs: now, updatedAtMs: now }
@@ -136,7 +137,7 @@ interface LoadFlowStarterLabels {
 /** Minimal executable load flow, ready for configuration in the canvas. */
 export function createLoadFlow(
   name: string,
-  labels: LoadFlowStarterLabels = { scenario: 'Cenário', request: 'Request' },
+  labels: LoadFlowStarterLabels = { scenario: 'Scenario', request: 'Request' },
 ): FlowState {
   const flow = createFlow(name)
   const scenarioId = crypto.randomUUID()
@@ -238,6 +239,26 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
       }
     }
   }, [flows, folders, loaded, loadError, workspaceRootPath, onSaved])
+
+  const commitSnapshot = useCommittedState({
+    scope: workspaceRootPath,
+    value: { flows, folders }, ready: loaded, error: loadError,
+    cancelPending: () => { if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current); saveTimeoutRef.current = null },
+    persist: async (snapshot) => {
+      const result = await saveFlows(workspaceRootPath, { flows: snapshot.flows.map(dtoFromFlow), folders: snapshot.folders })
+      if (!result.ok) throw new Error(result.error.message)
+      onSaved?.()
+    },
+    apply: (snapshot) => {
+      skipNextSaveRef.current = true
+      flowsRef.current = snapshot.flows
+      foldersRef.current = snapshot.folders
+      setFlows(snapshot.flows)
+      setFolders(snapshot.folders)
+      setSaveError(null)
+    },
+    restorePending: () => setFlows((current) => [...current]),
+  })
 
   const addFlow = useCallback((folderId?: string) => {
     const flow = createFlow(t('flows.newFlowName'))
@@ -414,6 +435,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
   }, [loaded, loadError, onSaved, workspaceRootPath])
 
   return {
+    commitSnapshot,
     flows,
     folders,
     saveError,

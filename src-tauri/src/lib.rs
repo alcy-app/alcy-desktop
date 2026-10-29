@@ -79,7 +79,7 @@ use commands::load_schema::load_schema;
 use commands::load_test_import::{analyze_load_test_import, commit_load_test_import};
 use commands::mock_servers::{
     MockServerRuntime, clear_mock_calls, delete_mock_server, get_mock_server, list_mock_calls,
-    list_mock_servers, save_mock_server, start_mock_server, stop_mock_server,
+    list_mock_servers, save_mock_server, start_mock_server, stop_mock_server, validate_mock_server,
 };
 use commands::onedrive::{
     OnedriveProvider, begin_onedrive_login, create_onedrive_team_workspace, get_onedrive_root,
@@ -417,6 +417,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 list_mock_servers,
                 get_mock_server,
                 save_mock_server,
+                validate_mock_server,
                 delete_mock_server,
                 start_mock_server,
                 stop_mock_server,

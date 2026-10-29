@@ -91,6 +91,7 @@ export function useFlowRun({
     if (session.state.isRunning || session.disposed) return
     if (session.state.flowExecutionId) void releaseFlowRun(session.state.flowExecutionId).catch(() => undefined)
     const flowExecutionId = crypto.randomUUID()
+    session.setError(null)
     setRunNodes(structuredClone(nodes))
     setSnapshotNodeIds({})
     setFormDrafts({ initial: initialAnswers })
@@ -126,6 +127,10 @@ export function useFlowRun({
         initialAnswers,
       },
       (event: FlowRunEventDto) => {
+        if (session.disposed) {
+          if (event.type === 'runFinished') setIsRunning(false)
+          return
+        }
         if (pendingCalls) {
           const call = recordedCallFromEvent(pendingCalls, event, Date.now())
           if (call) onCallRef.current?.(call)
@@ -161,9 +166,11 @@ export function useFlowRun({
       if (result.ok) return
       // Pre-run error: no event was emitted, `runFinished` never arrives.
       setIsRunning(false)
+      session.setError(errorMessage(result.error, t))
       if (session.disposed) return
       showToast(t('flows.canvas.runErrorToast', { message: errorMessage(result.error, t) }), 'error')
     })
+    return flowExecutionId
   }, [nodes, edges, environmentVariables, rootPath, flowName, recordExchanges, onRunFinished, onEnvironmentChanges, onScopedChanges, showToast, t, session, setRunNodes, setFormDrafts, setStatuses, setTraversedEdges, setLogEntries, setRunStartedAtMs, setFlowExecutionId, setIsRunning, setSnapshotNodeIds])
 
   const cancel = useCallback(() => {
@@ -171,7 +178,7 @@ export function useFlowRun({
     void cancelFlow(session.state.flowExecutionId)
   }, [session])
 
-  return { statuses, traversedEdges, logEntries, runStartedAtMs, flowExecutionId, isRunning, run, cancel, runNodes: state.runNodes, formDrafts: state.formDrafts, setFormDrafts, viewMode: state.viewMode, setViewMode: session.setViewMode, snapshotNodeIds: state.snapshotNodeIds, setSnapshotNodeIds }
+  return { error: state.error, statuses, traversedEdges, logEntries, runStartedAtMs, flowExecutionId, isRunning, run, cancel, runNodes: state.runNodes, formDrafts: state.formDrafts, setFormDrafts, viewMode: state.viewMode, setViewMode: session.setViewMode, snapshotNodeIds: state.snapshotNodeIds, setSnapshotNodeIds }
 }
 
 function errorMessage(error: ExecuteFlowError, t: (key: TranslationKey, params?: TranslationParams) => string): string {

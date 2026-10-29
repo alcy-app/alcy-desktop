@@ -15,6 +15,7 @@ async function call<T>(command: string, input: unknown): Promise<Result<T>> { tr
 export const listMockServers = (rootPath: string) => call<{ servers: MockServerSummaryDto[] }>('list_mock_servers', { rootPath })
 export const getMockServer = (rootPath: string, serverId: string) => call<MockServerDto>('get_mock_server', { rootPath, serverId })
 export const saveMockServer = (rootPath: string, server: MockServerDto) => call<void>('save_mock_server', { rootPath, server })
+export const validateMockServer = (server: MockServerDto) => call<void>('validate_mock_server', { server })
 export const deleteMockServer = (rootPath: string, serverId: string) => call<void>('delete_mock_server', { rootPath, serverId })
 export const startMockServer = (rootPath: string, serverId: string) => call<void>('start_mock_server', { rootPath, serverId })
 export const stopMockServer = (rootPath: string, serverId: string) => call<void>('stop_mock_server', { rootPath, serverId })

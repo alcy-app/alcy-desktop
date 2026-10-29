@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAgentResourceController, type AgentResourceBridge } from '../agent/agent-resource-bridge'
+import { dtoFromFlow, flowFromDto } from './use-flows-state'
 import { FlowFormView } from './FlowFormView'
 import { FlowPanels } from './FlowPanels'
 import { FlowTabs } from './FlowTabs'
@@ -229,6 +231,7 @@ interface PaletteTrigger {
 }
 
 interface FlowCanvasProps {
+  agentBridge?: AgentResourceBridge
   onPresentationChange?: (presentation: FlowPresentation) => void
   onRenameNode?: (previous: string, next: string) => void
   requestSaving?: boolean
@@ -267,6 +270,7 @@ interface FlowCanvasProps {
 
 /** Flow graph editing and execution. Mount with key={flow.id}: React Flow state hooks consume initial values once, so switching flows requires a fresh instance. */
 export function FlowCanvas({
+  agentBridge,
   onPresentationChange,
   onRenameNode,
   requestSaving = false,
@@ -1021,9 +1025,8 @@ export function FlowCanvas({
     [setNodes],
   )
 
-  const renameNode = (next: string) => {
-    if (!selectedNodeId || standardRun.isRunning || loadRun.isRunning || requestSaving || savingDrafts || identifierError(next, selectedNodeId, nodes)) return
-    const previous = selectedNodeId
+  const renameGraphNodeInEditor = (previous: string, next: string) => {
+    if (!nodes.some((node) => node.id === previous) || standardRun.isRunning || loadRun.isRunning || requestSaving || savingDrafts || identifierError(next, previous, nodes)) throw new Error('The node cannot be renamed in its current state.')
     changePresentation({ panels: presentation.panels.map((panel) => panel.nodeId === previous ? { ...panel, nodeId: next } : panel) })
     const graph = renameGraphNode(fromFlowNodes(nodes), fromFlowEdges(edges), previous, next)
     onRenameNode?.(previous, next)
@@ -1042,6 +1045,42 @@ export function FlowCanvas({
     setDisplayFormats((current) => { const updated = { ...current, [next]: current[previous] ?? 'auto' }; delete updated[previous]; try { localStorage.setItem(`alcy:flows:${flow.id}:display-formats`, JSON.stringify(updated)) } catch { /* Keep presentation preferences in memory. */ } return updated })
     onChange(graph.nodes, graph.edges)
   }
+
+  const renameNode = (next: string) => { if (selectedNodeId) renameGraphNodeInEditor(selectedNodeId, next) }
+
+  useAgentResourceController(agentBridge, 'flow', flow.id, {
+    read: () => dtoFromFlow({ ...flow, nodes: fromFlowNodes(latestGraphRef.current.nodes), edges: fromFlowEdges(latestGraphRef.current.edges), presentation }),
+    replace: (dto) => {
+      if (isRunning || requestSaving || savingDrafts) throw new Error('The flow is busy.')
+      const next = flowFromDto(dto)
+      pendingChangeRef.current = false
+      setNodes(toFlowNodes(next.nodes))
+      setEdges(toFlowEdges(next.edges))
+      if (next.presentation) setPresentation(next.presentation)
+    },
+    renameNode: renameGraphNodeInEditor,
+    status: () => ({ flowExecutionId, isRunning, statuses, error: standardRun.error, awaitingInput: initialFormOpen || pendingRun, load: isLoadFlow ? { runId: loadRun.runId, isRunning: loadRun.isRunning, progress: loadRun.progress, detail: loadRun.detail, error: loadRun.error } : undefined }),
+    run: async () => {
+      if (isRunning || requestSaving || savingDrafts || loadingLoadPreview) throw new Error('The flow is busy.')
+      if (isLoadFlow) {
+        if (!loadTestingEnabled) throw new Error('Load testing is disabled.')
+        if (draftNodeIds.length > 0) throw new Error('Save or discard request drafts before executing a load flow.')
+        flushChange()
+        await onPrepareLoadRun?.()
+        const result = await previewLoadFlow(rootPath, flow.id)
+        if (!result.ok) throw new Error(result.error.kind === 'notFound' ? 'Flow not found.' : result.error.message)
+        const runId = loadRun.start()
+        return { flowId: flow.id, runId, status: 'starting', preview: result.value }
+      }
+      if (draftNodeIds.length > 0 || fromFlowNodes(nodes).some((node) => node.kind === 'start' && node.form)) {
+        beginRun()
+        return { flowId: flow.id, status: 'awaitingInput' }
+      }
+      await onPrepareRun?.()
+      return { flowId: flow.id, flowExecutionId: run(), status: 'starting' }
+    },
+    cancel,
+  })
 
   // Place toolbar-created nodes near the visible canvas center using screenToFlowPosition with screen coordinates.
   const newNodePosition = (): { x: number; y: number } => {

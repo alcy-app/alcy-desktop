@@ -41,6 +41,8 @@ import { TitleBar } from '../../shared/ui/TitleBar'
 import { useToast } from '../../shared/ui/use-toast'
 import { useResizablePanel } from '../../shared/use-resizable-panel'
 import { useAgentHost } from './use-agent-host'
+import { AgentResourceBridge } from '../agent/agent-resource-bridge'
+import { useAgentResources } from '../agent/use-agent-resources'
 import { AgentPanel } from '../agent/AgentPanel'
 import { AuthorizationPanel } from './components/AuthorizationPanel'
 import { ConsolePanel, type ConsolePanelTab } from './components/ConsolePanel'
@@ -352,6 +354,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const valueMonitors = useValueMonitorsState(workspace.rootPath, notifyLocalChange, FEATURE_FLAGS.valueMonitors)
   const [valueMonitorEnabled, setValueMonitorEnabled] = useState(loadPersistedValueMonitorEnabled)
   const openTabs = useOpenTabs(workbench, flows)
+  const agentBridge = useMemo(() => new AgentResourceBridge(workspace.rootPath), [workspace.rootPath])
+  const agentResources = useAgentResources({ rootPath: workspace.rootPath, bridge: agentBridge, flows, monitors: valueMonitors, collections, environments, openTabs, workbench, onSaved: notifyLocalChange })
   const openFlowSessionIds = openTabs.descriptors.filter((tab) => tab.kind === 'flow').map((tab) => tab.id)
   const openFlowSessionKey = JSON.stringify(openFlowSessionIds)
   useEffect(() => { releaseClosedFlowSessions(workspace.rootPath, JSON.parse(openFlowSessionKey) as string[]) }, [workspace.rootPath, openFlowSessionKey])
@@ -814,6 +818,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   }, [])
 
   const agentHost = useAgentHost({
+    flows,
+    resources: agentResources,
     workbench,
     openTabs,
     collections,
@@ -1897,6 +1903,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               />
             ) : activeFlow ? (
               <FlowCanvas
+                agentBridge={agentBridge}
                 onPresentationChange={(presentation) => flows.updatePresentation(activeFlow.id, presentation)}
                 requestSaving={savingFlowRequests}
                 onRenameNode={(previous, next) => { workbench.renameFlowNode(activeFlow.id, previous, next); openTabs.renameFlowNode(activeFlow.id, previous, next) }}
@@ -2233,6 +2240,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               const nodeRef = tab.flowNodeRef
               return (
                 <MockServerEditor
+                  agentBridge={agentBridge}
                   key={tab.id}
                   rootPath={workspace.rootPath}
                   serverId={tab.serverId}
@@ -2254,6 +2262,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             <Suspense fallback={null}>
             {openTabs.runnerTabs.map((runnerTab) => (
               <CollectionRunner
+                agentBridge={agentBridge}
                 key={runnerTab.id}
                 tab={runnerTab}
                 hidden={barActiveTabId !== runnerTab.id}

@@ -3,6 +3,7 @@ import { listEnvironments } from '../../bindings/list-environments'
 import type { EnvironmentDto } from '../../bindings/list-environments'
 import type { EnvironmentMergeDto } from '../../bindings/import-collections'
 import { saveEnvironments } from '../../bindings/save-environments'
+import { useCommittedState } from '../../shared/use-committed-state'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { matchExistingRows, type BulkRow } from '../../shared/bulk-edit'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
@@ -41,18 +42,15 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
   const [environments, setEnvironments] = useState<EnvironmentState[]>([])
   const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
-  // Arquivo que não foi lido (ex.: gravado por uma versão mais nova do app): enquanto houver erro,
-  // nada é salvo, para não trocar o conteúdo do disco pelo estado vazio mostrado na tela.
+  // An unreadable or newer file must never be overwritten with the empty state shown in the UI.
   const [loadError, setLoadError] = useState<string | null>(null)
   const [unreadableSecrets, setUnreadableSecrets] = useState<string[]>([])
   const saveTimeoutRef = useRef<number | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
-  // O efeito de salvar reage a `environments`/`loaded` juntos — sem isso, o próprio carregamento
-  // (que muda os dois no mesmo render) dispararia um save supérfluo, reescrevendo o arquivo no
-  // disco sem nenhuma edição real (o que já bastava para acender "modificado" indevidamente).
+  // Loading changes environments and loaded together; skip persistence until an actual edit occurs.
   const skipNextSaveRef = useRef(false)
 
-  /** Relê o arquivo do disco (ex.: depois de uma atualização do repositório remoto), descartando um save pendente que o sobrescreveria. */
+  /** Reload from disk and discard pending saves that could overwrite external changes. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current)
@@ -109,7 +107,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
         environments: environments.map((environment) => ({
           id: environment.id,
           name: environment.name,
-          // Linhas sem nome ainda estão em edição: gravá-las faria o backend recusar o salvamento inteiro.
+          // Unnamed rows are drafts; persisting them would reject the entire snapshot.
           variables: definedVariables(environment.variables).map(({ name, value, sensitive }) => ({ name, value, sensitive })),
         })),
         activeEnvironmentId,
@@ -122,6 +120,22 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
       }
     }
   }, [environments, activeEnvironmentId, loaded, loadError, workspaceRootPath, onSaved])
+
+  const commitEnvironments = useCommittedState({
+    scope: workspaceRootPath,
+    value: { environments, activeEnvironmentId }, ready: loaded, error: loadError,
+    cancelPending: () => { if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current); saveTimeoutRef.current = null },
+    persist: async (next) => {
+      const result = await saveEnvironments(workspaceRootPath, {
+        environments: next.environments.map((environment) => ({ ...environment, variables: definedVariables(environment.variables).map(({ name, value, sensitive }) => ({ name, value, sensitive })) })),
+        activeEnvironmentId: next.activeEnvironmentId,
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      onSaved?.()
+    },
+    apply: (next) => { skipNextSaveRef.current = true; setEnvironments([...next.environments]); setActiveEnvironmentId(next.activeEnvironmentId) },
+    restorePending: () => setEnvironments((current) => [...current]),
+  })
 
   const activeEnvironment = environments.find((environment) => environment.id === activeEnvironmentId) ?? null
 
@@ -139,8 +153,8 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     })
   }, [])
 
-  /** Cria uma cópia do ambiente logo abaixo do original, com ids novos, e a torna ativa. Valores
-   * sensíveis são copiados como estão: a cópia fica no mesmo workspace e é cifrada ao salvar. */
+  /** Duplicate below the original with new ids and select the copy. Sensitive values stay
+   * in the same workspace and are encrypted again on save. */
   const duplicateEnvironment = useCallback(
     (id: string) => {
       const copyId = crypto.randomUUID()
@@ -166,12 +180,12 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     )
   }, [])
 
-  /** Reordena a lista de ambientes (arraste ou teclado). A ordem é a do arquivo salvo. */
+  /** Reorder environments by pointer or keyboard; the order is persisted. */
   const moveEnvironment = useCallback((draggedId: string, targetId: string, edge: SiblingEdge) => {
     setEnvironments((current) => moveById(current, draggedId, targetId, edge))
   }, [])
 
-  /** Reordena as variáveis de um ambiente. Não afeta a resolução: nomes são únicos por ambiente. */
+  /** Reorder variables without changing resolution; names are unique within an environment. */
   const moveVariable = useCallback((environmentId: string, draggedId: string, targetId: string, edge: SiblingEdge) => {
     setEnvironments((current) => {
       let changed = false
@@ -182,7 +196,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
         changed = true
         return { ...environment, variables }
       })
-      // Sem mudança real, mantém a referência para não disparar um salvamento vazio.
+      // Preserve the reference when nothing changed to avoid a redundant save.
       return changed ? next : current
     })
   }, [])
@@ -218,9 +232,8 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     [],
   )
 
-  /** Substitui as variáveis do ambiente pelo resultado da edição em massa, preservando id e
-   * `sensitive` das linhas que correspondem a uma existente. Um valor igual à máscara mantém o
-   * valor original da variável sensível. */
+  /** Replace variables from bulk editing, preserving matching row ids and sensitivity.
+   * A masked value retains the original sensitive value. */
   const replaceVariables = useCallback((environmentId: string, rows: BulkRow[]) => {
     setEnvironments((current) =>
       current.map((environment) => {
@@ -241,10 +254,8 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     )
   }, [])
 
-  /** Anexa ambientes importados (Postman/Insomnia) ao estado atual — ids de ambiente e de
-   * variável são regenerados no cliente, já que os ids que o backend atribui durante a
-   * importação (`imported-environment-0`, ...) se repetem a cada chamada e colidiriam entre
-   * importações sucessivas ou com ambientes já existentes. */
+  /** Append imported environments with regenerated environment and variable ids to avoid
+   * collisions between successive imports or existing workspace data. */
   const importEnvironments = useCallback((dtos: EnvironmentDto[], merges: EnvironmentMergeDto[] = []) => {
     setEnvironments((current) => [
       ...mergeImportedVariables(current, merges),
@@ -256,9 +267,8 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     ])
   }, [])
 
-  /** Aplica no ambiente ativo as variáveis gravadas por scripts (`al.environment.set`):
-   * atualiza o valor das existentes e cria as novas. O salvamento é o mesmo
-   * debounce das demais edições. Sem ambiente ativo, não há onde gravar. */
+  /** Upsert script variable changes into the active environment using the regular save
+   * debounce. With no active environment, there is no target for those changes. */
   const applyScriptChanges = useCallback(
     (changes: { name: string; value: string | null }[]) => {
       if (changes.length === 0 || activeEnvironmentId === null) return
@@ -310,6 +320,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
   }, [])
 
   return {
+    commitEnvironments,
     environments,
     loaded,
     loadError,

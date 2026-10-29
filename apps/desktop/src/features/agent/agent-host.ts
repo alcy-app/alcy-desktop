@@ -1,6 +1,8 @@
 import type { RequestContent, TreeNode } from '../request-workbench/collection-tree'
 import type { EditorField, EditorSlot } from '../request-workbench/editor-bridge'
 import type { ExecutionState, WorkbenchProtocol } from '../request-workbench/request-workbench.types'
+import type { AgentResourceHost } from './use-agent-resources'
+import type { GrpcStreamState } from '../request-workbench/grpc-stream'
 
 /** A request tab as the agent tools see it. */
 export interface AgentHostTab {
@@ -13,6 +15,7 @@ export interface AgentHostTab {
   isFlowNode: boolean
   content: RequestContent
   execution: ExecutionState
+  grpcStream?: GrpcStreamState
 }
 
 export interface AgentHostEnvironment {
@@ -33,6 +36,7 @@ export type AgentSaveResult = { ok: true; requestId: string; name: string } | { 
  * state, and actions resolve once the interface reflects them.
  */
 export interface WorkbenchAgentHost {
+  resources?: AgentResourceHost
   tabs(): AgentHostTab[]
   activeTabId(): string | null
   collections(): TreeNode[]
@@ -51,9 +55,11 @@ export interface WorkbenchAgentHost {
   replaceContent(tabId: string, content: RequestContent): void
   /** Sends the tab's request and resolves with its execution afterwards. */
   send(tabId: string): Promise<ExecutionState | null>
+  cancelRequest?(tabId: string): Promise<boolean>
+  controlGrpcStream?(tabId: string, close: boolean): Promise<boolean>
   saveTab(tabId: string, target: { parentId: string; name: string } | null): Promise<AgentSaveResult>
-  createCollection(name: string): string
-  createFolder(parentId: string, name: string): string | null
-  setVariable(environmentId: string, name: string, value: string, sensitive: boolean | undefined): void
-  setActiveEnvironment(environmentId: string | null): void
+  createCollection(name: string): string | Promise<string>
+  createFolder(parentId: string, name: string): string | null | Promise<string | null>
+  setVariable(environmentId: string, name: string, value: string, sensitive: boolean | undefined): void | Promise<void>
+  setActiveEnvironment(environmentId: string | null): void | Promise<void>
 }

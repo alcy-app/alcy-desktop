@@ -54,12 +54,12 @@ function host(): WorkbenchAgentHost {
 }
 
 /** A turn that asks to send the active tab and ends once the tool result arrives. */
-function scriptSendTurn() {
+function scriptSendTurn(tool: Partial<Pick<Extract<AgentEventDto, { type: 'toolCallRequested' }>, 'name' | 'input' | 'class'>> = {}) {
   let finish: (value: unknown) => void = () => {}
   startAgentTurn.mockImplementation((_input: unknown, onEvent: (event: AgentEventDto) => void) => {
     onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'Send it' })
     onEvent({ type: 'textDelta', text: 'Vou enviar.' })
-    onEvent({ type: 'toolCallRequested', waitId: 'w1', callId: 'c1', name: 'send_request', input: {}, class: 'sideEffect' })
+    onEvent({ type: 'toolCallRequested', waitId: 'w1', callId: 'c1', name: 'send_request', input: {}, class: 'sideEffect', ...tool })
     return new Promise((resolve) => {
       finish = resolve
     })
@@ -92,6 +92,38 @@ beforeEach(() => {
 })
 
 describe('AgentPanel', () => {
+  it('rejects a resource action if the target changes while approval is pending', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    scriptSendTurn({ name: 'delete_flow', input: { flowId: 'flow' } })
+    const workbench = host()
+    let revision = 'before'
+    const call = vi.fn(async () => ({ content: '{}', isError: false }))
+    workbench.resources = { call, context: () => [], summary: () => 'Example flow', fingerprint: () => revision }
+    render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('exclua o flow')
+    const approve = await screen.findByRole('button', { name: 'Aprovar' })
+    revision = 'manual edit'
+    fireEvent.click(approve)
+    await waitFor(() => expect(submitAgentToolResult).toHaveBeenCalledWith('w1', expect.stringContaining('changed while awaiting approval'), true))
+    expect(call).not.toHaveBeenCalled()
+  })
+
+  it('routes new persisted actions through the existing auto-approval mode', async () => {
+    window.localStorage.setItem('alcy:agent:approval-mode', 'autoApprove')
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    scriptSendTurn({ name: 'create_value_monitor', input: { name: 'Check names' } })
+    const workbench = host()
+    const call = vi.fn(async () => ({ content: '{"monitorId":"monitor"}', isError: false }))
+    workbench.resources = { call, context: () => [], summary: () => 'Check names', fingerprint: () => 'current' }
+    render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('crie o monitor')
+    await waitFor(() => expect(call).toHaveBeenCalledWith('create_value_monitor', { name: 'Check names' }))
+    expect(screen.queryByRole('button', { name: 'Aprovar' })).not.toBeInTheDocument()
+    expect(await screen.findByText('aprovado automaticamente')).toBeInTheDocument()
+  })
+
   it('navigates the provider menu, restores focus, and uses the selected provider', async () => {
     const local = { ...claude, id: 'local', label: 'Local', kind: 'openaiCompatible', model: 'local-model' }
     const providers = [claude, local]

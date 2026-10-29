@@ -4,6 +4,8 @@ import { emptyRequestContent, findNode, findRequest, type RequestContent, type T
 import type { ExecutionState } from '../request-workbench/request-workbench.types'
 import type { EditorField } from '../request-workbench/editor-bridge'
 import type { AgentHostTab, WorkbenchAgentHost } from './agent-host'
+import { isResourceTool } from './agent-resource-tools'
+import { boundedResource, mergeResource, page, redactResource, resourceSecrets } from './agent-resource-data'
 
 /** Stands for a secret the model never sees. Writing it back keeps the secret. */
 export const AGENT_SECRET_MASK = '••••'
@@ -22,7 +24,7 @@ export interface AgentToolOutcome {
   content: string
   isError: boolean
   /** Undoes an `edit` tool's change to a tab. */
-  revert?: () => void
+  revert?: () => void | boolean
 }
 
 class ToolInputError extends Error {}
@@ -114,10 +116,11 @@ export function describeRequest(content: RequestContent): Record<string, unknown
     base.query = truncate(content.query)
     base.variables = truncate(content.variables)
   } else {
-    base.grpc = { service: content.grpc.service, method: content.grpc.method }
+    base.grpc = { ...content.grpc, message: truncate(content.grpc.message) }
   }
   base.preRequestScript = truncate(content.preRequestScript)
   base.postResponseScript = truncate(content.postResponseScript)
+  base.routeParams = content.routeParams
   return base
 }
 
@@ -149,7 +152,13 @@ export function describeExecution(execution: ExecutionState): Record<string, unk
     case 'success': {
       const { result } = execution
       if (!('statusCode' in result)) {
-        return { status: 'completed', grpcMessages: result.messageCount }
+        return {
+          status: 'completed', grpcStatus: result.status, grpcMessages: result.messageCount,
+          durationMs: result.durationMs, sizeBytes: result.sizeBytes,
+          headers: maskHeaders(result.headers), trailers: maskHeaders(result.trailers),
+          body: execution.responseNotStored ? '[the body of this response was not kept]' : truncate(result.body.kind === 'inline' ? result.body.body : result.body.preview),
+          tests: result.testResults?.slice(0, 30).map((test) => ({ name: test.name, passed: test.passed })),
+        }
       }
       const body =
         result.bodyEncoding === 'base64'
@@ -196,7 +205,7 @@ function parseBody(value: unknown, previous: RestBodyInput): RestBodyInput {
       if (language !== undefined && !RAW_LANGUAGES.includes(language as RawBodyLanguage)) throw new ToolInputError(`Unknown body language '${language}'.`)
       return {
         type: 'raw',
-        content: optionalString(body, 'content') ?? '',
+        content: optionalString(body, 'content') ?? (previous.type === 'raw' ? previous.content : ''),
         rawLanguage: (language as RawBodyLanguage | undefined) ?? (previous.type === 'raw' ? previous.rawLanguage : 'json'),
       }
     }
@@ -206,12 +215,30 @@ function parseBody(value: unknown, previous: RestBodyInput): RestBodyInput {
         type: 'urlencoded',
         fields: fields.map((field) => {
           const entry = (field ?? {}) as Input
-          return { name: String(entry.name ?? ''), value: String(entry.value ?? ''), enabled: true }
+          return { name: String(entry.name ?? ''), value: String(entry.value ?? ''), enabled: entry.enabled !== false }
         }),
       }
     }
+    case 'binary': {
+      const filePath = optionalString(body, 'filePath') ?? (previous.type === 'binary' ? previous.filePath : '')
+      if (previous.type !== 'binary' || filePath !== previous.filePath) throw new ToolInputError('Select the file in the request editor first; the agent can reuse the selected attachment.')
+      return { type: 'binary', filePath }
+    }
+    case 'formData': {
+      if (!Array.isArray(body.fields)) throw new ToolInputError('formData needs fields.')
+      return { type: 'formData', fields: body.fields.map((raw) => {
+        const field = raw as Input
+        const name = requiredString(field, 'name')
+        const enabled = field.enabled !== false
+        if (field.kind === 'text') return { kind: 'text' as const, name, value: optionalString(field, 'value') ?? '', enabled }
+        if (field.kind !== 'file') throw new ToolInputError('Invalid formData field kind.')
+        const old = previous.type === 'formData' ? previous.fields.find((entry) => entry.kind === 'file' && entry.name === name) : undefined
+        if (!old || old.kind !== 'file' || (field.filePath !== undefined && field.filePath !== old.filePath)) throw new ToolInputError('Select file attachments in the request editor first.')
+        return { kind: 'file' as const, name, filePath: old.filePath, enabled }
+      }) }
+    }
     default:
-      throw new ToolInputError("body.type must be 'none', 'raw' or 'urlencoded'.")
+      throw new ToolInputError('body.type must be none, raw, urlencoded, formData or binary.')
   }
 }
 
@@ -229,10 +256,19 @@ function parseAuthentication(value: unknown, previous: AuthenticationInput): Aut
     case 'bearer':
       return { type: 'bearer', token: keepSecret(optionalString(auth, 'token'), previous.type === 'bearer' ? previous.token : '') }
     case 'basic':
+    case 'digest':
       return {
-        type: 'basic',
-        username: optionalString(auth, 'username') ?? (previous.type === 'basic' ? previous.username : ''),
-        password: keepSecret(optionalString(auth, 'password'), previous.type === 'basic' ? previous.password : ''),
+        type: auth.type,
+        username: optionalString(auth, 'username') ?? (previous.type === auth.type ? previous.username : ''),
+        password: keepSecret(optionalString(auth, 'password'), previous.type === auth.type ? previous.password : ''),
+      }
+    case 'oauth2ClientCredentials':
+      return {
+        type: 'oauth2ClientCredentials',
+        clientId: optionalString(auth, 'clientId') ?? (previous.type === 'oauth2ClientCredentials' ? previous.clientId : ''),
+        clientSecret: keepSecret(optionalString(auth, 'clientSecret'), previous.type === 'oauth2ClientCredentials' ? previous.clientSecret : ''),
+        tokenUrl: optionalString(auth, 'tokenUrl') ?? (previous.type === 'oauth2ClientCredentials' ? previous.tokenUrl : ''),
+        scope: optionalString(auth, 'scope') ?? (previous.type === 'oauth2ClientCredentials' ? previous.scope : ''),
       }
     case 'customHeader':
       return {
@@ -241,7 +277,7 @@ function parseAuthentication(value: unknown, previous: AuthenticationInput): Aut
         value: keepSecret(optionalString(auth, 'value'), previous.type === 'customHeader' ? previous.value : ''),
       }
     default:
-      throw new ToolInputError('authentication.type must be inherit, none, bearer, basic or customHeader.')
+      throw new ToolInputError('authentication.type must be inherit, none, bearer, basic, digest, customHeader or oauth2ClientCredentials.')
   }
 }
 
@@ -273,6 +309,19 @@ export function applyRequestPatch(content: RequestContent, input: Input): Reques
   const postResponseScript = optionalString(input, 'postResponseScript')
   if (preRequestScript !== undefined) next.preRequestScript = preRequestScript
   if (postResponseScript !== undefined) next.postResponseScript = postResponseScript
+  if (input.routeParams !== undefined) {
+    if (!Array.isArray(input.routeParams)) throw new ToolInputError('routeParams must be a list.')
+    next.routeParams = input.routeParams.map((entry) => ({ name: requiredString(entry as Input, 'name'), value: optionalString(entry as Input, 'value') ?? '' }))
+  }
+  if (input.grpc !== undefined) {
+    if (content.protocol !== 'grpc') throw new ToolInputError('grpc only applies to gRPC requests.')
+    const patch = input.grpc as Input
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ToolInputError('grpc must be an object.')
+    if (patch.schemaSource !== undefined && JSON.stringify(patch.schemaSource) !== JSON.stringify(content.grpc.schemaSource) && (patch.schemaSource as Input)?.type !== 'reflection') throw new ToolInputError('Choose local schema files in the editor first.')
+    for (const key of ['service', 'method', 'message']) if (patch[key] !== undefined && typeof patch[key] !== 'string') throw new ToolInputError(`grpc.${key} must be a string.`)
+    if (patch.deadlineMs !== undefined && patch.deadlineMs !== null && (typeof patch.deadlineMs !== 'number' || !Number.isInteger(patch.deadlineMs) || patch.deadlineMs <= 0)) throw new ToolInputError('Invalid gRPC deadline.')
+    next.grpc = mergeResource(content.grpc, patch) as RequestContent['grpc']
+  }
   return next
 }
 
@@ -324,10 +373,15 @@ function environmentId(host: WorkbenchAgentHost, input: Input): string {
 }
 
 async function run(name: string, input: Input, host: WorkbenchAgentHost, defaultRequestName: string): Promise<AgentToolOutcome> {
+  if (isResourceTool(name)) {
+    if (!host.resources) return failure('Workspace resources are not available.')
+    return host.resources.call(name, input)
+  }
   switch (name) {
     case 'list_open_tabs': {
       const active = host.activeTabId()
-      return ok({ tabs: host.tabs().map((tab) => describeTab(tab, active)) })
+      const result = page([...host.tabs().map((tab) => describeTab(tab, active)), ...(host.resources?.tabs?.() ?? [])], input)
+      return ok({ tabs: result.items, total: result.total, nextOffset: result.nextOffset })
     }
     case 'get_request': {
       const requestId = optionalString(input, 'requestId')
@@ -341,7 +395,7 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
     }
     case 'get_response': {
       const tab = targetTab(host, input)
-      return ok({ tabId: tab.id, ...describeExecution(tab.execution) })
+      return ok({ tabId: tab.id, ...describeExecution(tab.execution), ...(tab.grpcStream ? { stream: { accepting: tab.grpcStream.accepting, busy: tab.grpcStream.busy, droppedEvents: tab.grpcStream.dropped, events: page(tab.grpcStream.events, input) } } : {}) })
     }
     case 'search_collections': {
       const limit = typeof input.limit === 'number' ? Math.max(1, Math.min(MAX_SEARCH_RESULTS, Math.floor(input.limit))) : DEFAULT_SEARCH_RESULTS
@@ -349,9 +403,12 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
     }
     case 'list_environments': {
       const active = host.activeEnvironmentId()
+      const environments = page(host.environments(), input)
       return ok({
         activeEnvironmentId: active,
-        environments: host.environments().map((environment) => ({
+        total: environments.total,
+        nextOffset: environments.nextOffset,
+        environments: environments.items.map((environment) => ({
           id: environment.id,
           name: environment.name,
           active: environment.id === active,
@@ -393,7 +450,7 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
     }
     case 'new_request_tab': {
       const protocol = optionalString(input, 'protocol')
-      if (protocol !== 'rest' && protocol !== 'graphql') throw new ToolInputError("protocol must be 'rest' or 'graphql'.")
+      if (protocol !== 'rest' && protocol !== 'graphql' && protocol !== 'grpc') throw new ToolInputError("protocol must be 'rest', 'graphql' or 'grpc'.")
       const content = applyRequestPatch(emptyRequestContent(protocol), input)
       const tabId = await host.newRequestTab(optionalString(input, 'name')?.trim() || defaultRequestName, content)
       return tabId ? ok({ tabId }) : failure('The tab could not be opened.')
@@ -403,13 +460,29 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
       const previous = tab.content
       const next = applyRequestPatch(previous, input)
       host.replaceContent(tab.id, next)
-      return ok({ tabId: tab.id, ...describeRequest(next) }, () => host.replaceContent(tab.id, previous))
+      return ok({ tabId: tab.id, ...describeRequest(next) }, () => {
+        const current = host.tabs().find((item) => item.id === tab.id)
+        if (!current || JSON.stringify(current.content) !== JSON.stringify(next)) return false
+        host.replaceContent(tab.id, previous)
+        return true
+      })
     }
     case 'send_request': {
       const tab = targetTab(host, input)
       const execution = await host.send(tab.id)
       if (!execution) return failure('The request could not be sent.')
       return ok({ tabId: tab.id, ...describeExecution(execution) })
+    }
+    case 'cancel_request': {
+      const tab = targetTab(host, input)
+      if (!await host.cancelRequest?.(tab.id)) return failure('The request is not running.')
+      return ok({ tabId: tab.id, status: 'cancelling' })
+    }
+    case 'send_grpc_message':
+    case 'close_grpc_send': {
+      const tab = targetTab(host, input)
+      if (tab.protocol !== 'grpc' || !await host.controlGrpcStream?.(tab.id, name === 'close_grpc_send')) return failure('There is no accepting gRPC request stream. Start a client-streaming or bidirectional call first.')
+      return ok({ tabId: tab.id, status: name === 'close_grpc_send' ? 'sendClosed' : 'messageSent' })
     }
     case 'save_request': {
       const tab = targetTab(host, input)
@@ -426,11 +499,11 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
       return failure(reasons[result.reason])
     }
     case 'create_collection':
-      return ok({ collectionId: host.createCollection(requiredString(input, 'name').trim()) })
+      return ok({ collectionId: await host.createCollection(requiredString(input, 'name').trim()) })
     case 'create_folder': {
       const parentId = requiredString(input, 'parentId')
       if (!findNode(host.collections(), parentId)) return failure('parentId is not a collection or folder.')
-      const folderId = host.createFolder(parentId, requiredString(input, 'name').trim())
+      const folderId = await host.createFolder(parentId, requiredString(input, 'name').trim())
       return folderId ? ok({ folderId }) : failure('The folder could not be created.')
     }
     case 'set_environment_variable': {
@@ -439,14 +512,14 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
       const value = optionalString(input, 'value') ?? ''
       if (value === AGENT_SECRET_MASK) return failure('That is the mask of a secret, not its value; leave the variable as it is.')
       const sensitive = typeof input.sensitive === 'boolean' ? input.sensitive : undefined
-      host.setVariable(id, variableName, value, sensitive)
+      await host.setVariable(id, variableName, value, sensitive)
       return ok({ environmentId: id, name: variableName })
     }
     case 'set_active_environment': {
       const id = input.environmentId
       if (id !== null && typeof id !== 'string') throw new ToolInputError("'environmentId' must be a string or null.")
       if (id !== null && !host.environments().some((environment) => environment.id === id)) return failure(`No environment '${id}'.`)
-      host.setActiveEnvironment(id)
+      await host.setActiveEnvironment(id)
       return ok({ activeEnvironmentId: id })
     }
     default:
@@ -456,22 +529,29 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
 
 /** Runs a tool on the workbench. Approval of side effects happens before this is called. */
 export async function runAgentTool(name: string, input: Input, host: WorkbenchAgentHost, defaultRequestName: string): Promise<AgentToolOutcome> {
+  const secrets = () => resourceSecrets([host.environments(), host.collections(), host.tabs().map((tab) => tab.content)])
   try {
-    return await run(name, input, host, defaultRequestName)
+    const outcome = await run(name, input, host, defaultRequestName)
+    if (isResourceTool(name)) return outcome
+    let value: unknown
+    try { value = JSON.parse(outcome.content) } catch { value = outcome.content }
+    return { ...outcome, content: boundedResource(redactResource(value, secrets())) }
   } catch (error) {
-    if (error instanceof ToolInputError) return failure(error.message)
-    return failure(`The tool failed: ${error instanceof Error ? error.message : String(error)}`)
+    const message = error instanceof ToolInputError ? error.message : `The tool failed: ${error instanceof Error ? error.message : String(error)}`
+    return failure(String(redactResource(message, secrets())))
   }
 }
 
 /** Tools that need approval only in some cases: closing a tab discards its unsaved changes. */
 export function toolNeedsApproval(name: string, input: Input, host: WorkbenchAgentHost): boolean {
+  if (host.resources?.needsApproval?.(name, input)) return true
   if (name !== 'close_tab') return false
   return host.tabs().some((tab) => tab.id === input.tabId && tab.dirty)
 }
 
 /** Short description of a call for its card in the chat. */
 export function summarizeToolCall(name: string, input: Input, host: WorkbenchAgentHost | null): string {
+  if (isResourceTool(name)) return host?.resources?.summary(name, input) ?? ''
   const tab = host?.tabs().find((candidate) => candidate.id === (input.tabId ?? host.activeTabId()))
   const string = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '')
   switch (name) {

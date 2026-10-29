@@ -5,8 +5,10 @@ import type { FormAnswers } from '../../bindings/flow-forms'
 import type { FlowNodeState } from './flows.types'
 import type { NodeRunStatus } from './use-flow-run'
 import type { RunLogEntry } from './run-log'
+import { releaseClosedLoadFlowSessions } from './load-flow-run-session'
 
 interface SessionState {
+  error: string | null
   snapshotNodeIds: Record<string, string>
   viewMode: 'diagram' | 'panels'
   statuses: Record<string, NodeRunStatus>
@@ -21,7 +23,7 @@ interface SessionState {
 type Update<T> = T | ((current: T) => T)
 
 class FlowRunSession {
-  state: SessionState = { snapshotNodeIds: {}, viewMode: 'diagram', statuses: {}, traversedEdges: new Set(), logEntries: [], runStartedAtMs: null, flowExecutionId: null, isRunning: false, runNodes: [], formDrafts: {} }
+  state: SessionState = { error: null, snapshotNodeIds: {}, viewMode: 'diagram', statuses: {}, traversedEdges: new Set(), logEntries: [], runStartedAtMs: null, flowExecutionId: null, isRunning: false, runNodes: [], formDrafts: {} }
   listeners = new Set<() => void>()
   disposed = false
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -32,6 +34,7 @@ class FlowRunSession {
     this.listeners.forEach((notify) => notify())
   }
   setStatuses = (v: Update<SessionState['statuses']>) => this.update('statuses', v)
+  setError = (v: string | null) => this.update('error', v)
   setSnapshotNodeIds = (v: Update<SessionState['snapshotNodeIds']>) => this.update('snapshotNodeIds', v)
   setViewMode = (v: Update<SessionState['viewMode']>) => this.update('viewMode', v)
   setTraversedEdges = (v: Update<SessionState['traversedEdges']>) => this.update('traversedEdges', v)
@@ -54,6 +57,10 @@ class FlowRunSession {
 
 const sessions = new Map<string, { rootPath: string; flowId: string; session: FlowRunSession }>()
 
+export function getFlowRunState(rootPath: string, flowId: string) {
+  return sessions.get(JSON.stringify([rootPath, flowId]))?.session.state
+}
+
 export function useFlowRunSession(rootPath: string, flowId: string) {
   const key = JSON.stringify([rootPath, flowId])
   let entry = sessions.get(key)
@@ -65,6 +72,7 @@ export function useFlowRunSession(rootPath: string, flowId: string) {
 
 /** The workbench owns session lifetime; switching the active tab does not close it. */
 export function releaseClosedFlowSessions(rootPath: string, openFlowIds: readonly string[]) {
+  releaseClosedLoadFlowSessions(rootPath, openFlowIds)
   const open = new Set(openFlowIds)
   for (const [key, entry] of sessions) {
     if (entry.rootPath === rootPath && !open.has(entry.flowId)) { entry.session.close(); sessions.delete(key) }

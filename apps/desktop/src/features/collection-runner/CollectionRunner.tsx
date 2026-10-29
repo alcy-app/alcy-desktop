@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
+import { useAgentResourceController, type AgentResourceBridge } from '../agent/agent-resource-bridge'
 import type { ReactNode } from 'react'
 import type { ExecuteCollectionRunError, RunStepDto } from '../../bindings/execute-collection-run'
 import type { EnvironmentChange, ScopedVariableChange } from '../../bindings/execute-graphql-request'
@@ -28,8 +29,7 @@ import type { RunnerSettings } from './runner-settings'
 import { useCollectionRun } from './use-collection-run'
 import './collection-runner.css'
 
-/** Aba do runner: de uma coleção/pasta (`scopeId`) ou o relatório de um run
- * do histórico (`report`), somente leitura. */
+/** A collection/folder runner tab, or a read-only historical run report. */
 export interface RunnerTab {
   id: string
   label: string
@@ -38,9 +38,9 @@ export interface RunnerTab {
 }
 
 interface CollectionRunnerProps {
+  agentBridge?: AgentResourceBridge
   tab: RunnerTab
-  /** A aba fica montada (escondida) quando não está ativa, para não perder
-   * os eventos de um run em andamento. */
+  /** Inactive tabs stay mounted and hidden to retain events from ongoing runs. */
   hidden: boolean
   collections: TreeNode[]
   rootPath: string
@@ -78,7 +78,7 @@ function verdictTone(verdict: RunVerdict): string {
   }
 }
 
-/** "Executado hoje às 22:49:00" (ou com a data, em outro dia). */
+/** Format a run time with its date when it is not today. */
 function ranAtText(ms: number, language: string, t: Translate): string {
   const date = new Date(ms)
   const time = new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date)
@@ -87,7 +87,7 @@ function ranAtText(ms: number, language: string, t: Translate): string {
   return t('runner.results.ranOn', { date: day, time })
 }
 
-/** Status do run e quando ele começou, numa linha discreta. */
+/** A compact run status and start time. */
 function RunStatusLine({ state, extra }: { state: CollectionRunState; extra?: string }) {
   const { t, language } = useLanguage()
   const verdict = summarizeRun(state).verdict
@@ -129,6 +129,7 @@ function startErrorMessage(error: ExecuteCollectionRunError, t: Translate): stri
 }
 
 function LiveRunner({
+  agentBridge,
   tab,
   collections,
   rootPath,
@@ -176,20 +177,11 @@ function LiveRunner({
     [run.state.runId],
   )
 
-  if (!scope) {
-    return (
-      <EmptyState
-        icon={<RunnerIcon size={24} />}
-        title={t('runner.scopeMissing.title')}
-      />
-    )
-  }
-
-  const startRun = () => {
-    if (!options || !canRun) return
+  const startRun = async () => {
+    if (!scope || !options || !canRun || running) throw new Error('The runner cannot start with this configuration.')
     setView('results')
     const selected = new Set(requestIds)
-    void run.start({
+    return run.start({
       scopeName: scope.name,
       plan: orderedItems
         .filter((item) => selected.has(item.id))
@@ -202,6 +194,7 @@ function LiveRunner({
   }
 
   const chooseDataFile = async () => {
+    if (running) throw new Error('Cannot configure a running runner.')
     const path = await pickDataFile()
     if (!path) return
     setDataFile({ status: 'loading', path })
@@ -213,8 +206,28 @@ function LiveRunner({
     )
   }
 
+  useAgentResourceController(agentBridge, 'runner', tab.id, {
+    read: () => ({ requestIds, settings, dataFile, state: run.state, error: run.startError }),
+    configure: (configuration) => {
+      if (running) throw new Error('Cannot configure a running runner.')
+      const ids = configuration.requestIds
+      if (new Set(ids).size !== ids.length || ids.some((id) => !items.some((item) => item.id === id))) throw new Error('Request selection contains duplicate or unknown ids.')
+      if (!toRunOptions(configuration.settings)) throw new Error('Invalid runner options.')
+      setOrder([...ids, ...items.map((item) => item.id).filter((id) => !ids.includes(id))])
+      setDeselected(new Set(items.filter((item) => !ids.includes(item.id)).map((item) => item.id)))
+      setSettings(configuration.settings)
+    },
+    pickDataFile: chooseDataFile,
+    clearDataFile: () => { if (running) throw new Error('Cannot configure a running runner.'); setDataFile({ status: 'none' }) },
+    restoreDataFile: (value) => { if (running) throw new Error('Cannot configure a running runner.'); setDataFile(value) },
+    run: startRun,
+    cancel: run.cancel,
+  })
+
+  if (!scope) return <EmptyState icon={<RunnerIcon size={24} />} title={t('runner.scopeMissing.title')} />
+
   const showResults = view === 'results' && run.state.phase !== 'idle'
-  // O título já traz o nome do escopo; o caminho só aparece para pastas.
+  // The title already includes the scope name; only folders need their parent path.
   const parentPath = (scopePath(collections, scope.id) ?? []).slice(0, -1)
   const configDetails = [
     ...(parentPath.length > 0 ? [parentPath.join(' / ')] : []),
@@ -245,7 +258,7 @@ function LiveRunner({
                 {run.state.runId && (
                   <ReportExportMenu rootPath={rootPath} runId={run.state.runId} fileName={scope.name} />
                 )}
-                <Button variant="ghost" className="runner-action" onClick={startRun} disabled={!canRun}>
+                <Button variant="ghost" className="runner-action" onClick={() => { void startRun().catch(() => undefined) }} disabled={!canRun}>
                   <PlayIcon size={11} />
                   {t('runner.results.runAgain')}
                 </Button>
@@ -262,7 +275,7 @@ function LiveRunner({
                   {t('runner.results.viewLast')}
                 </Button>
               )}
-              <Button onClick={startRun} disabled={!canRun || running}>
+              <Button onClick={() => { void startRun().catch(() => undefined) }} disabled={!canRun || running}>
                 <PlayIcon size={11} />
                 {t('runner.runButton', { count: String(requestIds.length) })}
               </Button>

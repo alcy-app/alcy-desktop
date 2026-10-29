@@ -6,6 +6,8 @@ import { emptyRequestContent } from '../request-workbench/collection-tree'
 import type { RequestProtocol, TreeNode } from '../request-workbench/collection-tree'
 import { CollectionRunner } from './CollectionRunner'
 import type { RunnerTab } from './CollectionRunner'
+import { AgentResourceBridge } from '../agent/agent-resource-bridge'
+import { DEFAULT_RUNNER_SETTINGS } from './runner-settings'
 
 const executeCollectionRun = vi.fn()
 vi.mock('../../bindings/execute-collection-run', () => ({
@@ -81,8 +83,8 @@ beforeEach(() => {
   executeCollectionRun.mockReset()
 })
 
-describe('CollectionRunner — configuração', () => {
-  it('lista as requisições na ordem da sidebar e permite pular algumas', () => {
+describe('CollectionRunner configuration', () => {
+  it('lists requests in sidebar order and allows deselecting some of them', () => {
     renderRunner(liveTab)
 
     const list = screen.getByRole('list', { name: 'Requisições do run' })
@@ -101,7 +103,7 @@ describe('CollectionRunner — configuração', () => {
     expect(screen.getByRole('button', { name: /Executar \(0\)/ })).toBeDisabled()
   })
 
-  it('valida iterações e delay', () => {
+  it('validates iterations and delay', () => {
     renderRunner(liveTab)
 
     fireEvent.change(screen.getByLabelText('Iterações'), { target: { value: '0' } })
@@ -109,15 +111,29 @@ describe('CollectionRunner — configuração', () => {
     expect(screen.getByRole('button', { name: /Executar \(2\)/ })).toBeDisabled()
   })
 
-  it('mostra um aviso quando a coleção foi removida', () => {
+  it('shows a notice when the collection was removed', () => {
     renderRunner({ ...liveTab, scopeId: 'gone' })
 
     expect(screen.getByText('Esta coleção foi removida.')).toBeInTheDocument()
   })
 })
 
-describe('CollectionRunner — execução', () => {
-  it('envia o plano e as opções, acompanha o progresso e devolve as variáveis', async () => {
+describe('CollectionRunner execution', () => {
+  it('shares agent configuration with the UI and returns a run id before execution finishes', async () => {
+    executeCollectionRun.mockImplementation(() => new Promise(() => {}))
+    const bridge = new AgentResourceBridge('/ws')
+    renderRunner(liveTab, { agentBridge: bridge })
+    act(() => bridge.get('runner', liveTab.id)!.configure({ requestIds: ['products'], settings: { ...DEFAULT_RUNNER_SETTINGS, iterations: '3' } }))
+    expect(screen.getByLabelText('Iterações')).toHaveValue(3)
+    expect(screen.getByRole('checkbox', { name: 'Incluir Login no run' })).not.toBeChecked()
+    let runId: unknown
+    await act(async () => { runId = await bridge.get('runner', liveTab.id)!.run() })
+    expect(runId).toEqual(expect.any(String))
+    expect(executeCollectionRun).toHaveBeenCalledWith(expect.objectContaining({ runId, requestIds: ['products'], options: expect.objectContaining({ iterations: 3 }) }), expect.any(Function))
+    expect(bridge.get('runner', liveTab.id)!.read().state.phase).toBe('running')
+  })
+
+  it('sends the plan and options, tracks progress and applies variable changes', async () => {
     let emit: (event: CollectionRunEventDto) => void = () => {}
     let finish: () => void = () => {}
     executeCollectionRun.mockImplementation((_input: unknown, onEvent: (event: CollectionRunEventDto) => void) => {
@@ -171,9 +187,9 @@ describe('CollectionRunner — execução', () => {
     expect(screen.getByRole('radio', { name: 'Falharam 1' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Puladas 0' })).toBeInTheDocument()
     expect(screen.getByText('2/2')).toBeInTheDocument()
-    // Testes: no resumo do run e nos fatos da requisição selecionada.
+    // Assertions appear in both the run summary and the selected request details.
     expect(screen.getAllByText('0/1')).toHaveLength(2)
-    // A primeira falha fica selecionada no detalhe.
+    // The first failure is selected in the details panel.
     expect(screen.getByText('esperado 3, recebido 0')).toBeInTheDocument()
     expect(props.onEnvironmentChanges).toHaveBeenCalledWith([{ name: 'token', value: 'abc' }])
     expect(props.onRunFinished).toHaveBeenCalled()
@@ -181,7 +197,7 @@ describe('CollectionRunner — execução', () => {
     expect(screen.getByRole('button', { name: /Executar novamente/ })).toBeInTheDocument()
   })
 
-  it('mostra o erro quando o run não consegue começar', async () => {
+  it('shows the error when execution cannot start', async () => {
     executeCollectionRun.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'sem acesso' } })
     renderRunner(liveTab)
 
@@ -194,8 +210,8 @@ describe('CollectionRunner — execução', () => {
   })
 })
 
-describe('CollectionRunner — relatório do histórico', () => {
-  it('mostra o run gravado sem executar nada', () => {
+describe('CollectionRunner historical reports', () => {
+  it('shows a saved run without executing any requests', () => {
     const report: CollectionRunDetailDto = {
       id: 'run-1',
       scopeName: 'Loja',
@@ -226,7 +242,7 @@ describe('CollectionRunner — relatório do histórico', () => {
     renderRunner({ id: 'runner-run:run-1', label: 'Runner · Loja', scopeId: null, report })
 
     expect(screen.getByText('Interrompido')).toBeInTheDocument()
-    // A segunda requisição não rodou: aparece como pulada no filtro.
+    // The second request did not run and appears under the skipped filter.
     expect(screen.getByRole('radio', { name: 'Puladas 1' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: 'Puladas 1' }))
     expect(screen.getByRole('radio', { name: 'Puladas 1' })).toHaveAttribute('aria-checked', 'true')
@@ -238,7 +254,7 @@ describe('CollectionRunner — relatório do histórico', () => {
     expect(executeCollectionRun).not.toHaveBeenCalled()
   })
 
-  it('exporta o relatório no formato escolhido', async () => {
+  it('exports the report in the selected format', async () => {
     const report: CollectionRunDetailDto = {
       id: 'run-2',
       scopeName: 'Loja',

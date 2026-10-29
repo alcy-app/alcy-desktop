@@ -2,31 +2,30 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { listValueMonitors } from '../../bindings/list-value-monitors'
 import type { ValueMonitorDto, ValueMonitorsError, ValueRuleKind } from '../../bindings/list-value-monitors'
 import { saveValueMonitors } from '../../bindings/save-value-monitors'
+import { useCommittedState } from '../../shared/use-committed-state'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { defaultRule, type RuleKindName } from './rule-catalog'
 
 const SAVE_DEBOUNCE_MS = 500
 
 /**
- * Monitores de valores do workspace: carrega ao montar, grava com debounce
- * após cada edição e guarda o erro de validação do último save (que aponta
- * o monitor e, quando é o caso, a regra inválida). Com `enabled` falso
- * (feature flag desligada) não lê nem grava nada.
+ * Workspace value monitors load on mount and save after an edit debounce.
+ * Validation errors identify the monitor and, when applicable, the invalid rule.
+ * A disabled feature neither reads nor writes workspace data.
  */
 export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () => void, enabled = true) {
   const { t } = useLanguage()
   const [monitors, setMonitors] = useState<ValueMonitorDto[]>([])
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<ValueMonitorsError | null>(null)
-  // Arquivo que não foi lido (ex.: gravado por uma versão mais nova do app): enquanto houver erro,
-  // nada é salvo, para não trocar o conteúdo do disco pelo estado vazio mostrado na tela.
+  // An unreadable or newer file must never be overwritten with the empty state shown in the UI.
   const [loadError, setLoadError] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const saveTimeoutRef = useRef<number | null>(null)
-  // O carregamento muda `monitors` e `loaded` juntos; sem isto ele dispararia um save sem edição real.
+  // Loading changes monitors and loaded together; skip persistence until an actual edit occurs.
   const skipNextSaveRef = useRef(false)
 
-  /** Relê o arquivo do disco (ex.: depois de um pull), descartando um save pendente que o sobrescreveria. */
+  /** Reload from disk and discard pending saves that could overwrite external changes. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current)
@@ -69,6 +68,19 @@ export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () =>
     }
   }, [monitors, loaded, loadError, workspaceRootPath, onSaved])
 
+  const commitMonitors = useCommittedState({
+    scope: workspaceRootPath,
+    value: monitors, ready: loaded && enabled, error: loadError,
+    cancelPending: () => { if (saveTimeoutRef.current !== null) window.clearTimeout(saveTimeoutRef.current); saveTimeoutRef.current = null },
+    persist: async (next) => {
+      const result = await saveValueMonitors(workspaceRootPath, next)
+      if (!result.ok) { setError(result.error); throw new Error(result.error.message) }
+      onSaved?.()
+    },
+    apply: (next) => { skipNextSaveRef.current = true; setMonitors([...next]); setError(null) },
+    restorePending: () => setMonitors((current) => [...current]),
+  })
+
   const updateMonitor = useCallback((id: string, update: (monitor: ValueMonitorDto) => ValueMonitorDto) => {
     setMonitors((current) => current.map((monitor) => (monitor.id === id ? update(monitor) : monitor)))
   }, [])
@@ -99,7 +111,7 @@ export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () =>
     [updateMonitor],
   )
 
-  /** Adiciona um campo (sem espaços nas pontas); ignora vazio e repetido. */
+  /** Add a trimmed field, ignoring empty or duplicate values. */
   const addField = useCallback(
     (id: string, field: string) => {
       const trimmed = field.trim()
@@ -117,7 +129,7 @@ export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () =>
     [updateMonitor],
   )
 
-  /** Adiciona uma regra com parâmetros iniciais e devolve o id dela. */
+  /** Add a rule with default parameters and return its id. */
   const addRule = useCallback(
     (id: string, kind: RuleKindName): string => {
       const ruleId = crypto.randomUUID()
@@ -143,6 +155,7 @@ export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () =>
   )
 
   return {
+    commitMonitors,
     monitors,
     loaded,
     loadError,
