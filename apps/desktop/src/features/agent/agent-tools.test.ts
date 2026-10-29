@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { emptyRequestContent, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
 import type { ExecutionState } from '../request-workbench/request-workbench.types'
 import type { AgentHostTab, WorkbenchAgentHost } from './agent-host'
-import { AGENT_SECRET_MASK, runAgentTool } from './agent-tools'
+import { AGENT_SECRET_MASK, runAgentTool, toolNeedsApproval } from './agent-tools'
 
 function restContent(patch: Partial<RequestContent> = {}): RequestContent {
   return { ...emptyRequestContent('rest'), ...patch }
@@ -41,6 +41,8 @@ function fakeHost(tabs: AgentHostTab[], overrides: Partial<WorkbenchAgentHost> =
     activeEnvironmentId: () => 'e1',
     openRequest: vi.fn(async () => 'opened'),
     selectTab: vi.fn(async () => true),
+    closeTab: vi.fn(async () => true),
+    highlight: vi.fn(async () => ({ ok: true as const, slot: 'body' as const, matches: 2 })),
     newRequestTab: vi.fn(async () => 'new-tab'),
     replaceContent: vi.fn((tabId: string, content: RequestContent) => {
       state.tabs = state.tabs.map((candidate) => (candidate.id === tabId ? { ...candidate, content } : candidate))
@@ -196,5 +198,40 @@ describe('runAgentTool', () => {
   it('fails unknown tools and missing tabs without throwing', async () => {
     expect((await runAgentTool('rm_rf', {}, fakeHost([]), 'x')).isError).toBe(true)
     expect((await runAgentTool('get_response', { tabId: 'nope' }, fakeHost([]), 'x')).isError).toBe(true)
+  })
+})
+
+describe('runAgentTool — tabs, scripts and highlights', () => {
+  it('writes scripts and returns them when reading the request', async () => {
+    const host = fakeHost([tab('t1', restContent())])
+    const script = "al.test('status', () => al.expect(al.response.status).toBe(200))"
+    expect((await runAgentTool('update_request', { postResponseScript: script }, host, 'x')).isError).toBe(false)
+    expect(host.tabs()[0].content.postResponseScript).toBe(script)
+    expect(parse((await runAgentTool('get_request', {}, host, 'x')).content).postResponseScript).toBe(script)
+  })
+
+  it('closes a tab and asks first only when it has unsaved changes', async () => {
+    const clean = { ...tab('clean', restContent()), dirty: false }
+    const host = fakeHost([tab('dirty', restContent()), clean])
+    expect(toolNeedsApproval('close_tab', { tabId: 'dirty' }, host)).toBe(true)
+    expect(toolNeedsApproval('close_tab', { tabId: 'clean' }, host)).toBe(false)
+    expect(toolNeedsApproval('select_tab', { tabId: 'dirty' }, host)).toBe(false)
+    expect(parse((await runAgentTool('close_tab', { tabId: 'clean' }, host, 'x')).content)).toEqual({ closedTabId: 'clean' })
+    expect(host.closeTab).toHaveBeenCalledWith('clean')
+  })
+
+  it('highlights in the requested editor and explains misses', async () => {
+    const host = fakeHost([tab('t1', restContent())])
+    const outcome = await runAgentTool('highlight_in_editor', { target: 'request', field: 'body', text: 'id' }, host, 'x')
+    expect(parse(outcome.content)).toEqual({ tabId: 't1', editor: 'body', matches: 2 })
+    expect(host.highlight).toHaveBeenCalledWith('t1', 'request', 'body', 'id')
+
+    vi.mocked(host.highlight).mockResolvedValueOnce({ ok: false, reason: 'noResponse' })
+    const miss = await runAgentTool('highlight_in_editor', { target: 'response', text: 'id' }, host, 'x')
+    expect(miss.isError).toBe(true)
+    expect(miss.content).toContain('send the request')
+
+    expect((await runAgentTool('highlight_in_editor', { target: 'response', field: 'body', text: 'id' }, host, 'x')).isError).toBe(true)
+    expect((await runAgentTool('highlight_in_editor', { target: 'request', field: 'headers', text: 'id' }, host, 'x')).isError).toBe(true)
   })
 })

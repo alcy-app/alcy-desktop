@@ -11,6 +11,7 @@ import { ResponseCodeView } from './ResponseCodeView'
 import type { ResponseCodeLanguage } from './ResponseCodeView'
 import type { JsonPathSegment } from '../json-value-index'
 import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
+import type { EditorSlot } from '../editor-bridge'
 
 /** Monitor de valores ligado: monitores a aplicar e onde reportar quantos valores reprovaram. */
 export interface ResponseBodyMonitor {
@@ -25,6 +26,8 @@ interface ResponseBodyProps {
   /** Quando presente, valores JSON do corpo podem ser capturados para o script de pós-resposta. */
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
+  /** Editor slot for the agent (ADR 0064); only the workbench response sets it. */
+  agentSlot?: EditorSlot
 }
 
 const FORMAT_OPTIONS: ResponseBodyMode[] = ['json', 'xml', 'html', 'text']
@@ -64,6 +67,7 @@ function TextBodyView({
   partial = false,
   onCaptureValue,
   monitor,
+  agentSlot,
 }: {
   text: string
   selectedFormat: ResponseBodyMode
@@ -72,6 +76,7 @@ function TextBodyView({
   partial?: boolean
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
+  agentSlot?: EditorSlot
 }) {
   if (selectedFormat === 'html' && htmlPreview) return <HtmlPreview body={text} />
   return (
@@ -82,6 +87,7 @@ function TextBodyView({
       onCaptureValue={selectedFormat === 'html' ? undefined : onCaptureValue}
       monitors={monitor?.monitors ?? null}
       onMonitorFailedCount={monitor?.onFailedCount}
+      agentSlot={agentSlot}
     />
   )
 }
@@ -311,6 +317,7 @@ interface WindowedTextBodyProps {
   htmlPreview: boolean
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
+  agentSlot?: EditorSlot
 }
 
 function WindowedTextBody({
@@ -322,6 +329,7 @@ function WindowedTextBody({
   htmlPreview,
   onCaptureValue,
   monitor,
+  agentSlot,
 }: WindowedTextBodyProps) {
   const { t } = useLanguage()
   const { text, nextOffset, isLoading, loadError, isAutoLoading, handleLoadMore, handleLoadAll } = useWindowedBodyText(
@@ -342,6 +350,7 @@ function WindowedTextBody({
         partial={nextOffset !== null}
         onCaptureValue={onCaptureValue}
         monitor={monitor}
+        agentSlot={agentSlot}
       />
       {!isAutoLoading && nextOffset !== null && (
         <div className="rw-code-block-actions">
@@ -412,7 +421,7 @@ function WindowedImage({ handle, contentType, preview, previewNextOffset }: Wind
   )
 }
 
-export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor }: ResponseBodyProps) {
+export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor, agentSlot }: ResponseBodyProps) {
   const [selectedFormat, setSelectedFormat] = useState<ResponseBodyMode>(() =>
     bodyEncoding === 'text' ? detectBodyMode(headers, body.kind === 'inline' ? body.body : body.preview) : 'text',
   )
@@ -462,6 +471,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
           htmlPreview={htmlPreview}
           onCaptureValue={onCaptureValue}
           monitor={monitor}
+          agentSlot={agentSlot}
         />
       </div>
     )
@@ -476,6 +486,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
         htmlPreview={htmlPreview}
         onCaptureValue={onCaptureValue}
         monitor={monitor}
+        agentSlot={agentSlot}
       />
     </div>
   )

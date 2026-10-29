@@ -59,6 +59,12 @@ const TOOLS: &[ToolSpec] = &[
         schema: no_arguments,
     },
     ToolSpec {
+        name: "highlight_in_editor",
+        class: ToolClass::Read,
+        description: "Show the user where some text is: opens the request field or the response body in the editor and highlights every occurrence. Use it when the user cannot find a value or when you point to one. Without field, the first request field containing the text is used.",
+        schema: highlight_arguments,
+    },
+    ToolSpec {
         name: "open_request",
         class: ToolClass::Edit,
         description: "Open a saved request in a tab and make it active. Returns the tab id.",
@@ -71,6 +77,12 @@ const TOOLS: &[ToolSpec] = &[
         schema: select_tab_arguments,
     },
     ToolSpec {
+        name: "close_tab",
+        class: ToolClass::Edit,
+        description: "Close an open tab. Closing a tab with unsaved changes discards them, so the user approves it first.",
+        schema: select_tab_arguments,
+    },
+    ToolSpec {
         name: "new_request_tab",
         class: ToolClass::Edit,
         description: "Open a new unsaved request tab (REST or GraphQL) with the given fields and make it active. Returns the tab id.",
@@ -79,7 +91,7 @@ const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "update_request",
         class: ToolClass::Edit,
-        description: "Change fields of the request in an open tab (the active one without tabId). Only the given fields change; headers replace the whole list. The tab stays unsaved and the user can revert the change.",
+        description: "Change fields of the request in an open tab (the active one without tabId), including its pre-request and post-response scripts. Only the given fields change; headers replace the whole list. The tab stays unsaved and the user can revert the change.",
         schema: update_request_arguments,
     },
     ToolSpec {
@@ -202,6 +214,22 @@ fn create_folder_arguments() -> Value {
     )
 }
 
+fn highlight_arguments() -> Value {
+    object(
+        json!({
+            "tabId": { "type": "string" },
+            "target": { "type": "string", "enum": ["request", "response"] },
+            "field": {
+                "type": "string",
+                "enum": ["body", "query", "variables", "preRequestScript", "postResponseScript"],
+                "description": "Request field to search (target request only).",
+            },
+            "text": { "type": "string", "description": "Exact text to highlight, as it appears in the editor." },
+        }),
+        &["target", "text"],
+    )
+}
+
 fn save_request_arguments() -> Value {
     object(
         json!({
@@ -231,6 +259,13 @@ fn set_active_environment_arguments() -> Value {
         &["environmentId"],
     )
 }
+
+/// The script API, as the editor's autocompletion documents it.
+const SCRIPT_DESCRIPTION: &str = "JavaScript run before the request (pre-request) or after the response (post-response); replaces the whole script, empty removes it. \
+API: `al.request` (url, method, body, headers.get/set/remove, json(), setJson()); `al.response` in post-response only (status, time, headers.get, text(), json()); \
+variables with get/set/has/unset in `al.environment`, `al.collection`, `al.folder`, `al.variables` and `al.runtime`; \
+tests with `al.test('name', () => { al.expect(value).toBe(expected) })` (toEqual, toBeTruthy, toContain, toMatch, toBeGreaterThan, toHaveProperty, .not); \
+`al.console.log`; `require('lodash' | 'crypto-js' | 'moment' | 'uuid')`.";
 
 /// Request fields shared by `new_request_tab` and `update_request`.
 fn request_fields() -> serde_json::Map<String, Value> {
@@ -272,6 +307,8 @@ fn request_fields() -> serde_json::Map<String, Value> {
         },
         "query": { "type": "string", "description": "GraphQL document (GraphQL only)." },
         "variables": { "type": "string", "description": "GraphQL variables as a JSON string (GraphQL only)." },
+        "preRequestScript": { "type": "string", "description": SCRIPT_DESCRIPTION },
+        "postResponseScript": { "type": "string", "description": SCRIPT_DESCRIPTION },
         "authentication": {
             "type": "object",
             "description": "inherit uses the collection's; bearer takes token; basic takes username and password; customHeader takes name and value. Prefer {{variables}} over literal secrets.",
@@ -336,6 +373,11 @@ mod tests {
             agent_tool_class("send_request"),
             Some(ToolClass::SideEffect)
         );
+        assert_eq!(
+            agent_tool_class("highlight_in_editor"),
+            Some(ToolClass::Read)
+        );
+        assert_eq!(agent_tool_class("close_tab"), Some(ToolClass::Edit));
         assert_eq!(agent_tool_class("rm_rf"), None);
     }
 }

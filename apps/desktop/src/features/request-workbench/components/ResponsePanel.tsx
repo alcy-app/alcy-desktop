@@ -1,6 +1,6 @@
 import { GrpcResponseView } from './GrpcResponseView'
 import type { GrpcStreamState } from '../grpc-stream'
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ResponseBodyOutput } from '../../../bindings/execute-graphql-request'
 import type { RequestSendDto, RequestSendsSource } from '../../../bindings/list-request-sends'
 import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
@@ -28,6 +28,7 @@ import { ScriptTestList } from './ScriptTestList'
 import { ResponseComparisonView } from './ResponseComparisonView'
 import { ResponseHistoryMenu, type ResponseView } from './ResponseHistoryMenu'
 import { ResponseNetworkBadge } from './ResponseNetworkBadge'
+import { registerEditorRevealer } from '../editor-bridge'
 
 /** Collect the body, fetching windowed chunks on demand, for copying as one string. */
 async function collectBodyText(body: ResponseBodyOutput): Promise<string> {
@@ -103,6 +104,8 @@ export const ResponsePanel = memo(function ResponsePanel({
   const { t, language } = useLanguage()
   const { showToast } = useToast()
   const [responseTab, setResponseTab] = useState<ResponseTabId>('body')
+  // The agent highlights inside the body view, so it can ask for it.
+  useEffect(() => registerEditorRevealer('response', () => setResponseTab('body')), [])
 
   // Load send history only after its menu opens.
   const [historyActivated, setHistoryActivated] = useState(false)
@@ -374,6 +377,7 @@ export const ResponsePanel = memo(function ResponsePanel({
                 headers={http ? http.headers : GRPC_BODY_HEADERS}
                 onCaptureValue={view.kind === 'current' ? onCaptureValue : undefined}
                 monitor={bodyMonitor}
+                agentSlot={view.kind === 'current' ? 'response' : undefined}
               />
             )}
           </div>

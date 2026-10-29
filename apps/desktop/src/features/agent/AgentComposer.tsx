@@ -1,9 +1,10 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { IconButton } from '../../shared/ui/IconButton'
-import { AtIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
+import { AtIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SelectionIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
+import { useEditorSelection, type EditorSelection } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
-import { agentContextOptions, mentionAt, type AgentContextOption } from './agent-context'
+import { agentContextOptions, mentionAt, selectionContext, type AgentContextOption } from './agent-context'
 
 interface AgentComposerProps {
   host: WorkbenchAgentHost
@@ -21,7 +22,12 @@ interface AgentComposerProps {
 const CATEGORY_KINDS = ['tab', 'request', 'environment'] as const
 type CategoryKind = (typeof CATEGORY_KINDS)[number]
 type ContextMenuEntry = { type: 'context'; option: AgentContextOption } | { type: 'category'; kind: CategoryKind; disabled: boolean }
-const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon }
+const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon }
+const SELECTION_PREVIEW_CHARS = 48
+
+function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
+  return a !== null && b !== null && a.slot === b.slot && a.text === b.text
+}
 const CATEGORY_ICONS = { tab: PanelRightIcon, request: FolderIcon, environment: VariablesIcon }
 
 /** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items. */
@@ -36,6 +42,13 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const lastCaretRef = useRef<{ value: string; caret: number } | null>(null)
   const menuId = useId()
   const mentionOpen = mention !== null
+  // The editor selection rides along automatically until dismissed or sent.
+  const selection = useEditorSelection()
+  const [dismissedSelection, setDismissedSelection] = useState<EditorSelection | null>(null)
+  const activeSelection = selection && !sameSelection(selection, dismissedSelection) ? selection : null
+  const selectionLabel = activeSelection
+    ? t('agent.context.selectionLabel', { where: t(`agent.context.selection.${activeSelection.slot}`) })
+    : ''
 
   useEffect(() => {
     if (!mentionOpen) return
@@ -127,7 +140,8 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
 
   const submit = () => {
     if (running || disabled || text.trim() === '') return
-    onSend(text, context)
+    onSend(text, activeSelection ? [selectionContext(activeSelection, host, selectionLabel), ...context] : context)
+    if (activeSelection) setDismissedSelection(activeSelection)
     setText('')
     setContext([])
     setMention(null)
@@ -268,8 +282,26 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
           </div>
         </div>
       )}
-      {context.length > 0 && (
+      {(context.length > 0 || activeSelection) && (
         <ul className="agent-context-chips" aria-label={t('agent.context.attachedAria')}>
+          {activeSelection && (
+            <li className="agent-context-chip agent-context-chip--selection" title={activeSelection.text}>
+              <span className="agent-context-chip-kind" title={t('agent.context.kind.selection')}><SelectionIcon size={12} /></span>
+              <span className="agent-context-chip-label">
+                {selectionLabel}
+                <span className="agent-context-chip-preview">
+                  {' · '}
+                  {activeSelection.text.length > SELECTION_PREVIEW_CHARS ? `${activeSelection.text.slice(0, SELECTION_PREVIEW_CHARS)}…` : activeSelection.text}
+                </span>
+              </span>
+              <IconButton
+                icon={<CloseIcon size={10} />}
+                label={t('agent.context.removeAria', { name: selectionLabel })}
+                tooltip={false}
+                onClick={() => setDismissedSelection(activeSelection)}
+              />
+            </li>
+          )}
           {context.map((item) => {
             const ContextIcon = CONTEXT_ICONS[item.kind]
             return (

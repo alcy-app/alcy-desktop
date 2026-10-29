@@ -2777,6 +2777,16 @@ const en: Record<TranslationKey, string> = {
   'settings.agent.removeKey': 'Remove key',
   'settings.agent.saveKey': 'Save key',
   'settings.agent.save': 'Save',
+  'agent.tool.close_tab': 'Close the tab',
+  'agent.tool.highlight_in_editor': 'Highlighted in the editor',
+  'agent.context.kind.selection': 'Selection',
+  'agent.context.selectionLabel': 'Selection in {where}',
+  'agent.context.selection.body': 'request body',
+  'agent.context.selection.query': 'query',
+  'agent.context.selection.variables': 'variables',
+  'agent.context.selection.preRequestScript': 'pre-request script',
+  'agent.context.selection.postResponseScript': 'post-response script',
+  'agent.context.selection.response': 'response body',
 }
 
 export default en

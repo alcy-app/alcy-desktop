@@ -2,6 +2,7 @@ import type { AuthenticationInput, HeaderInput } from '../../bindings/execute-gr
 import type { HttpMethodInput, RawBodyLanguage, RestBodyInput } from '../../bindings/execute-rest-request'
 import { emptyRequestContent, findNode, findRequest, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
 import type { ExecutionState } from '../request-workbench/request-workbench.types'
+import type { EditorField } from '../request-workbench/editor-bridge'
 import type { AgentHostTab, WorkbenchAgentHost } from './agent-host'
 
 /** Stands for a secret the model never sees. Writing it back keeps the secret. */
@@ -13,6 +14,7 @@ const MAX_SEARCH_RESULTS = 50
 const DEFAULT_SEARCH_RESULTS = 20
 const METHODS: HttpMethodInput[] = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 const RAW_LANGUAGES: RawBodyLanguage[] = ['json', 'text', 'xml', 'html', 'javascript']
+const EDITOR_FIELDS: EditorField[] = ['body', 'query', 'variables', 'preRequestScript', 'postResponseScript']
 const SECRET_HEADER = /authorization|token|secret|api[-_]?key|cookie|password|session/i
 const TEMPLATE_ONLY = /^\s*\{\{[^{}]+\}\}\s*$/
 
@@ -114,8 +116,8 @@ export function describeRequest(content: RequestContent): Record<string, unknown
   } else {
     base.grpc = { service: content.grpc.service, method: content.grpc.method }
   }
-  if (content.preRequestScript.trim() !== '') base.hasPreRequestScript = true
-  if (content.postResponseScript.trim() !== '') base.hasPostResponseScript = true
+  base.preRequestScript = truncate(content.preRequestScript)
+  base.postResponseScript = truncate(content.postResponseScript)
   return base
 }
 
@@ -267,6 +269,10 @@ export function applyRequestPatch(content: RequestContent, input: Input): Reques
   if (query !== undefined) next.query = query
   if (variables !== undefined) next.variables = variables
   if (input.authentication !== undefined) next.authentication = parseAuthentication(input.authentication, content.authentication)
+  const preRequestScript = optionalString(input, 'preRequestScript')
+  const postResponseScript = optionalString(input, 'postResponseScript')
+  if (preRequestScript !== undefined) next.preRequestScript = preRequestScript
+  if (postResponseScript !== undefined) next.postResponseScript = postResponseScript
   return next
 }
 
@@ -363,6 +369,28 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
       const tabId = requiredString(input, 'tabId')
       return (await host.selectTab(tabId)) ? ok({ tabId }) : failure(`No open tab '${tabId}'.`)
     }
+    case 'close_tab': {
+      const tabId = requiredString(input, 'tabId')
+      return (await host.closeTab(tabId)) ? ok({ closedTabId: tabId }) : failure(`No open tab '${tabId}'.`)
+    }
+    case 'highlight_in_editor': {
+      const tab = targetTab(host, input)
+      const target = optionalString(input, 'target')
+      if (target !== 'request' && target !== 'response') throw new ToolInputError("target must be 'request' or 'response'.")
+      const field = optionalString(input, 'field')
+      if (field !== undefined && !EDITOR_FIELDS.includes(field as EditorField)) throw new ToolInputError(`Unknown field '${field}'.`)
+      if (field !== undefined && target === 'response') throw new ToolInputError('field only applies to the request.')
+      const text = requiredString(input, 'text')
+      const result = await host.highlight(tab.id, target, (field as EditorField | undefined) ?? null, text)
+      if (result.ok) return ok({ tabId: tab.id, editor: result.slot, matches: result.matches })
+      const reasons = {
+        notFound: 'The tab no longer exists.',
+        noResponse: 'This tab has no response yet; send the request first.',
+        noEditor: 'That content is not shown in a text editor (e.g. HTML preview or a binary body).',
+        noMatch: `'${text}' does not appear there. Check the exact text with get_request or get_response.`,
+      }
+      return failure(reasons[result.reason])
+    }
     case 'new_request_tab': {
       const protocol = optionalString(input, 'protocol')
       if (protocol !== 'rest' && protocol !== 'graphql') throw new ToolInputError("protocol must be 'rest' or 'graphql'.")
@@ -436,6 +464,12 @@ export async function runAgentTool(name: string, input: Input, host: WorkbenchAg
   }
 }
 
+/** Tools that need approval only in some cases: closing a tab discards its unsaved changes. */
+export function toolNeedsApproval(name: string, input: Input, host: WorkbenchAgentHost): boolean {
+  if (name !== 'close_tab') return false
+  return host.tabs().some((tab) => tab.id === input.tabId && tab.dirty)
+}
+
 /** Short description of a call for its card in the chat. */
 export function summarizeToolCall(name: string, input: Input, host: WorkbenchAgentHost | null): string {
   const tab = host?.tabs().find((candidate) => candidate.id === (input.tabId ?? host.activeTabId()))
@@ -462,9 +496,12 @@ export function summarizeToolCall(name: string, input: Input, host: WorkbenchAge
       const request = host ? findRequest(host.collections(), string('requestId')) : null
       return request?.name ?? ''
     }
+    case 'highlight_in_editor':
+      return string('text')
     case 'get_request':
     case 'get_response':
     case 'select_tab':
+    case 'close_tab':
       return tab?.name ?? ''
     default:
       return ''

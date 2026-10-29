@@ -510,6 +510,16 @@ export function RecordIcon(props: IconProps) {
   )
 }
 
+/** Text cursor over a selection, for text selected in an editor. */
+export function SelectionIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M6 2.5h4M6 13.5h4M8 2.5v11" />
+      <path d="M2.5 6v4M13.5 6v4" />
+    </svg>
+  )
+}
+
 export function SparkleIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>

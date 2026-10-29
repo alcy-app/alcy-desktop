@@ -22,6 +22,8 @@ import { environmentVariablesExtension, setEnvironmentVariables } from '../templ
 import { useVariableEditing } from '../variable-editing-context'
 import { EditorSearch } from './EditorSearch'
 import { useEditorSearch } from './use-editor-search'
+import { editorSelectionExtension, useEditorAgentBridge } from './use-editor-agent-bridge'
+import type { EditorSlot } from '../editor-bridge'
 import { LineCount } from './LineCount'
 import './template-highlight.css'
 
@@ -31,9 +33,11 @@ interface VariablesPanelProps {
   /** Variáveis do ambiente ativo — o JSON de variables é interpolado no envio,
    * então `{{variável}}` ganha destaque, tooltip e sugestões aqui. */
   environmentVariables: EnvironmentVariableDto[]
+  /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
+  agentSlot?: EditorSlot
 }
 
-export function VariablesPanel({ value, onChange, environmentVariables }: VariablesPanelProps) {
+export function VariablesPanel({ value, onChange, environmentVariables, agentSlot }: VariablesPanelProps) {
   const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -45,6 +49,7 @@ export function VariablesPanel({ value, onChange, environmentVariables }: Variab
   const { bindings: shortcutBindings } = useShortcuts()
   const shortcutBindingsRef = useRef(shortcutBindings)
   const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
+  const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -90,6 +95,7 @@ export function VariablesPanel({ value, onChange, environmentVariables }: Variab
         interactiveCodeEditorTheme,
         editableCodeEditorTheme,
         editorSearchHighlightExtension,
+        editorSelectionExtension(agentSlot),
         ariaLabelCompartment.of(EditorView.contentAttributes.of({ 'aria-label': t('variables.editorLabel') })),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
@@ -136,6 +142,7 @@ export function VariablesPanel({ value, onChange, environmentVariables }: Variab
       </div>
       <div className="rw-variables-editor" ref={containerRef} />
       <EditorSearch
+        requestedSearch={requestedSearch}
         text={value}
         viewRef={viewRef}
         isOpen={isSearchOpen}

@@ -747,3 +747,12 @@
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-offset);
 }
+
+.agent-context-chip--selection {
+  border-color: var(--accent);
+}
+
+.agent-context-chip-preview {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}

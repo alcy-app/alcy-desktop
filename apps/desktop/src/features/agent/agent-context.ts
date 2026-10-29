@@ -1,8 +1,9 @@
 import type { AgentContextInput } from '../../bindings/agent-turn'
 import type { TreeNode } from '../request-workbench/collection-tree'
+import type { EditorSelection, EditorSlot } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
 
-export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response'
+export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response' | 'selection'
 
 export interface AgentContextOption extends AgentContextInput {
   kind: AgentContextKind
@@ -74,4 +75,20 @@ export function mentionAt(text: string, caret: number): { start: number; query: 
   const query = before.slice(at + 1)
   if (/\s/.test(query) || query.length > 60) return null
   return { start: at, query }
+}
+
+const SLOT_DESCRIPTIONS: Record<EditorSlot, string> = {
+  body: 'Request body',
+  query: 'GraphQL query',
+  variables: 'GraphQL variables',
+  preRequestScript: 'Pre-request script',
+  postResponseScript: 'Post-response script',
+  response: 'Response body',
+}
+
+/** The editor selection as the first context reference: the subject of the message. */
+export function selectionContext(selection: EditorSelection, host: WorkbenchAgentHost, label: string): AgentContextOption {
+  const tab = host.tabs().find((candidate) => candidate.id === host.activeTabId())
+  const where = tab ? `${SLOT_DESCRIPTIONS[selection.slot]} of tab "${tab.name}" (tabId ${tab.id})` : SLOT_DESCRIPTIONS[selection.slot]
+  return { kind: 'selection', id: selection.slot, label, summary: `${where}, selected text:\n${selection.text}` }
 }

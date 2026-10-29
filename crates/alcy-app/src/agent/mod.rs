@@ -14,8 +14,8 @@ pub use chat_model::{
 };
 pub use conversation::{AgentMessage, AgentRole, ContentBlock, push_user_text};
 pub use prompt::{
-    AgentLanguage, ContextReference, MAX_CONTEXT_REFERENCES, agent_system_prompt,
-    compose_user_message,
+    AgentLanguage, ContextReference, MAX_CONTEXT_REFERENCES, SELECTION_CONTEXT_KIND,
+    agent_system_prompt, compose_user_message,
 };
 pub use run_turn::{
     AgentToolHost, AgentTurnOutcome, AgentTurnRequest, AgentTurnSink, DEFAULT_MAX_OUTPUT_TOKENS,

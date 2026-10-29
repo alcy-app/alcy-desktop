@@ -2078,6 +2078,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                             onChange={workbench.setQuery}
                             environmentVariables={effectiveVariables}
                             schema={workbench.schema.status === 'success' ? workbench.schema.schema : null}
+                            agentSlot="query"
                           />
                         </div>
                       )}
@@ -2086,6 +2087,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       )}
                       {workbench.activeSection === 'variables' && (
                         <VariablesPanel
+                          agentSlot="variables"
                           key={workbench.activeTabId ?? ''}
                           value={workbench.variables}
                           onChange={workbench.setVariables}
@@ -2110,6 +2112,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       )}
                       {workbench.activeSection === 'body' && (
                         <RestBodyPanel
+                          agentEditors
                           key={workbench.activeTabId ?? ''}
                           body={workbench.body}
                           rootPath={workspace.rootPath}
@@ -2131,6 +2134,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       {workbench.activeSection === 'scripts' && (
                         <ScriptsPanel
                           editorKey={workbench.activeTabId ?? ''}
+                          agentEditors
                           preRequestScript={workbench.preRequestScript}
                           postResponseScript={workbench.postResponseScript}
                           onPreRequestScriptChange={workbench.setPreRequestScript}

@@ -27,6 +27,8 @@ import { useValueMonitorFindings } from '../use-value-monitor-findings'
 import type { MonitorHighlight } from '../use-value-monitor-findings'
 import { EditorSearch } from './EditorSearch'
 import { useEditorSearch } from './use-editor-search'
+import { editorSelectionExtension, useEditorAgentBridge } from './use-editor-agent-bridge'
+import type { EditorSlot } from '../editor-bridge'
 import { LineCount } from './LineCount'
 import { MonitorNavigator } from './MonitorNavigator'
 import './value-monitor.css'
@@ -48,6 +50,8 @@ interface ResponseCodeViewProps {
   monitors?: ValueMonitorDto[] | null
   /** Quantos valores reprovaram na avaliação atual (`null` sem avaliação pronta). */
   onMonitorFailedCount?: (count: number | null) => void
+  /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
+  agentSlot?: EditorSlot
 }
 
 interface ResponseContextMenuState {
@@ -160,7 +164,7 @@ function commonPrefixLength(a: string, b: string): number {
  * (substitui o tokenizer manual + `<span>` por token e a degradação por
  * limiar de tamanho).
  */
-export function ResponseCodeView({ text, language, partial = false, onCaptureValue, monitors = null, onMonitorFailedCount }: ResponseCodeViewProps) {
+export function ResponseCodeView({ text, language, partial = false, onCaptureValue, monitors = null, onMonitorFailedCount, agentSlot }: ResponseCodeViewProps) {
   const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
@@ -169,6 +173,7 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
   const ariaLabelCompartmentRef = useRef<Compartment | null>(null)
   const [contextMenu, setContextMenu] = useState<ResponseContextMenuState | null>(null)
   const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
+  const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
   const formatted = useFormattedText(text, language, partial)
   // Em JSON, valores ganham destaque ao passar o mouse e podem ser copiados
   // (ou capturados, com `onCaptureValue`) pelo menu de contexto.
@@ -243,6 +248,7 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
         interactiveCodeEditorTheme,
         responseCodeEditorTheme,
         editorSearchHighlightExtension,
+        editorSelectionExtension(agentSlot),
       ],
       parent: container,
     })
@@ -359,6 +365,7 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
       <div className="rw-code-view-frame">
         <div className="rw-code-block rw-code-view" ref={containerRef} />
         <EditorSearch
+          requestedSearch={requestedSearch}
           text={formatted}
           viewRef={viewRef}
           isOpen={isSearchOpen}

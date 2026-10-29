@@ -2771,6 +2771,16 @@ const ptBR = {
   'settings.agent.removeKey': 'Remover chave',
   'settings.agent.saveKey': 'Salvar chave',
   'settings.agent.save': 'Salvar',
+  'agent.tool.close_tab': 'Fechar a aba',
+  'agent.tool.highlight_in_editor': 'Destacou no editor',
+  'agent.context.kind.selection': 'Seleção',
+  'agent.context.selectionLabel': 'Seleção em {where}',
+  'agent.context.selection.body': 'corpo da requisição',
+  'agent.context.selection.query': 'query',
+  'agent.context.selection.variables': 'variáveis',
+  'agent.context.selection.preRequestScript': 'script de pré-requisição',
+  'agent.context.selection.postResponseScript': 'script de pós-resposta',
+  'agent.context.selection.response': 'corpo da resposta',
 } as const
 
 export default ptBR

@@ -1,11 +1,12 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import type { AgentHostTab, WorkbenchAgentHost } from '../agent/agent-host'
 import type { useEnvironmentsState } from '../environments/use-environments-state'
-import { findNode, findRequest } from './collection-tree'
+import { findNode, findRequest, type RequestContent } from './collection-tree'
+import { editorHighlighter, revealEditor, type EditorField, type EditorHighlighter, type EditorSlot } from './editor-bridge'
 import type { useCollectionsState } from './use-collections-state'
 import type { useOpenTabs } from './use-open-tabs'
 import { contentOf, isTabDirty, type useWorkbenchState } from './use-workbench-state'
-import type { WorkbenchTab } from './request-workbench.types'
+import type { RequestTabId, WorkbenchTab } from './request-workbench.types'
 
 interface AgentHostSources {
   workbench: ReturnType<typeof useWorkbenchState>
@@ -18,6 +19,51 @@ interface AgentHostSources {
 
 /** Longest wait for a render after an action that may not change any state. */
 const RENDER_FALLBACK_MS = 200
+/** Longest wait for an editor to mount after switching to its section. */
+const EDITOR_MOUNT_TIMEOUT_MS = 1000
+
+const FIELD_SECTIONS: Record<EditorField, RequestTabId> = {
+  body: 'body',
+  query: 'query',
+  variables: 'variables',
+  preRequestScript: 'scripts',
+  postResponseScript: 'scripts',
+}
+
+/** Request fields with an editor for the protocol, in the order they are searched. */
+function editorFields(content: RequestContent): EditorField[] {
+  const scripts: EditorField[] = ['preRequestScript', 'postResponseScript']
+  if (content.protocol === 'graphql') return ['query', 'variables', ...scripts]
+  if (content.protocol === 'rest') return [...(content.body.type === 'raw' ? ['body' as const] : []), ...scripts]
+  return scripts
+}
+
+function fieldText(content: RequestContent, field: EditorField): string {
+  switch (field) {
+    case 'body':
+      return content.body.type === 'raw' ? content.body.content : ''
+    case 'query':
+      return content.query
+    case 'variables':
+      return content.variables
+    case 'preRequestScript':
+      return content.preRequestScript
+    case 'postResponseScript':
+      return content.postResponseScript
+  }
+}
+
+/** Waits until the slot's editor is mounted, asking its panel to show it. */
+async function mountedEditor(slot: EditorSlot): Promise<EditorHighlighter | null> {
+  const deadline = Date.now() + EDITOR_MOUNT_TIMEOUT_MS
+  for (;;) {
+    revealEditor(slot)
+    const highlighter = editorHighlighter(slot)
+    if (highlighter) return highlighter
+    if (Date.now() > deadline) return null
+    await new Promise((resolve) => window.setTimeout(resolve, 30))
+  }
+}
 
 function toHostTab(tab: WorkbenchTab): AgentHostTab {
   return {
@@ -95,6 +141,36 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         if (!tab) return null
         await show(tab.id)
         return tab.id
+      },
+      async closeTab(tabId) {
+        if (!findTab(tabId)) return false
+        latest.current.openTabs.closeOpenTab(tabId)
+        await afterRender()
+        return true
+      },
+      async highlight(tabId, target, field, text) {
+        const tab = findTab(tabId)
+        if (!tab) return { ok: false, reason: 'notFound' }
+        let slot: EditorSlot = 'response'
+        if (target === 'response') {
+          if (tab.execution.status !== 'success') return { ok: false, reason: 'noResponse' }
+        } else {
+          const content = contentOf(tab)
+          const needle = text.toLowerCase()
+          const candidates = field ? [field] : editorFields(content)
+          const chosen = candidates.find((candidate) => fieldText(content, candidate).toLowerCase().includes(needle)) ?? (field ?? null)
+          if (!chosen) return { ok: false, reason: 'noMatch' }
+          slot = chosen
+        }
+        await show(tabId)
+        if (slot !== 'response') {
+          latest.current.workbench.setActiveSection(FIELD_SECTIONS[slot])
+          await afterRender()
+        }
+        const highlighter = await mountedEditor(slot)
+        if (!highlighter) return { ok: false, reason: 'noEditor' }
+        const matches = highlighter.highlight(text)
+        return matches > 0 ? { ok: true, slot, matches } : { ok: false, reason: 'noMatch' }
       },
       replaceContent(tabId, content) {
         latest.current.workbench.replaceTabContent(tabId, content)

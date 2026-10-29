@@ -10,7 +10,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 - **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
-- **Agente**: um chat ao lado do workbench que cria e altera requisições, abre abas, envia requisições com a sua aprovação e explica as respostas. Funciona com Claude, OpenCode Zen ou um servidor local compatível com OpenAI, configurados em Configurações > Agente, e nada é enviado antes disso.
+- **Agente**: um chat ao lado do workbench que cria e altera requisições e scripts, abre e fecha abas, envia requisições com a sua aprovação, explica as respostas e destaca no editor o valor de que está falando. O trecho selecionado no editor entra no contexto da conversa. Funciona com Claude, OpenCode Zen ou um servidor local compatível com OpenAI, configurados em Configurações > Agente, e nada é enviado antes disso.
 
 ### Changed
 

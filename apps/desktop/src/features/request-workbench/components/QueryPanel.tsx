@@ -26,6 +26,8 @@ import { graphqlQueryHighlight, setQueryVariables } from '../graphql-query-highl
 import { useVariableEditing } from '../variable-editing-context'
 import { EditorSearch } from './EditorSearch'
 import { useEditorSearch } from './use-editor-search'
+import { editorSelectionExtension, useEditorAgentBridge } from './use-editor-agent-bridge'
+import type { EditorSlot } from '../editor-bridge'
 import { LineCount } from './LineCount'
 import './template-highlight.css'
 
@@ -35,6 +37,8 @@ interface QueryPanelProps {
   environmentVariables: EnvironmentVariableDto[]
   /** Schema carregado, para sugerir campos e argumentos; `null` desliga as sugestões do schema. */
   schema: LoadSchemaOutput | null
+  /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
+  agentSlot?: EditorSlot
 }
 
 /**
@@ -45,7 +49,7 @@ interface QueryPanelProps {
  * `TemplateHighlightedField` (que segue existindo só para o campo de URL,
  * de linha única — ver `EndpointBar`).
  */
-export function QueryPanel({ value, onChange, environmentVariables, schema }: QueryPanelProps) {
+export function QueryPanel({ value, onChange, environmentVariables, schema, agentSlot }: QueryPanelProps) {
   const { t } = useLanguage()
   const formatted = useMemo(() => formatGraphqlQuery(value), [value])
 
@@ -59,6 +63,7 @@ export function QueryPanel({ value, onChange, environmentVariables, schema }: Qu
   const { bindings: shortcutBindings } = useShortcuts()
   const shortcutBindingsRef = useRef(shortcutBindings)
   const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
+  const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -106,6 +111,7 @@ export function QueryPanel({ value, onChange, environmentVariables, schema }: Qu
         interactiveCodeEditorTheme,
         editableCodeEditorTheme,
         editorSearchHighlightExtension,
+        editorSelectionExtension(agentSlot),
         ariaLabelCompartment.of(EditorView.contentAttributes.of({ 'aria-label': t('query.editorLabel') })),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
@@ -169,6 +175,7 @@ export function QueryPanel({ value, onChange, environmentVariables, schema }: Qu
       </div>
       <div className="rw-query-editor" ref={containerRef} />
       <EditorSearch
+        requestedSearch={requestedSearch}
         text={value}
         viewRef={viewRef}
         isOpen={isSearchOpen}

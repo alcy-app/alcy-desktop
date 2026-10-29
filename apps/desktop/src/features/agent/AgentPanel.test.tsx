@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '../../test-utils'
+import { act, fireEvent, render, screen, waitFor } from '../../test-utils'
+import { EditorSelection, EditorState } from '@codemirror/state'
+import { publishEditorSelection } from '../request-workbench/editor-bridge'
 import type { AgentEventDto } from '../../bindings/agent-turn'
 import { emptyRequestContent } from '../request-workbench/collection-tree'
 import type { WorkbenchAgentHost } from './agent-host'
@@ -37,6 +39,8 @@ function host(): WorkbenchAgentHost {
     activeEnvironmentId: () => null,
     openRequest: vi.fn(),
     selectTab: vi.fn(),
+    closeTab: vi.fn(),
+    highlight: vi.fn(),
     newRequestTab: vi.fn(),
     replaceContent: vi.fn(),
     send: vi.fn(async () => ({ status: 'error', error: { kind: 'timeout' } }) as const),
@@ -250,6 +254,29 @@ describe('AgentPanel', () => {
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
     expect(startAgentTurn).not.toHaveBeenCalled()
     expect(input).toHaveValue('olá')
+  })
+
+  it('sends the editor selection first in the context, once, and lets it be dismissed', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+
+    act(() => publishEditorSelection('response', EditorState.create({ doc: '{"status":"failed"}', selection: EditorSelection.single(11, 17) })))
+    expect(await screen.findByText(/Seleção em corpo da resposta/)).toBeInTheDocument()
+
+    sendMessage('por que falhou?')
+    await waitFor(() => expect(startAgentTurn).toHaveBeenCalled())
+    const [input] = startAgentTurn.mock.calls[0] as [{ context: { kind: string; summary: string }[] }]
+    expect(input.context[0].kind).toBe('selection')
+    expect(input.context[0].summary).toContain('Response body of tab "Users"')
+    expect(input.context[0].summary).toContain('failed')
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Contexto anexado' })).not.toBeInTheDocument())
+
+    act(() => publishEditorSelection('response', EditorState.create({ doc: '{"status":"failed"}', selection: EditorSelection.single(2, 8) })))
+    fireEvent.click(await screen.findByRole('button', { name: /Remover Seleção em corpo da resposta do contexto/ }))
+    expect(screen.queryByRole('list', { name: 'Contexto anexado' })).not.toBeInTheDocument()
+    act(() => publishEditorSelection('response', EditorState.create({ doc: '{}', selection: EditorSelection.single(0, 0) })))
   })
 
   it('asks to set up a provider before chatting', async () => {

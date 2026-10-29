@@ -12,7 +12,7 @@ import {
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import type { WorkbenchAgentHost } from './agent-host'
-import { runAgentTool, summarizeToolCall } from './agent-tools'
+import { runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tools'
 
 export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' | 'declined' | 'reverted'
 
@@ -92,7 +92,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
 
   const handleToolCall = useCallback(
     async (event: Extract<AgentEventDto, { type: 'toolCallRequested' }>) => {
-      const needsApproval = event.class === 'sideEffect'
+      const needsApproval = event.class === 'sideEffect' || toolNeedsApproval(event.name, event.input, hostRef.current)
       setItems((current) => [
         ...current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item)),
         {

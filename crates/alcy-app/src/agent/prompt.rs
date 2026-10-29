@@ -10,6 +10,9 @@ pub struct ContextReference {
 
 pub const MAX_CONTEXT_REFERENCES: usize = 20;
 const MAX_CONTEXT_SUMMARY_BYTES: usize = 2 * 1024;
+/// Text the user selected in an editor; it is the subject of the message.
+pub const SELECTION_CONTEXT_KIND: &str = "selection";
+const MAX_SELECTION_BYTES: usize = 8 * 1024;
 
 /// Language of the interface, used to answer in the same one by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +36,9 @@ You help the user build, change, send and understand requests by using the workb
 if the user declines, do not retry the same call, ask what to change.\n\
 - Reference environment variables as {{{{name}}}}. Never ask for or write secret values; masked values appear as ••••.\n\
 - When explaining a response, be concrete: status, the fields that matter, errors and likely causes.\n\
+- A `selection` in the attached context is what the user selected in an editor: treat it as the main subject of the message.\n\
+- When the user cannot find something, or you mention a specific value, highlight it with highlight_in_editor.\n\
+- Scripts use the `al` API described in update_request; prefer al.test assertions for checks on the response.\n\
 - Keep answers short and use Markdown for code and JSON.\n\
 - Answer in the language the user writes in; when unclear, use {language}."
     )
@@ -45,12 +51,22 @@ pub fn compose_user_message(text: &str, context: &[ContextReference]) -> String 
     }
     let mut message = String::from(text);
     message.push_str("\n\n<attached_context>\n");
-    for reference in context.iter().take(MAX_CONTEXT_REFERENCES) {
+    // The selection goes first, with more room than other references.
+    let (selections, others): (Vec<_>, Vec<_>) = context
+        .iter()
+        .take(MAX_CONTEXT_REFERENCES)
+        .partition(|reference| reference.kind == SELECTION_CONTEXT_KIND);
+    for reference in selections.into_iter().chain(others) {
         message.push_str(&format!(
             "- {} \"{}\" (id: {})\n",
             reference.kind, reference.label, reference.id
         ));
-        let summary = truncate_utf8(reference.summary.trim(), MAX_CONTEXT_SUMMARY_BYTES);
+        let limit = if reference.kind == SELECTION_CONTEXT_KIND {
+            MAX_SELECTION_BYTES
+        } else {
+            MAX_CONTEXT_SUMMARY_BYTES
+        };
+        let summary = truncate_utf8(reference.summary.trim(), limit);
         if !summary.is_empty() {
             for line in summary.lines() {
                 message.push_str("  ");
@@ -105,6 +121,26 @@ mod tests {
         assert!(message.starts_with("explain\n\n<attached_context>"));
         assert!(message.contains("- request \"List users\" (id: r1)"));
         assert!(message.contains("  GET {{base}}/users"));
+    }
+
+    #[test]
+    fn the_selection_comes_first_with_a_larger_budget() {
+        let reference = |kind: &str, summary: String| ContextReference {
+            kind: kind.into(),
+            id: kind.into(),
+            label: kind.into(),
+            summary,
+        };
+        let message = compose_user_message(
+            "why?",
+            &[
+                reference("tab", "GET /users".into()),
+                reference(SELECTION_CONTEXT_KIND, "x".repeat(5000)),
+            ],
+        );
+        let selection = message.find("- selection").unwrap();
+        assert!(selection < message.find("- tab").unwrap());
+        assert!(message.contains(&"x".repeat(5000)));
     }
 
     #[test]

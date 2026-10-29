@@ -27,6 +27,8 @@ import {
 } from '../codemirror-shared'
 import { EditorSearch } from './EditorSearch'
 import { useEditorSearch } from './use-editor-search'
+import { editorSelectionExtension, useEditorAgentBridge } from './use-editor-agent-bridge'
+import type { EditorSlot } from '../editor-bridge'
 import { LineCount } from './LineCount'
 import './template-highlight.css'
 
@@ -56,6 +58,8 @@ interface RequestBodyPanelProps {
    * editor tem esse recurso é decidido na montagem (`undefined` = nunca);
    * depois, `null` só o desliga. */
   bodySchema?: BodySchema | null
+  /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
+  agentSlot?: EditorSlot
 }
 
 /**
@@ -73,6 +77,7 @@ export function RequestBodyPanel({
   extraExtensions,
   environmentVariables,
   bodySchema,
+  agentSlot,
 }: RequestBodyPanelProps) {
   const { t } = useLanguage()
   const editorLabel = label ?? t('requestBody.editorLabel')
@@ -87,6 +92,7 @@ export function RequestBodyPanel({
   const { bindings: shortcutBindings } = useShortcuts()
   const shortcutBindingsRef = useRef(shortcutBindings)
   const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
+  const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -136,6 +142,7 @@ export function RequestBodyPanel({
         editableCodeEditorTheme,
         twoDigitLineNumbersTheme,
         editorSearchHighlightExtension,
+        editorSelectionExtension(agentSlot),
         ariaLabelCompartment.of(EditorView.contentAttributes.of({ 'aria-label': editorLabel })),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
@@ -198,6 +205,7 @@ export function RequestBodyPanel({
       </div>
       <div className="rw-request-body-editor" ref={containerRef} />
       <EditorSearch
+        requestedSearch={requestedSearch}
         text={value}
         viewRef={viewRef}
         isOpen={isSearchOpen}

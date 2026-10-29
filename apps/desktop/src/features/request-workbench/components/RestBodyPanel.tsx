@@ -78,6 +78,8 @@ interface RestBodyPanelProps {
   pickFile?: () => Promise<string | null>
   /** Injetável para testes; consulta o backend por padrão. */
   checkFiles?: (rootPath: string, paths: string[]) => Promise<boolean[]>
+  /** Exposes the raw body editor to the agent (ADR 0064); only the workbench sets it. */
+  agentEditors?: boolean
 }
 
 /** Aba "Body" de uma requisição REST: seletor do tipo de corpo e o editor
@@ -98,6 +100,7 @@ export function RestBodyPanel({
   onBinaryFileChange,
   environmentVariables,
   bodySchema = null,
+  agentEditors = false,
   pickFile = pickBodyFile,
   checkFiles = checkBodyFiles,
 }: RestBodyPanelProps) {
@@ -175,6 +178,7 @@ export function RestBodyPanel({
             language={codeLanguageForRaw(body.rawLanguage)}
             environmentVariables={environmentVariables}
             bodySchema={body.rawLanguage === 'json' ? bodySchema : null}
+            agentSlot={agentEditors ? 'body' : undefined}
           />
         )}
         {body.type === 'urlencoded' && (

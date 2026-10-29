@@ -25,6 +25,8 @@ const KNOWN_TOOLS = new Set([
   'create_folder',
   'set_environment_variable',
   'set_active_environment',
+  'close_tab',
+  'highlight_in_editor',
 ])
 
 interface AgentMessageListProps {

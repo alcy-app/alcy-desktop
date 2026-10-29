@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Tabs } from '../../../shared/ui/Tabs'
 import type { ExecutionState } from '../request-workbench.types'
 import { scriptCompletionExtension } from '../script-completions'
 import { scriptReservedHighlight } from '../script-highlight'
 import { RequestBodyPanel } from './RequestBodyPanel'
+import { registerEditorRevealer } from '../editor-bridge'
 
 type ScriptKind = 'pre' | 'post'
 
@@ -17,6 +18,8 @@ interface ScriptsPanelProps {
   /** Identifica o documento (a aba): outro valor recria os editores, cada um com seu próprio
    * histórico de desfazer, mas mantém a escolha entre pré-requisição e pós-resposta. */
   editorKey?: string
+  /** Exposes both editors to the agent (ADR 0064); only the workbench sets it. */
+  agentEditors?: boolean
 }
 
 /** Falha de script da última execução; os logs (`al.console.log`) vão para o console do app. */
@@ -38,9 +41,19 @@ export function ScriptsPanel({
   onPostResponseScriptChange,
   execution,
   editorKey = '',
+  agentEditors = false,
 }: ScriptsPanelProps) {
   const { t } = useLanguage()
   const [active, setActive] = useState<ScriptKind>('pre')
+  useEffect(() => {
+    if (!agentEditors) return
+    const unregisterPre = registerEditorRevealer('preRequestScript', () => setActive('pre'))
+    const unregisterPost = registerEditorRevealer('postResponseScript', () => setActive('post'))
+    return () => {
+      unregisterPre()
+      unregisterPost()
+    }
+  }, [agentEditors])
   const error = lastRunError(execution)
 
   const tabs: { id: ScriptKind; label: string; badge?: number }[] = [
@@ -60,6 +73,7 @@ export function ScriptsPanel({
             label={t('scripts.preRequestEditorLabel')}
             value={preRequestScript}
             onChange={onPreRequestScriptChange}
+            agentSlot={agentEditors ? 'preRequestScript' : undefined}
           />
         ) : (
           <RequestBodyPanel
@@ -69,6 +83,7 @@ export function ScriptsPanel({
             label={t('scripts.postResponseEditorLabel')}
             value={postResponseScript}
             onChange={onPostResponseScriptChange}
+            agentSlot={agentEditors ? 'postResponseScript' : undefined}
           />
         )}
       </div>

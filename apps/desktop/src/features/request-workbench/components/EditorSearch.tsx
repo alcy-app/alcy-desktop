@@ -7,6 +7,7 @@ import { Tooltip } from '../../../shared/ui/Tooltip'
 import { useTooltip } from '../../../shared/ui/use-tooltip'
 import { ChevronDownIcon, CloseIcon, SearchIcon } from '../../../shared/ui/icons'
 import { findEditorSearchMatches, updateEditorSearchHighlights } from '../editor-search'
+import type { RequestedSearch } from './use-editor-agent-bridge'
 import './editor-search.css'
 
 interface SearchOptionButtonProps {
@@ -43,9 +44,11 @@ interface EditorSearchProps {
   onOpen: () => void
   onClose: () => void
   placement?: 'request' | 'response'
+  /** Search started from outside (the agent): fills the query and scrolls to the first match without taking focus. */
+  requestedSearch?: RequestedSearch | null
 }
 
-export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement = 'request' }: EditorSearchProps) {
+export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement = 'request', requestedSearch = null }: EditorSearchProps) {
   const { t } = useLanguage()
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [query, setQuery] = useState('')
@@ -53,6 +56,18 @@ export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement
   const [wholeWord, setWholeWord] = useState(false)
   const [regularExpression, setRegularExpression] = useState(false)
   const [requestedIndex, setRequestedIndex] = useState(0)
+  const [appliedNonce, setAppliedNonce] = useState<number | null>(null)
+  // Last outside request already scrolled to; differs from appliedNonce while one is pending.
+  const revealedNonceRef = useRef<number | null>(null)
+  // An outside request replaces the query during render, like a reset from props.
+  if (requestedSearch && requestedSearch.nonce !== appliedNonce) {
+    setAppliedNonce(requestedSearch.nonce)
+    setQuery(requestedSearch.text)
+    setMatchCase(false)
+    setWholeWord(false)
+    setRegularExpression(false)
+    setRequestedIndex(0)
+  }
 
   const result = useMemo(
     () => findEditorSearchMatches(text, query, { matchCase, wholeWord, regularExpression }),
@@ -61,9 +76,10 @@ export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement
   const activeIndex = result.matches.length === 0 ? -1 : ((requestedIndex % result.matches.length) + result.matches.length) % result.matches.length
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen || appliedNonce !== revealedNonceRef.current) return
     inputRef.current?.focus()
     inputRef.current?.select()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- focus only when the bar opens; an outside request opens it without focus.
   }, [isOpen])
 
   useEffect(() => {
@@ -75,7 +91,12 @@ export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement
     }
 
     updateEditorSearchHighlights(view, result.matches, activeIndex)
-  }, [activeIndex, isOpen, result.matches, viewRef])
+    if (appliedNonce !== revealedNonceRef.current) {
+      revealedNonceRef.current = appliedNonce
+      const first = result.matches[0]
+      if (first) view.dispatch({ effects: EditorView.scrollIntoView(first.from, { y: 'center' }) })
+    }
+  }, [activeIndex, appliedNonce, isOpen, result.matches, viewRef])
 
   useEffect(
     () => () => {

@@ -300,6 +300,11 @@ applies edits to open tabs with a revert, and masks secrets before any value
 reaches the model. Every agent front end goes through the same bridge, so
 approval and masking hold for all of them.
 
+The workbench editors (request body, GraphQL query and variables, scripts and
+the response body) register in a small editor bridge: the agent highlights
+text through each editor's search bar, and the latest selection goes with the
+next message as its main context.
+
 The transcript stays in Rust: each turn sends only the new message, and chats
 are saved per workspace under app data (`agent-sessions/`), never in the
 workspace folder.
