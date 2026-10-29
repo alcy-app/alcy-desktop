@@ -1,5 +1,12 @@
 /** Canonical pt-BR dictionary. TranslationKey is derived from it, so the compiler requires en.ts to implement exactly the same keys. */
 const ptBR = {
+  'agent.thinking': 'O Alcy está pensando',
+  'agent.thinking.route': 'Farejando a próxima rota…',
+  'agent.thinking.forest': 'Explorando a floresta de endpoints…',
+  'agent.thinking.antlers': 'Desembaraçando os chifres do JSON…',
+  'agent.thinking.payload': 'Seguindo as pegadas do payload…',
+  'agent.thinking.trail': 'Encontrando uma trilha entre requests…',
+  'agent.thinking.ruminating': 'Ruminando a melhor resposta…',
   'agent.tool.cancel_request': 'Cancelar requisição',
   'agent.tool.send_grpc_message': 'Enviar mensagem gRPC',
   'agent.tool.close_grpc_send': 'Encerrar envio gRPC',

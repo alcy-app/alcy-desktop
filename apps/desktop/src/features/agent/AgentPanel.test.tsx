@@ -92,6 +92,26 @@ beforeEach(() => {
 })
 
 describe('AgentPanel', () => {
+  it('shows thinking before the first response and removes it when text arrives or the turn ends', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    let emit: (event: AgentEventDto) => void = () => {}
+    let finish: (value: unknown) => void = () => {}
+    startAgentTurn.mockImplementation((_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+      emit = onEvent
+      return new Promise((resolve) => { finish = resolve })
+    })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('explique a API')
+    expect(await screen.findByRole('status', { name: 'O Alcy está pensando' })).toBeInTheDocument()
+    act(() => emit({ type: 'textDelta', text: 'Aqui está a explicação.' }))
+    expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'O agente está respondendo' })).toBeInTheDocument()
+    await act(async () => finish({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }))
+    expect(screen.queryByRole('status', { name: 'O agente está respondendo' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
+  })
+
   it('rejects a resource action if the target changes while approval is pending', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     scriptSendTurn({ name: 'delete_flow', input: { flowId: 'flow' } })

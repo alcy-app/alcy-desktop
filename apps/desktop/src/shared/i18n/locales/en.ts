@@ -6,6 +6,13 @@ import type { TranslationKey } from './pt-BR'
  * not - the two locales can never silently drift apart.
  */
 const en: Record<TranslationKey, string> = {
+  'agent.thinking': 'Alcy is thinking',
+  'agent.thinking.route': 'Sniffing out the next route…',
+  'agent.thinking.forest': 'Exploring the endpoint forest…',
+  'agent.thinking.antlers': 'Untangling JSON from my antlers…',
+  'agent.thinking.payload': 'Following the payload tracks…',
+  'agent.thinking.trail': 'Finding a trail between requests…',
+  'agent.thinking.ruminating': 'Chewing over the best response…',
   'agent.tool.cancel_request': 'Cancel request',
   'agent.tool.send_grpc_message': 'Send gRPC message',
   'agent.tool.close_grpc_send': 'Finish gRPC request stream',

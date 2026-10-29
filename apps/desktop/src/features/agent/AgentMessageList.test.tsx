@@ -1,12 +1,35 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '../../test-utils'
 import { AgentMessageList } from './AgentMessageList'
+import type { AgentChatItem } from './use-agent-session'
 
 const actions = { onApprove: vi.fn(), onDecline: vi.fn(), onRevert: vi.fn() }
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('AgentMessageList', () => {
+  it('shows thinking between model responses, without duplicating streaming or tool progress', () => {
+    const user: AgentChatItem = { kind: 'user', id: 'u', text: 'Crie um flow', context: [] }
+    const tool: Extract<AgentChatItem, { kind: 'tool' }> = { kind: 'tool', id: 'tool', name: 'create_flow', toolClass: 'sideEffect', summary: 'Example', state: 'running', canRevert: false, autoApproved: false }
+    const { rerender } = render(<AgentMessageList items={[tool, user]} running {...actions} />)
+    expect(screen.getByRole('status', { name: 'O Alcy está pensando' })).toBeInTheDocument()
+
+    rerender(<AgentMessageList items={[user, { kind: 'assistant', id: 'a', text: 'Vou criar o flow.', streaming: true }]} running {...actions} />)
+    expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'O agente está respondendo' })).toBeInTheDocument()
+
+    rerender(<AgentMessageList items={[user, tool]} running {...actions} />)
+    expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
+    rerender(<AgentMessageList items={[user, { ...tool, state: 'awaitingApproval' }]} running {...actions} />)
+    expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Aprovar' })).toBeInTheDocument()
+
+    rerender(<AgentMessageList items={[user, { ...tool, state: 'done' }]} running {...actions} />)
+    expect(screen.getByRole('status', { name: 'O Alcy está pensando' })).toBeInTheDocument()
+    rerender(<AgentMessageList items={[user, { ...tool, state: 'done' }]} running={false} {...actions} />)
+    expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
+  })
+
   it('copies individual code blocks, including blocks nested in Markdown lists', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })

@@ -7,6 +7,7 @@ import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, Spinner } from '../../shared
 import { MarkdownView } from '../notifications/MarkdownView'
 import type { AgentChatItem } from './use-agent-session'
 import { RESOURCE_TOOL_NAMES } from './agent-resource-tools'
+import { AgentThinking } from './AgentThinking'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
@@ -36,6 +37,7 @@ const KNOWN_TOOLS = new Set([
 
 interface AgentMessageListProps {
   items: AgentChatItem[]
+  running?: boolean
   onApprove: (callId: string) => void
   onDecline: (callId: string) => void
   onRevert: (callId: string) => void
@@ -54,17 +56,21 @@ function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
   return ids
 }
 
-export function AgentMessageList({ items, onApprove, onDecline, onRevert }: AgentMessageListProps) {
+export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert }: AgentMessageListProps) {
   const { t, language } = useLanguage()
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
+  const last = items.at(-1)
+  const thinking = running
+    && !(last?.kind === 'assistant' && last.streaming)
+    && !(last?.kind === 'tool' && (last.state === 'running' || last.state === 'awaitingApproval'))
 
   // Follow new content while the user is at the bottom; leave them alone after scrolling up.
   useEffect(() => {
     const element = scrollRef.current
     if (element && pinnedToBottom.current) element.scrollTop = element.scrollHeight
-  }, [items])
+  }, [items, thinking])
 
   const hidden = Math.max(0, items.length - visible)
   const shown = hidden > 0 ? items.slice(hidden) : items
@@ -138,6 +144,7 @@ export function AgentMessageList({ items, onApprove, onDecline, onRevert }: Agen
             return <ToolCallCard key={item.id} item={item} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
         }
       })}
+      {thinking && <AgentThinking />}
     </div>
   )
 }

@@ -227,13 +227,46 @@
 .agent-streaming > :nth-child(2) { animation-delay: 150ms; }
 .agent-streaming > :nth-child(3) { animation-delay: 300ms; }
 
+.agent-thinking {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-sm);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.agent-thinking-icon {
+  flex-shrink: 0;
+  width: calc(18px * var(--icon-scale));
+  height: calc(18px * var(--icon-scale));
+  background: var(--accent-strong);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  animation: agent-pulse 1.6s ease-in-out infinite;
+}
+
+.agent-thinking-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @keyframes agent-pulse {
   0%, 80%, 100% { opacity: var(--disabled-opacity); }
   40% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-streaming > span { animation: none; }
+  .agent-streaming > span,
+  .agent-thinking-icon { animation: none; }
 }
 
 .agent-notice {

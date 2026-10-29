@@ -156,7 +156,7 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
           </div>
         </div>
       ) : (
-        <AgentMessageList items={session.items} onApprove={session.approve} onDecline={session.decline} onRevert={session.revert} />
+        <AgentMessageList items={session.items} running={session.running} onApprove={session.approve} onDecline={session.decline} onRevert={session.revert} />
       )}
 
       <AgentComposer
