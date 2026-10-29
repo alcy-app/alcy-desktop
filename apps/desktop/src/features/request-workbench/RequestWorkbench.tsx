@@ -191,6 +191,15 @@ interface PendingLoadTestImport {
 
 /** Response value monitor preference, shared across all requests. */
 const VALUE_MONITOR_STORAGE_KEY = 'alcy:panel:value-monitor'
+const AGENT_OPEN_STORAGE_KEY = 'alcy:panel:agent-open'
+
+function readAgentOpen(): boolean {
+  try {
+    return window.localStorage.getItem(AGENT_OPEN_STORAGE_KEY) === 'open'
+  } catch {
+    return false
+  }
+}
 
 /** Inline Start mock block (spec 0121); null if removed or no longer inline. */
 function inlineMockServerOf(flows: FlowState[], flowId: string, nodeId: string): MockServerDto | null {
@@ -403,7 +412,22 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const [harExporting, setHarExporting] = useState(false)
   const harExportingRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [agentOpen, setAgentOpen] = useState(false)
+  // The agent panel keeps its place across restarts and workspaces; once shown it
+  // stays mounted while hidden, so closing it keeps the chat (and a reply in flight).
+  const [agentOpen, setAgentOpenState] = useState(readAgentOpen)
+  const [agentMounted, setAgentMounted] = useState(agentOpen)
+  const setAgentOpen = useCallback((next: boolean | ((open: boolean) => boolean)) => {
+    setAgentOpenState((current) => {
+      const open = typeof next === 'function' ? next(current) : next
+      try {
+        window.localStorage.setItem(AGENT_OPEN_STORAGE_KEY, open ? 'open' : 'closed')
+      } catch {
+        // Storage unavailable; the panel starts closed next time.
+      }
+      return open
+    })
+    setAgentMounted(true)
+  }, [])
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const { reload: reloadCollections } = collections
   const { reload: reloadEnvironments } = environments
@@ -796,7 +820,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     environments,
     sendActive: () => handleSendRef.current(),
   })
-  const toggleAgentPanel = useCallback(() => setAgentOpen((open) => !open), [])
+  const toggleAgentPanel = useCallback(() => setAgentOpen((open) => !open), [setAgentOpen])
   const openAgentSettings = useCallback(() => {
     setSettingsCategory('agent')
     setSettingsOpen(true)
@@ -2246,14 +2270,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             ))}
             </Suspense>
           </main>
-          {FEATURE_FLAGS.agent && agentOpen && (
+          {FEATURE_FLAGS.agent && agentMounted && (
             <>
-              <ResizeHandle
-                ariaLabel={t('workbench.resize.agent')}
-                orientation="vertical"
-                onPointerDown={agentPanel.startResizing}
-              />
-              <div className="agent-panel-wrapper" style={{ width: agentPanel.size }}>
+              {agentOpen && (
+                <ResizeHandle
+                  ariaLabel={t('workbench.resize.agent')}
+                  orientation="vertical"
+                  onPointerDown={agentPanel.startResizing}
+                />
+              )}
+              <div className="agent-panel-wrapper" style={{ width: agentPanel.size }} hidden={!agentOpen}>
                 <AgentPanel
                   rootPath={workspace.rootPath}
                   host={agentHost}

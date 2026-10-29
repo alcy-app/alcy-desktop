@@ -1616,6 +1616,11 @@
   min-height: 0;
 }
 
+/* Closed, the panel stays mounted (its chat keeps going) but takes no space. */
+.agent-panel-wrapper[hidden] {
+  display: none;
+}
+
 /* Agent chat toggle at the end of the status bar; pressed while the panel is open. */
 .rw-statusbar-agent.ui-icon-button {
   color: var(--text-muted);

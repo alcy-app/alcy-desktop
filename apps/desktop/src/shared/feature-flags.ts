@@ -17,7 +17,7 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * linking a workspace. The versioning tab appears when this or `gitlab`
    * is on.
    */
-  onedrive: true,
+  onedrive: false,
   /** Notification bell on the right side of the status bar. */
   notifications: true,
   /** Value monitors: sidebar entry, Monitor button and response highlights. */
@@ -32,9 +32,9 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * Visual creation, import and execution of load tests.
    * The runtime remains isolated in Rust.
    */
-  loadTesting: true,
+  loadTesting: false,
   /**
-   * Agent chat panel (ADR 0064): the panel, its title bar button, its
+   * Agent chat panel (ADR 0064): the panel, its status bar button, its
    * shortcut and the Agent settings category. Nothing is sent to
    * a provider until the user configures one.
    */

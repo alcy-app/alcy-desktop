@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentCommandError } from '../../bindings/agent-settings'
-import { loadAgentSession } from '../../bindings/agent-sessions'
+import { loadAgentSession, type AgentSessionViewDto } from '../../bindings/agent-sessions'
 import {
   cancelAgentTurn,
   startAgentTurn,
@@ -12,6 +12,7 @@ import {
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import type { WorkbenchAgentHost } from './agent-host'
+import { rememberSession, rememberedSession } from './agent-session-memory'
 import { runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tools'
 
 export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' | 'declined' | 'reverted'
@@ -135,6 +136,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     (event: AgentEventDto) => {
       switch (event.type) {
         case 'sessionStarted':
+          rememberSession(rootPath, event.sessionId)
           setSessionId(event.sessionId)
           setTitle(event.title)
           return
@@ -160,7 +162,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
           return
       }
     },
-    [handleToolCall, t],
+    [handleToolCall, rootPath, t],
   )
 
   const send = useCallback(
@@ -227,17 +229,13 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     setSessionId(null)
     setTitle(null)
     revertsRef.current.clear()
-  }, [])
+    rememberSession(rootPath, null)
+  }, [rootPath])
 
-  const openSession = useCallback(
-    async (id: string) => {
-      if (runIdRef.current !== null) return
-      const result = await loadAgentSession(rootPath, id)
-      if (!result.ok) {
-        setItems((current) => [...current, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t) }])
-        return
-      }
-      const view = result.value
+  /** Shows a saved chat and remembers it as the workspace's open chat. */
+  const applyView = useCallback(
+    (view: AgentSessionViewDto) => {
+      rememberSession(rootPath, view.id)
       revertsRef.current.clear()
       setSessionId(view.id)
       setTitle(view.title)
@@ -266,6 +264,34 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     },
     [rootPath, t],
   )
+
+  const openSession = useCallback(
+    async (id: string) => {
+      if (runIdRef.current !== null) return
+      const result = await loadAgentSession(rootPath, id)
+      if (result.ok) applyView(result.value)
+      else setItems((current) => [...current, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t) }])
+    },
+    [applyView, rootPath, t],
+  )
+
+  // Bring back the chat last open in this workspace when the panel mounts.
+  // A remembered chat that no longer exists is forgotten quietly.
+  useEffect(() => {
+    const id = rememberedSession(rootPath)
+    if (id === null) return
+    let cancelled = false
+    void loadAgentSession(rootPath, id).then((result) => {
+      if (cancelled || runIdRef.current !== null) return
+      if (result.ok) applyView(result.value)
+      else rememberSession(rootPath, null)
+    })
+    return () => {
+      cancelled = true
+    }
+    // Only once per workspace: later changes come from the user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath])
 
   // A turn left running when the panel goes away (or the workspace changes) is cancelled.
   useEffect(

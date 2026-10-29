@@ -11,6 +11,7 @@ const getAgentSettings = vi.fn()
 const saveAgentSettings = vi.fn()
 const startAgentTurn = vi.fn()
 const submitAgentToolResult = vi.fn()
+const loadAgentSession = vi.fn()
 
 vi.mock('../../bindings/agent-settings', () => ({
   getAgentSettings: () => getAgentSettings(),
@@ -23,7 +24,7 @@ vi.mock('../../bindings/agent-turn', () => ({
 }))
 vi.mock('../../bindings/agent-sessions', () => ({
   listAgentSessions: vi.fn(async () => ({ ok: true, value: [] })),
-  loadAgentSession: vi.fn(),
+  loadAgentSession: (...args: unknown[]) => loadAgentSession(...args),
   deleteAgentSession: vi.fn(),
 }))
 
@@ -82,6 +83,7 @@ const sendMessage = (text: string) => {
 }
 
 beforeEach(() => {
+  loadAgentSession.mockReset().mockResolvedValue({ ok: false, error: { kind: 'notFound' } })
   window.localStorage.removeItem('alcy:agent:approval-mode')
   getAgentSettings.mockReset()
   saveAgentSettings.mockReset()
@@ -357,6 +359,34 @@ describe('AgentPanel', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Configurar provedores…' }))
     expect(onOpenSettings).toHaveBeenCalled()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('reopens the chat last open in the workspace and remembers new ones', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 's-old', '/other': 's-other' }))
+    loadAgentSession.mockResolvedValue({
+      ok: true,
+      value: { id: 's-old', title: 'Users API', providerId: 'claude', model: 'm', omittedItems: 0, items: [{ kind: 'user', text: 'liste os usuários' }] },
+    })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+
+    expect(await screen.findByText('liste os usuários')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Users API' })).toBeInTheDocument()
+    expect(loadAgentSession).toHaveBeenCalledWith('/w', 's-old')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Novo chat' }))
+    expect(JSON.parse(window.localStorage.getItem('alcy:agent:sessions') ?? '{}')).toEqual({ '/other': 's-other' })
+  })
+
+  it('forgets a remembered chat that no longer exists, without an error', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 'gone' }))
+    loadAgentSession.mockResolvedValue({ ok: false, error: { kind: 'notFound' } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+
+    await screen.findByText('Como posso ajudar?')
+    await waitFor(() => expect(window.localStorage.getItem('alcy:agent:sessions')).toBe('{}'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('asks to set up a provider before chatting', async () => {

@@ -173,7 +173,7 @@ const getProxySettings = vi.fn()
 const onFileDrop = vi.fn()
 let persistedTabSession: unknown = null
 
-const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, gitlab: true, onedrive: false, notifications: true, webclientExport: true, loadTesting: false }))
+const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, gitlab: true, onedrive: false, notifications: true, webclientExport: true, loadTesting: false, agent: false }))
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: featureFlags }))
 
 // Starts empty, like the public build; the extension tests fill it in.
@@ -5527,6 +5527,31 @@ describe('RequestWorkbench', () => {
       fireEvent.change(nameInputs[nameInputs.length - 1], { target: { value: 'st' } })
       expect(screen.queryByRole('listbox', { name: 'Sugestões da documentação' })).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('RequestWorkbench — painel do agente', () => {
+  it('keeps the panel mounted while closed and remembers whether it was open', async () => {
+    featureFlags.agent = true
+    onTestFinished(() => {
+      featureFlags.agent = false
+    })
+    const { unmount } = render()
+    fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
+    const panel = await screen.findByRole('complementary', { name: 'Agente' })
+    expect(window.localStorage.getItem('alcy:panel:agent-open')).toBe('open')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ocultar painel do agente' }))
+    expect(panel).toBeInTheDocument()
+    expect(panel.closest('.agent-panel-wrapper')).toHaveAttribute('hidden')
+    expect(window.localStorage.getItem('alcy:panel:agent-open')).toBe('closed')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar painel do agente' }))
+    expect(screen.getByRole('complementary', { name: 'Agente' })).toBe(panel)
+
+    unmount()
+    render()
+    expect(await screen.findByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
   })
 })
 
