@@ -2818,6 +2818,12 @@ const en: Record<TranslationKey, string> = {
   'settings.agent.empty': 'No provider set up. Add one to use the agent.',
   'settings.agent.preset.claudeDetail': 'Claude models with your Anthropic key.',
   'settings.agent.preset.opencodeDetail': 'OpenCode Zen models with a single key.',
+  'settings.agent.modelsToggle': 'Show models',
+  'settings.agent.modelsLoading': 'Loading models…',
+  'settings.agent.modelsEmpty': 'No models loaded yet.',
+  'settings.agent.loadModels': 'Load models',
+  'settings.agent.modelsNoMatch': 'No model with that name. The typed text is used as is.',
+  'settings.agent.modelsAfterSave': 'Save the changes to load the models.',
 }
 
 export default en

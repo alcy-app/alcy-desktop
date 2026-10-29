@@ -17,6 +17,7 @@ import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Input } from '../../shared/ui/Input'
 import { AlertIcon, CheckIcon, ChevronDownIcon, LockIcon, PlusIcon, SparkleIcon } from '../../shared/ui/icons'
 import { agentErrorMessage } from '../agent/use-agent-session'
+import { ModelCombobox } from './ModelCombobox'
 
 /** Same limit as the backend (`MAX_AGENT_PROVIDERS`). */
 const MAX_PROVIDERS = 16
@@ -329,23 +330,19 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
               <span>{t('settings.agent.baseUrl')}</span>
               <Input mono value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
             </label>
-            <label className="settings-agent-field">
+            <div className="settings-agent-field">
               <span>{t('settings.agent.model')}</span>
-              <Input
-                mono
+              <ModelCombobox
                 value={model}
-                list={`${id}-models`}
+                onChange={setModel}
+                models={models}
+                loading={busy === 'test'}
+                canLoad={!dirty && busy === null}
+                onLoad={() => void test()}
+                label={t('settings.agent.model')}
                 placeholder={t('settings.agent.modelPlaceholder')}
-                onChange={(event) => setModel(event.target.value)}
               />
-              <datalist id={`${id}-models`}>
-                {models.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </datalist>
-            </label>
+            </div>
           </div>
 
           <div className="settings-agent-key">

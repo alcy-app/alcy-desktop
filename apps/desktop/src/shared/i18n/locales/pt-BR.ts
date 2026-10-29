@@ -2812,6 +2812,12 @@ const ptBR = {
   'settings.agent.empty': 'Nenhum provedor configurado. Adicione um para usar o agente.',
   'settings.agent.preset.claudeDetail': 'Modelos Claude com a sua chave da Anthropic.',
   'settings.agent.preset.opencodeDetail': 'Modelos do OpenCode Zen com uma única chave.',
+  'settings.agent.modelsToggle': 'Mostrar modelos',
+  'settings.agent.modelsLoading': 'Carregando modelos…',
+  'settings.agent.modelsEmpty': 'Nenhum modelo carregado ainda.',
+  'settings.agent.loadModels': 'Carregar modelos',
+  'settings.agent.modelsNoMatch': 'Nenhum modelo com esse nome. O texto digitado será usado como está.',
+  'settings.agent.modelsAfterSave': 'Salve as alterações para carregar os modelos.',
 } as const
 
 export default ptBR
