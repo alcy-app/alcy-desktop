@@ -283,6 +283,22 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     [activeEnvironmentId],
   )
 
+  /** Creates or updates `name` in an environment; `sensitive` left undefined keeps the current flag. */
+  const upsertVariable = useCallback((environmentId: string, name: string, value: string, sensitive?: boolean) => {
+    setEnvironments((current) =>
+      current.map((environment) => {
+        if (environment.id !== environmentId) return environment
+        const index = environment.variables.findIndex((variable) => variable.name === name)
+        if (index < 0) {
+          return { ...environment, variables: [...environment.variables, { id: nextVariableId(), name, value, sensitive: sensitive ?? false }] }
+        }
+        const variables = [...environment.variables]
+        variables[index] = { ...variables[index], value, sensitive: sensitive ?? variables[index].sensitive }
+        return { ...environment, variables }
+      }),
+    )
+  }, [])
+
   const removeVariable = useCallback((environmentId: string, variableId: string) => {
     setEnvironments((current) =>
       current.map((environment) =>
@@ -309,6 +325,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     moveEnvironment,
     addVariable,
     updateVariable,
+    upsertVariable,
     removeVariable,
     moveVariable,
     replaceVariables,

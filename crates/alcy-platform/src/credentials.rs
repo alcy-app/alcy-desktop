@@ -21,7 +21,13 @@ impl KeyringCredentialStore {
 
 fn map_error(error: Error) -> CredentialError {
     match error {
-        Error::NoDefaultStore | Error::NoStorageAccess(_) | Error::PlatformFailure(_) => {
+        // The store is set up once per process; its own error says why it is
+        // missing (e.g. a session bus address left stale by a bus restart).
+        Error::NoDefaultStore => CredentialError::Unavailable(match Entry::store_status() {
+            Err(reason) => reason.to_string(),
+            Ok(()) => error.to_string(),
+        }),
+        Error::NoStorageAccess(_) | Error::PlatformFailure(_) => {
             CredentialError::Unavailable(error.to_string())
         }
         other => CredentialError::Failed(other.to_string()),

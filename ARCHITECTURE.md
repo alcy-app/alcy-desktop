@@ -279,6 +279,31 @@ exactly SharePoint's permission on that library. Opening one creates the
 local copy, links it and pulls, or reuses a recent copy linked to the same
 folder.
 
+### Agent
+
+The agent panel chats with a model that acts on the workbench through tools
+(ADR 0064). The loop lives in `alcy-app` (`run_agent_turn`): it asks the
+model, runs the tools it requests and feeds the results back, up to a fixed
+number of rounds, with cancellation and bounded tool output. The model is the
+`ChatModel` port, implemented by `alcy-agent` for the Anthropic Messages API
+and for OpenAI-compatible Chat Completions (OpenCode Zen, local servers),
+both streamed over SSE through `SharedHttpClient`, so the app's proxy and
+certificates apply. Nothing leaves the machine until the user sets up a
+provider and sends a message; API keys live in the system keyring.
+
+Tools are a catalog of plain data in `alcy-app` (name, JSON Schema and an
+approval class: read, edit or side effect). They run where the state lives,
+in the UI: the `AgentToolHost` port is a bridge in `src-tauri` that sends
+each call over the turn's channel and waits for the result. The frontend
+asks for approval before side effects (sending, saving, environments),
+applies edits to open tabs with a revert, and masks secrets before any value
+reaches the model. Every agent front end goes through the same bridge, so
+approval and masking hold for all of them.
+
+The transcript stays in Rust: each turn sends only the new message, and chats
+are saved per workspace under app data (`agent-sessions/`), never in the
+workspace folder.
+
 ### gRPC
 
 `alcy-grpc` calls any method of any service without generated code (spec
@@ -348,6 +373,7 @@ apps/desktop/          # React + TypeScript
 src-tauri/             # Tauri adapter and composition root
 crates/alcy-domain/    # core types and rules
 crates/alcy-app/       # use cases and ports
+crates/alcy-agent/     # agent model providers (Anthropic, OpenAI-compatible)
 crates/alcy-collection-import/ # import of external collection formats
 crates/alcy-gitlab/    # GitLab client (OAuth PKCE and API v4)
 crates/alcy-onedrive/  # OneDrive/SharePoint client (Microsoft OAuth PKCE and Graph)

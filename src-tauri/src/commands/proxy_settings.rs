@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use alcy_agent::AgentHttpClient;
 use alcy_domain::{ProxySettings, ProxySettingsError};
 use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
@@ -225,6 +226,7 @@ pub async fn save_proxy_settings(
     import_fetcher: State<'_, ImportFetcher>,
     gitlab: State<'_, GitlabClient>,
     onedrive: State<'_, OnedriveProvider>,
+    agent: State<'_, AgentHttpClient>,
 ) -> Result<ProxyStatusDto, ProxyCommandError> {
     let result: Result<ProxyStatusDto, ProxyCommandError> = async {
         save_settings(
@@ -236,6 +238,7 @@ pub async fn save_proxy_settings(
             RemoteHttpClients {
                 gitlab: &gitlab,
                 onedrive: &onedrive.client,
+                agent: &agent,
             },
             &input,
         )
@@ -306,9 +309,11 @@ mod tests {
             GitlabClient::new(),
             OnedriveClient::new(),
         );
+        let agent = AgentHttpClient::new();
         let remotes = RemoteHttpClients {
             gitlab: &gitlab,
             onedrive: &onedrive,
+            agent: &agent,
         };
 
         let saved = save_settings(
@@ -362,9 +367,11 @@ mod tests {
             GitlabClient::new(),
             OnedriveClient::new(),
         );
+        let agent = AgentHttpClient::new();
         let remotes = RemoteHttpClients {
             gitlab: &gitlab,
             onedrive: &onedrive,
+            agent: &agent,
         };
         let pac_url = format!("{}/p.pac", server.uri());
 
@@ -400,6 +407,7 @@ mod tests {
             RemoteHttpClients {
                 gitlab: &GitlabClient::new(),
                 onedrive: &OnedriveClient::new(),
+                agent: &AgentHttpClient::new(),
             },
         )
         .await;

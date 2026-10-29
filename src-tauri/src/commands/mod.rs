@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod api_docs;
 pub mod app_logs;
 pub mod body_files;

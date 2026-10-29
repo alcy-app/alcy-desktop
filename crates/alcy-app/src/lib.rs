@@ -1,5 +1,7 @@
 //! Application use cases and ports for Alcy.
 
+mod agent;
+pub use agent::*;
 mod compare_responses;
 mod credential_store;
 mod evaluate_condition;

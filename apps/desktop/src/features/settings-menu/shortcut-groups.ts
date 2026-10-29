@@ -8,7 +8,7 @@ export const SHORTCUT_GROUPS: ReadonlyArray<{ id: ShortcutGroup; actions: readon
   { id: 'tabs', actions: ['closeTab', 'nextTab', 'previousTab'] },
   { id: 'collections', actions: ['newCollection', 'importCollections', 'searchCollections'] },
   { id: 'items', actions: ['renameItem', 'duplicateItem', 'deleteItem'] },
-  { id: 'interface', actions: ['toggleSidebar', 'openSettings'] },
+  { id: 'interface', actions: ['toggleSidebar', 'toggleAgentPanel', 'openSettings'] },
   { id: 'editors', actions: ['showSuggestions', 'acceptSuggestion'] },
   { id: 'flows', actions: ['openBlockPalette'] },
 ]

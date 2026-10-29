@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use alcy_agent::AgentHttpClient;
 use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_http_proxy::ProxyError;
@@ -143,6 +144,7 @@ pub fn list_custom_ca_certificates(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn add_custom_ca_certificate(
     path: String,
     store: State<'_, CustomCaCertificateStore>,
@@ -151,6 +153,7 @@ pub fn add_custom_ca_certificate(
     import_fetcher: State<'_, ImportFetcher>,
     gitlab: State<'_, GitlabClient>,
     onedrive: State<'_, OnedriveProvider>,
+    agent: State<'_, AgentHttpClient>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
     crate::logging::logged_with("alcy::tls", "adicionar CA personalizada", || {
         let (name, pem) = read_pem(&path)?;
@@ -173,6 +176,7 @@ pub fn add_custom_ca_certificate(
             RemoteHttpClients {
                 gitlab: &gitlab,
                 onedrive: &onedrive.client,
+                agent: &agent,
             },
         )
         .map_err(invalid)?;
@@ -182,6 +186,7 @@ pub fn add_custom_ca_certificate(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn remove_custom_ca_certificate(
     id: String,
     store: State<'_, CustomCaCertificateStore>,
@@ -190,6 +195,7 @@ pub fn remove_custom_ca_certificate(
     import_fetcher: State<'_, ImportFetcher>,
     gitlab: State<'_, GitlabClient>,
     onedrive: State<'_, OnedriveProvider>,
+    agent: State<'_, AgentHttpClient>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
     crate::logging::logged_with("alcy::tls", "remover CA personalizada", || {
         let mut certificates = store.load().map_err(storage_error)?;
@@ -208,6 +214,7 @@ pub fn remove_custom_ca_certificate(
             RemoteHttpClients {
                 gitlab: &gitlab,
                 onedrive: &onedrive.client,
+                agent: &agent,
             },
         )
         .map_err(invalid)?;

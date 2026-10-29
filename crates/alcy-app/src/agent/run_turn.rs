@@ -1,0 +1,555 @@
+use std::future::Future;
+use std::sync::Mutex;
+
+use serde_json::Value;
+
+use super::chat_model::{
+    ChatModel, ChatModelError, ChatRequest, StopReason, TokenUsage, ToolDefinition,
+};
+use super::conversation::{AgentMessage, AgentRole, ContentBlock};
+use super::prompt::truncate_utf8;
+use super::tools::{ToolClass, agent_tool_class};
+use crate::FlowCancellation;
+
+/// Model rounds that may request tools in one turn before the loop stops.
+pub const MAX_TOOL_ROUNDS: usize = 20;
+/// Tool output kept in the transcript; the rest is cut with a note.
+pub const MAX_TOOL_RESULT_BYTES: usize = 32 * 1024;
+pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8192;
+
+pub struct ToolCall<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub input: &'a Value,
+    pub class: ToolClass,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolOutcome {
+    pub content: String,
+    pub is_error: bool,
+}
+
+impl ToolOutcome {
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            content: message.into(),
+            is_error: true,
+        }
+    }
+}
+
+/// Port that runs a tool where the state it touches lives (the workbench,
+/// in the UI). Asking the user for approval is part of running it.
+pub trait AgentToolHost: Sync {
+    fn call(&self, call: &ToolCall<'_>) -> impl Future<Output = ToolOutcome> + Send;
+}
+
+/// Progress of a turn, for the UI.
+pub trait AgentTurnSink: Sync {
+    fn text_delta(&self, text: &str);
+    fn tool_finished(&self, call_id: &str, is_error: bool);
+}
+
+pub struct AgentTurnRequest<'a> {
+    pub model: &'a str,
+    pub system_prompt: &'a str,
+    pub tools: &'a [ToolDefinition],
+    pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnStop {
+    /// The model finished its answer.
+    EndTurn,
+    /// The answer hit the output token limit.
+    MaxTokens,
+    /// The model kept calling tools past `MAX_TOOL_ROUNDS`.
+    RoundLimit,
+    Cancelled,
+    /// The provider stopped for another reason (refusal, filter…).
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentTurnOutcome {
+    pub stop: TurnStop,
+    pub usage: TokenUsage,
+}
+
+/// Runs one user turn: asks the model, runs the tools it requests through
+/// `host` and feeds the results back until it answers without tools.
+///
+/// The user message must already be in `transcript`. Assistant replies and
+/// tool results are appended as they happen, so on error or cancellation the
+/// transcript stays valid for the next turn (every tool call has a result).
+pub async fn run_agent_turn<M, H, S, C>(
+    model: &M,
+    host: &H,
+    sink: &S,
+    cancellation: &C,
+    transcript: &mut Vec<AgentMessage>,
+    request: AgentTurnRequest<'_>,
+) -> Result<AgentTurnOutcome, ChatModelError>
+where
+    M: ChatModel,
+    H: AgentToolHost,
+    S: AgentTurnSink,
+    C: FlowCancellation,
+{
+    let mut usage = TokenUsage::default();
+    for _ in 0..MAX_TOOL_ROUNDS {
+        if cancellation.is_cancelled() {
+            return Ok(AgentTurnOutcome {
+                stop: TurnStop::Cancelled,
+                usage,
+            });
+        }
+        let streamed = Mutex::new(String::new());
+        let on_text = |text: &str| {
+            sink.text_delta(text);
+            streamed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push_str(text);
+        };
+        let chat = ChatRequest {
+            model: request.model,
+            system_prompt: request.system_prompt,
+            messages: transcript,
+            tools: request.tools,
+            max_tokens: request.max_tokens,
+        };
+        let response = tokio::select! {
+            response = model.complete(&chat, &on_text) => response?,
+            _ = cancellation.cancelled() => {
+                let partial = streamed
+                    .into_inner()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if !partial.is_empty() {
+                    transcript.push(AgentMessage {
+                        role: AgentRole::Assistant,
+                        content: vec![ContentBlock::Text { text: partial }],
+                    });
+                }
+                return Ok(AgentTurnOutcome { stop: TurnStop::Cancelled, usage });
+            }
+        };
+        usage.accumulate(response.usage);
+
+        let calls: Vec<(String, String, Value)> = response
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::ToolUse { id, name, input } => {
+                    Some((id.clone(), name.clone(), input.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if !response.content.is_empty() {
+            transcript.push(AgentMessage {
+                role: AgentRole::Assistant,
+                content: response.content,
+            });
+        }
+        if calls.is_empty() {
+            let stop = match response.stop_reason {
+                StopReason::EndTurn | StopReason::ToolUse => TurnStop::EndTurn,
+                StopReason::MaxTokens => TurnStop::MaxTokens,
+                StopReason::Other => TurnStop::Other,
+            };
+            return Ok(AgentTurnOutcome { stop, usage });
+        }
+
+        let mut results = Vec::with_capacity(calls.len());
+        let mut cancelled = false;
+        for (id, name, input) in &calls {
+            let outcome = if cancelled {
+                ToolOutcome::error("Cancelled by the user before it ran.")
+            } else {
+                tokio::select! {
+                    outcome = run_tool(host, id, name, input) => outcome,
+                    _ = cancellation.cancelled() => {
+                        cancelled = true;
+                        ToolOutcome::error("Cancelled by the user.")
+                    }
+                }
+            };
+            sink.tool_finished(id, outcome.is_error);
+            results.push(ContentBlock::ToolResult {
+                tool_use_id: id.clone(),
+                content: limit_tool_output(outcome.content),
+                is_error: outcome.is_error,
+            });
+        }
+        transcript.push(AgentMessage {
+            role: AgentRole::User,
+            content: results,
+        });
+        if cancelled {
+            return Ok(AgentTurnOutcome {
+                stop: TurnStop::Cancelled,
+                usage,
+            });
+        }
+    }
+    Ok(AgentTurnOutcome {
+        stop: TurnStop::RoundLimit,
+        usage,
+    })
+}
+
+async fn run_tool<H: AgentToolHost>(host: &H, id: &str, name: &str, input: &Value) -> ToolOutcome {
+    let Some(class) = agent_tool_class(name) else {
+        return ToolOutcome::error(format!("Unknown tool '{name}'."));
+    };
+    if !input.is_object() {
+        return ToolOutcome::error("The tool arguments must be a JSON object.");
+    }
+    host.call(&ToolCall {
+        id,
+        name,
+        input,
+        class,
+    })
+    .await
+}
+
+fn limit_tool_output(content: String) -> String {
+    if content.len() <= MAX_TOOL_RESULT_BYTES {
+        return content;
+    }
+    let kept = truncate_utf8(&content, MAX_TOOL_RESULT_BYTES);
+    format!(
+        "{kept}\n[truncated: {} more bytes not shown]",
+        content.len() - kept.len()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::agent::chat_model::ChatResponse;
+    use crate::agent::tools::agent_tool_catalog;
+
+    struct ScriptedModel {
+        replies: Mutex<VecDeque<ChatResponse>>,
+        seen_lengths: Mutex<Vec<usize>>,
+        hang: bool,
+    }
+
+    impl ScriptedModel {
+        fn new(replies: Vec<ChatResponse>) -> Self {
+            Self {
+                replies: Mutex::new(replies.into()),
+                seen_lengths: Mutex::new(Vec::new()),
+                hang: false,
+            }
+        }
+    }
+
+    impl ChatModel for ScriptedModel {
+        fn complete(
+            &self,
+            request: &ChatRequest<'_>,
+            on_text: &(dyn Fn(&str) + Sync),
+        ) -> impl Future<Output = Result<ChatResponse, ChatModelError>> + Send {
+            self.seen_lengths
+                .lock()
+                .unwrap()
+                .push(request.messages.len());
+            let reply = self.replies.lock().unwrap().pop_front();
+            if let Some(ChatResponse { content, .. }) = &reply {
+                for block in content {
+                    if let ContentBlock::Text { text } = block {
+                        on_text(text);
+                    }
+                }
+            }
+            let hang = self.hang;
+            async move {
+                if hang {
+                    std::future::pending::<()>().await;
+                }
+                reply.ok_or(ChatModelError::InvalidResponse("no more replies".into()))
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingHost {
+        calls: Mutex<Vec<(String, ToolClass)>>,
+        decline_side_effects: bool,
+    }
+
+    impl AgentToolHost for RecordingHost {
+        fn call(&self, call: &ToolCall<'_>) -> impl Future<Output = ToolOutcome> + Send {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((call.name.to_string(), call.class));
+            let outcome = if self.decline_side_effects && call.class == ToolClass::SideEffect {
+                ToolOutcome::error("The user declined.")
+            } else {
+                ToolOutcome {
+                    content: format!("ran {}", call.name),
+                    is_error: false,
+                }
+            };
+            async move { outcome }
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        text: Mutex<String>,
+        finished: Mutex<Vec<(String, bool)>>,
+    }
+
+    impl AgentTurnSink for RecordingSink {
+        fn text_delta(&self, text: &str) {
+            self.text.lock().unwrap().push_str(text);
+        }
+        fn tool_finished(&self, call_id: &str, is_error: bool) {
+            self.finished
+                .lock()
+                .unwrap()
+                .push((call_id.to_string(), is_error));
+        }
+    }
+
+    #[derive(Default)]
+    struct Flag(AtomicBool);
+
+    impl FlowCancellation for Flag {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::SeqCst)
+        }
+        fn cancelled(&self) -> impl Future<Output = ()> + Send {
+            let cancelled = self.is_cancelled();
+            async move {
+                if !cancelled {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    }
+
+    fn text(text: &str) -> ChatResponse {
+        ChatResponse {
+            content: vec![ContentBlock::Text { text: text.into() }],
+            stop_reason: StopReason::EndTurn,
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        }
+    }
+
+    fn tool_use(calls: &[(&str, &str)]) -> ChatResponse {
+        ChatResponse {
+            content: calls
+                .iter()
+                .map(|(id, name)| ContentBlock::ToolUse {
+                    id: (*id).into(),
+                    name: (*name).into(),
+                    input: json!({}),
+                })
+                .collect(),
+            stop_reason: StopReason::ToolUse,
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        }
+    }
+
+    async fn run(
+        model: &ScriptedModel,
+        host: &RecordingHost,
+        sink: &RecordingSink,
+        cancellation: &Flag,
+        transcript: &mut Vec<AgentMessage>,
+    ) -> Result<AgentTurnOutcome, ChatModelError> {
+        let tools = agent_tool_catalog();
+        run_agent_turn(
+            model,
+            host,
+            sink,
+            cancellation,
+            transcript,
+            AgentTurnRequest {
+                model: "m",
+                system_prompt: "s",
+                tools: &tools,
+                max_tokens: 100,
+            },
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn answers_without_tools_in_one_round() {
+        let model = ScriptedModel::new(vec![text("hello")]);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut transcript = vec![AgentMessage::user_text("hi")];
+        let outcome = run(&model, &host, &sink, &Flag::default(), &mut transcript)
+            .await
+            .unwrap();
+        assert_eq!(outcome.stop, TurnStop::EndTurn);
+        assert_eq!(outcome.usage.output_tokens, 5);
+        assert_eq!(*sink.text.lock().unwrap(), "hello");
+        assert_eq!(transcript.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn runs_tools_and_feeds_results_back() {
+        let model = ScriptedModel::new(vec![
+            tool_use(&[("t1", "list_open_tabs"), ("t2", "send_request")]),
+            text("done"),
+        ]);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut transcript = vec![AgentMessage::user_text("send it")];
+        let outcome = run(&model, &host, &sink, &Flag::default(), &mut transcript)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.stop, TurnStop::EndTurn);
+        assert_eq!(outcome.usage.input_tokens, 20);
+        assert_eq!(
+            *host.calls.lock().unwrap(),
+            vec![
+                ("list_open_tabs".to_string(), ToolClass::Read),
+                ("send_request".to_string(), ToolClass::SideEffect),
+            ]
+        );
+        // user, assistant (tools), user (results), assistant (text)
+        assert_eq!(transcript.len(), 4);
+        assert_eq!(*model.seen_lengths.lock().unwrap(), vec![1, 3]);
+        let ContentBlock::ToolResult { content, .. } = &transcript[2].content[1] else {
+            panic!("expected a tool result");
+        };
+        assert_eq!(content, "ran send_request");
+    }
+
+    #[tokio::test]
+    async fn a_declined_side_effect_reaches_the_model_as_an_error() {
+        let model = ScriptedModel::new(vec![tool_use(&[("t1", "send_request")]), text("ok")]);
+        let host = RecordingHost {
+            decline_side_effects: true,
+            ..RecordingHost::default()
+        };
+        let sink = RecordingSink::default();
+        let mut transcript = vec![AgentMessage::user_text("send")];
+        run(&model, &host, &sink, &Flag::default(), &mut transcript)
+            .await
+            .unwrap();
+        assert_eq!(*sink.finished.lock().unwrap(), vec![("t1".into(), true)]);
+        assert!(matches!(
+            &transcript[2].content[0],
+            ContentBlock::ToolResult { is_error: true, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_tools_and_bad_arguments_never_reach_the_host() {
+        let model = ScriptedModel::new(vec![
+            ChatResponse {
+                content: vec![
+                    ContentBlock::ToolUse {
+                        id: "t1".into(),
+                        name: "delete_everything".into(),
+                        input: json!({}),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "t2".into(),
+                        name: "get_request".into(),
+                        input: json!("{not json"),
+                    },
+                ],
+                stop_reason: StopReason::ToolUse,
+                usage: TokenUsage::default(),
+            },
+            text("sorry"),
+        ]);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut transcript = vec![AgentMessage::user_text("x")];
+        run(&model, &host, &sink, &Flag::default(), &mut transcript)
+            .await
+            .unwrap();
+        assert!(host.calls.lock().unwrap().is_empty());
+        assert_eq!(
+            *sink.finished.lock().unwrap(),
+            vec![("t1".into(), true), ("t2".into(), true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_after_the_round_limit() {
+        let replies = (0..MAX_TOOL_ROUNDS)
+            .map(|_| tool_use(&[("t", "list_open_tabs")]))
+            .collect();
+        let model = ScriptedModel::new(replies);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut transcript = vec![AgentMessage::user_text("loop")];
+        let outcome = run(&model, &host, &sink, &Flag::default(), &mut transcript)
+            .await
+            .unwrap();
+        assert_eq!(outcome.stop, TurnStop::RoundLimit);
+        assert_eq!(host.calls.lock().unwrap().len(), MAX_TOOL_ROUNDS);
+        assert_eq!(transcript.last().unwrap().role, AgentRole::User);
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_streaming_keeps_the_partial_text() {
+        let mut model = ScriptedModel::new(vec![text("partial")]);
+        model.hang = true;
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut transcript = vec![AgentMessage::user_text("x")];
+
+        let tools = agent_tool_catalog();
+        let turn = run_agent_turn(
+            &model,
+            &host,
+            &sink,
+            &AlwaysCancelledAfterStart,
+            &mut transcript,
+            AgentTurnRequest {
+                model: "m",
+                system_prompt: "s",
+                tools: &tools,
+                max_tokens: 100,
+            },
+        );
+        let outcome = turn.await.unwrap();
+        assert_eq!(outcome.stop, TurnStop::Cancelled);
+        assert_eq!(
+            transcript.last().unwrap().content,
+            vec![ContentBlock::Text {
+                text: "partial".into()
+            }]
+        );
+    }
+
+    /// Not cancelled when the round starts, cancelled while waiting.
+    struct AlwaysCancelledAfterStart;
+
+    impl FlowCancellation for AlwaysCancelledAfterStart {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+        async fn cancelled(&self) {}
+    }
+
+    #[test]
+    fn long_tool_output_is_cut_with_a_note() {
+        let output = limit_tool_output("x".repeat(MAX_TOOL_RESULT_BYTES + 10));
+        assert!(output.ends_with("[truncated: 10 more bytes not shown]"));
+    }
+}

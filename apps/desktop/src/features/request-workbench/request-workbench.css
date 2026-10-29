@@ -183,7 +183,7 @@
 .rw-header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-1);
   margin-left: auto;
 }
 
@@ -1607,4 +1607,11 @@
 
 .rw-load-errors ul {
   padding-left: var(--space-4);
+}
+
+.agent-panel-wrapper {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 0;
 }

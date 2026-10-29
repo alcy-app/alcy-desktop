@@ -1,0 +1,20 @@
+[package]
+name = "alcy-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+alcy-app = { path = "../alcy-app" }
+alcy-domain = { path = "../alcy-domain" }
+alcy-http-proxy = { path = "../alcy-http-proxy" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "system-proxy"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+
+[lints]
+workspace = true

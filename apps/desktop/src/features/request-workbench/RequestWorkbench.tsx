@@ -33,13 +33,15 @@ import { hasOpenModal } from '../../shared/ui/open-modals'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { useTooltip } from '../../shared/ui/use-tooltip'
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RunnerIcon, Spinner } from '../../shared/ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RunnerIcon, SidebarRightIcon, Spinner } from '../../shared/ui/icons'
 import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
 import { TitleBar } from '../../shared/ui/TitleBar'
 import { useToast } from '../../shared/ui/use-toast'
 import { useResizablePanel } from '../../shared/use-resizable-panel'
+import { useAgentHost } from './use-agent-host'
+import { AgentPanel } from '../agent/AgentPanel'
 import { AuthorizationPanel } from './components/AuthorizationPanel'
 import { ConsolePanel, type ConsolePanelTab } from './components/ConsolePanel'
 import { DocsPanel } from './components/DocsPanel'
@@ -401,6 +403,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const [harExporting, setHarExporting] = useState(false)
   const harExportingRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [agentOpen, setAgentOpen] = useState(false)
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const { reload: reloadCollections } = collections
   const { reload: reloadEnvironments } = environments
@@ -502,7 +505,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     direction: 'reverse',
     storageKey: 'alcy:panel:console',
   })
+  const agentPanel = useResizablePanel({
+    initialSize: 380,
+    minSize: 300,
+    maxSize: 720,
+    axis: 'horizontal',
+    direction: 'reverse',
+    storageKey: 'alcy:panel:agent',
+  })
   const isResizingAny =
+    agentPanel.isResizing ||
     sidebarPanel.isResizing ||
     queryExplorerPanel.isResizing ||
     responsePanel.isResizing ||
@@ -775,6 +787,19 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   })
   const handleResendWithoutLimit = useCallback(() => {
     void handleSendRef.current({ ignoreResponseSizeLimit: true })
+  }, [])
+
+  const agentHost = useAgentHost({
+    workbench,
+    openTabs,
+    collections,
+    environments,
+    sendActive: () => handleSendRef.current(),
+  })
+  const toggleAgentPanel = useCallback(() => setAgentOpen((open) => !open), [])
+  const openAgentSettings = useCallback(() => {
+    setSettingsCategory('agent')
+    setSettingsOpen(true)
   }, [])
 
   /** Append a post-response script statement saving a response value to an environment variable. */
@@ -1593,6 +1618,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'openSettings':
         // Panel actions must not run behind a modal.
         return !hasOpenModal()
+      case 'toggleAgentPanel':
+        if (!FEATURE_FLAGS.agent) return false
+        return !hasOpenModal()
       case 'closeTab':
       case 'openBlockPalette':
       case 'renameItem':
@@ -1644,6 +1672,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         return
       case 'toggleSidebar':
         onToggleSidebarCollapsed()
+        return
+      case 'toggleAgentPanel':
+        toggleAgentPanel()
         return
       case 'openSettings':
         setSettingsCategory('general')
@@ -1732,6 +1763,13 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               label={sidebarCollapsed ? t('workbench.sidebarToggle.showAria') : t('workbench.sidebarToggle.hideAria')}
               onClick={onToggleSidebarCollapsed}
             />
+            {FEATURE_FLAGS.agent && (
+              <IconButton
+                icon={<SidebarRightIcon size={14} />}
+                label={agentOpen ? t('agent.hideAria') : t('agent.showAria')}
+                onClick={toggleAgentPanel}
+              />
+            )}
           </div>
         </TitleBar>
 
@@ -2211,6 +2249,24 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             ))}
             </Suspense>
           </main>
+          {FEATURE_FLAGS.agent && agentOpen && (
+            <>
+              <ResizeHandle
+                ariaLabel={t('workbench.resize.agent')}
+                orientation="vertical"
+                onPointerDown={agentPanel.startResizing}
+              />
+              <div className="agent-panel-wrapper" style={{ width: agentPanel.size }}>
+                <AgentPanel
+                  rootPath={workspace.rootPath}
+                  host={agentHost}
+                  settingsOpen={settingsOpen}
+                  onOpenSettings={openAgentSettings}
+                  onClose={() => setAgentOpen(false)}
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {consoleOpen && (

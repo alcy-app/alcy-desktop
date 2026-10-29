@@ -3,6 +3,7 @@
 
 use std::future::Future;
 
+use alcy_agent::AgentHttpClient;
 use alcy_app::{RemoteError, VersionControlError};
 use alcy_domain::WorkspaceLinkError;
 use alcy_gitlab::GitlabClient;
@@ -109,23 +110,26 @@ impl From<CallbackError> for RemoteCommandError {
     }
 }
 
-/// HTTP clients of the remote providers, which follow the app's proxy and
-/// custom CAs like the request executors.
+/// HTTP clients of the remote services (providers and the agent), which
+/// follow the app's proxy and custom CAs like the request executors.
 #[derive(Clone, Copy)]
 pub struct RemoteHttpClients<'a> {
     pub gitlab: &'a GitlabClient,
     pub onedrive: &'a OnedriveClient,
+    pub agent: &'a AgentHttpClient,
 }
 
 impl RemoteHttpClients<'_> {
     pub fn reconfigure_proxy(&self, plan: &ProxyPlan) -> Result<(), ProxyError> {
         self.gitlab.reconfigure_proxy(plan)?;
-        self.onedrive.reconfigure_proxy(plan)
+        self.onedrive.reconfigure_proxy(plan)?;
+        self.agent.reconfigure_proxy(plan)
     }
 
     pub fn set_custom_ca_certificates(&self, certificates: &[String]) -> Result<(), ProxyError> {
         self.gitlab.set_custom_ca_certificates(certificates)?;
-        self.onedrive.set_custom_ca_certificates(certificates)
+        self.onedrive.set_custom_ca_certificates(certificates)?;
+        self.agent.set_custom_ca_certificates(certificates)
     }
 }
 

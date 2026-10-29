@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+alcy-agent = { path = "../crates/alcy-agent" }
 alcy-app = { path = "../crates/alcy-app" }
 alcy-collection-import = { path = "../crates/alcy-collection-import" }
 alcy-domain = { path = "../crates/alcy-domain" }

@@ -1,16 +1,17 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from './markdown'
 import { useOpenExternalLink } from './use-open-external-link'
 import './markdown-view.css'
 
 interface MarkdownViewProps {
   source: string
-  /** Soma aos níveis dos títulos para encaixá-los abaixo do título da página. */
+  /** Offset headings to fit below the containing page title. */
   headingOffset?: number
+  renderCodeBlock?: (text: string) => ReactNode
 }
 
-/** Renderiza o subconjunto de Markdown de `markdown.ts` como elementos React, sem HTML cru. */
-export function MarkdownView({ source, headingOffset = 0 }: MarkdownViewProps) {
+/** Render the supported Markdown subset as React elements without raw HTML. */
+export function MarkdownView({ source, headingOffset = 0, renderCodeBlock }: MarkdownViewProps) {
   const blocks = useMemo(() => parseMarkdown(source), [source])
   const openLink = useOpenExternalLink()
 
@@ -52,9 +53,10 @@ export function MarkdownView({ source, headingOffset = 0 }: MarkdownViewProps) {
           return <Heading key={index}>{renderInlines(block.children)}</Heading>
         }
         case 'paragraph':
-          // Em listas compactas o texto do item fica sem <p>, como no GitLab.
+          // Tight list items render their text without a paragraph wrapper.
           return tight ? <span key={index}>{renderInlines(block.children)}</span> : <p key={index}>{renderInlines(block.children)}</p>
         case 'code':
+          if (renderCodeBlock) return <div key={index}>{renderCodeBlock(block.text)}</div>
           return (
             <pre key={index}>
               <code>{block.text}</code>

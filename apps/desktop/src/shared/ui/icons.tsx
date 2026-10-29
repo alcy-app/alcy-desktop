@@ -24,6 +24,15 @@ function svgProps({ size = 14, className }: IconProps) {
   } as const
 }
 
+export function AtIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M10.5 5.5v4a1.5 1.5 0 0 0 3 0V8a5.5 5.5 0 1 0-2.5 4.6" />
+    </svg>
+  )
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -390,6 +399,16 @@ export function PanelLeftIcon(props: IconProps) {
   )
 }
 
+/** Mirror of `PanelLeftIcon`: toggles a panel docked to the right. */
+export function SidebarRightIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="M10 2.5v11" />
+    </svg>
+  )
+}
+
 export function PanelRightIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
@@ -487,6 +506,15 @@ export function RecordIcon(props: IconProps) {
     <svg {...svgProps(props)}>
       <circle cx="8" cy="8" r="5.5" />
       <circle cx="8" cy="8" r="2.2" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function SparkleIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M7 2.5l1.1 3.4L11.5 7l-3.4 1.1L7 11.5 5.9 8.1 2.5 7l3.4-1.1z" />
+      <path d="M12.5 10v3.5M10.75 11.75h3.5" />
     </svg>
   )
 }

@@ -1,0 +1,1015 @@
+//! Agent chat (ADR 0064): provider settings, API keys in the keyring, chat
+//! turns streamed over a channel and the bridge that runs tools in the UI.
+
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use alcy_agent::AgentHttpClient;
+use alcy_app::{
+    AgentLanguage, AgentRole, AgentToolHost, AgentTurnRequest, AgentTurnSink, ChatModelError,
+    ContentBlock, ContextReference, CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS,
+    MAX_CONTEXT_REFERENCES, ToolCall, ToolClass, ToolOutcome, TurnStop, agent_system_prompt,
+    agent_tool_catalog, compose_user_message, push_user_text, run_agent_turn,
+};
+use alcy_domain::{
+    AgentProvider, AgentProviderKind, AgentSettings, AgentSettingsError, agent_credential_key,
+};
+use alcy_platform::KeyringCredentialStore;
+use alcy_storage::{
+    AgentSessionRecord, AgentSessionStore, AgentSettingsStore, StorageError, is_valid_session_id,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tauri::State;
+use tauri::ipc::Channel;
+use tokio::sync::{oneshot, watch};
+
+use super::flow_execution_registry::WatchCancellation;
+
+const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+const MAX_TOOL_RESULT_IPC_BYTES: usize = 256 * 1024;
+const MAX_TITLE_CHARS: usize = 60;
+/// Items of a chat sent to the UI when it is reopened.
+const MAX_VIEW_ITEMS: usize = 400;
+const MAX_VIEW_TEXT_BYTES: usize = 64 * 1024;
+
+/// Where the agent keeps its files (app data).
+pub struct AgentPaths {
+    pub settings: PathBuf,
+    pub sessions: PathBuf,
+}
+
+impl AgentPaths {
+    fn settings_store(&self) -> AgentSettingsStore {
+        AgentSettingsStore::new(self.settings.clone())
+    }
+
+    fn session_store(&self) -> AgentSessionStore {
+        AgentSessionStore::new(self.sessions.clone())
+    }
+}
+
+/// Turns in progress: their cancellation, the tool calls waiting for the UI
+/// and the chats busy with a turn.
+#[derive(Default)]
+pub struct AgentRuns {
+    cancellations: Mutex<HashMap<String, watch::Sender<bool>>>,
+    pending_tools: Mutex<HashMap<String, oneshot::Sender<ToolOutcome>>>,
+    busy_sessions: Mutex<HashSet<String>>,
+    sequence: AtomicU64,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl AgentRuns {
+    fn next_id(&self) -> u64 {
+        self.sequence.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+/// Removes the run's registrations however the turn ends.
+struct RunGuard<'a> {
+    runs: &'a AgentRuns,
+    run_id: String,
+    session_id: String,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        lock(&self.runs.cancellations).remove(&self.run_id);
+        lock(&self.runs.busy_sessions).remove(&self.session_id);
+        let prefix = format!("{}:", self.run_id);
+        lock(&self.runs.pending_tools).retain(|wait_id, _| !wait_id.starts_with(&prefix));
+    }
+}
+
+// ---------------------------------------------------------------- DTOs
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentProviderKindDto {
+    Anthropic,
+    OpenaiCompatible,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProviderDto {
+    pub id: String,
+    pub kind: AgentProviderKindDto,
+    pub label: String,
+    pub base_url: String,
+    pub model: String,
+    pub has_api_key: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSettingsDto {
+    pub providers: Vec<AgentProviderDto>,
+    pub active_provider_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProviderInput {
+    pub id: String,
+    pub kind: AgentProviderKindDto,
+    pub label: String,
+    pub base_url: String,
+    pub model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAgentSettingsInput {
+    pub providers: Vec<AgentProviderInput>,
+    pub active_provider_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAgentApiKeyInput {
+    pub provider_id: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProviderIdInput {
+    pub provider_id: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelDto {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub enum AgentLanguageDto {
+    #[serde(rename = "pt-BR")]
+    PortugueseBrazil,
+    #[serde(rename = "en")]
+    English,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentContextInput {
+    pub kind: String,
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub summary: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartAgentTurnInput {
+    pub run_id: String,
+    pub root_path: String,
+    pub session_id: Option<String>,
+    pub provider_id: String,
+    /// Empty uses the provider's default model.
+    #[serde(default)]
+    pub model: String,
+    pub text: String,
+    #[serde(default)]
+    pub context: Vec<AgentContextInput>,
+    pub language: AgentLanguageDto,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolClassDto {
+    Read,
+    Edit,
+    SideEffect,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnStopDto {
+    EndTurn,
+    MaxTokens,
+    RoundLimit,
+    Cancelled,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentEventDto {
+    SessionStarted {
+        session_id: String,
+        title: String,
+    },
+    TextDelta {
+        text: String,
+    },
+    ToolCallRequested {
+        wait_id: String,
+        call_id: String,
+        name: String,
+        input: Value,
+        class: ToolClassDto,
+    },
+    ToolCallFinished {
+        call_id: String,
+        is_error: bool,
+    },
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTurnResultDto {
+    pub session_id: String,
+    pub stop_reason: TurnStopDto,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelAgentTurnInput {
+    pub run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitAgentToolResultInput {
+    pub wait_id: String,
+    pub content: String,
+    pub is_error: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionsInput {
+    pub root_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionInput {
+    pub root_path: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionSummaryDto {
+    pub id: String,
+    pub title: String,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentViewItemDto {
+    User {
+        text: String,
+    },
+    Assistant {
+        text: String,
+    },
+    Tool {
+        call_id: String,
+        name: String,
+        input: Value,
+        is_error: bool,
+    },
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionViewDto {
+    pub id: String,
+    pub title: String,
+    pub provider_id: String,
+    pub model: String,
+    pub items: Vec<AgentViewItemDto>,
+    /// Older items left out of `items`.
+    pub omitted_items: usize,
+}
+
+/// Never carries API keys or message contents.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentCommandError {
+    Invalid { message: String },
+    Storage { message: String },
+    Credentials { message: String },
+    UnknownProvider,
+    MissingApiKey,
+    MissingModel,
+    Busy,
+    NotFound,
+    Unauthorized,
+    RateLimited,
+    Network { message: String },
+    Provider { status: u16, message: String },
+    InvalidResponse { message: String },
+}
+
+impl From<StorageError> for AgentCommandError {
+    fn from(error: StorageError) -> Self {
+        Self::Storage {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<AgentSettingsError> for AgentCommandError {
+    fn from(error: AgentSettingsError) -> Self {
+        Self::Invalid {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<ChatModelError> for AgentCommandError {
+    fn from(error: ChatModelError) -> Self {
+        match error {
+            ChatModelError::Unauthorized => Self::Unauthorized,
+            ChatModelError::RateLimited => Self::RateLimited,
+            ChatModelError::Network(message) => Self::Network { message },
+            ChatModelError::Provider { status, message } => Self::Provider { status, message },
+            ChatModelError::InvalidResponse(message) => Self::InvalidResponse { message },
+        }
+    }
+}
+
+fn credentials_error(error: alcy_app::CredentialError) -> AgentCommandError {
+    AgentCommandError::Credentials {
+        message: error.to_string(),
+    }
+}
+
+async fn run_blocking<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T, AgentCommandError> + Send + 'static,
+) -> Result<T, AgentCommandError> {
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| AgentCommandError::Storage {
+            message: error.to_string(),
+        })?
+}
+
+// ---------------------------------------------------------------- settings
+
+fn kind_dto(kind: AgentProviderKind) -> AgentProviderKindDto {
+    match kind {
+        AgentProviderKind::Anthropic => AgentProviderKindDto::Anthropic,
+        AgentProviderKind::OpenAiCompatible => AgentProviderKindDto::OpenaiCompatible,
+    }
+}
+
+fn settings_dto(settings: AgentSettings, credentials: &dyn CredentialStore) -> AgentSettingsDto {
+    AgentSettingsDto {
+        providers: settings
+            .providers
+            .into_iter()
+            .map(|provider| AgentProviderDto {
+                // A keyring that cannot be read reads as "no key"; storing
+                // one reports the real error.
+                has_api_key: matches!(
+                    credentials.load(&agent_credential_key(&provider.id)),
+                    Ok(Some(_))
+                ),
+                kind: kind_dto(provider.kind),
+                id: provider.id,
+                label: provider.label,
+                base_url: provider.base_url,
+                model: provider.model,
+            })
+            .collect(),
+        active_provider_id: settings.active_provider_id,
+    }
+}
+
+#[tauri::command]
+pub async fn get_agent_settings(
+    paths: State<'_, AgentPaths>,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<AgentSettingsDto, AgentCommandError> {
+    let store = paths.settings_store();
+    let result = async {
+        let settings = run_blocking(move || Ok(store.load()?)).await?;
+        Ok(settings_dto(settings, &*credentials))
+    }
+    .await;
+    crate::logging::logged("alcy::agent", "load agent settings", result)
+}
+
+#[tauri::command]
+pub async fn save_agent_settings(
+    input: SaveAgentSettingsInput,
+    paths: State<'_, AgentPaths>,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<AgentSettingsDto, AgentCommandError> {
+    let store = paths.settings_store();
+    let result = async {
+        let settings = AgentSettings {
+            providers: input
+                .providers
+                .into_iter()
+                .map(|provider| AgentProvider {
+                    id: provider.id,
+                    kind: match provider.kind {
+                        AgentProviderKindDto::Anthropic => AgentProviderKind::Anthropic,
+                        AgentProviderKindDto::OpenaiCompatible => {
+                            AgentProviderKind::OpenAiCompatible
+                        }
+                    },
+                    label: provider.label,
+                    base_url: provider.base_url,
+                    model: provider.model,
+                })
+                .collect(),
+            active_provider_id: input.active_provider_id,
+        }
+        .validated()?;
+        let saved = settings.clone();
+        run_blocking(move || Ok(store.save(&saved)?)).await?;
+        Ok(settings_dto(settings, &*credentials))
+    }
+    .await;
+    crate::logging::logged("alcy::agent", "save agent settings", result)
+}
+
+#[tauri::command]
+pub async fn set_agent_api_key(
+    input: SetAgentApiKeyInput,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<(), AgentCommandError> {
+    let result = (|| {
+        let key = input.api_key.trim();
+        if key.is_empty() {
+            return Err(AgentCommandError::MissingApiKey);
+        }
+        credentials
+            .save(&agent_credential_key(&input.provider_id), key)
+            .map_err(credentials_error)
+    })();
+    crate::logging::logged("alcy::agent", "store agent API key", result)
+}
+
+#[tauri::command]
+pub async fn clear_agent_api_key(
+    input: AgentProviderIdInput,
+    credentials: State<'_, KeyringCredentialStore>,
+) -> Result<(), AgentCommandError> {
+    let result = credentials
+        .delete(&agent_credential_key(&input.provider_id))
+        .map_err(credentials_error);
+    crate::logging::logged("alcy::agent", "remove agent API key", result)
+}
+
+/// The provider and its stored key.
+async fn provider_and_key(
+    paths: &AgentPaths,
+    credentials: &dyn CredentialStore,
+    provider_id: &str,
+) -> Result<(AgentProvider, Option<String>), AgentCommandError> {
+    let store = paths.settings_store();
+    let settings = run_blocking(move || Ok(store.load()?)).await?;
+    let provider = settings
+        .provider(provider_id)
+        .cloned()
+        .ok_or(AgentCommandError::UnknownProvider)?;
+    let key = credentials
+        .load(&agent_credential_key(provider_id))
+        .map_err(credentials_error)?;
+    if key.is_none() && provider.kind == AgentProviderKind::Anthropic {
+        return Err(AgentCommandError::MissingApiKey);
+    }
+    Ok((provider, key))
+}
+
+/// Also serves as the connection test of the settings screen.
+#[tauri::command]
+pub async fn list_agent_models(
+    input: AgentProviderIdInput,
+    paths: State<'_, AgentPaths>,
+    credentials: State<'_, KeyringCredentialStore>,
+    http: State<'_, AgentHttpClient>,
+) -> Result<Vec<AgentModelDto>, AgentCommandError> {
+    let result = async {
+        let (provider, key) = provider_and_key(&paths, &*credentials, &input.provider_id).await?;
+        let models = http.chat(&provider, key.as_deref())?.list_models().await?;
+        Ok(models
+            .into_iter()
+            .map(|model| AgentModelDto {
+                id: model.id,
+                label: model.label,
+            })
+            .collect())
+    }
+    .await;
+    crate::logging::logged("alcy::agent", "list agent models", result)
+}
+
+// ---------------------------------------------------------------- turns
+
+struct ChannelSink<'a> {
+    channel: &'a Channel<AgentEventDto>,
+}
+
+impl AgentTurnSink for ChannelSink<'_> {
+    fn text_delta(&self, text: &str) {
+        let _ = self
+            .channel
+            .send(AgentEventDto::TextDelta { text: text.into() });
+    }
+
+    fn tool_finished(&self, call_id: &str, is_error: bool) {
+        let _ = self.channel.send(AgentEventDto::ToolCallFinished {
+            call_id: call_id.into(),
+            is_error,
+        });
+    }
+}
+
+/// Runs tools in the UI: sends the call over the turn's channel and waits for
+/// `submit_agent_tool_result`. Approval and masking happen on that side, so
+/// they hold for whichever agent calls the bridge (ADR 0064).
+struct UiToolBridge<'a> {
+    channel: &'a Channel<AgentEventDto>,
+    runs: &'a AgentRuns,
+    run_id: &'a str,
+}
+
+struct PendingToolGuard<'a> {
+    runs: &'a AgentRuns,
+    wait_id: String,
+}
+
+impl Drop for PendingToolGuard<'_> {
+    fn drop(&mut self) {
+        lock(&self.runs.pending_tools).remove(&self.wait_id);
+    }
+}
+
+impl AgentToolHost for UiToolBridge<'_> {
+    fn call(&self, call: &ToolCall<'_>) -> impl Future<Output = ToolOutcome> + Send {
+        let wait_id = format!("{}:{}", self.run_id, self.runs.next_id());
+        let (sender, receiver) = oneshot::channel();
+        lock(&self.runs.pending_tools).insert(wait_id.clone(), sender);
+        let sent = self.channel.send(AgentEventDto::ToolCallRequested {
+            wait_id: wait_id.clone(),
+            call_id: call.id.into(),
+            name: call.name.into(),
+            input: call.input.clone(),
+            class: match call.class {
+                ToolClass::Read => ToolClassDto::Read,
+                ToolClass::Edit => ToolClassDto::Edit,
+                ToolClass::SideEffect => ToolClassDto::SideEffect,
+            },
+        });
+        let guard = PendingToolGuard {
+            runs: self.runs,
+            wait_id,
+        };
+        async move {
+            let _guard = guard;
+            if sent.is_err() {
+                return ToolOutcome::error("The app window is not available.");
+            }
+            receiver
+                .await
+                .unwrap_or_else(|_| ToolOutcome::error("The app did not answer the tool call."))
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
+}
+
+fn title_from(text: &str) -> String {
+    let line = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    let mut title: String = line.trim().chars().take(MAX_TITLE_CHARS).collect();
+    if line.trim().chars().count() > MAX_TITLE_CHARS {
+        title.push('…');
+    }
+    title
+}
+
+fn turn_stop_dto(stop: TurnStop) -> TurnStopDto {
+    match stop {
+        TurnStop::EndTurn => TurnStopDto::EndTurn,
+        TurnStop::MaxTokens => TurnStopDto::MaxTokens,
+        TurnStop::RoundLimit => TurnStopDto::RoundLimit,
+        TurnStop::Cancelled => TurnStopDto::Cancelled,
+        TurnStop::Other => TurnStopDto::Other,
+    }
+}
+
+#[tauri::command]
+pub async fn start_agent_turn(
+    input: StartAgentTurnInput,
+    on_event: Channel<AgentEventDto>,
+    paths: State<'_, AgentPaths>,
+    runs: State<'_, AgentRuns>,
+    credentials: State<'_, KeyringCredentialStore>,
+    http: State<'_, AgentHttpClient>,
+) -> Result<AgentTurnResultDto, AgentCommandError> {
+    let result = run_turn(input, &on_event, &paths, &runs, &*credentials, &http).await;
+    crate::logging::logged("alcy::agent", "agent turn", result)
+}
+
+async fn run_turn(
+    input: StartAgentTurnInput,
+    channel: &Channel<AgentEventDto>,
+    paths: &AgentPaths,
+    runs: &AgentRuns,
+    credentials: &dyn CredentialStore,
+    http: &AgentHttpClient,
+) -> Result<AgentTurnResultDto, AgentCommandError> {
+    let text = input.text.trim().to_string();
+    if text.is_empty() {
+        return Err(AgentCommandError::Invalid {
+            message: "the message is empty".into(),
+        });
+    }
+    if text.len() > MAX_MESSAGE_BYTES {
+        return Err(AgentCommandError::Invalid {
+            message: "the message is too long".into(),
+        });
+    }
+    let (provider, key) = provider_and_key(paths, credentials, &input.provider_id).await?;
+    let model = match input.model.trim() {
+        "" => provider.model.clone(),
+        model => model.to_string(),
+    };
+    if model.is_empty() {
+        return Err(AgentCommandError::MissingModel);
+    }
+    let chat = http.chat(&provider, key.as_deref())?;
+
+    let root_path = input.root_path.clone();
+    let sessions = paths.session_store();
+    let mut session = match input.session_id.clone() {
+        Some(id) => {
+            let root = root_path.clone();
+            run_blocking(move || sessions.load(&root, &id).map_err(Into::into))
+                .await?
+                .ok_or(AgentCommandError::NotFound)?
+        }
+        None => {
+            let now = now_ms();
+            AgentSessionRecord {
+                id: format!("{now:x}-{:x}", runs.next_id()),
+                title: title_from(&text),
+                created_at_ms: now,
+                updated_at_ms: now,
+                provider_id: provider.id.clone(),
+                model: model.clone(),
+                messages: Vec::new(),
+            }
+        }
+    };
+    let is_new = input.session_id.is_none();
+
+    if !lock(&runs.busy_sessions).insert(session.id.clone()) {
+        return Err(AgentCommandError::Busy);
+    }
+    let (sender, receiver) = watch::channel(false);
+    lock(&runs.cancellations).insert(input.run_id.clone(), sender);
+    let _guard = RunGuard {
+        runs,
+        run_id: input.run_id.clone(),
+        session_id: session.id.clone(),
+    };
+
+    let context: Vec<ContextReference> = input
+        .context
+        .into_iter()
+        .take(MAX_CONTEXT_REFERENCES)
+        .map(|reference| ContextReference {
+            kind: reference.kind,
+            id: reference.id,
+            label: reference.label,
+            summary: reference.summary,
+        })
+        .collect();
+    push_user_text(&mut session.messages, compose_user_message(&text, &context));
+    let _ = channel.send(AgentEventDto::SessionStarted {
+        session_id: session.id.clone(),
+        title: session.title.clone(),
+    });
+
+    let system_prompt = agent_system_prompt(match input.language {
+        AgentLanguageDto::PortugueseBrazil => AgentLanguage::PortugueseBrazil,
+        AgentLanguageDto::English => AgentLanguage::English,
+    });
+    let tools = agent_tool_catalog();
+    let outcome = run_agent_turn(
+        &chat,
+        &UiToolBridge {
+            channel,
+            runs,
+            run_id: &input.run_id,
+        },
+        &ChannelSink { channel },
+        &WatchCancellation(receiver),
+        &mut session.messages,
+        AgentTurnRequest {
+            model: &model,
+            system_prompt: &system_prompt,
+            tools: &tools,
+            max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        },
+    )
+    .await;
+
+    // The chat is saved even when the turn failed: what happened before the
+    // failure (and the user's message) stays in the history.
+    session.updated_at_ms = now_ms();
+    session.provider_id = provider.id.clone();
+    session.model = model;
+    let session_id = session.id.clone();
+    let store = paths.session_store();
+    run_blocking(move || {
+        store.save(&root_path, &session)?;
+        if is_new {
+            store.prune(&root_path)?;
+        }
+        Ok(())
+    })
+    .await?;
+
+    let outcome = outcome?;
+    Ok(AgentTurnResultDto {
+        session_id,
+        stop_reason: turn_stop_dto(outcome.stop),
+        input_tokens: outcome.usage.input_tokens,
+        output_tokens: outcome.usage.output_tokens,
+    })
+}
+
+/// Idempotent: an unknown or finished run is ignored.
+#[tauri::command]
+pub fn cancel_agent_turn(input: CancelAgentTurnInput, runs: State<'_, AgentRuns>) {
+    if let Some(sender) = lock(&runs.cancellations).get(&input.run_id) {
+        let _ = sender.send(true);
+    }
+}
+
+#[tauri::command]
+pub fn submit_agent_tool_result(
+    input: SubmitAgentToolResultInput,
+    runs: State<'_, AgentRuns>,
+) -> Result<(), AgentCommandError> {
+    let sender = lock(&runs.pending_tools)
+        .remove(&input.wait_id)
+        .ok_or(AgentCommandError::NotFound)?;
+    let mut content = input.content;
+    if content.len() > MAX_TOOL_RESULT_IPC_BYTES {
+        let mut end = MAX_TOOL_RESULT_IPC_BYTES;
+        while !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        content.truncate(end);
+    }
+    let _ = sender.send(ToolOutcome {
+        content,
+        is_error: input.is_error,
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------- history
+
+#[tauri::command]
+pub async fn list_agent_sessions(
+    input: AgentSessionsInput,
+    paths: State<'_, AgentPaths>,
+) -> Result<Vec<AgentSessionSummaryDto>, AgentCommandError> {
+    let store = paths.session_store();
+    let result = run_blocking(move || {
+        Ok(store
+            .list(&input.root_path)?
+            .into_iter()
+            .map(|summary| AgentSessionSummaryDto {
+                id: summary.id,
+                title: summary.title,
+                updated_at_ms: summary.updated_at_ms,
+            })
+            .collect())
+    })
+    .await;
+    crate::logging::logged("alcy::agent", "list agent chats", result)
+}
+
+#[tauri::command]
+pub async fn load_agent_session(
+    input: AgentSessionInput,
+    paths: State<'_, AgentPaths>,
+) -> Result<AgentSessionViewDto, AgentCommandError> {
+    let store = paths.session_store();
+    let result = run_blocking(move || {
+        if !is_valid_session_id(&input.session_id) {
+            return Err(AgentCommandError::NotFound);
+        }
+        let session = store
+            .load(&input.root_path, &input.session_id)?
+            .ok_or(AgentCommandError::NotFound)?;
+        Ok(session_view(session))
+    })
+    .await;
+    crate::logging::logged("alcy::agent", "open agent chat", result)
+}
+
+#[tauri::command]
+pub async fn delete_agent_session(
+    input: AgentSessionInput,
+    paths: State<'_, AgentPaths>,
+    runs: State<'_, AgentRuns>,
+) -> Result<(), AgentCommandError> {
+    if lock(&runs.busy_sessions).contains(&input.session_id) {
+        return Err(AgentCommandError::Busy);
+    }
+    let store = paths.session_store();
+    let result = run_blocking(move || Ok(store.delete(&input.root_path, &input.session_id)?)).await;
+    crate::logging::logged("alcy::agent", "delete agent chat", result)
+}
+
+/// What the user sees of a chat: their messages without the attached
+/// context, the assistant's text and one item per tool call.
+fn session_view(session: AgentSessionRecord) -> AgentSessionViewDto {
+    let failed: HashSet<&str> = session
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                is_error: true,
+                ..
+            } => Some(tool_use_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut items = Vec::new();
+    for message in &session.messages {
+        for block in &message.content {
+            match (message.role, block) {
+                (AgentRole::User, ContentBlock::Text { text }) => {
+                    let visible = text
+                        .split("\n\n<attached_context>")
+                        .next()
+                        .unwrap_or_default();
+                    items.push(AgentViewItemDto::User {
+                        text: capped(visible),
+                    });
+                }
+                (AgentRole::Assistant, ContentBlock::Text { text }) => {
+                    items.push(AgentViewItemDto::Assistant { text: capped(text) });
+                }
+                (_, ContentBlock::ToolUse { id, name, input }) => {
+                    items.push(AgentViewItemDto::Tool {
+                        call_id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                        is_error: failed.contains(id.as_str()),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    let omitted_items = items.len().saturating_sub(MAX_VIEW_ITEMS);
+    let items = items.split_off(omitted_items);
+    AgentSessionViewDto {
+        id: session.id,
+        title: session.title,
+        provider_id: session.provider_id,
+        model: session.model,
+        items,
+        omitted_items,
+    }
+}
+
+fn capped(text: &str) -> String {
+    if text.len() <= MAX_VIEW_TEXT_BYTES {
+        return text.to_string();
+    }
+    let mut end = MAX_VIEW_TEXT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alcy_app::AgentMessage;
+    use serde_json::json;
+
+    #[test]
+    fn titles_use_the_first_line_and_are_shortened() {
+        assert_eq!(title_from("\n  Create a GET  \nmore"), "Create a GET");
+        let long = "a".repeat(80);
+        assert_eq!(title_from(&long).chars().count(), MAX_TITLE_CHARS + 1);
+    }
+
+    #[test]
+    fn the_view_hides_context_and_marks_failed_tools() {
+        let view = session_view(AgentSessionRecord {
+            id: "s".into(),
+            title: "t".into(),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            provider_id: "claude".into(),
+            model: "m".into(),
+            messages: vec![
+                AgentMessage::user_text(
+                    "explain\n\n<attached_context>\n- secret\n</attached_context>",
+                ),
+                AgentMessage {
+                    role: AgentRole::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "sending".into(),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "t1".into(),
+                            name: "send_request".into(),
+                            input: json!({}),
+                        },
+                    ],
+                },
+                AgentMessage {
+                    role: AgentRole::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: "t1".into(),
+                        content: "declined".into(),
+                        is_error: true,
+                    }],
+                },
+            ],
+        });
+        assert_eq!(
+            view.items,
+            vec![
+                AgentViewItemDto::User {
+                    text: "explain".into()
+                },
+                AgentViewItemDto::Assistant {
+                    text: "sending".into()
+                },
+                AgentViewItemDto::Tool {
+                    call_id: "t1".into(),
+                    name: "send_request".into(),
+                    input: json!({}),
+                    is_error: true,
+                },
+            ]
+        );
+        assert_eq!(view.omitted_items, 0);
+    }
+
+    #[test]
+    fn errors_serialize_with_a_kind_and_no_secrets() {
+        let value = serde_json::to_value(AgentCommandError::from(ChatModelError::Provider {
+            status: 400,
+            message: "bad model".into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({ "kind": "provider", "status": 400, "message": "bad model" })
+        );
+    }
+}

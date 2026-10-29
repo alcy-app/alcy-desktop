@@ -3,6 +3,7 @@ mod logging;
 mod mock_runtime;
 mod window_state;
 
+use alcy_agent::AgentHttpClient;
 use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_onedrive::OnedriveClient;
@@ -12,6 +13,11 @@ use alcy_storage::{
     ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitlabAccountsStore,
     LocalSecrets, OnedriveAccountsStore, ProxySettingsStore, RecentWorkspacesStore, SchemaStore,
     SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore,
+};
+use commands::agent::{
+    AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, delete_agent_session,
+    get_agent_settings, list_agent_models, list_agent_sessions, load_agent_session,
+    save_agent_settings, set_agent_api_key, start_agent_turn, submit_agent_tool_result,
 };
 use commands::api_docs::get_request_docs;
 use commands::app_logs::{AppLogLocation, write_frontend_logs};
@@ -241,6 +247,8 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(ApiDocsStore::new())
         .manage(GitlabClient::new())
         .manage(KeyringCredentialStore::new("alcy"))
+        .manage(AgentHttpClient::new())
+        .manage(AgentRuns::default())
         .manage(PendingUpdate::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -294,6 +302,10 @@ pub fn run_with(extensions: Vec<Extension>) {
                 client: OnedriveClient::new(),
                 accounts: OnedriveAccountsStore::new(app_data_dir.join("onedrive-accounts.json")),
             });
+            app.manage(AgentPaths {
+                settings: app_data_dir.join("agent-settings.json"),
+                sessions: app_data_dir.join("agent-sessions"),
+            });
             app.manage(UpdateSettingsStore::new(
                 app_data_dir.join("update-settings.json"),
             ));
@@ -310,6 +322,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 RemoteHttpClients {
                     gitlab: &app.state::<GitlabClient>(),
                     onedrive: &app.state::<OnedriveProvider>().client,
+                    agent: &app.state::<AgentHttpClient>(),
                 },
             );
             app.manage(custom_ca_store);
@@ -359,6 +372,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                     RemoteHttpClients {
                         gitlab: &handle.state::<GitlabClient>(),
                         onedrive: &handle.state::<OnedriveProvider>().client,
+                        agent: &handle.state::<AgentHttpClient>(),
                     },
                 )
                 .await;
@@ -377,6 +391,17 @@ pub fn run_with(extensions: Vec<Extension>) {
             extension_commands,
             extension_invokes,
             log_invocations(tauri::generate_handler![
+                get_agent_settings,
+                save_agent_settings,
+                set_agent_api_key,
+                clear_agent_api_key,
+                list_agent_models,
+                start_agent_turn,
+                cancel_agent_turn,
+                submit_agent_tool_result,
+                list_agent_sessions,
+                load_agent_session,
+                delete_agent_session,
                 execute_graphql_request,
                 execute_rest_request,
                 execute_grpc_request,

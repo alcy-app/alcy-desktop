@@ -2,7 +2,7 @@
  * Enable or disable complete interface features without removing their code.
  * Disabling a flag hides the feature and prevents automatic execution.
  */
-export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting', boolean>> = {
+export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent', boolean>> = {
   /** Check for, download and install application updates. */
   updates: true,
   /**
@@ -33,4 +33,10 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * The runtime remains isolated in Rust.
    */
   loadTesting: true,
+  /**
+   * Agent chat panel (ADR 0064): the panel, its title bar button, its
+   * shortcut and the Agent settings category. Nothing is sent to
+   * a provider until the user configures one.
+   */
+  agent: true,
 }
