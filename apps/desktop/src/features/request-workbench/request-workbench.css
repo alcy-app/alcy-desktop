@@ -1615,3 +1615,14 @@
   min-width: 0;
   min-height: 0;
 }
+
+/* Agent chat toggle at the end of the status bar; pressed while the panel is open. */
+.rw-statusbar-agent.ui-icon-button {
+  color: var(--text-muted);
+}
+
+.rw-statusbar-agent.ui-icon-button:hover,
+.rw-statusbar-agent.ui-icon-button[aria-pressed='true'] {
+  background: var(--surface-overlay);
+  color: var(--text);
+}

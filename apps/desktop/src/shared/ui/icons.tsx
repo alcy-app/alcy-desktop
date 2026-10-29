@@ -399,12 +399,14 @@ export function PanelLeftIcon(props: IconProps) {
   )
 }
 
-/** Mirror of `PanelLeftIcon`: toggles a panel docked to the right. */
-export function SidebarRightIcon(props: IconProps) {
+/** Small robot head: the agent chat. */
+export function RobotIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-      <path d="M10 2.5v11" />
+      <rect x="2.5" y="5" width="11" height="8" rx="2" />
+      <path d="M8 5V2.5M6.5 2.5h3" />
+      <path d="M6 8.5v1M10 8.5v1" />
+      <path d="M1 8v2.5M15 8v2.5" />
     </svg>
   )
 }

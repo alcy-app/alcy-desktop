@@ -33,7 +33,7 @@ import { hasOpenModal } from '../../shared/ui/open-modals'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { useTooltip } from '../../shared/ui/use-tooltip'
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RunnerIcon, SidebarRightIcon, Spinner } from '../../shared/ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RobotIcon, RunnerIcon, Spinner } from '../../shared/ui/icons'
 import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -1763,13 +1763,6 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               label={sidebarCollapsed ? t('workbench.sidebarToggle.showAria') : t('workbench.sidebarToggle.hideAria')}
               onClick={onToggleSidebarCollapsed}
             />
-            {FEATURE_FLAGS.agent && (
-              <IconButton
-                icon={<SidebarRightIcon size={14} />}
-                label={agentOpen ? t('agent.hideAria') : t('agent.showAria')}
-                onClick={toggleAgentPanel}
-              />
-            )}
           </div>
         </TitleBar>
 
@@ -2374,6 +2367,19 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               <>
                 <span className="rw-statusbar-divider" aria-hidden="true" />
                 <NotificationsButton notifications={notifications} onOpenDetails={handleOpenNotification} />
+              </>
+            )}
+            {FEATURE_FLAGS.agent && (
+              <>
+                <span className="rw-statusbar-divider" aria-hidden="true" />
+                <IconButton
+                  icon={<RobotIcon size={14} />}
+                  className="rw-statusbar-agent"
+                  label={agentOpen ? t('agent.hideAria') : t('agent.showAria')}
+                  tooltipSide="top"
+                  aria-pressed={agentOpen}
+                  onClick={toggleAgentPanel}
+                />
               </>
             )}
           </div>
