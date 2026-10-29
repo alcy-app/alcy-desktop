@@ -421,6 +421,10 @@ mod tests {
             Some(ToolClass::Read)
         );
         assert_eq!(agent_tool_class("close_tab"), Some(ToolClass::Edit));
+        assert_eq!(
+            agent_tool_class("create_request"),
+            Some(ToolClass::SideEffect)
+        );
         assert_eq!(agent_tool_class("rm_rf"), None);
         for name in [
             "run_flow",

@@ -2880,6 +2880,7 @@ const ptBR = {
   'settings.agent.loadModels': 'Carregar modelos',
   'settings.agent.modelsNoMatch': 'Nenhum modelo com esse nome. O texto digitado será usado como está.',
   'settings.agent.modelsAfterSave': 'Salve as alterações para carregar os modelos.',
+  'agent.tool.create_request': 'Criar requisição na coleção',
 } as const
 
 export default ptBR

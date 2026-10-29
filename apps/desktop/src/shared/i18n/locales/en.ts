@@ -2886,6 +2886,7 @@ const en: Record<TranslationKey, string> = {
   'settings.agent.loadModels': 'Load models',
   'settings.agent.modelsNoMatch': 'No model with that name. The typed text is used as is.',
   'settings.agent.modelsAfterSave': 'Save the changes to load the models.',
+  'agent.tool.create_request': 'Create request in collection',
 }
 
 export default en

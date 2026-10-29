@@ -298,8 +298,14 @@ pub(super) const TOOLS: &[ToolSpec] = &[
     tool!(
         "duplicate_collection_item",
         SideEffect,
-        "Duplicate a collection, folder subtree or request with regenerated ids. Optional name overrides the copy name.",
-        || target("itemId", json!({"name":text()}))
+        "Duplicate a collection, folder subtree or request with regenerated ids and save it, without opening a tab. Optional name overrides the copy name. For a request, the request fields (as in update_request) change the copy and parentId saves it in another collection or folder: start a new request from a similar saved one instead of from scratch. Returns itemId.",
+        duplicate_arguments
+    ),
+    tool!(
+        "create_request",
+        SideEffect,
+        "Create a request and save it in a collection or folder (parentId from search_collections) without opening a tab, for when the user does not need to see it. Returns requestId; open_request shows it later. Use new_request_tab when the user wants to see or edit the request.",
+        create_request_arguments
     ),
     tool!(
         "delete_collection_item",
@@ -354,6 +360,31 @@ fn pagination() -> Value {
         &[],
     )
 }
+fn duplicate_arguments() -> Value {
+    let mut fields = super::request_fields();
+    fields.insert("itemId".into(), text());
+    fields.insert("name".into(), text());
+    fields.insert(
+        "parentId".into(),
+        json!({"type":"string","description":"Collection or folder for a request copy; the original's by default."}),
+    );
+    object(Value::Object(fields), &["itemId"])
+}
+
+fn create_request_arguments() -> Value {
+    let mut fields = super::request_fields();
+    fields.insert(
+        "parentId".into(),
+        json!({"type":"string","description":"Collection or folder id from search_collections."}),
+    );
+    fields.insert("name".into(), text());
+    fields.insert(
+        "protocol".into(),
+        json!({"type":"string","enum":["rest","graphql"]}),
+    );
+    object(Value::Object(fields), &["parentId", "name", "protocol"])
+}
+
 fn target(key: &str, extra: Value) -> Value {
     let mut fields = extra.as_object().cloned().unwrap_or_default();
     fields.insert(key.into(), text());

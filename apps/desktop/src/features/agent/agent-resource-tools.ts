@@ -12,7 +12,7 @@ export const RESOURCE_TOOL_NAMES = [
   'list_value_monitors', 'get_value_monitor', 'create_value_monitor', 'update_value_monitor', 'delete_value_monitor', 'evaluate_value_monitors',
   'list_runners', 'open_runner', 'get_runner', 'configure_runner', 'pick_runner_data_file', 'clear_runner_data_file', 'run_runner', 'get_runner_run', 'cancel_runner', 'get_runner_output',
   'list_mock_servers', 'get_mock_server', 'create_mock_server', 'update_mock_server', 'save_mock_server', 'delete_mock_server', 'open_mock_server', 'start_mock_server', 'stop_mock_server', 'list_mock_calls', 'clear_mock_calls',
-  'get_collection', 'update_collection_item', 'duplicate_collection_item', 'delete_collection_item', 'set_scope_variable', 'delete_scope_variable',
+  'get_collection', 'create_request', 'update_collection_item', 'duplicate_collection_item', 'delete_collection_item', 'set_scope_variable', 'delete_scope_variable',
   'create_environment', 'update_environment', 'delete_environment', 'delete_environment_variable',
 ] as const
 export type ResourceToolName = typeof RESOURCE_TOOL_NAMES[number]

@@ -172,6 +172,48 @@ describe('workspace resource tools', () => {
     expect((await h.call('update_collection_item', { itemId: 'collection', parentId: 'collection' })).isError).toBe(true)
   })
 
+  it('creates a saved request in a collection without opening a tab', async () => {
+    const h = setup()
+    const created = await h.call('create_request', { parentId: 'collection', name: 'Create user', protocol: 'rest', method: 'post', url: '{{base}}/users', body: { type: 'raw', content: '{"name":"Ana"}' } })
+    expect(created.isError).toBe(false)
+    const request = h.state.collections.collections[0].requests.find((item) => item.id === created.value.requestId)
+    expect(request).toEqual(expect.objectContaining({ name: 'Create user', protocol: 'rest' }))
+    expect(request?.content).toEqual(expect.objectContaining({ method: 'post', endpointUrl: '{{base}}/users', body: { type: 'raw', content: '{"name":"Ana"}', rawLanguage: 'json' } }))
+    expect(h.state.openTabs.openFlow).not.toHaveBeenCalled()
+    expect(h.state.workbench.tabs).toHaveLength(0)
+
+    expect((await h.call('create_request', { parentId: 'missing', name: 'x', protocol: 'rest' })).isError).toBe(true)
+    expect((await h.call('create_request', { parentId: 'collection', name: 'x', protocol: 'grpc' })).isError).toBe(true)
+  })
+
+  it('duplicates a request with edits into another folder, leaving the original as it was', async () => {
+    const h = setup()
+    h.state.collections.collections = [
+      {
+        ...h.state.collections.collections[0],
+        requests: [{ id: 'request', name: 'Get users', protocol: 'rest', content: { ...emptyRequestContent('rest'), endpointUrl: '{{base}}/users', authentication: { type: 'bearer', token: 'raw-token' } } }],
+        folders: [{ id: 'admin', name: 'Admin', authentication: { type: 'inherit' }, variables: [], folders: [], requests: [] }],
+      },
+    ]
+    const copy = await h.call('duplicate_collection_item', { itemId: 'request', name: 'Get one user', url: '{{base}}/users/1', authentication: { type: 'bearer', token: '••••' }, parentId: 'admin' })
+    expect(copy.isError).toBe(false)
+    expect(copy.value.changed).toEqual(['url', 'authentication'])
+
+    const [collection] = h.state.collections.collections
+    const moved = collection.folders[0].requests[0]
+    expect(moved).toEqual(expect.objectContaining({ id: copy.value.itemId, name: 'Get one user' }))
+    expect(moved.content.endpointUrl).toBe('{{base}}/users/1')
+    expect(moved.content.authentication).toEqual({ type: 'bearer', token: 'raw-token' })
+    expect(collection.requests).toHaveLength(1)
+    expect(collection.requests[0].content.endpointUrl).toBe('{{base}}/users')
+  })
+
+  it('refuses request edits when duplicating a folder or collection', async () => {
+    const h = setup()
+    expect((await h.call('duplicate_collection_item', { itemId: 'collection', url: 'https://x' })).isError).toBe(true)
+    expect(h.state.collections.collections).toHaveLength(1)
+  })
+
   it('offers resource references without including secret values', () => {
     const h = setup()
     expect(h.result.current.context()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'flow', id: 'flow' }), expect.objectContaining({ kind: 'monitor', id: 'monitor' })]))

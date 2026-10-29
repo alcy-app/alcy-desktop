@@ -14,7 +14,7 @@ import type { useEnvironmentsState } from '../environments/use-environments-stat
 import type { useOpenTabs } from '../request-workbench/use-open-tabs'
 import type { useWorkbenchState } from '../request-workbench/use-workbench-state'
 import { contentOf, isTabDirty } from '../request-workbench/use-workbench-state'
-import { descendantIds, duplicateRequest, findNode, findParentId, findRequest, insertFolder, moveItems, regenerateIds, removeNode, renameNode, updateNodeAuthentication, updateNodeVariables, type TreeNode } from '../request-workbench/collection-tree'
+import { descendantIds, duplicateRequest, emptyRequestContent, findNode, findParentId, findRequest, insertFolder, insertRequest, moveItems, regenerateIds, removeNode, renameNode, updateNodeAuthentication, updateNodeVariables, updateRequestContent, type TreeNode } from '../request-workbench/collection-tree'
 import { DEFAULT_RUNNER_SETTINGS, toRunOptions } from '../collection-runner/runner-settings'
 import { runStateFromDetail, summarizeRun } from '../collection-runner/collection-run-state'
 import { MOCK_SERVERS_CHANGED_EVENT } from '../mock-servers/mock-server-defaults'
@@ -23,7 +23,7 @@ import { getLoadFlowRunState } from '../flows/load-flow-run-session'
 import { boundedResource, mergeResource, page, record, redactResource, resourceSecrets, string, strings } from './agent-resource-data'
 import { isResourceTool, patchFlow, patchMonitor } from './agent-resource-tools'
 import type { AgentResourceBridge } from './agent-resource-bridge'
-import type { AgentToolOutcome } from './agent-tools'
+import { applyRequestPatch, type AgentToolOutcome } from './agent-tools'
 
 export interface AgentResourceHost {
   cancelReads?(): void
@@ -46,6 +46,9 @@ interface Sources {
   workbench: ReturnType<typeof useWorkbenchState>
   onSaved(): void
 }
+
+/** Request fields shared with update_request; a duplicate applies them to the copy. */
+const REQUEST_FIELDS = ['method', 'url', 'headers', 'body', 'query', 'variables', 'authentication', 'preRequestScript', 'postResponseScript'] as const
 
 function unwrap<T>(result: { ok: true; value?: T } | { ok: false; error: { kind: string; message?: string } }): T {
   if (!result.ok) throw new Error(result.error.message ?? result.error.kind)
@@ -453,17 +456,41 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
           })
           return { itemId: id, updated: true }
         }
+        case 'create_request': {
+          // Saved straight into the collection: no tab opens (open_request shows it later).
+          const parentId = string(input, 'parentId')
+          if (!findNode(s.collections.collections, parentId)) throw new Error('parentId is not a collection or folder. Use search_collections.')
+          const protocol = string(input, 'protocol')
+          if (protocol !== 'rest' && protocol !== 'graphql') throw new Error("protocol must be 'rest' or 'graphql'.")
+          const content = applyRequestPatch(emptyRequestContent(protocol), input)
+          const requestName = string(input, 'name').trim()
+          if (requestName === '') throw new Error('name is required.')
+          const requestId = crypto.randomUUID()
+          await s.collections.commitCollections((current) => insertRequest(current, parentId, { id: requestId, name: requestName, protocol, content }))
+          return { requestId, name: requestName, parentId }
+        }
         case 'duplicate_collection_item': {
           const id = string(input, 'itemId')
           const item = checkItem(id)
           const newId = crypto.randomUUID()
+          const requestEdits = REQUEST_FIELDS.filter((field) => input[field] !== undefined)
+          const parentId = typeof input.parentId === 'string' ? string(input, 'parentId') : null
+          if (!('content' in item) && (requestEdits.length > 0 || parentId !== null)) throw new Error('Request fields and parentId only apply when duplicating a request.')
+          if (parentId !== null && !findNode(s.collections.collections, parentId)) throw new Error('parentId is not a collection or folder. Use search_collections.')
+          // The edits apply to the copy only; secrets written back as the mask keep the original's values.
+          const content = 'content' in item && requestEdits.length > 0 ? applyRequestPatch(item.content, input) : null
           await s.collections.commitCollections((current) => {
             const label = typeof input.name === 'string' ? string(input, 'name') : `${item.name} copy`
-            if ('content' in item) return duplicateRequest(current, id, newId, label)
-            const clone = { ...regenerateIds(item), id: newId, name: label }
-            return insertFolder(current, findParentId(current, id) ?? null, clone)
+            if (!('content' in item)) {
+              const clone = { ...regenerateIds(item), id: newId, name: label }
+              return insertFolder(current, findParentId(current, id) ?? null, clone)
+            }
+            let next = duplicateRequest(current, id, newId, label)
+            if (content) next = updateRequestContent(next, newId, content)
+            if (parentId !== null && parentId !== findParentId(next, newId)) next = moveItems(next, [newId], parentId)
+            return next
           })
-          return { itemId: newId }
+          return { itemId: newId, ...(requestEdits.length > 0 ? { changed: requestEdits } : {}), ...(parentId !== null ? { parentId } : {}) }
         }
         case 'delete_collection_item': {
           const id = string(input, 'itemId')
@@ -588,7 +615,8 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
           : typeof input.serverId === 'string' ? s.bridge.get('mock', input.serverId)?.read()
           : typeof input.monitorId === 'string' ? monitor(input.monitorId)
           : typeof input.environmentId === 'string' ? checkEnvironment(input.environmentId)
-          : typeof input.itemId === 'string' ? checkItem(input.itemId) : null
+          : typeof input.itemId === 'string' ? checkItem(input.itemId)
+          : typeof input.parentId === 'string' ? findNode(s.collections.collections, input.parentId) : null
         const executionContext = name === 'run_flow' || name === 'run_runner' ? [s.environments.activeEnvironmentId, s.environments.environments, s.collections.collections] : undefined
         const drafts = name === 'delete_collection_item' || name === 'delete_flow' ? s.workbench.tabs.filter(isTabDirty).map((tab) => ({ id: tab.id, content: contentOf(tab) })) : undefined
         return JSON.stringify([s.rootPath, target, executionContext, drafts])
