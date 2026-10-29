@@ -215,12 +215,20 @@ function AgentPillPicker({ options, selectedId, triggerLabel, ariaLabel, tooltip
     const first = menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')
     const target = selected ?? first
     target?.focus()
+  }, [open])
+
+  // Clicking elsewhere closes the menu and drops the focus restored to the trigger,
+  // so the focus ring and its tooltip do not linger after the pointer leaves.
+  useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      if (rootRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+      const active = document.activeElement
+      if (active instanceof HTMLElement && rootRef.current?.contains(active)) active.blur()
     }
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
-  }, [open])
+  }, [])
 
   const close = () => {
     setOpen(false)

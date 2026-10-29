@@ -780,3 +780,28 @@
 .agent-tool-state--auto {
   color: var(--warning);
 }
+
+/* Send time above each message and a line per day, as in editor chats. */
+.agent-message-time {
+  display: block;
+  margin-bottom: calc(0px - var(--space-1));
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  text-align: right;
+}
+
+.agent-day {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.agent-day::before,
+.agent-day::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}

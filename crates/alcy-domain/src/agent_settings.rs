@@ -26,10 +26,10 @@ pub struct AgentProvider {
 
 pub const CLAUDE_PROVIDER_ID: &str = "claude";
 pub const OPENCODE_PROVIDER_ID: &str = "opencode";
-pub const CUSTOM_PROVIDER_ID: &str = "custom";
 pub const MAX_AGENT_PROVIDERS: usize = 16;
 
-/// Agent preferences: the providers and which one new chats use. `None`
+/// Agent preferences: the providers and which one new chats use. Other
+/// providers (local servers, gateways) are added by the user from presets. `None`
 /// means the agent has not been set up; nothing is sent anywhere until the
 /// user picks a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,13 +69,6 @@ impl Default for AgentSettings {
                     label: "OpenCode Zen".into(),
                     base_url: "https://opencode.ai/inference/openai/v1".into(),
                     model: "claude-sonnet-5-5".into(),
-                },
-                AgentProvider {
-                    id: CUSTOM_PROVIDER_ID.into(),
-                    kind: AgentProviderKind::OpenAiCompatible,
-                    label: "Custom".into(),
-                    base_url: "http://localhost:11434/v1".into(),
-                    model: String::new(),
                 },
             ],
             active_provider_id: None,

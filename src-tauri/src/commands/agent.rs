@@ -289,9 +289,14 @@ pub struct AgentSessionSummaryDto {
 pub enum AgentViewItemDto {
     User {
         text: String,
+        /// When the message was sent; absent in chats saved before times existed.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        at_ms: Option<u64>,
     },
     Assistant {
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        at_ms: Option<u64>,
     },
     Tool {
         call_id: String,
@@ -420,10 +425,46 @@ pub async fn get_agent_settings(
     let store = paths.settings_store();
     let result = async {
         let settings = run_blocking(move || Ok(store.load()?)).await?;
+        let (settings, changed) = without_unused_legacy_custom(settings, &*credentials);
+        if changed {
+            let store = paths.settings_store();
+            let saved = settings.clone();
+            run_blocking(move || Ok(store.save(&saved)?)).await?;
+        }
         Ok(settings_dto(settings, &*credentials))
     }
     .await;
     crate::logging::logged("alcy::agent", "load agent settings", result)
+}
+
+/// Id and address of the "Custom" provider that earlier builds created by
+/// default; providers are now added from presets instead.
+const LEGACY_CUSTOM_ID: &str = "custom";
+const LEGACY_CUSTOM_BASE_URL: &str = "http://localhost:11434/v1";
+
+/// Drops the old default "Custom" provider when it was never set up (no
+/// model, no key, default address). One the user configured stays as a
+/// regular provider. Returns whether anything was removed.
+fn without_unused_legacy_custom(
+    mut settings: AgentSettings,
+    credentials: &dyn CredentialStore,
+) -> (AgentSettings, bool) {
+    let unused = settings.providers.iter().any(|provider| {
+        provider.id == LEGACY_CUSTOM_ID
+            && provider.base_url == LEGACY_CUSTOM_BASE_URL
+            && provider.model.is_empty()
+            && settings.active_provider_id.as_deref() != Some(LEGACY_CUSTOM_ID)
+            && matches!(
+                credentials.load(&agent_credential_key(LEGACY_CUSTOM_ID)),
+                Ok(None)
+            )
+    });
+    if unused {
+        settings
+            .providers
+            .retain(|provider| provider.id != LEGACY_CUSTOM_ID);
+    }
+    (settings, unused)
 }
 
 #[tauri::command]
@@ -650,6 +691,28 @@ fn context_budget_tokens(provider: &AgentProvider) -> usize {
     }
 }
 
+/// Times of the messages a turn added. The user's text lands in a new message,
+/// or in the last one when it joined an interrupted turn's tool results; the
+/// replies get the time the turn ended. Earlier messages without a time get 0.
+fn record_message_times(
+    times: &mut Vec<u64>,
+    previous_len: usize,
+    len: usize,
+    sent_at_ms: u64,
+    finished_at_ms: u64,
+) {
+    times.resize(previous_len, 0);
+    if len == previous_len {
+        // The text joined the previous user message.
+        if let Some(last) = times.last_mut() {
+            *last = sent_at_ms;
+        }
+        return;
+    }
+    times.push(sent_at_ms);
+    times.resize(len, finished_at_ms);
+}
+
 fn turn_stop_dto(stop: TurnStop) -> TurnStopDto {
     match stop {
         TurnStop::EndTurn => TurnStopDto::EndTurn,
@@ -723,6 +786,7 @@ async fn run_turn(
                 messages: Vec::new(),
                 summary: None,
                 summarized_until: 0,
+                message_times_ms: Vec::new(),
             }
         }
     };
@@ -755,6 +819,8 @@ async fn run_turn(
         summary: session.summary.take(),
         summarized_until: session.summarized_until,
     };
+    let sent_at_ms = now_ms();
+    let previous_len = conversation.messages.len();
     push_user_text(
         &mut conversation.messages,
         compose_user_message(&text, &context),
@@ -791,6 +857,13 @@ async fn run_turn(
     session.messages = conversation.messages;
     session.summary = conversation.summary;
     session.summarized_until = conversation.summarized_until;
+    record_message_times(
+        &mut session.message_times_ms,
+        previous_len,
+        session.messages.len(),
+        sent_at_ms,
+        now_ms(),
+    );
 
     // The chat is saved even when the turn failed: what happened before the
     // failure (and the user's message) stays in the history.
@@ -921,7 +994,14 @@ fn session_view(session: AgentSessionRecord) -> AgentSessionViewDto {
         })
         .collect();
     let mut items = Vec::new();
-    for message in &session.messages {
+    let time_of = |index: usize| {
+        session
+            .message_times_ms
+            .get(index)
+            .copied()
+            .filter(|time| *time > 0)
+    };
+    for (index, message) in session.messages.iter().enumerate() {
         for block in &message.content {
             match (message.role, block) {
                 (AgentRole::User, ContentBlock::Text { text }) => {
@@ -931,10 +1011,14 @@ fn session_view(session: AgentSessionRecord) -> AgentSessionViewDto {
                         .unwrap_or_default();
                     items.push(AgentViewItemDto::User {
                         text: capped(visible),
+                        at_ms: time_of(index),
                     });
                 }
                 (AgentRole::Assistant, ContentBlock::Text { text }) => {
-                    items.push(AgentViewItemDto::Assistant { text: capped(text) });
+                    items.push(AgentViewItemDto::Assistant {
+                        text: capped(text),
+                        at_ms: time_of(index),
+                    });
                 }
                 (_, ContentBlock::ToolUse { id, name, input }) => {
                     items.push(AgentViewItemDto::Tool {
@@ -976,6 +1060,72 @@ mod tests {
     use super::*;
     use alcy_app::AgentMessage;
     use serde_json::json;
+
+    struct NoKeys;
+
+    impl CredentialStore for NoKeys {
+        fn load(&self, _: &str) -> Result<Option<String>, alcy_app::CredentialError> {
+            Ok(None)
+        }
+        fn save(&self, _: &str, _: &str) -> Result<(), alcy_app::CredentialError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), alcy_app::CredentialError> {
+            Ok(())
+        }
+    }
+
+    fn legacy_custom(model: &str) -> AgentProvider {
+        AgentProvider {
+            id: LEGACY_CUSTOM_ID.into(),
+            kind: AgentProviderKind::OpenAiCompatible,
+            label: "Custom".into(),
+            base_url: LEGACY_CUSTOM_BASE_URL.into(),
+            model: model.into(),
+        }
+    }
+
+    #[test]
+    fn the_old_default_custom_provider_goes_away_only_when_unused() {
+        let mut settings = AgentSettings::default();
+        settings.providers.push(legacy_custom(""));
+        let (cleaned, changed) = without_unused_legacy_custom(settings, &NoKeys);
+        assert!(changed);
+        assert!(cleaned.provider(LEGACY_CUSTOM_ID).is_none());
+
+        let mut configured = AgentSettings::default();
+        configured.providers.push(legacy_custom("qwen3"));
+        let (kept, changed) = without_unused_legacy_custom(configured, &NoKeys);
+        assert!(!changed);
+        assert!(kept.provider(LEGACY_CUSTOM_ID).is_some());
+
+        let mut active = AgentSettings::default();
+        active.providers.push(legacy_custom(""));
+        active.active_provider_id = Some(LEGACY_CUSTOM_ID.into());
+        assert!(!without_unused_legacy_custom(active, &NoKeys).1);
+    }
+
+    #[test]
+    fn a_turn_records_the_send_and_reply_times() {
+        let mut times = vec![1, 2];
+        record_message_times(&mut times, 2, 5, 100, 200);
+        assert_eq!(times, vec![1, 2, 100, 200, 200]);
+
+        // A chat saved before times existed: earlier messages are unknown.
+        let mut old = Vec::new();
+        record_message_times(&mut old, 3, 5, 100, 200);
+        assert_eq!(old, vec![0, 0, 0, 100, 200]);
+
+        // A turn that failed before any reply only adds the user's message.
+        let mut unanswered = vec![1, 2, 3];
+        record_message_times(&mut unanswered, 3, 4, 100, 200);
+        assert_eq!(unanswered, vec![1, 2, 3, 100]);
+
+        // The text joined the last (tool results) message.
+        let mut joined = vec![1, 2, 3];
+        record_message_times(&mut joined, 3, 3, 100, 200);
+        assert_eq!(joined, vec![1, 2, 100]);
+    }
 
     #[test]
     fn local_servers_get_a_smaller_context_budget() {
@@ -1034,6 +1184,7 @@ mod tests {
             model: "m".into(),
             summary: None,
             summarized_until: 0,
+            message_times_ms: vec![1000, 2000, 0],
             messages: vec![
                 AgentMessage::user_text(
                     "explain\n\n<attached_context>\n- secret\n</attached_context>",
@@ -1065,10 +1216,12 @@ mod tests {
             view.items,
             vec![
                 AgentViewItemDto::User {
-                    text: "explain".into()
+                    text: "explain".into(),
+                    at_ms: Some(1000),
                 },
                 AgentViewItemDto::Assistant {
-                    text: "sending".into()
+                    text: "sending".into(),
+                    at_ms: Some(2000),
                 },
                 AgentViewItemDto::Tool {
                     call_id: "t1".into(),

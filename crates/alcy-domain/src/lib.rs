@@ -34,7 +34,7 @@ mod workspace_link;
 
 pub use agent_settings::{
     AgentProvider, AgentProviderKind, AgentSettings, AgentSettingsError, CLAUDE_PROVIDER_ID,
-    CUSTOM_PROVIDER_ID, MAX_AGENT_PROVIDERS, OPENCODE_PROVIDER_ID, agent_credential_key,
+    MAX_AGENT_PROVIDERS, OPENCODE_PROVIDER_ID, agent_credential_key,
 };
 pub use api_docs::{
     ApiDocsSource, ApiDocsSourceKind, BodyDoc, DocsRef, MediaDoc, ParameterDoc, ParameterLocation,

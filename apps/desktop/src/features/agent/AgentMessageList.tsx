@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
@@ -36,8 +36,21 @@ interface AgentMessageListProps {
   onRevert: (callId: string) => void
 }
 
+/** Ids of the messages that open a new day, as in editor chats; messages without a time open none. */
+function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
+  const ids = new Set<string>()
+  let lastDay: string | null = null
+  for (const item of items) {
+    if ((item.kind !== 'user' && item.kind !== 'assistant') || item.atMs === undefined) continue
+    const day = new Date(item.atMs).toDateString()
+    if (day !== lastDay) ids.add(item.id)
+    lastDay = day
+  }
+  return ids
+}
+
 export function AgentMessageList({ items, onApprove, onDecline, onRevert }: AgentMessageListProps) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
@@ -50,6 +63,21 @@ export function AgentMessageList({ items, onApprove, onDecline, onRevert }: Agen
 
   const hidden = Math.max(0, items.length - visible)
   const shown = hidden > 0 ? items.slice(hidden) : items
+  const timeFormat = new Intl.DateTimeFormat(language, { hour: 'numeric', minute: '2-digit' })
+  const dayFormat = new Intl.DateTimeFormat(language, { weekday: 'short', day: 'numeric', month: 'short' })
+  const newDays = firstMessagesOfEachDay(shown)
+  const dayLine = (id: string, atMs: number | undefined) =>
+    atMs !== undefined && newDays.has(id) ? (
+      <p className="agent-day" role="separator">
+        <span>{dayFormat.format(atMs)}</span>
+      </p>
+    ) : null
+  const timeLabel = (atMs: number | undefined) =>
+    atMs === undefined ? null : (
+      <time className="agent-message-time" dateTime={new Date(atMs).toISOString()}>
+        {timeFormat.format(atMs)}
+      </time>
+    )
 
   return (
     <div
@@ -72,19 +100,27 @@ export function AgentMessageList({ items, onApprove, onDecline, onRevert }: Agen
         switch (item.kind) {
           case 'user':
             return (
-              <div key={item.id} className="agent-message agent-message--user">
-                {item.context.length > 0 && (
-                  <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
-                )}
-                <p className="agent-message-text">{item.text}</p>
-              </div>
+              <Fragment key={item.id}>
+                {dayLine(item.id, item.atMs)}
+                {timeLabel(item.atMs)}
+                <div className="agent-message agent-message--user">
+                  {item.context.length > 0 && (
+                    <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
+                  )}
+                  <p className="agent-message-text">{item.text}</p>
+                </div>
+              </Fragment>
             )
           case 'assistant':
             return (
-              <div key={item.id} className="agent-message agent-message--assistant" aria-busy={item.streaming}>
-                <MarkdownView source={item.text} headingOffset={2} renderCodeBlock={(text) => <AgentCodeBlock text={text} />} />
-                {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
-              </div>
+              <Fragment key={item.id}>
+                {dayLine(item.id, item.atMs)}
+                {timeLabel(item.atMs)}
+                <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
+                  <MarkdownView source={item.text} headingOffset={2} renderCodeBlock={(text) => <AgentCodeBlock text={text} />} />
+                  {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
+                </div>
+              </Fragment>
             )
           case 'notice':
             return (

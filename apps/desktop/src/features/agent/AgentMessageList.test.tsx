@@ -28,6 +28,26 @@ describe('AgentMessageList', () => {
     expect(screen.getByText('GET /users')).toBeInTheDocument()
   })
 
+  it('shows the time of each message and a line when the day changes', () => {
+    const at = (day: number, hour: number, minute: number) => new Date(2026, 9, day, hour, minute).getTime()
+    render(
+      <AgentMessageList
+        items={[
+          { kind: 'user', id: 'old', text: 'sem horário', context: [] },
+          { kind: 'user', id: 'u1', text: 'ola', context: [], atMs: at(28, 21, 4) },
+          { kind: 'assistant', id: 'a1', text: 'Olá!', streaming: false, atMs: at(28, 21, 5) },
+          { kind: 'user', id: 'u2', text: 'ok', context: [], atMs: at(29, 9, 4) },
+        ]}
+        {...actions}
+      />,
+    )
+    expect(screen.getAllByRole('separator')).toHaveLength(2)
+    expect(screen.getByText('21:04')).toBeInTheDocument()
+    expect(screen.getByText('21:05')).toBeInTheDocument()
+    expect(screen.getByText(/^0?9:04$/)).toBeInTheDocument()
+    expect(document.querySelectorAll('time')).toHaveLength(3)
+  })
+
   it('shows a streaming status only while the assistant is responding', () => {
     const { rerender } = render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: true, text: 'Olá' }]} {...actions} />)
     expect(screen.getByRole('status', { name: 'O agente está respondendo' })).toBeInTheDocument()

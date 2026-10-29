@@ -27,6 +27,9 @@ pub struct AgentSessionRecord {
     /// Summary that replaces `messages[..summarized_until]` in requests (spec 0135).
     pub summary: Option<String>,
     pub summarized_until: usize,
+    /// When each message was written, aligned with `messages`; `0` (or a
+    /// missing entry, in chats saved before) means unknown.
+    pub message_times_ms: Vec<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +55,9 @@ struct PersistedSession {
     summary: Option<String>,
     #[serde(default)]
     summarized_until: usize,
+    /// Additive, like the summary: older chats have no times.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    message_times_ms: Vec<u64>,
 }
 
 /// Only the header, to list chats without keeping their messages.
@@ -136,6 +142,7 @@ impl AgentSessionStore {
             provider_id: file.provider_id,
             model: file.model,
             summarized_until: file.summarized_until.min(file.messages.len()),
+            message_times_ms: file.message_times_ms,
             messages: file.messages.into_iter().map(message_from).collect(),
             summary: file.summary,
         }))
@@ -154,6 +161,7 @@ impl AgentSessionStore {
             messages: session.messages.iter().map(message_to).collect(),
             summary: session.summary.clone(),
             summarized_until: session.summarized_until,
+            message_times_ms: session.message_times_ms.clone(),
         };
         let json =
             serde_json::to_vec(&file).map_err(|error| StorageError::Write(error.to_string()))?;
@@ -349,6 +357,7 @@ mod tests {
             ],
             summary: None,
             summarized_until: 0,
+            message_times_ms: vec![10, 11, 12],
         }
     }
 

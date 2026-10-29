@@ -17,8 +17,9 @@ import { runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tool
 export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' | 'declined' | 'reverted'
 
 export type AgentChatItem =
-  | { kind: 'user'; id: string; text: string; context: AgentContextInput[] }
-  | { kind: 'assistant'; id: string; text: string; streaming: boolean }
+  /** `atMs`: when the message was sent or started arriving; unknown in older chats. */
+  | { kind: 'user'; id: string; text: string; context: AgentContextInput[]; atMs?: number }
+  | { kind: 'assistant'; id: string; text: string; streaming: boolean; atMs?: number }
   | { kind: 'tool'; id: string; name: string; toolClass: AgentToolClass; summary: string; state: AgentToolState; canRevert: boolean; autoApproved: boolean }
   | { kind: 'notice'; id: string; tone: 'error' | 'info'; text: string }
 
@@ -143,7 +144,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
             if (last?.kind === 'assistant' && last.streaming) {
               return [...current.slice(0, -1), { ...last, text: last.text + event.text }]
             }
-            return [...current, { kind: 'assistant', id: nextItemId('assistant'), text: event.text, streaming: true }]
+            return [...current, { kind: 'assistant', id: nextItemId('assistant'), text: event.text, streaming: true, atMs: Date.now() }]
           })
           return
         case 'toolCallRequested':
@@ -169,7 +170,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       const runId = crypto.randomUUID()
       runIdRef.current = runId
       setRunning(true)
-      setItems((current) => [...current, { kind: 'user', id: nextItemId('user'), text: trimmed, context }])
+      setItems((current) => [...current, { kind: 'user', id: nextItemId('user'), text: trimmed, context, atMs: Date.now() }])
       const result = await startAgentTurn(
         { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language },
         handleEvent,
@@ -245,9 +246,9 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
         ...view.items.map((item): AgentChatItem => {
           switch (item.kind) {
             case 'user':
-              return { kind: 'user', id: nextItemId('user'), text: item.text, context: [] }
+              return { kind: 'user', id: nextItemId('user'), text: item.text, context: [], atMs: item.atMs }
             case 'assistant':
-              return { kind: 'assistant', id: nextItemId('assistant'), text: item.text, streaming: false }
+              return { kind: 'assistant', id: nextItemId('assistant'), text: item.text, streaming: false, atMs: item.atMs }
             case 'tool':
               return {
                 kind: 'tool',

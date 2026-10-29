@@ -8,8 +8,9 @@ export interface AgentSessionSummaryDto {
 }
 
 export type AgentViewItemDto =
-  | { kind: 'user'; text: string }
-  | { kind: 'assistant'; text: string }
+  /** `atMs` is absent in chats saved before message times existed. */
+  | { kind: 'user'; text: string; atMs?: number }
+  | { kind: 'assistant'; text: string; atMs?: number }
   | { kind: 'tool'; callId: string; name: string; input: Record<string, unknown>; isError: boolean }
 
 export interface AgentSessionViewDto {

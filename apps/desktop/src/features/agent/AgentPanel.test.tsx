@@ -118,6 +118,8 @@ describe('AgentPanel', () => {
     expect(trigger).toHaveFocus()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(saveAgentSettings).toHaveBeenCalledWith(expect.objectContaining({ activeProviderId: local.id }))
+    fireEvent.pointerDown(document.body)
+    expect(trigger).not.toHaveFocus()
     sendMessage('olá')
     expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ providerId: local.id, model: local.model }), expect.any(Function))
   })
@@ -128,9 +130,11 @@ describe('AgentPanel', () => {
     const trigger = await screen.findByRole('button', { name: 'Provedor e modelo' })
     fireEvent.click(trigger)
     expect(screen.getByRole('menu')).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: /Claude/ })).toHaveFocus()
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).not.toHaveFocus()
   })
 
   it('fills and focuses the composer from each prompt starter without sending', async () => {
