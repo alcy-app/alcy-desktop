@@ -279,6 +279,25 @@ describe('AgentPanel', () => {
     act(() => publishEditorSelection('response', EditorState.create({ doc: '{}', selection: EditorSelection.single(0, 0) })))
   })
 
+  it('tells when the chat was summarized and names keyring failures', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn.mockImplementationOnce(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+      onEvent({ type: 'contextCompacted' })
+      onEvent({ type: 'textDelta', text: 'Continuando.' })
+      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
+    })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+
+    sendMessage('continue')
+    expect(await screen.findByText(/foi resumida para caber no contexto/)).toBeInTheDocument()
+    expect(await screen.findByText('Continuando.')).toBeInTheDocument()
+
+    startAgentTurn.mockResolvedValueOnce({ ok: false, error: { kind: 'credentials', message: 'Server GUID mismatch' } })
+    sendMessage('de novo')
+    expect(await screen.findByRole('alert')).toHaveTextContent('O chaveiro do sistema não está disponível: Server GUID mismatch')
+  })
+
   it('asks to set up a provider before chatting', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [{ ...claude, hasApiKey: false }], activeProviderId: null } })
     const onOpenSettings = vi.fn()

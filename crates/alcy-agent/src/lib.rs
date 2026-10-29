@@ -193,6 +193,39 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn lists_models_from_the_gateway_when_the_api_path_has_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/inference/openai/v1/models"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("Not Found"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/inference/v1/models"))
+            .and(header("authorization", "Bearer secret"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"data":[{"id":"kimi-k2.6"},{"id":"claude-sonnet-5-5"}]}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AgentHttpClient::new();
+        let provider = provider(
+            AgentProviderKind::OpenAiCompatible,
+            format!("{}/inference/openai/v1", server.uri()),
+        );
+        let models = client
+            .chat(&provider, Some("secret"))
+            .unwrap()
+            .list_models()
+            .await
+            .unwrap();
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(ids, vec!["claude-sonnet-5-5", "kimi-k2.6"]);
+    }
+
     #[test]
     fn anthropic_requires_a_key() {
         let client = AgentHttpClient::new();

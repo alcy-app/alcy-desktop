@@ -11,6 +11,8 @@ export type AgentEventDto =
   | { type: 'textDelta'; text: string }
   | { type: 'toolCallRequested'; waitId: string; callId: string; name: string; input: Record<string, unknown>; class: AgentToolClass }
   | { type: 'toolCallFinished'; callId: string; isError: boolean }
+  /** The oldest part of the chat was summarized to fit the model's context. */
+  | { type: 'contextCompacted' }
 
 export interface AgentContextInput {
   kind: string

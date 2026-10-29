@@ -32,7 +32,18 @@ impl OpenAiCompatibleChat<'_> {
 
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, ChatModelError> {
         let client = self.http.get().await;
-        let body = json(self.authorized(client.get(format!("{}/models", self.base_url)))).await?;
+        let primary = format!("{}/models", self.base_url);
+        let body = match json(self.authorized(client.get(&primary))).await {
+            // Gateways that serve several APIs (OpenCode Zen) list models once,
+            // above the per-API path: `…/openai/v1` lists at `…/v1/models`.
+            Err(ChatModelError::Provider { status: 404, .. })
+                if shared_models_url(self.base_url).is_some() =>
+            {
+                let shared = shared_models_url(self.base_url).unwrap_or(primary);
+                json(self.authorized(client.get(shared))).await?
+            }
+            other => other?,
+        };
         let mut models: Vec<ModelInfo> = body["data"]
             .as_array()
             .map(|models| {
@@ -51,6 +62,13 @@ impl OpenAiCompatibleChat<'_> {
         models.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(models)
     }
+}
+
+/// `…/<api>/v1` → `…/v1/models`; `None` when the base has no such segment.
+fn shared_models_url(base_url: &str) -> Option<String> {
+    let without_version = base_url.strip_suffix("/v1")?;
+    let (prefix, api) = without_version.rsplit_once('/')?;
+    (!api.is_empty() && prefix.contains("://")).then(|| format!("{prefix}/v1/models"))
 }
 
 impl ChatModel for OpenAiCompatibleChat<'_> {
@@ -94,13 +112,17 @@ pub(crate) fn request_body(request: &ChatRequest<'_>) -> Value {
             })
         })
         .collect();
-    json!({
+    let mut body = json!({
         "model": request.model,
         "stream": true,
         "stream_options": { "include_usage": true },
         "messages": messages,
-        "tools": tools,
-    })
+    });
+    // The API rejects an empty tool list (the chat summary has none).
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools);
+    }
+    body
 }
 
 /// One neutral message may become several here: tool results are separate
@@ -318,6 +340,16 @@ mod tests {
     }
 
     #[test]
+    fn the_shared_model_list_sits_above_the_api_path() {
+        assert_eq!(
+            shared_models_url("https://opencode.ai/inference/openai/v1").as_deref(),
+            Some("https://opencode.ai/inference/v1/models")
+        );
+        assert_eq!(shared_models_url("http://localhost:11434/v1"), None);
+        assert_eq!(shared_models_url("https://api.example.com/v2"), None);
+    }
+
+    #[test]
     fn assembles_fragmented_tool_calls() {
         let (response, text) = run_stream(&[
             r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Checking"}}]}"#,
@@ -417,6 +449,10 @@ mod tests {
             tools: &[],
             max_tokens: 10,
         });
+        assert!(
+            body.get("tools").is_none(),
+            "an empty tool list is left out"
+        );
         let sent = body["messages"].as_array().unwrap();
         assert_eq!(sent[0]["role"], "system");
         assert_eq!(

@@ -24,6 +24,9 @@ pub struct AgentSessionRecord {
     pub provider_id: String,
     pub model: String,
     pub messages: Vec<AgentMessage>,
+    /// Summary that replaces `messages[..summarized_until]` in requests (spec 0135).
+    pub summary: Option<String>,
+    pub summarized_until: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +47,11 @@ struct PersistedSession {
     provider_id: String,
     model: String,
     messages: Vec<PersistedMessage>,
+    /// Additive: chats saved before compaction existed have neither field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    #[serde(default)]
+    summarized_until: usize,
 }
 
 /// Only the header, to list chats without keeping their messages.
@@ -127,7 +135,9 @@ impl AgentSessionStore {
             updated_at_ms: file.updated_at_ms,
             provider_id: file.provider_id,
             model: file.model,
+            summarized_until: file.summarized_until.min(file.messages.len()),
             messages: file.messages.into_iter().map(message_from).collect(),
+            summary: file.summary,
         }))
     }
 
@@ -142,6 +152,8 @@ impl AgentSessionStore {
             provider_id: session.provider_id.clone(),
             model: session.model.clone(),
             messages: session.messages.iter().map(message_to).collect(),
+            summary: session.summary.clone(),
+            summarized_until: session.summarized_until,
         };
         let json =
             serde_json::to_vec(&file).map_err(|error| StorageError::Write(error.to_string()))?;
@@ -335,6 +347,8 @@ mod tests {
                     }],
                 },
             ],
+            summary: None,
+            summarized_until: 0,
         }
     }
 
@@ -358,6 +372,23 @@ mod tests {
         store.delete("/w1", "a").unwrap();
         assert_eq!(store.load("/w1", "a").unwrap(), None);
         assert_eq!(store.list("/w2").unwrap().len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn keeps_the_summary_and_reads_chats_saved_without_it() {
+        let (store, root) = temp_store();
+        let mut summarized = session("s", 1);
+        summarized.summary = Some("earlier part".into());
+        summarized.summarized_until = 2;
+        store.save("/w", &summarized).unwrap();
+        assert_eq!(store.load("/w", "s").unwrap(), Some(summarized));
+
+        let old = r#"{"version":1,"id":"o","title":"t","createdAtMs":1,"updatedAtMs":1,"providerId":"claude","model":"m","messages":[]}"#;
+        let path = store.session_path("/w", "o").unwrap();
+        fs::write(path, old).unwrap();
+        let loaded = store.load("/w", "o").unwrap().unwrap();
+        assert_eq!((loaded.summary, loaded.summarized_until), (None, 0));
         let _ = fs::remove_dir_all(root);
     }
 

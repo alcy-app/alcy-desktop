@@ -2781,6 +2781,8 @@ const ptBR = {
   'agent.context.selection.preRequestScript': 'script de pré-requisição',
   'agent.context.selection.postResponseScript': 'script de pós-resposta',
   'agent.context.selection.response': 'corpo da resposta',
+  'agent.error.credentials': 'O chaveiro do sistema não está disponível: {message}',
+  'agent.notice.compacted': 'A parte mais antiga da conversa foi resumida para caber no contexto do modelo.',
 } as const
 
 export default ptBR

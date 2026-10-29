@@ -3,6 +3,7 @@
 //! live in `alcy-agent` and tools run in the UI.
 
 mod chat_model;
+mod context_window;
 mod conversation;
 mod prompt;
 mod run_turn;
@@ -12,6 +13,7 @@ pub use chat_model::{
     ChatModel, ChatModelError, ChatRequest, ChatResponse, ModelInfo, StopReason, TokenUsage,
     ToolDefinition,
 };
+pub use context_window::{AgentConversation, KEEP_FULL_TOOL_RESULTS};
 pub use conversation::{AgentMessage, AgentRole, ContentBlock, push_user_text};
 pub use prompt::{
     AgentLanguage, ContextReference, MAX_CONTEXT_REFERENCES, SELECTION_CONTEXT_KIND,

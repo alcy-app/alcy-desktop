@@ -2787,6 +2787,8 @@ const en: Record<TranslationKey, string> = {
   'agent.context.selection.preRequestScript': 'pre-request script',
   'agent.context.selection.postResponseScript': 'post-response script',
   'agent.context.selection.response': 'response body',
+  'agent.error.credentials': 'The system keyring is not available: {message}',
+  'agent.notice.compacted': 'The oldest part of the chat was summarized to fit the model\'s context.',
 }
 
 export default en

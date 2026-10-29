@@ -81,15 +81,19 @@ pub(crate) fn request_body(request: &ChatRequest<'_>) -> Value {
             })
         })
         .collect();
-    json!({
+    let mut body = json!({
         "model": request.model,
         "max_tokens": request.max_tokens,
         "stream": true,
         // The prompt and tools are the same every round: cache them.
         "system": [{ "type": "text", "text": request.system_prompt, "cache_control": { "type": "ephemeral" } }],
-        "tools": tools,
         "messages": request.messages.iter().map(message_json).collect::<Vec<_>>(),
-    })
+    });
+    // A request without tools (the chat summary) leaves the field out.
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools);
+    }
+    body
 }
 
 fn message_json(message: &AgentMessage) -> Value {

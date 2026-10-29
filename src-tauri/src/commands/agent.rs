@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alcy_agent::AgentHttpClient;
 use alcy_app::{
-    AgentLanguage, AgentRole, AgentToolHost, AgentTurnRequest, AgentTurnSink, ChatModelError,
-    ContentBlock, ContextReference, CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS,
+    AgentConversation, AgentLanguage, AgentRole, AgentToolHost, AgentTurnRequest, AgentTurnSink,
+    ChatModelError, ContentBlock, ContextReference, CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS,
     MAX_CONTEXT_REFERENCES, ToolCall, ToolClass, ToolOutcome, TurnStop, agent_system_prompt,
     agent_tool_catalog, compose_user_message, push_user_text, run_agent_turn,
 };
@@ -232,6 +232,8 @@ pub enum AgentEventDto {
         call_id: String,
         is_error: bool,
     },
+    /// The oldest part of the chat was summarized to fit the model's context.
+    ContextCompacted,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -551,6 +553,10 @@ impl AgentTurnSink for ChannelSink<'_> {
             is_error,
         });
     }
+
+    fn context_compacted(&self) {
+        let _ = self.channel.send(AgentEventDto::ContextCompacted);
+    }
 }
 
 /// Runs tools in the UI: sends the call over the turn's channel and waits for
@@ -624,6 +630,26 @@ fn title_from(text: &str) -> String {
     title
 }
 
+/// Estimated context window of the provider (spec 0135). Local servers
+/// usually run small models, so they get a much smaller budget.
+fn context_budget_tokens(provider: &AgentProvider) -> usize {
+    let host = provider
+        .base_url
+        .split_once("://")
+        .map_or(provider.base_url.as_str(), |(_, rest)| rest)
+        .split(['/', '?'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let local =
+        host.starts_with("localhost") || host.starts_with("127.") || host.starts_with("[::1]");
+    match (provider.kind, local) {
+        (_, true) => 24_000,
+        (AgentProviderKind::Anthropic, false) => 150_000,
+        (AgentProviderKind::OpenAiCompatible, false) => 100_000,
+    }
+}
+
 fn turn_stop_dto(stop: TurnStop) -> TurnStopDto {
     match stop {
         TurnStop::EndTurn => TurnStopDto::EndTurn,
@@ -695,6 +721,8 @@ async fn run_turn(
                 provider_id: provider.id.clone(),
                 model: model.clone(),
                 messages: Vec::new(),
+                summary: None,
+                summarized_until: 0,
             }
         }
     };
@@ -722,7 +750,15 @@ async fn run_turn(
             summary: reference.summary,
         })
         .collect();
-    push_user_text(&mut session.messages, compose_user_message(&text, &context));
+    let mut conversation = AgentConversation {
+        messages: std::mem::take(&mut session.messages),
+        summary: session.summary.take(),
+        summarized_until: session.summarized_until,
+    };
+    push_user_text(
+        &mut conversation.messages,
+        compose_user_message(&text, &context),
+    );
     let _ = channel.send(AgentEventDto::SessionStarted {
         session_id: session.id.clone(),
         title: session.title.clone(),
@@ -742,15 +778,19 @@ async fn run_turn(
         },
         &ChannelSink { channel },
         &WatchCancellation(receiver),
-        &mut session.messages,
+        &mut conversation,
         AgentTurnRequest {
             model: &model,
             system_prompt: &system_prompt,
             tools: &tools,
             max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            context_budget_tokens: context_budget_tokens(&provider),
         },
     )
     .await;
+    session.messages = conversation.messages;
+    session.summary = conversation.summary;
+    session.summarized_until = conversation.summarized_until;
 
     // The chat is saved even when the turn failed: what happened before the
     // failure (and the user's message) stays in the history.
@@ -938,6 +978,45 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn local_servers_get_a_smaller_context_budget() {
+        let provider = |kind, base_url: &str| AgentProvider {
+            id: "p".into(),
+            kind,
+            label: "P".into(),
+            base_url: base_url.into(),
+            model: "m".into(),
+        };
+        assert_eq!(
+            context_budget_tokens(&provider(
+                AgentProviderKind::Anthropic,
+                "https://api.anthropic.com"
+            )),
+            150_000
+        );
+        assert_eq!(
+            context_budget_tokens(&provider(
+                AgentProviderKind::OpenAiCompatible,
+                "https://opencode.ai/inference/openai/v1"
+            )),
+            100_000
+        );
+        assert_eq!(
+            context_budget_tokens(&provider(
+                AgentProviderKind::OpenAiCompatible,
+                "http://localhost:11434/v1"
+            )),
+            24_000
+        );
+        assert_eq!(
+            context_budget_tokens(&provider(
+                AgentProviderKind::OpenAiCompatible,
+                "http://127.0.0.1:1234/v1"
+            )),
+            24_000
+        );
+    }
+
+    #[test]
     fn titles_use_the_first_line_and_are_shortened() {
         assert_eq!(title_from("\n  Create a GET  \nmore"), "Create a GET");
         let long = "a".repeat(80);
@@ -953,6 +1032,8 @@ mod tests {
             updated_at_ms: 0,
             provider_id: "claude".into(),
             model: "m".into(),
+            summary: None,
+            summarized_until: 0,
             messages: vec![
                 AgentMessage::user_text(
                     "explain\n\n<attached_context>\n- secret\n</attached_context>",

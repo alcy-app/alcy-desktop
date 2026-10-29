@@ -6,6 +6,10 @@ use serde_json::Value;
 use super::chat_model::{
     ChatModel, ChatModelError, ChatRequest, StopReason, TokenUsage, ToolDefinition,
 };
+use super::context_window::{
+    AgentConversation, COMPACT_AT_PERCENT, KEEP_AFTER_COMPACTION_PERCENT, SUMMARY_SYSTEM_PROMPT,
+    compaction_cut, estimate_tokens, fixed_tokens, request_messages, summary_input,
+};
 use super::conversation::{AgentMessage, AgentRole, ContentBlock};
 use super::prompt::truncate_utf8;
 use super::tools::{ToolClass, agent_tool_class};
@@ -16,6 +20,7 @@ pub const MAX_TOOL_ROUNDS: usize = 20;
 /// Tool output kept in the transcript; the rest is cut with a note.
 pub const MAX_TOOL_RESULT_BYTES: usize = 32 * 1024;
 pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8192;
+const SUMMARY_MAX_OUTPUT_TOKENS: u32 = 1024;
 
 pub struct ToolCall<'a> {
     pub id: &'a str,
@@ -49,6 +54,8 @@ pub trait AgentToolHost: Sync {
 pub trait AgentTurnSink: Sync {
     fn text_delta(&self, text: &str);
     fn tool_finished(&self, call_id: &str, is_error: bool);
+    /// The oldest part of the chat was replaced by a summary in requests.
+    fn context_compacted(&self);
 }
 
 pub struct AgentTurnRequest<'a> {
@@ -56,6 +63,8 @@ pub struct AgentTurnRequest<'a> {
     pub system_prompt: &'a str,
     pub tools: &'a [ToolDefinition],
     pub max_tokens: u32,
+    /// Estimated tokens the provider's context window allows (spec 0135).
+    pub context_budget_tokens: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,15 +89,16 @@ pub struct AgentTurnOutcome {
 /// Runs one user turn: asks the model, runs the tools it requests through
 /// `host` and feeds the results back until it answers without tools.
 ///
-/// The user message must already be in `transcript`. Assistant replies and
-/// tool results are appended as they happen, so on error or cancellation the
-/// transcript stays valid for the next turn (every tool call has a result).
+/// The user message must already be in the conversation. Assistant replies
+/// and tool results are appended as they happen, so on error or cancellation
+/// the transcript stays valid for the next turn (every tool call has a
+/// result). A conversation near the context budget is summarized first.
 pub async fn run_agent_turn<M, H, S, C>(
     model: &M,
     host: &H,
     sink: &S,
     cancellation: &C,
-    transcript: &mut Vec<AgentMessage>,
+    conversation: &mut AgentConversation,
     request: AgentTurnRequest<'_>,
 ) -> Result<AgentTurnOutcome, ChatModelError>
 where
@@ -98,6 +108,19 @@ where
     C: FlowCancellation,
 {
     let mut usage = TokenUsage::default();
+    tokio::select! {
+        // Biased: a turn that needs no summary must not lose a race it never ran.
+        biased;
+        compacted = compact_if_needed(model, conversation, &request) => {
+            if let Some(summary_usage) = compacted {
+                usage.accumulate(summary_usage);
+                sink.context_compacted();
+            }
+        }
+        _ = cancellation.cancelled() => {
+            return Ok(AgentTurnOutcome { stop: TurnStop::Cancelled, usage });
+        }
+    }
     for _ in 0..MAX_TOOL_ROUNDS {
         if cancellation.is_cancelled() {
             return Ok(AgentTurnOutcome {
@@ -113,10 +136,11 @@ where
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push_str(text);
         };
+        let messages = request_messages(conversation);
         let chat = ChatRequest {
             model: request.model,
             system_prompt: request.system_prompt,
-            messages: transcript,
+            messages: &messages,
             tools: request.tools,
             max_tokens: request.max_tokens,
         };
@@ -127,7 +151,7 @@ where
                     .into_inner()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 if !partial.is_empty() {
-                    transcript.push(AgentMessage {
+                    conversation.messages.push(AgentMessage {
                         role: AgentRole::Assistant,
                         content: vec![ContentBlock::Text { text: partial }],
                     });
@@ -148,7 +172,7 @@ where
             })
             .collect();
         if !response.content.is_empty() {
-            transcript.push(AgentMessage {
+            conversation.messages.push(AgentMessage {
                 role: AgentRole::Assistant,
                 content: response.content,
             });
@@ -183,7 +207,7 @@ where
                 is_error: outcome.is_error,
             });
         }
-        transcript.push(AgentMessage {
+        conversation.messages.push(AgentMessage {
             role: AgentRole::User,
             content: results,
         });
@@ -198,6 +222,53 @@ where
         stop: TurnStop::RoundLimit,
         usage,
     })
+}
+
+/// Summarizes the oldest part of the chat when the next request would pass
+/// `COMPACT_AT_PERCENT` of the budget. Returns the usage of the summary call,
+/// or `None` when nothing was summarized; a failed summary is not an error,
+/// the turn just goes on without it.
+async fn compact_if_needed<M: ChatModel>(
+    model: &M,
+    conversation: &mut AgentConversation,
+    request: &AgentTurnRequest<'_>,
+) -> Option<TokenUsage> {
+    let budget = request.context_budget_tokens;
+    let fixed = fixed_tokens(request.system_prompt, request.tools);
+    let estimate = fixed + estimate_tokens(&request_messages(conversation));
+    if estimate * 100 <= budget * COMPACT_AT_PERCENT {
+        return None;
+    }
+    let keep = (budget * KEEP_AFTER_COMPACTION_PERCENT / 100).saturating_sub(fixed);
+    let cut = compaction_cut(conversation, keep)?;
+    let input = summary_input(
+        conversation.summary.as_deref(),
+        &conversation.messages[conversation.summarized_until..cut],
+    );
+    let messages = [AgentMessage::user_text(input)];
+    let summary_request = ChatRequest {
+        model: request.model,
+        system_prompt: SUMMARY_SYSTEM_PROMPT,
+        messages: &messages,
+        tools: &[],
+        max_tokens: SUMMARY_MAX_OUTPUT_TOKENS,
+    };
+    let response = model.complete(&summary_request, &|_| {}).await.ok()?;
+    let summary: String = response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if summary.trim().is_empty() {
+        return None;
+    }
+    conversation.summary = Some(summary.trim().to_string());
+    conversation.summarized_until = cut;
+    Some(response.usage)
 }
 
 async fn run_tool<H: AgentToolHost>(host: &H, id: &str, name: &str, input: &Value) -> ToolOutcome {
@@ -310,6 +381,7 @@ mod tests {
     struct RecordingSink {
         text: Mutex<String>,
         finished: Mutex<Vec<(String, bool)>>,
+        compacted: Mutex<usize>,
     }
 
     impl AgentTurnSink for RecordingSink {
@@ -321,6 +393,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((call_id.to_string(), is_error));
+        }
+        fn context_compacted(&self) {
+            *self.compacted.lock().unwrap() += 1;
         }
     }
 
@@ -377,18 +452,41 @@ mod tests {
         cancellation: &Flag,
         transcript: &mut Vec<AgentMessage>,
     ) -> Result<AgentTurnOutcome, ChatModelError> {
+        let mut conversation = AgentConversation::new(std::mem::take(transcript));
+        let outcome = run_with_budget(
+            model,
+            host,
+            sink,
+            cancellation,
+            &mut conversation,
+            1_000_000,
+        )
+        .await;
+        *transcript = conversation.messages;
+        outcome
+    }
+
+    async fn run_with_budget(
+        model: &ScriptedModel,
+        host: &RecordingHost,
+        sink: &RecordingSink,
+        cancellation: &impl FlowCancellation,
+        conversation: &mut AgentConversation,
+        context_budget_tokens: usize,
+    ) -> Result<AgentTurnOutcome, ChatModelError> {
         let tools = agent_tool_catalog();
         run_agent_turn(
             model,
             host,
             sink,
             cancellation,
-            transcript,
+            conversation,
             AgentTurnRequest {
                 model: "m",
                 system_prompt: "s",
                 tools: &tools,
                 max_tokens: 100,
+                context_budget_tokens,
             },
         )
         .await
@@ -511,26 +609,20 @@ mod tests {
         let mut model = ScriptedModel::new(vec![text("partial")]);
         model.hang = true;
         let (host, sink) = (RecordingHost::default(), RecordingSink::default());
-        let mut transcript = vec![AgentMessage::user_text("x")];
-
-        let tools = agent_tool_catalog();
-        let turn = run_agent_turn(
+        let mut conversation = AgentConversation::new(vec![AgentMessage::user_text("x")]);
+        let outcome = run_with_budget(
             &model,
             &host,
             &sink,
             &AlwaysCancelledAfterStart,
-            &mut transcript,
-            AgentTurnRequest {
-                model: "m",
-                system_prompt: "s",
-                tools: &tools,
-                max_tokens: 100,
-            },
-        );
-        let outcome = turn.await.unwrap();
+            &mut conversation,
+            1_000_000,
+        )
+        .await
+        .unwrap();
         assert_eq!(outcome.stop, TurnStop::Cancelled);
         assert_eq!(
-            transcript.last().unwrap().content,
+            conversation.messages.last().unwrap().content,
             vec![ContentBlock::Text {
                 text: "partial".into()
             }]
@@ -545,6 +637,102 @@ mod tests {
             false
         }
         async fn cancelled(&self) {}
+    }
+
+    /// A chat whose old turns are large: three turns of about 2k tokens each.
+    fn long_conversation() -> AgentConversation {
+        let mut messages = Vec::new();
+        for turn in 0..3 {
+            messages.push(AgentMessage::user_text(format!(
+                "question {turn} {}",
+                "q".repeat(8000)
+            )));
+            messages.push(AgentMessage {
+                role: AgentRole::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: format!("answer {turn}"),
+                }],
+            });
+        }
+        messages.push(AgentMessage::user_text("latest question"));
+        AgentConversation::new(messages)
+    }
+
+    #[tokio::test]
+    async fn a_conversation_near_the_budget_is_summarized_first() {
+        let model = ScriptedModel::new(vec![text("they asked three questions"), text("final")]);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut conversation = long_conversation();
+        let outcome = run_with_budget(
+            &model,
+            &host,
+            &sink,
+            &Flag::default(),
+            &mut conversation,
+            7000,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.stop, TurnStop::EndTurn);
+        assert_eq!(*sink.compacted.lock().unwrap(), 1);
+        assert_eq!(
+            conversation.summary.as_deref(),
+            Some("they asked three questions")
+        );
+        assert!(conversation.summarized_until > 0);
+        // The summary call sees one message; the turn sees only what follows the cut.
+        let seen = model.seen_lengths.lock().unwrap().clone();
+        assert_eq!(seen[0], 1);
+        assert_eq!(
+            seen[1],
+            conversation.messages.len() - 1 - conversation.summarized_until
+        );
+        assert_eq!(
+            conversation.messages.len(),
+            8,
+            "the transcript keeps everything"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_summary_does_not_fail_the_turn() {
+        let model = ScriptedModel::new(vec![]);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut conversation = long_conversation();
+        let result = run_with_budget(
+            &model,
+            &host,
+            &sink,
+            &Flag::default(),
+            &mut conversation,
+            7000,
+        )
+        .await;
+        // The scripted model has no replies at all: the summary fails silently,
+        // then the turn itself reports the model error.
+        assert!(matches!(result, Err(ChatModelError::InvalidResponse(_))));
+        assert_eq!(conversation.summary, None);
+        assert_eq!(*sink.compacted.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_small_conversation_is_not_summarized() {
+        let model = ScriptedModel::new(vec![text("hi")]);
+        let (host, sink) = (RecordingHost::default(), RecordingSink::default());
+        let mut conversation = long_conversation();
+        run_with_budget(
+            &model,
+            &host,
+            &sink,
+            &Flag::default(),
+            &mut conversation,
+            1_000_000,
+        )
+        .await
+        .unwrap();
+        assert_eq!(*sink.compacted.lock().unwrap(), 0);
+        assert_eq!(*model.seen_lengths.lock().unwrap(), vec![7]);
     }
 
     #[test]

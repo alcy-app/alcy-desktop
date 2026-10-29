@@ -52,6 +52,7 @@ export function agentErrorMessage(error: AgentCommandError, t: (key: Translation
     case 'invalid':
     case 'storage':
     case 'credentials':
+      return t('agent.error.credentials', { message: error.message })
     case 'invalidResponse':
       return t('agent.error.generic', { message: error.message })
   }
@@ -144,9 +145,15 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
           return
         case 'toolCallFinished':
           return
+        case 'contextCompacted':
+          setItems((current) => [
+            ...current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item)),
+            { kind: 'notice', id: nextItemId('notice'), tone: 'info', text: t('agent.notice.compacted') },
+          ])
+          return
       }
     },
-    [handleToolCall],
+    [handleToolCall, t],
   )
 
   const send = useCallback(
