@@ -1,19 +1,22 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import type { AgentProviderDto } from '../../bindings/agent-settings'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { IconButton } from '../../shared/ui/IconButton'
-import { MenuItem } from '../../shared/ui/Menu'
+import { MenuItem, MenuSeparator } from '../../shared/ui/Menu'
 import { useTooltip } from '../../shared/ui/use-tooltip'
-import { CheckIcon, ChevronDownIcon, ClockIcon, CloseIcon, GearIcon, PlusIcon, SparkleIcon, Spinner } from '../../shared/ui/icons'
+import { CheckIcon, ClockIcon, CloseIcon, GearIcon, LockIcon, PlusIcon, SparkleIcon, Spinner } from '../../shared/ui/icons'
 import type { WorkbenchAgentHost } from './agent-host'
 import { AgentComposer } from './AgentComposer'
 import { AgentHistoryPopover } from './AgentHistoryPopover'
 import { AgentMessageList } from './AgentMessageList'
 import { useAgentSession } from './use-agent-session'
 import { isProviderUsable, useAgentSettings } from './use-agent-settings'
+import { useAgentApprovalMode, type AgentApprovalMode } from './use-agent-approval-mode'
 import './agent.css'
+
+const APPROVAL_MODES: AgentApprovalMode[] = ['automatic', 'autoApprove']
+const APPROVAL_ICONS: Record<AgentApprovalMode, ReactNode> = { automatic: <LockIcon size={12} />, autoApprove: <CheckIcon size={12} /> }
 
 interface AgentPanelProps {
   rootPath: string
@@ -48,23 +51,47 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
   const activeId = state.status === 'ready' ? state.settings.activeProviderId : null
   const provider = providers.find((candidate) => candidate.id === activeId) ?? null
 
+  const { mode: approvalMode, setMode: setApprovalMode } = useAgentApprovalMode()
   const session = useAgentSession({
     rootPath,
     host,
     providerId: provider?.id ?? null,
     model: provider?.model ?? '',
     defaultRequestName: t('collections.newRequestName'),
+    autoApprove: approvalMode === 'autoApprove',
   })
 
-  const providerPicker =
-    providers.length > 0 ? (
-      <AgentProviderPicker
-        providers={providers}
-        provider={provider}
-        disabled={session.running}
-        onSelect={(id) => void setActiveProvider(id)}
+  const toolbar = (
+    <>
+      {providers.length > 0 && (
+        <AgentPillPicker
+          options={providers.map((candidate) => ({ id: candidate.id, label: `${candidate.label} · ${candidate.model}`, icon: <SparkleIcon size={12} /> }))}
+          selectedId={provider?.id ?? null}
+          triggerLabel={provider?.label ?? t('agent.chooseProvider')}
+          ariaLabel={t('agent.providerAria')}
+          tooltip={provider ? `${provider.label} · ${provider.model}` : t('agent.chooseProvider')}
+          disabled={session.running}
+          action={{ label: t('agent.configureProviders'), onSelect: onOpenSettings }}
+          onSelect={(id) => void setActiveProvider(id)}
+        />
+      )}
+      <AgentPillPicker
+        options={APPROVAL_MODES.map((mode) => ({
+          id: mode,
+          label: t(`agent.approvalMode.${mode}`),
+          icon: APPROVAL_ICONS[mode],
+          detail: t(`agent.approvalMode.${mode}Detail`),
+        }))}
+        selectedId={approvalMode}
+        triggerLabel={t(`agent.approvalMode.${approvalMode}`)}
+        ariaLabel={t('agent.approvalMode.aria')}
+        tooltip={t(`agent.approvalMode.${approvalMode}Detail`)}
+        disabled={provider === null}
+        tone={approvalMode === 'autoApprove' ? 'warning' : undefined}
+        onSelect={(mode) => setApprovalMode(mode as AgentApprovalMode)}
       />
-    ) : null
+    </>
+  )
 
   return (
     <aside className="agent-panel" aria-label={t('agent.title')}>
@@ -139,7 +166,7 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
         textareaRef={composerRef}
         running={session.running}
         disabled={provider === null}
-        footer={providerPicker}
+        footer={toolbar}
         onSend={(text, context) => void session.send(text, context)}
         onStop={session.stop}
       />
@@ -147,25 +174,38 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
   )
 }
 
-interface AgentProviderPickerProps {
-  providers: AgentProviderDto[]
-  provider: AgentProviderDto | null
+interface PillOption {
+  id: string
+  label: string
+  icon: ReactNode
+  /** Shown on hover (e.g. what an approval mode does). */
+  detail?: string
+}
+
+interface AgentPillPickerProps {
+  options: PillOption[]
+  selectedId: string | null
+  /** Text of the trigger. */
+  triggerLabel: string
+  /** Accessible name of the trigger and title of the menu. */
+  ariaLabel: string
+  tooltip: string
   disabled: boolean
+  /** Marks the trigger, e.g. `warning` while auto-approval is on. */
+  tone?: 'warning'
+  /** Item after a separator at the end of the menu. */
+  action?: { label: string; onSelect: () => void }
   onSelect: (id: string) => void
 }
 
-/** Compact provider trigger; the menu keeps full model names readable. */
-function AgentProviderPicker({ providers, provider, disabled, onSelect }: AgentProviderPickerProps) {
-  const { t } = useLanguage()
+/** Compact pill trigger in the composer toolbar with a menu of options. */
+function AgentPillPicker({ options, selectedId, triggerLabel, ariaLabel, tooltip: tooltipText, disabled, tone, action, onSelect }: AgentPillPickerProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const menuId = useId()
-  const { triggerProps, tooltip } = useTooltip(
-    provider ? `${provider.label} · ${provider.model}` : t('agent.chooseProvider'),
-    { side: 'top', enabled: !open },
-  )
+  const { triggerProps, tooltip } = useTooltip(tooltipText, { side: 'top', enabled: !open })
 
   if (disabled && open) setOpen(false)
 
@@ -207,7 +247,7 @@ function AgentProviderPicker({ providers, provider, disabled, onSelect }: AgentP
           setOpen(true)
           return
         }
-        const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"], [role="menuitem"]') ?? [])
         if (items.length === 0) return
         const current = items.findIndex((item) => item === document.activeElement)
         const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
@@ -220,7 +260,8 @@ function AgentProviderPicker({ providers, provider, disabled, onSelect }: AgentP
         ref={buttonRef}
         variant="ghost"
         className="agent-provider-trigger"
-        aria-label={t('agent.providerAria')}
+        data-tone={tone}
+        aria-label={ariaLabel}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -228,26 +269,39 @@ function AgentProviderPicker({ providers, provider, disabled, onSelect }: AgentP
         {...triggerProps}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="agent-provider-label">{provider?.label ?? t('agent.chooseProvider')}</span>
-        <ChevronDownIcon size={10} />
+        <span className="agent-provider-trigger-icon" aria-hidden="true">{options.find((option) => option.id === selectedId)?.icon}</span>
+        <span className="agent-provider-label">{triggerLabel}</span>
       </Button>
       {tooltip}
       {open && (
-        <div ref={menuRef} id={menuId} className="ui-menu agent-provider-menu" role="menu" aria-label={t('agent.providerAria')}>
-          <p className="agent-provider-menu-title">{t('agent.providerAria')}</p>
-          {providers.map((candidate) => (
-            <div key={candidate.id} className="agent-provider-option">
+        <div ref={menuRef} id={menuId} className="ui-menu agent-provider-menu" role="menu" aria-label={ariaLabel}>
+          {options.map((option) => (
+            <div key={option.id} className="agent-provider-option" title={option.detail}>
               <MenuItem
-                label={`${candidate.label} · ${candidate.model}`}
-                icon={candidate.id === provider?.id ? <CheckIcon size={12} /> : <span />}
-                selected={candidate.id === provider?.id}
+                label={option.label}
+                icon={option.icon}
+                selected={option.id === selectedId}
                 onSelect={() => {
-                  onSelect(candidate.id)
+                  onSelect(option.id)
                   close()
                 }}
               />
             </div>
           ))}
+          {action && (
+            <>
+              <MenuSeparator />
+              <div className="agent-provider-option">
+                <MenuItem
+                  label={action.label}
+                  onSelect={() => {
+                    setOpen(false)
+                    action.onSelect()
+                  }}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

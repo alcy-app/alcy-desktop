@@ -69,12 +69,20 @@ function scriptSendTurn() {
   })
 }
 
+/** Opens the context menu the only way left: typing @ in the composer. */
+const typeMention = () => {
+  const input = screen.getByLabelText('Mensagem para o agente') as HTMLTextAreaElement
+  input.focus()
+  fireEvent.change(input, { target: { value: '@' } })
+}
+
 const sendMessage = (text: string) => {
   fireEvent.change(screen.getByLabelText('Mensagem para o agente'), { target: { value: text } })
   fireEvent.keyDown(screen.getByLabelText('Mensagem para o agente'), { key: 'Enter' })
 }
 
 beforeEach(() => {
+  window.localStorage.removeItem('alcy:agent:approval-mode')
   getAgentSettings.mockReset()
   saveAgentSettings.mockReset()
   startAgentTurn.mockReset()
@@ -136,12 +144,12 @@ describe('AgentPanel', () => {
     expect(startAgentTurn).not.toHaveBeenCalled()
   })
 
-  it('opens context from the toolbar and attaches the highlighted item with the keyboard', async () => {
+  it('opens context by typing @ and attaches the highlighted item with the keyboard', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
     await screen.findByText('Como posso ajudar?')
-    fireEvent.click(screen.getByRole('button', { name: 'Adicionar contexto' }))
+    typeMention()
     const input = screen.getByLabelText('Mensagem para o agente')
     await waitFor(() => expect(input).toHaveFocus())
     expect(screen.getByRole('listbox', { name: 'Adicionar contexto' })).toBeInTheDocument()
@@ -160,7 +168,7 @@ describe('AgentPanel', () => {
     workbench.environments = () => [{ id: 'dev', name: 'Development', variables: [] }]
     render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
     await screen.findByText('Como posso ajudar?')
-    fireEvent.click(screen.getByRole('button', { name: 'Adicionar contexto' }))
+    typeMention()
     const input = screen.getByLabelText('Mensagem para o agente')
     await waitFor(() => expect(input).toHaveFocus())
     expect(screen.getByRole('option', { name: 'Coleções e requisições' })).toBeDisabled()
@@ -212,7 +220,7 @@ describe('AgentPanel', () => {
     render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
     await screen.findByText('Como posso ajudar?')
     const input = screen.getByLabelText('Mensagem para o agente')
-    fireEvent.click(screen.getByRole('button', { name: 'Adicionar contexto' }))
+    typeMention()
     await waitFor(() => expect(input).toHaveFocus())
 
     const category = screen.getByRole('option', { name: 'Ambientes' })
@@ -238,7 +246,7 @@ describe('AgentPanel', () => {
     expect(screen.getByLabelText('Contexto anexado')).toHaveTextContent('Development')
     await waitFor(() => expect(input).toHaveFocus())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Adicionar contexto' }))
+    typeMention()
     expect(screen.getByRole('listbox')).toBeInTheDocument()
     fireEvent.pointerDown(document.body)
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
@@ -296,6 +304,55 @@ describe('AgentPanel', () => {
     startAgentTurn.mockResolvedValueOnce({ ok: false, error: { kind: 'credentials', message: 'Server GUID mismatch' } })
     sendMessage('de novo')
     expect(await screen.findByRole('alert')).toHaveTextContent('O chaveiro do sistema não está disponível: Server GUID mismatch')
+  })
+
+  it('runs side effects without asking in auto-approve mode and remembers the mode', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    scriptSendTurn()
+    const workbench = host()
+    const { unmount } = render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Modo de aprovação' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Auto-aprovação' }))
+    expect(screen.getByRole('button', { name: 'Modo de aprovação' })).toHaveTextContent('Auto-aprovação')
+
+    sendMessage('envie')
+    await waitFor(() => expect(submitAgentToolResult).toHaveBeenCalledWith('w1', expect.any(String), false))
+    expect(workbench.send).toHaveBeenCalledWith('t1')
+    expect(screen.queryByRole('button', { name: 'Aprovar' })).not.toBeInTheDocument()
+    expect(await screen.findByText('aprovado automaticamente')).toBeInTheDocument()
+
+    unmount()
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    expect(await screen.findByRole('button', { name: 'Modo de aprovação' })).toHaveTextContent('Auto-aprovação')
+  })
+
+  it('approves what is waiting when switching to auto-approve', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    scriptSendTurn()
+    const workbench = host()
+    render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+
+    sendMessage('envie')
+    expect(await screen.findByRole('button', { name: 'Aprovar' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Modo de aprovação' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Auto-aprovação' }))
+    await waitFor(() => expect(submitAgentToolResult).toHaveBeenCalledWith('w1', expect.any(String), false))
+    expect(workbench.send).toHaveBeenCalledWith('t1')
+  })
+
+  it('opens the agent settings from the end of the provider menu', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    const onOpenSettings = vi.fn()
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={onOpenSettings} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Provedor e modelo' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Configurar provedores…' }))
+    expect(onOpenSettings).toHaveBeenCalled()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
   it('asks to set up a provider before chatting', async () => {

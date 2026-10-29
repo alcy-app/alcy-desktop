@@ -2783,6 +2783,13 @@ const ptBR = {
   'agent.context.selection.response': 'corpo da resposta',
   'agent.error.credentials': 'O chaveiro do sistema não está disponível: {message}',
   'agent.notice.compacted': 'A parte mais antiga da conversa foi resumida para caber no contexto do modelo.',
+  'agent.approvalMode.aria': 'Modo de aprovação',
+  'agent.approvalMode.automatic': 'Automático',
+  'agent.approvalMode.automaticDetail': 'Leituras e edições em abas rodam sozinhas; enviar, salvar, mexer em ambientes e fechar abas com alterações pedem aprovação.',
+  'agent.approvalMode.autoApprove': 'Auto-aprovação',
+  'agent.approvalMode.autoApproveDetail': 'Aprova todas as ações sem perguntar, inclusive enviar requisições e salvar.',
+  'agent.toolState.autoApproved': 'aprovado automaticamente',
+  'agent.configureProviders': 'Configurar provedores…',
 } as const
 
 export default ptBR

@@ -19,7 +19,7 @@ export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' 
 export type AgentChatItem =
   | { kind: 'user'; id: string; text: string; context: AgentContextInput[] }
   | { kind: 'assistant'; id: string; text: string; streaming: boolean }
-  | { kind: 'tool'; id: string; name: string; toolClass: AgentToolClass; summary: string; state: AgentToolState; canRevert: boolean }
+  | { kind: 'tool'; id: string; name: string; toolClass: AgentToolClass; summary: string; state: AgentToolState; canRevert: boolean; autoApproved: boolean }
   | { kind: 'notice'; id: string; tone: 'error' | 'info'; text: string }
 
 interface UseAgentSessionOptions {
@@ -28,6 +28,8 @@ interface UseAgentSessionOptions {
   providerId: string | null
   model: string
   defaultRequestName: string
+  /** Run every action without asking, side effects included. */
+  autoApprove: boolean
 }
 
 export function agentErrorMessage(error: AgentCommandError, t: (key: TranslationKey, values?: Record<string, string | number>) => string): string {
@@ -65,7 +67,7 @@ function nextItemId(prefix: string) {
 }
 
 /** One chat with the agent: streaming, tool calls on the workbench, approvals and history. */
-export function useAgentSession({ rootPath, host, providerId, model, defaultRequestName }: UseAgentSessionOptions) {
+export function useAgentSession({ rootPath, host, providerId, model, defaultRequestName, autoApprove }: UseAgentSessionOptions) {
   const { t, language } = useLanguage()
   const [items, setItems] = useState<AgentChatItem[]>([])
   const [running, setRunning] = useState(false)
@@ -77,9 +79,11 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   // Tools read the latest host and default name, not those of the render that started the turn.
   const hostRef = useRef(host)
   const defaultNameRef = useRef(defaultRequestName)
+  const autoApproveRef = useRef(autoApprove)
   useEffect(() => {
     hostRef.current = host
     defaultNameRef.current = defaultRequestName
+    autoApproveRef.current = autoApprove
   })
 
   const updateTool = useCallback((id: string, patch: Partial<Extract<AgentChatItem, { kind: 'tool' }>>) => {
@@ -93,7 +97,8 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
 
   const handleToolCall = useCallback(
     async (event: Extract<AgentEventDto, { type: 'toolCallRequested' }>) => {
-      const needsApproval = event.class === 'sideEffect' || toolNeedsApproval(event.name, event.input, hostRef.current)
+      const gated = event.class === 'sideEffect' || toolNeedsApproval(event.name, event.input, hostRef.current)
+      const needsApproval = gated && !autoApproveRef.current
       setItems((current) => [
         ...current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item)),
         {
@@ -104,6 +109,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
           summary: summarizeToolCall(event.name, event.input, hostRef.current),
           state: needsApproval ? 'awaitingApproval' : 'running',
           canRevert: false,
+          autoApproved: gated && !needsApproval,
         },
       ])
       if (needsApproval) {
@@ -194,6 +200,15 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     approvalsRef.current.get(callId)?.(approved)
   }, [])
 
+  // Switching to auto-approval also approves what is already waiting.
+  useEffect(() => {
+    if (!autoApprove) return
+    for (const [callId, resolve] of approvalsRef.current) {
+      updateTool(callId, { autoApproved: true })
+      resolve(true)
+    }
+  }, [autoApprove, updateTool])
+
   const revert = useCallback(
     (callId: string) => {
       const undo = revertsRef.current.get(callId)
@@ -242,6 +257,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
                 summary: summarizeToolCall(item.name, item.input, null),
                 state: item.isError ? 'failed' : 'done',
                 canRevert: false,
+                autoApproved: false,
               }
           }
         }),

@@ -150,8 +150,10 @@ function ToolCallCard({ item, onApprove, onDecline, onRevert }: ToolCallCardProp
         <span className="agent-tool-icon">{icon}</span>
         <span className="agent-tool-label">{label}</span>
         {item.summary && <span className="agent-tool-summary" title={item.summary}>{item.summary}</span>}
-        {item.state !== 'done' && item.state !== 'running' && item.state !== 'awaitingApproval' && (
+        {item.state !== 'done' && item.state !== 'running' && item.state !== 'awaitingApproval' ? (
           <span className="agent-tool-state">{t(`agent.toolState.${item.state}`)}</span>
+        ) : (
+          item.autoApproved && <span className="agent-tool-state agent-tool-state--auto">{t('agent.toolState.autoApproved')}</span>
         )}
       </div>
       {item.state === 'awaitingApproval' && (

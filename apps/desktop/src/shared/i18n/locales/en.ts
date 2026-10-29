@@ -2789,6 +2789,13 @@ const en: Record<TranslationKey, string> = {
   'agent.context.selection.response': 'response body',
   'agent.error.credentials': 'The system keyring is not available: {message}',
   'agent.notice.compacted': 'The oldest part of the chat was summarized to fit the model\'s context.',
+  'agent.approvalMode.aria': 'Approval mode',
+  'agent.approvalMode.automatic': 'Automatic',
+  'agent.approvalMode.automaticDetail': 'Reads and tab edits run on their own; sending, saving, changing environments and closing tabs with changes ask for approval.',
+  'agent.approvalMode.autoApprove': 'Auto-approve',
+  'agent.approvalMode.autoApproveDetail': 'Approves every action without asking, including sending requests and saving.',
+  'agent.toolState.autoApproved': 'auto-approved',
+  'agent.configureProviders': 'Configure providers…',
 }
 
 export default en

@@ -38,7 +38,6 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const [highlight, setHighlight] = useState(0)
   const [category, setCategory] = useState<CategoryKind | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const contextButtonRef = useRef<HTMLButtonElement>(null)
   const lastCaretRef = useRef<{ value: string; caret: number } | null>(null)
   const menuId = useId()
   const mentionOpen = mention !== null
@@ -59,7 +58,7 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
     // A pointer press can blur the textarea before the menu receives its click.
     const closeOutside = (event: Event) => {
       const target = event.target as Node | null
-      if (target === textareaRef.current || menuRef.current?.contains(target) || contextButtonRef.current?.contains(target)) return
+      if (target === textareaRef.current || menuRef.current?.contains(target)) return
       close()
     }
     document.addEventListener('pointerdown', closeOutside)
@@ -204,21 +203,6 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
     }
   }
 
-  const addContext = () => {
-    const input = textareaRef.current
-    const start = input?.selectionStart ?? text.length
-    const end = input?.selectionEnd ?? start
-    const prefix = start > 0 && !/\s/.test(text[start - 1]) ? ' @' : '@'
-    const next = text.slice(0, start) + prefix + text.slice(end)
-    const caret = start + prefix.length
-    setText(next)
-    updateMention(next, caret)
-    requestAnimationFrame(() => {
-      input?.focus()
-      input?.setSelectionRange(caret, caret)
-    })
-  }
-
   return (
     <div className="agent-composer" data-disabled={disabled}>
       {mention && (
@@ -343,7 +327,6 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
         onKeyDown={onKeyDown}
       />
       <div className="agent-composer-footer">
-        <IconButton ref={contextButtonRef} icon={<AtIcon size={14} />} label={t('agent.context.menuAria')} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={addContext} />
         {footer}
         {running ? (
           <IconButton icon={<StopIcon size={13} />} label={t('agent.composer.stop')} size="md" className="agent-composer-send" onClick={onStop} />
