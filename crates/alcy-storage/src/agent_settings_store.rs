@@ -45,7 +45,7 @@ impl AgentSettingsStore {
         Self { path }
     }
 
-    /// Without a file, the presets with no active provider.
+    /// Without a file, no providers and none active.
     pub fn load(&self) -> Result<AgentSettings, StorageError> {
         let raw = match fs::read_to_string(&self.path) {
             Ok(raw) => raw,
@@ -129,11 +129,16 @@ mod tests {
     fn roundtrips_and_never_stores_keys() {
         let path = temp_path();
         let store = AgentSettingsStore::new(path.clone());
-        let mut settings = AgentSettings {
+        let settings = AgentSettings {
+            providers: vec![AgentProvider {
+                id: "opencode".into(),
+                kind: AgentProviderKind::OpenAiCompatible,
+                label: "OpenCode Zen".into(),
+                base_url: "https://opencode.ai/inference/openai/v1".into(),
+                model: "kimi-k2.6".into(),
+            }],
             active_provider_id: Some("opencode".into()),
-            ..AgentSettings::default()
         };
-        settings.providers[1].model = "kimi-k2.6".into();
         store.save(&settings).unwrap();
         assert_eq!(store.load().unwrap(), settings);
         let raw = fs::read_to_string(&path).unwrap();

@@ -20,10 +20,7 @@ import { agentErrorMessage } from '../agent/use-agent-session'
 
 /** Same limit as the backend (`MAX_AGENT_PROVIDERS`). */
 const MAX_PROVIDERS = 16
-/** Presets shipped with the app; the others were added by the user and can be removed. */
-const BUILT_IN_PROVIDERS = new Set(['claude', 'opencode'])
-
-type PresetKey = 'openrouter' | 'ollama' | 'lmstudio' | 'anthropic' | 'openaiCompatible'
+type PresetKey = 'claude' | 'opencode' | 'openrouter' | 'ollama' | 'lmstudio' | 'openaiCompatible'
 
 interface ProviderPreset {
   key: PresetKey
@@ -34,11 +31,13 @@ interface ProviderPreset {
   model: string
 }
 
+/** Every provider starts from one of these; none is set up until the user adds it. */
 const PRESETS: ProviderPreset[] = [
+  { key: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5' },
+  { key: 'opencode', kind: 'openaiCompatible', label: 'OpenCode Zen', baseUrl: 'https://opencode.ai/inference/openai/v1', model: 'claude-sonnet-5-5' },
   { key: 'openrouter', kind: 'openaiCompatible', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: '' },
   { key: 'ollama', kind: 'openaiCompatible', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', model: '' },
   { key: 'lmstudio', kind: 'openaiCompatible', label: 'LM Studio', baseUrl: 'http://localhost:1234/v1', model: '' },
-  { key: 'anthropic', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5' },
   { key: 'openaiCompatible', kind: 'openaiCompatible', label: null, baseUrl: 'http://localhost:8000/v1', model: '' },
 ]
 
@@ -151,7 +150,11 @@ export function AgentSection() {
         {loadError && <InlineAlert>{loadError}</InlineAlert>}
       </section>
 
-      {settings && (
+      {settings && settings.providers.length === 0 && !adding && (
+        <p className="settings-agent-empty">{t('settings.agent.empty')}</p>
+      )}
+
+      {settings && settings.providers.length > 0 && (
         <ul className="settings-agent-list" aria-label={t('settings.agent.listAria')}>
           {settings.providers.map((provider) => (
             <ProviderCard
@@ -159,7 +162,6 @@ export function AgentSection() {
               provider={provider}
               active={settings.activeProviderId === provider.id}
               expanded={expandedId === provider.id}
-              removable={!BUILT_IN_PROVIDERS.has(provider.id)}
               onToggle={() => setExpandedId((current) => (current === provider.id ? null : provider.id))}
               onSave={(next) => save(settings.providers.map((candidate) => (candidate.id === next.id ? next : candidate)), settings.activeProviderId)}
               onActivate={() => save(settings.providers, provider.id)}
@@ -204,7 +206,6 @@ interface ProviderCardProps {
   provider: AgentProviderDto
   active: boolean
   expanded: boolean
-  removable: boolean
   onToggle: () => void
   onSave: (provider: AgentProviderDto) => Promise<SaveResult>
   onActivate: () => Promise<SaveResult>
@@ -215,7 +216,7 @@ interface ProviderCardProps {
 type Busy = 'save' | 'key' | 'test' | 'remove' | null
 type TestResult = { ok: true; count: number } | { ok: false; message: string } | null
 
-function ProviderCard({ provider, active, expanded, removable, onToggle, onSave, onActivate, onRemove, onKeyChanged }: ProviderCardProps) {
+function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate, onRemove, onKeyChanged }: ProviderCardProps) {
   const { t } = useLanguage()
   const id = useId()
   const [label, setLabel] = useState(provider.label)
@@ -320,12 +321,10 @@ function ProviderCard({ provider, active, expanded, removable, onToggle, onSave,
           <p className="settings-proxy-hint">{t(provider.kind === 'anthropic' ? 'settings.agent.kind.anthropic' : 'settings.agent.kind.openaiCompatible')}</p>
 
           <div className="settings-agent-fields">
-            {removable && (
-              <label className="settings-agent-field">
-                <span>{t('settings.agent.name')}</span>
-                <Input value={label} onChange={(event) => setLabel(event.target.value)} />
-              </label>
-            )}
+            <label className="settings-agent-field">
+              <span>{t('settings.agent.name')}</span>
+              <Input value={label} onChange={(event) => setLabel(event.target.value)} />
+            </label>
             <label className="settings-agent-field">
               <span>{t('settings.agent.baseUrl')}</span>
               <Input mono value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
@@ -403,21 +402,20 @@ function ProviderCard({ provider, active, expanded, removable, onToggle, onSave,
           {error && <InlineAlert>{error}</InlineAlert>}
 
           <div className="settings-agent-card-footer">
-            {removable &&
-              (confirmingRemove ? (
-                <>
-                  <Button variant="danger" isLoading={busy === 'remove'} disabled={busy !== null} onClick={() => void remove()}>
-                    {t('settings.agent.confirmRemove')}
-                  </Button>
-                  <Button variant="ghost" disabled={busy !== null} onClick={() => setConfirmingRemove(false)}>
-                    {t('settings.agent.cancel')}
-                  </Button>
-                </>
-              ) : (
-                <Button variant="ghost" className="settings-agent-remove" disabled={busy !== null} onClick={() => setConfirmingRemove(true)}>
-                  {t('settings.agent.remove')}
+            {confirmingRemove ? (
+              <>
+                <Button variant="danger" isLoading={busy === 'remove'} disabled={busy !== null} onClick={() => void remove()}>
+                  {t('settings.agent.confirmRemove')}
                 </Button>
-              ))}
+                <Button variant="ghost" disabled={busy !== null} onClick={() => setConfirmingRemove(false)}>
+                  {t('settings.agent.cancel')}
+                </Button>
+              </>
+            ) : (
+              <Button variant="ghost" className="settings-agent-remove" disabled={busy !== null} onClick={() => setConfirmingRemove(true)}>
+                {t('settings.agent.remove')}
+              </Button>
+            )}
             <span className="settings-agent-card-footer-spacer" />
             {saved && !dirty && (
               <span className="settings-agent-saved" role="status">

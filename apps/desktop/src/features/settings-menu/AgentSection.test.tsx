@@ -43,6 +43,22 @@ beforeEach(() => {
 const card = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) }).closest('li') as HTMLElement
 
 describe('AgentSection', () => {
+  it('starts with no provider and adds one from a preset', async () => {
+    current = { providers: [], activeProviderId: null }
+    render(<AgentSection />)
+    expect(await screen.findByText('Nenhum provedor configurado. Adicione um para usar o agente.')).toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: 'Provedores configurados' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Adicionar provedor' }))
+    fireEvent.click(screen.getByRole('button', { name: /Claude/ }))
+    await waitFor(() => expect(card('Claude')).toBeInTheDocument())
+    expect(saveAgentSettings.mock.calls[0][0].providers).toEqual([
+      expect.objectContaining({ id: 'claude', kind: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5' }),
+    ])
+    expect(within(card('Claude')).getByText('Falta a chave')).toBeInTheDocument()
+    expect(within(card('Claude')).getByRole('button', { name: 'Remover provedor' })).toBeInTheDocument()
+  })
+
   it('summarizes what each provider still needs and opens the first one to set up', async () => {
     render(<AgentSection />)
     expect(await screen.findByText('Falta a chave')).toBeInTheDocument()
@@ -89,7 +105,6 @@ describe('AgentSection', () => {
     )
     const openRouter = card('OpenRouter')
     expect(screen.getByRole('button', { name: /^OpenRouter/ })).toHaveAttribute('aria-expanded', 'true')
-    expect(within(card('Claude')).queryByRole('button', { name: 'Remover provedor' })).not.toBeInTheDocument()
 
     fireEvent.change(within(openRouter).getByLabelText('Chave de API'), { target: { value: 'or-key' } })
     fireEvent.click(within(openRouter).getByRole('button', { name: 'Salvar chave' }))

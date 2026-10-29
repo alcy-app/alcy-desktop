@@ -425,7 +425,7 @@ pub async fn get_agent_settings(
     let store = paths.settings_store();
     let result = async {
         let settings = run_blocking(move || Ok(store.load()?)).await?;
-        let (settings, changed) = without_unused_legacy_custom(settings, &*credentials);
+        let (settings, changed) = without_unused_legacy_defaults(settings, &*credentials);
         if changed {
             let store = paths.settings_store();
             let saved = settings.clone();
@@ -437,34 +437,41 @@ pub async fn get_agent_settings(
     crate::logging::logged("alcy::agent", "load agent settings", result)
 }
 
-/// Id and address of the "Custom" provider that earlier builds created by
-/// default; providers are now added from presets instead.
-const LEGACY_CUSTOM_ID: &str = "custom";
-const LEGACY_CUSTOM_BASE_URL: &str = "http://localhost:11434/v1";
+/// Providers earlier builds created by default, as they came: id, base URL
+/// and model. Providers are now only added by the user, from presets.
+const LEGACY_DEFAULTS: [(&str, &str, &str); 3] = [
+    ("claude", "https://api.anthropic.com", "claude-sonnet-5-5"),
+    (
+        "opencode",
+        "https://opencode.ai/inference/openai/v1",
+        "claude-sonnet-5-5",
+    ),
+    ("custom", "http://localhost:11434/v1", ""),
+];
 
-/// Drops the old default "Custom" provider when it was never set up (no
-/// model, no key, default address). One the user configured stays as a
+/// Drops the old default providers that were never set up: still as they
+/// came, without a key and not in use. One the user configured stays as a
 /// regular provider. Returns whether anything was removed.
-fn without_unused_legacy_custom(
+fn without_unused_legacy_defaults(
     mut settings: AgentSettings,
     credentials: &dyn CredentialStore,
 ) -> (AgentSettings, bool) {
-    let unused = settings.providers.iter().any(|provider| {
-        provider.id == LEGACY_CUSTOM_ID
-            && provider.base_url == LEGACY_CUSTOM_BASE_URL
-            && provider.model.is_empty()
-            && settings.active_provider_id.as_deref() != Some(LEGACY_CUSTOM_ID)
+    let before = settings.providers.len();
+    let active = settings.active_provider_id.clone();
+    settings.providers.retain(|provider| {
+        let untouched = LEGACY_DEFAULTS.iter().any(|(id, base_url, model)| {
+            provider.id == *id && provider.base_url == *base_url && provider.model == *model
+        });
+        let unused = untouched
+            && active.as_deref() != Some(provider.id.as_str())
             && matches!(
-                credentials.load(&agent_credential_key(LEGACY_CUSTOM_ID)),
+                credentials.load(&agent_credential_key(&provider.id)),
                 Ok(None)
-            )
+            );
+        !unused
     });
-    if unused {
-        settings
-            .providers
-            .retain(|provider| provider.id != LEGACY_CUSTOM_ID);
-    }
-    (settings, unused)
+    let changed = settings.providers.len() != before;
+    (settings, changed)
 }
 
 #[tauri::command]
@@ -1075,34 +1082,70 @@ mod tests {
         }
     }
 
-    fn legacy_custom(model: &str) -> AgentProvider {
+    fn legacy(id: &str, base_url: &str, model: &str) -> AgentProvider {
         AgentProvider {
-            id: LEGACY_CUSTOM_ID.into(),
+            id: id.into(),
             kind: AgentProviderKind::OpenAiCompatible,
-            label: "Custom".into(),
-            base_url: LEGACY_CUSTOM_BASE_URL.into(),
+            label: id.into(),
+            base_url: base_url.into(),
             model: model.into(),
         }
     }
 
+    /// The defaults of earlier builds, as they were saved.
+    fn legacy_settings() -> AgentSettings {
+        AgentSettings {
+            providers: LEGACY_DEFAULTS
+                .iter()
+                .map(|(id, base_url, model)| legacy(id, base_url, model))
+                .collect(),
+            active_provider_id: None,
+        }
+    }
+
+    struct KeyFor(&'static str);
+
+    impl CredentialStore for KeyFor {
+        fn load(&self, key: &str) -> Result<Option<String>, alcy_app::CredentialError> {
+            Ok((key == agent_credential_key(self.0)).then(|| "secret".into()))
+        }
+        fn save(&self, _: &str, _: &str) -> Result<(), alcy_app::CredentialError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), alcy_app::CredentialError> {
+            Ok(())
+        }
+    }
+
     #[test]
-    fn the_old_default_custom_provider_goes_away_only_when_unused() {
-        let mut settings = AgentSettings::default();
-        settings.providers.push(legacy_custom(""));
-        let (cleaned, changed) = without_unused_legacy_custom(settings, &NoKeys);
+    fn untouched_old_defaults_go_away_and_configured_ones_stay() {
+        let (cleaned, changed) = without_unused_legacy_defaults(legacy_settings(), &NoKeys);
         assert!(changed);
-        assert!(cleaned.provider(LEGACY_CUSTOM_ID).is_none());
+        assert!(cleaned.providers.is_empty());
 
-        let mut configured = AgentSettings::default();
-        configured.providers.push(legacy_custom("qwen3"));
-        let (kept, changed) = without_unused_legacy_custom(configured, &NoKeys);
-        assert!(!changed);
-        assert!(kept.provider(LEGACY_CUSTOM_ID).is_some());
+        // A key, a changed model or being in use keeps the provider.
+        let (kept, _) = without_unused_legacy_defaults(legacy_settings(), &KeyFor("claude"));
+        assert_eq!(kept.providers.len(), 1);
+        assert_eq!(kept.providers[0].id, "claude");
 
-        let mut active = AgentSettings::default();
-        active.providers.push(legacy_custom(""));
-        active.active_provider_id = Some(LEGACY_CUSTOM_ID.into());
-        assert!(!without_unused_legacy_custom(active, &NoKeys).1);
+        let mut edited = legacy_settings();
+        edited.providers[2].model = "qwen3".into();
+        let (kept, _) = without_unused_legacy_defaults(edited, &NoKeys);
+        assert_eq!(kept.providers.len(), 1);
+        assert_eq!(kept.providers[0].id, "custom");
+
+        let mut active = legacy_settings();
+        active.active_provider_id = Some("opencode".into());
+        let (kept, _) = without_unused_legacy_defaults(active, &NoKeys);
+        assert_eq!(kept.providers.len(), 1);
+        assert_eq!(kept.providers[0].id, "opencode");
+
+        // Providers added from presets are never touched.
+        let added = AgentSettings {
+            providers: vec![legacy("openrouter", "https://openrouter.ai/api/v1", "")],
+            active_provider_id: None,
+        };
+        assert!(!without_unused_legacy_defaults(added, &NoKeys).1);
     }
 
     #[test]

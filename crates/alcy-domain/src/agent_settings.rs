@@ -24,15 +24,13 @@ pub struct AgentProvider {
     pub model: String,
 }
 
-pub const CLAUDE_PROVIDER_ID: &str = "claude";
-pub const OPENCODE_PROVIDER_ID: &str = "opencode";
 pub const MAX_AGENT_PROVIDERS: usize = 16;
 
-/// Agent preferences: the providers and which one new chats use. Other
-/// providers (local servers, gateways) are added by the user from presets. `None`
+/// Agent preferences: the providers and which one new chats use. It starts
+/// empty: every provider is added by the user from a preset. `None`
 /// means the agent has not been set up; nothing is sent anywhere until the
 /// user picks a provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentSettings {
     pub providers: Vec<AgentProvider>,
     pub active_provider_id: Option<String>,
@@ -50,30 +48,6 @@ pub enum AgentSettingsError {
     TooManyProviders,
     #[error("the active provider '{0}' does not exist")]
     UnknownActiveProvider(String),
-}
-
-impl Default for AgentSettings {
-    fn default() -> Self {
-        Self {
-            providers: vec![
-                AgentProvider {
-                    id: CLAUDE_PROVIDER_ID.into(),
-                    kind: AgentProviderKind::Anthropic,
-                    label: "Claude".into(),
-                    base_url: "https://api.anthropic.com".into(),
-                    model: "claude-sonnet-5-5".into(),
-                },
-                AgentProvider {
-                    id: OPENCODE_PROVIDER_ID.into(),
-                    kind: AgentProviderKind::OpenAiCompatible,
-                    label: "OpenCode Zen".into(),
-                    base_url: "https://opencode.ai/inference/openai/v1".into(),
-                    model: "claude-sonnet-5-5".into(),
-                },
-            ],
-            active_provider_id: None,
-        }
-    }
 }
 
 impl AgentSettings {
@@ -139,48 +113,63 @@ fn has_http_host(url: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn provider(id: &str, base_url: &str) -> AgentProvider {
+        AgentProvider {
+            id: id.into(),
+            kind: AgentProviderKind::Anthropic,
+            label: "Claude".into(),
+            base_url: base_url.into(),
+            model: "claude-sonnet-5-5".into(),
+        }
+    }
+
+    fn settings(providers: Vec<AgentProvider>) -> AgentSettings {
+        AgentSettings {
+            providers,
+            active_provider_id: None,
+        }
+    }
+
     #[test]
-    fn defaults_are_valid_and_not_active() {
-        let settings = AgentSettings::default().validated().unwrap();
-        assert_eq!(settings.active_provider_id, None);
-        assert!(settings.provider(CLAUDE_PROVIDER_ID).is_some());
-        assert!(settings.provider(OPENCODE_PROVIDER_ID).is_some());
+    fn starts_without_providers() {
+        assert_eq!(
+            AgentSettings::default().validated().unwrap().providers,
+            vec![]
+        );
     }
 
     #[test]
     fn trims_and_drops_the_trailing_slash() {
-        let mut settings = AgentSettings::default();
-        settings.providers[0].base_url = "  https://api.anthropic.com/ ".into();
-        let settings = settings.validated().unwrap();
+        let settings = settings(vec![provider("claude", "  https://api.anthropic.com/ ")])
+            .validated()
+            .unwrap();
         assert_eq!(settings.providers[0].base_url, "https://api.anthropic.com");
     }
 
     #[test]
     fn rejects_bad_urls_ids_and_active_provider() {
-        let mut settings = AgentSettings::default();
-        settings.providers[0].base_url = "ftp://example.com".into();
         assert_eq!(
-            settings.validated(),
+            settings(vec![provider("claude", "ftp://example.com")]).validated(),
             Err(AgentSettingsError::InvalidBaseUrl("claude".into()))
         );
-
-        let mut settings = AgentSettings::default();
-        settings.providers[1].id = "claude".into();
         assert_eq!(
-            settings.validated(),
+            settings(vec![
+                provider("claude", "https://api.anthropic.com"),
+                provider("claude", "https://api.anthropic.com"),
+            ])
+            .validated(),
             Err(AgentSettingsError::DuplicateId("claude".into()))
         );
-
-        let mut settings = AgentSettings::default();
-        settings.providers[0].id = "a b".into();
-        assert_eq!(settings.validated(), Err(AgentSettingsError::InvalidId));
-
-        let settings = AgentSettings {
+        assert_eq!(
+            settings(vec![provider("a b", "https://api.anthropic.com")]).validated(),
+            Err(AgentSettingsError::InvalidId)
+        );
+        let missing = AgentSettings {
             active_provider_id: Some("missing".into()),
             ..AgentSettings::default()
         };
         assert_eq!(
-            settings.validated(),
+            missing.validated(),
             Err(AgentSettingsError::UnknownActiveProvider("missing".into()))
         );
     }

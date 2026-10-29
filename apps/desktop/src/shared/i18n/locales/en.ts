@@ -2814,8 +2814,10 @@ const en: Record<TranslationKey, string> = {
   'settings.agent.preset.openrouterDetail': 'Hundreds of models with a single key.',
   'settings.agent.preset.ollamaDetail': 'Local models on your machine, no key.',
   'settings.agent.preset.lmstudioDetail': 'LM Studio local server, no key.',
-  'settings.agent.preset.anthropicDetail': 'Another Anthropic account or key.',
   'settings.agent.preset.openaiCompatibleDetail': 'Any server with the OpenAI chat API.',
+  'settings.agent.empty': 'No provider set up. Add one to use the agent.',
+  'settings.agent.preset.claudeDetail': 'Claude models with your Anthropic key.',
+  'settings.agent.preset.opencodeDetail': 'OpenCode Zen models with a single key.',
 }
 
 export default en

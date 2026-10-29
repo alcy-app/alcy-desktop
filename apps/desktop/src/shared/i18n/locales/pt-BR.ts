@@ -2808,8 +2808,10 @@ const ptBR = {
   'settings.agent.preset.openrouterDetail': 'Centenas de modelos com uma única chave.',
   'settings.agent.preset.ollamaDetail': 'Modelos locais na sua máquina, sem chave.',
   'settings.agent.preset.lmstudioDetail': 'Servidor local do LM Studio, sem chave.',
-  'settings.agent.preset.anthropicDetail': 'Outra conta ou chave da Anthropic.',
   'settings.agent.preset.openaiCompatibleDetail': 'Qualquer servidor com a API de chat da OpenAI.',
+  'settings.agent.empty': 'Nenhum provedor configurado. Adicione um para usar o agente.',
+  'settings.agent.preset.claudeDetail': 'Modelos Claude com a sua chave da Anthropic.',
+  'settings.agent.preset.opencodeDetail': 'Modelos do OpenCode Zen com uma única chave.',
 } as const
 
 export default ptBR
