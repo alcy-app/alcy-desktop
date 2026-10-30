@@ -51,6 +51,9 @@ pub enum HistoryOutcomeSummaryDto {
         status_code: u16,
         duration_ms: u64,
         size_bytes: usize,
+        /// `false` quando "Salvar respostas" estava desligado e só o resumo
+        /// (status, tempo e tamanho) foi guardado.
+        response_stored: bool,
     },
     Failed {
         kind: String,
@@ -228,10 +231,12 @@ pub(crate) fn outcome_summary_dto(outcome: HistorySummaryOutcome) -> HistoryOutc
             status_code,
             duration_ms,
             size_bytes,
+            response_omitted,
         } => HistoryOutcomeSummaryDto::Success {
             status_code,
             duration_ms,
             size_bytes,
+            response_stored: !response_omitted,
         },
         HistorySummaryOutcome::Failed { kind } => HistoryOutcomeSummaryDto::Failed {
             kind: failure_kind_to_str(kind).to_string(),
@@ -993,6 +998,7 @@ mod tests {
                 status_code: 200,
                 duration_ms: 10,
                 size_bytes: "{\"data\":{}}".len(),
+                response_stored: true,
             }
         );
 
@@ -1133,6 +1139,10 @@ mod tests {
         assert!(
             json.get("sizeBytes").is_some(),
             "esperava sizeBytes em {json}"
+        );
+        assert!(
+            json.get("responseStored").is_some(),
+            "esperava responseStored em {json}"
         );
         assert!(
             json.get("status_code").is_none(),

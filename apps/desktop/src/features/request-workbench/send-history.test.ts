@@ -9,7 +9,7 @@ function send(id: string, executedAtMs: number): RequestSendDto {
     protocol: 'rest',
     endpoint: 'https://api.example.com',
     method: 'get',
-    outcome: { type: 'success', statusCode: 200, durationMs: 1, sizeBytes: 1 },
+    outcome: { type: 'success', statusCode: 200, durationMs: 1, sizeBytes: 1, responseStored: true },
     baseline: false,
   }
 }

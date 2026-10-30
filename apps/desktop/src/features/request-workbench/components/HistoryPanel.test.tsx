@@ -12,7 +12,7 @@ const ENTRIES: HistoryEntrySummaryDto[] = [
     protocol: 'rest',
     endpoint: LONG_URL,
     executedAtMs: Date.UTC(2026, 8, 25, 12),
-    outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 34 },
+    outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 34, responseStored: true },
   },
   {
     origin: 'flow',

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export type HistoryOutcomeSummary =
-  | { type: 'success'; statusCode: number; durationMs: number; sizeBytes: number }
+  | { type: 'success'; statusCode: number; durationMs: number; sizeBytes: number; responseStored: boolean }
   | { type: 'failed'; kind: 'network' | 'timeout' }
 
 export interface RequestHistorySummaryDto {

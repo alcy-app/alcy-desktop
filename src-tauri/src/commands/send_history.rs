@@ -338,11 +338,53 @@ mod tests {
         let json = serde_json::to_value(&sends[0]).unwrap();
         assert!(json.get("executedAtMs").is_some());
         assert_eq!(json["outcome"]["statusCode"], 200);
+        assert_eq!(json["outcome"]["responseStored"], true);
         assert_eq!(json["baseline"], false);
         assert_eq!(json["protocol"], "rest");
         assert_eq!(json["endpoint"], "https://api.example.com/items");
         assert_eq!(json["method"], "post");
         assert!(json.get("fingerprint").is_none());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn reports_when_the_send_response_was_not_stored() {
+        let root = temp_root();
+        let request = Request::new(
+            Endpoint::new("https://api.example.com/items").unwrap(),
+            RequestDocument::new(ProtocolId::Rest, ""),
+            "",
+            Vec::new(),
+            Authentication::None,
+        );
+        let outcome = HistoryOutcome::Success(Response::new(
+            200,
+            5,
+            "",
+            Vec::new(),
+            ResponseMetadata::default(),
+        ));
+        HistoryStore::new(root.clone(), Duration::from_secs(3600))
+            .record(
+                HistoryEntry::new("a", request, outcome, SystemTime::now())
+                    .with_source(Some("req-1".to_string()), None)
+                    .without_response_details(),
+            )
+            .unwrap();
+
+        let sends = list_request_sends_inner(
+            ListRequestSendsInput {
+                root_path: root_path(&root),
+                request_id: Some("req-1".to_string()),
+                tab_id: None,
+            },
+            HistoryRetention::default(),
+        )
+        .unwrap();
+
+        let json = serde_json::to_value(&sends[0]).unwrap();
+        assert_eq!(json["outcome"]["responseStored"], false);
 
         fs::remove_dir_all(&root).ok();
     }

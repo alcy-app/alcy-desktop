@@ -3864,7 +3864,7 @@ describe('RequestWorkbench', () => {
               protocol: 'graphql',
               endpoint: 'https://api.example.com/graphql',
               executedAtMs: Date.now(),
-              outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 2 },
+              outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 2, responseStored: true },
             },
             {
               origin: 'flow',

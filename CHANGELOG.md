@@ -21,6 +21,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Fixed
 
+- O histórico de envios de uma requisição não lista mais os envios cujas respostas não foram salvas, que abriam sem conteúdo.
 - Removidas as transições ao passar o mouse pela lista de flows para evitar piscadas na tela.
 
 ## [0.8.1] - 21/10/2026

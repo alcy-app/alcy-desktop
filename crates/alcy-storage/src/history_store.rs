@@ -72,6 +72,9 @@ pub enum HistorySummaryOutcome {
         status_code: u16,
         duration_ms: u64,
         size_bytes: usize,
+        /// `true` quando "Salvar respostas" estava desligado e só o resumo
+        /// (status, tempo e tamanho) foi guardado.
+        response_omitted: bool,
     },
     Failed {
         kind: HistoryFailureKind,
@@ -118,6 +121,11 @@ enum PersistedOutcomeSummary {
         status_code: u16,
         duration_ms: u64,
         size_bytes: usize,
+        /// Aditivo: `true` quando só o resumo da resposta foi guardado.
+        /// Entradas antigas não têm o campo e continuam valendo como
+        /// respostas guardadas.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        response_omitted: bool,
     },
     Failed {
         kind: String,
@@ -872,10 +880,12 @@ fn summary_from_index(index: PersistedIndexEntry) -> Result<HistorySummary, Stor
             status_code,
             duration_ms,
             size_bytes,
+            response_omitted,
         } => HistorySummaryOutcome::Success {
             status_code,
             duration_ms,
             size_bytes,
+            response_omitted,
         },
         PersistedOutcomeSummary::Failed { kind } => HistorySummaryOutcome::Failed {
             kind: failure_kind_from_str(&kind)?,
@@ -901,6 +911,7 @@ fn index_entry_from_entry(entry: &HistoryEntry) -> PersistedIndexEntry {
             status_code: response.status_code,
             duration_ms: response.duration_ms,
             size_bytes: response.size_bytes,
+            response_omitted: entry.response_omitted,
         },
         HistoryOutcome::Failed { kind, .. } => PersistedOutcomeSummary::Failed {
             kind: failure_kind_to_str(*kind).to_string(),
@@ -1006,6 +1017,7 @@ fn entry_from_parts(
                 status_code,
                 duration_ms,
                 size_bytes,
+                ..
             },
             PersistedOutcomeDetail::Success {
                 body,
@@ -1494,6 +1506,22 @@ mod tests {
 
         store.record(entry.without_response_details()).unwrap();
 
+        let summary = store
+            .load_summaries()
+            .unwrap()
+            .into_iter()
+            .find(|summary| summary.id == "entry-1")
+            .unwrap();
+        assert_eq!(
+            summary.outcome,
+            HistorySummaryOutcome::Success {
+                status_code: 200,
+                duration_ms: 12,
+                size_bytes,
+                response_omitted: true,
+            }
+        );
+
         let loaded = store.load_entry("entry-1").unwrap().unwrap();
         assert!(loaded.response_omitted);
         let HistoryOutcome::Success(response) = loaded.outcome else {
@@ -1648,6 +1676,7 @@ mod tests {
                 status_code: 200,
                 duration_ms: 12,
                 size_bytes: "{\"data\":{\"ping\":true}}".len(),
+                response_omitted: false,
             }
         );
 

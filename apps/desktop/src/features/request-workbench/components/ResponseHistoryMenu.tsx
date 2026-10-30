@@ -5,6 +5,7 @@ import { useLanguage } from '../../../shared/i18n/use-language'
 import { Badge } from '../../../shared/ui/Badge'
 import { ChevronDownIcon, ClockIcon, EllipsisIcon } from '../../../shared/ui/icons'
 import { MenuItem, OptionsMenu } from '../../../shared/ui/Menu'
+import { sendHasStoredResponse } from '../send-history'
 import type { SendsState } from '../use-send-history'
 import { OutcomeText } from './ResponseComparisonView'
 import { RequestMethodBadge } from './RequestMethodBadge'
@@ -66,10 +67,13 @@ export function ResponseHistoryMenu({
   const anchorRef = useRef<HTMLDivElement>(null)
 
   const list = sends.status === 'ready' ? sends.sends : []
+  // Sem a resposta guardada, o envio não tem o que mostrar neste menu: some da
+  // lista em vez de abrir com "Resposta não armazenada".
+  const stored = list.filter(sendHasStoredResponse)
   const current = list.find((send) => send.id === currentSendId) ?? null
-  const baseline = list.find((send) => send.baseline) ?? null
-  const past = list.filter((send) => send.id !== currentSendId)
-  const viewedPast = view.kind === 'past' ? (list.find((send) => send.id === view.sendId) ?? null) : null
+  const baseline = stored.find((send) => send.baseline) ?? null
+  const past = stored.filter((send) => send.id !== currentSendId)
+  const viewedPast = view.kind === 'past' ? (stored.find((send) => send.id === view.sendId) ?? null) : null
 
   const close = () => {
     setIsOpen(false)

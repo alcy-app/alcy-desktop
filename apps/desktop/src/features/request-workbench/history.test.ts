@@ -11,7 +11,7 @@ function summary(id: string, executedAtMs: number): HistoryEntrySummaryDto {
     protocol: 'graphql',
     endpoint: 'https://api.example.com/graphql',
     executedAtMs,
-    outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 2 },
+    outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 2, responseStored: true },
   }
 }
 

@@ -57,7 +57,7 @@ function send(id: string, executedAtMs: number, overrides: Partial<RequestSendDt
     protocol: 'rest',
     endpoint: 'https://api.example.com/users',
     method: 'get',
-    outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 34 },
+    outcome: { type: 'success', statusCode: 200, durationMs: 12, sizeBytes: 34, responseStored: true },
     baseline: false,
     ...overrides,
   }
@@ -322,6 +322,28 @@ describe('ResponsePanel — histórico de envios', () => {
     const menu = await openHistory()
 
     expect(await within(menu).findByText('Nenhum envio anterior.')).toBeInTheDocument()
+  })
+
+  it('não lista envios cuja resposta não foi guardada', async () => {
+    listRequestSends.mockResolvedValue({
+      ok: true,
+      value: [
+        send('current', 4000),
+        send('unstored', 3000, {
+          outcome: { type: 'success', statusCode: 500, durationMs: 12, sizeBytes: 34, responseStored: false },
+        }),
+        send('stored', 2000, {
+          outcome: { type: 'success', statusCode: 201, durationMs: 12, sizeBytes: 34, responseStored: true },
+        }),
+      ],
+    })
+    renderPanel()
+
+    const menu = await openHistory()
+
+    await waitFor(() => expect(pastRows(menu)).toHaveLength(2))
+    expect(within(menu).getByText('201')).toBeInTheDocument()
+    expect(within(menu).queryByText('500')).not.toBeInTheDocument()
   })
 
   it('mostra erro quando a lista não carrega', async () => {
