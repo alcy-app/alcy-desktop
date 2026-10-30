@@ -2751,6 +2751,7 @@ const en: Record<TranslationKey, string> = {
   'settings.shortcuts.action.toggleAgentPanel': 'Show/hide the agent panel',
   'workbench.resize.agent': 'Resize agent panel',
   'agent.suggestions.aria': 'Prompt starters',
+  'agent.followUps.title': 'What would you like to do next?',
   'agent.suggestions.create': 'Create a GET request…',
   'agent.suggestions.explain': 'Explain the current response',
   'agent.suggestions.auth': 'Add an auth header to this request',

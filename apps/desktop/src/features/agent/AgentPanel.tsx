@@ -172,6 +172,10 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
           onRevert={session.revert}
           onRetry={session.retry}
           onEditLast={session.editLast}
+          onFollowUp={(text) => {
+            void session.send(text, [])
+            composerRef.current?.focus()
+          }}
           onQuote={(text, label) => {
             setContext((current) => [...current, quoteContext(text, label)])
             composerRef.current?.focus()

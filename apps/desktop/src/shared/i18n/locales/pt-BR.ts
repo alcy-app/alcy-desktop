@@ -2745,6 +2745,7 @@ const ptBR = {
   'settings.shortcuts.action.toggleAgentPanel': 'Mostrar/ocultar o painel do agente',
   'workbench.resize.agent': 'Redimensionar painel do agente',
   'agent.suggestions.aria': 'Sugestões para começar',
+  'agent.followUps.title': 'O que você gostaria de fazer agora?',
   'agent.suggestions.create': 'Crie uma requisição GET…',
   'agent.suggestions.explain': 'Explique a resposta atual',
   'agent.suggestions.auth': 'Adicione um cabeçalho de autenticação a esta requisição',

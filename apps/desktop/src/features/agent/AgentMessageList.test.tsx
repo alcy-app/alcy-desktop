@@ -8,6 +8,29 @@ const actions = { onApprove: vi.fn(), onDecline: vi.fn(), onRevert: vi.fn() }
 afterEach(() => vi.unstubAllGlobals())
 
 describe('AgentMessageList', () => {
+  it('offers continuations only for the latest completed reply and copies only its prose', async () => {
+    const onFollowUp = vi.fn()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const reply: AgentChatItem = { kind: 'assistant', id: 'a', streaming: false, text: 'Pronto.\n\n```alcy-suggestions\n["Explique os campos", "Adicione testes"]\n```' }
+    const { rerender } = render(<AgentMessageList items={[reply]} {...actions} onFollowUp={onFollowUp} />)
+    const group = screen.getByRole('group', { name: 'O que você gostaria de fazer agora?' })
+    fireEvent.click(within(group).getByRole('button', { name: 'Adicione testes' }))
+    expect(onFollowUp).toHaveBeenCalledWith('Adicione testes')
+    fireEvent.click(screen.getByRole('button', { name: 'Copiar mensagem' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Pronto.'))
+    expect(screen.queryByText('alcy-suggestions')).not.toBeInTheDocument()
+
+    rerender(<AgentMessageList items={[reply]} running {...actions} onFollowUp={onFollowUp} />)
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    rerender(<AgentMessageList items={[{ ...reply, streaming: true }]} {...actions} onFollowUp={onFollowUp} />)
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    rerender(<AgentMessageList items={[reply, { kind: 'user', id: 'u', text: 'Continue', context: [] }]} {...actions} onFollowUp={onFollowUp} />)
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+    rerender(<AgentMessageList items={[reply, { kind: 'notice', id: 'n', tone: 'error', text: 'Failed' }]} {...actions} onFollowUp={onFollowUp} />)
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
+  })
+
   it('shows thinking between model responses, without duplicating streaming or tool progress', () => {
     const user: AgentChatItem = { kind: 'user', id: 'u', text: 'Crie um flow', context: [] }
     const tool: Extract<AgentChatItem, { kind: 'tool' }> = { kind: 'tool', id: 'tool', name: 'create_flow', toolClass: 'sideEffect', summary: 'Example', state: 'running', canRevert: false, autoApproved: false }

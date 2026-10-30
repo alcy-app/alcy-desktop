@@ -101,6 +101,31 @@ beforeEach(() => {
 })
 
 describe('AgentPanel', () => {
+  it('sends a suggested continuation once without consuming the composer draft and still asks for tool approval', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 's-old' }))
+    loadAgentSession.mockResolvedValue({ ok: true, value: {
+      id: 's-old', title: 'Users', providerId: 'claude', model: 'm', omittedItems: 0,
+      items: [{ kind: 'assistant', text: 'Pronto.\n\n```alcy-suggestions\n["Envie a requisição"]\n```' }],
+    } })
+    scriptSendTurn()
+    const workbench = host()
+    render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    const suggestion = await screen.findByRole('button', { name: 'Envie a requisição' })
+    const composer = screen.getByLabelText('Mensagem para o agente')
+    fireEvent.change(composer, { target: { value: 'Um rascunho' } })
+    fireEvent.click(suggestion)
+    expect(await screen.findByRole('button', { name: 'Aprovar' })).toBeInTheDocument()
+    expect(startAgentTurn).toHaveBeenCalledTimes(1)
+    expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's-old', text: 'Envie a requisição', context: [] }), expect.any(Function))
+    expect(workbench.send).not.toHaveBeenCalled()
+    expect(composer).toHaveValue('Um rascunho')
+    expect(screen.getByRole('button', { name: 'Aprovar' })).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'Envie a requisição' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Recusar' }))
+    await waitFor(() => expect(submitAgentToolResult).toHaveBeenCalled())
+  })
+
   it('shows thinking before the first response and removes it when text arrives or the turn ends', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     let emit: (event: AgentEventDto) => void = () => {}

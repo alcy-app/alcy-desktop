@@ -109,6 +109,42 @@
   background: var(--accent-softer);
 }
 
+.agent-follow-ups {
+  margin-top: var(--space-3);
+}
+
+.agent-follow-ups-title {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.agent-follow-ups-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.agent-follow-up.ui-button {
+  max-width: 100%;
+  height: auto;
+  padding: var(--space-2);
+  border-color: var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--leading-normal);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.agent-follow-up.ui-button:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
 .agent-messages {
   display: flex;
   flex: 1;
@@ -153,9 +189,11 @@
 
 /* An explicit color keeps the selection visible while the right-click menu has the focus
    (WebKit otherwise paints it as an inactive, faint selection). */
+.agent-message::selection,
 .agent-message ::selection,
 .agent-notice > span::selection {
-  background: var(--selection-bg);
+  background: color-mix(in srgb, var(--text-muted) 55%, var(--surface));
+  color: var(--text-heading);
 }
 
 .agent-message-group {

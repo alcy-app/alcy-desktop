@@ -353,6 +353,12 @@ chat near the provider's context budget has its oldest part summarized by the
 model; the summary is saved with the chat, the transcript keeps everything
 (spec 0135).
 
+Final agent replies may end with a bounded `alcy-suggestions` JSON code block.
+React renders its strings as optional follow-up buttons only after the turn
+finishes. Clicking sends a new message through the existing turn and approval
+paths. The trailer stays in the transcript text, so saved chats need no contract
+change; it is hidden from rendered prose, copying and quoting.
+
 Token usage is counted locally (ADR 0065): at the end of a turn Rust adds its
 tokens to `agent-usage.json` in app data, per provider and local day named by
 the interface, keeping two weeks. The chat shows today and the current week

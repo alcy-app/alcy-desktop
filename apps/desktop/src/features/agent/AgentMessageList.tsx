@@ -11,6 +11,7 @@ import { isAgentReferenceKind, type AgentReferenceKind } from './agent-reference
 import type { AgentChatItem } from './use-agent-session'
 import { toolLabel } from './agent-tool-labels'
 import { AgentThinking } from './AgentThinking'
+import { splitAgentReply } from './agent-follow-ups'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
@@ -31,6 +32,8 @@ interface AgentMessageListProps {
   onEditLast?: (text: string) => void
   /** Attaches a message, or a selected part of one, as context of the next message. */
   onQuote?: (text: string, label: string) => void
+  /** Sends a suggested continuation as a new user message. */
+  onFollowUp?: (text: string) => void
 }
 
 const EXCERPT_LABEL_CHARS = 32
@@ -78,7 +81,7 @@ function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
   return ids
 }
 
-export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference, onRetry, onEditLast, onQuote }: AgentMessageListProps) {
+export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference, onRetry, onEditLast, onQuote, onFollowUp }: AgentMessageListProps) {
   const { t, language } = useLanguage()
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -184,7 +187,8 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                 </div>
               </Fragment>
             )
-          case 'assistant':
+          case 'assistant': {
+            const reply = splitAgentReply(item.text)
             return (
               <Fragment key={item.id}>
                 {dayLine(item.id, item.atMs)}
@@ -192,7 +196,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                 <div className="agent-message-group">
                   <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
                     <MarkdownView
-                      source={item.text}
+                      source={reply.text}
                       headingOffset={2}
                       renderCodeBlock={(text, lang) => <AgentCodeBlock text={text} lang={lang} />}
                       resolveReference={resolveReference}
@@ -206,10 +210,23 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                     />
                     {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
                   </div>
-                  {!item.streaming && item.text.trim() !== '' && <MessageActions text={item.text} onQuote={quote(item.text, quoteLabel('agent.quote.reply', item.atMs))} />}
+                  {!item.streaming && reply.text.trim() !== '' && <MessageActions text={reply.text} onQuote={quote(reply.text, quoteLabel('agent.quote.reply', item.atMs))} />}
+                  {!running && !item.streaming && item.id === last?.id && onFollowUp && reply.suggestions.length > 0 && (
+                    <div className="agent-follow-ups" role="group" aria-label={t('agent.followUps.title')}>
+                      <p className="agent-follow-ups-title">{t('agent.followUps.title')}</p>
+                      <div className="agent-follow-ups-options">
+                        {reply.suggestions.map((suggestion) => (
+                          <Button key={suggestion} variant="ghost" className="agent-follow-up" onClick={() => onFollowUp(suggestion)}>
+                            {suggestion}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </Fragment>
             )
+          }
           case 'notice':
             return (
               <p key={item.id} className="agent-notice" data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}>
