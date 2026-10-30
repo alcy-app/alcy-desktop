@@ -399,7 +399,8 @@
   font-size: var(--font-size-xs);
 }
 
-.agent-tool:not([data-state='awaitingApproval']) + .agent-tool:not([data-state='awaitingApproval']) {
+/* Loose calls in a row read as one chain; grouped calls space themselves. */
+.agent-messages > .agent-tool:not([data-state='awaitingApproval']) + .agent-tool:not([data-state='awaitingApproval']) {
   margin-top: calc(0px - var(--space-4));
 }
 
@@ -409,6 +410,64 @@
   border: 1px solid var(--warning);
   border-radius: var(--radius-lg);
   background: var(--warning-soft);
+}
+
+.agent-tool-group {
+  flex-shrink: 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.agent-tool-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-tool-group-toggle:hover .agent-tool-label {
+  color: var(--text);
+}
+
+.agent-tool-group-toggle:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agent-tool-group-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.agent-tool-group-toggle[aria-expanded='true'] .agent-tool-group-chevron {
+  transform: rotate(90deg);
+}
+
+.agent-tool-group[data-state='done'] > .agent-tool-group-toggle .agent-tool-icon { color: var(--success); }
+.agent-tool-group[data-state='failed'] > .agent-tool-group-toggle .agent-tool-icon { color: var(--error); }
+
+/* Expanded calls sit under the group's own rule, one per line. */
+.agent-tool-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.agent-tool-group-items .agent-tool {
+  padding: var(--space-1) 0 var(--space-1) var(--space-5);
+  border-left: 0;
+  line-height: var(--leading-normal);
 }
 
 .agent-tool-header {

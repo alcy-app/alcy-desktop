@@ -30,6 +30,28 @@ describe('AgentMessageList', () => {
     expect(screen.queryByRole('status', { name: 'O Alcy está pensando' })).not.toBeInTheDocument()
   })
 
+  it('collapses a chain of tool calls into one group that expands to list them', () => {
+    const tool = (id: string, state: Extract<AgentChatItem, { kind: 'tool' }>['state'], canRevert = false): AgentChatItem =>
+      ({ kind: 'tool', id, name: 'search_collections', toolClass: 'read', summary: id, state, canRevert, autoApproved: false })
+    const { rerender } = render(<AgentMessageList items={[tool('t1', 'done'), tool('t2', 'failed'), tool('t3', 'done', true)]} {...actions} />)
+    const toggle = screen.getByRole('button', { name: /3 ações executadas · 1 com falha/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('t1')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reverter' })).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('t1')).toBeInTheDocument()
+    expect(screen.getByText('falhou')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Reverter' }))
+    expect(actions.onRevert).toHaveBeenCalledWith('t3')
+
+    rerender(<AgentMessageList items={[tool('t1', 'done'), tool('t2', 'running'), tool('t3', 'awaitingApproval'), tool('t4', 'done')]} running {...actions} />)
+    expect(screen.getByRole('button', { name: /Executando ações \(2\)/ })).toHaveTextContent('Buscou nas collections')
+    expect(screen.getByRole('button', { name: 'Aprovar' })).toBeInTheDocument()
+    expect(screen.getByText('t4')).toBeInTheDocument()
+  })
+
   it('copies individual code blocks, including blocks nested in Markdown lists', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })

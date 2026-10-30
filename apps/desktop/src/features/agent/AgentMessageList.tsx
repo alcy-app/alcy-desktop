@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
-import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, FlowIcon, GlobeIcon, MockServerIcon, PanelRightIcon, Spinner } from '../../shared/ui/icons'
+import { AlertIcon, CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, FlowIcon, GlobeIcon, MockServerIcon, PanelRightIcon, Spinner } from '../../shared/ui/icons'
 import { MarkdownView } from '../notifications/MarkdownView'
 import { highlightSpans } from '../request-workbench/screenshot/screenshot-highlight'
 import { codeBlockLanguage, splitUserMessage } from './agent-code'
@@ -51,6 +51,34 @@ interface AgentMessageListProps {
 }
 
 const REFERENCE_ICONS = { request: GlobeIcon, flow: FlowIcon, mock: MockServerIcon, tab: PanelRightIcon }
+
+type ToolItem = Extract<AgentChatItem, { kind: 'tool' }>
+type Row = { kind: 'item'; item: AgentChatItem } | { kind: 'tools'; id: string; tools: ToolItem[] }
+
+/**
+ * Runs of two or more consecutive tool calls collapse into one group, as in
+ * editor chats. A call waiting for approval always stands alone, so its
+ * question and buttons stay in sight.
+ */
+function groupToolRuns(items: AgentChatItem[]): Row[] {
+  const rows: Row[] = []
+  let run: ToolItem[] = []
+  const flush = () => {
+    if (run.length > 1) rows.push({ kind: 'tools', id: run[0].id, tools: run })
+    else if (run.length === 1) rows.push({ kind: 'item', item: run[0] })
+    run = []
+  }
+  for (const item of items) {
+    if (item.kind === 'tool' && item.state !== 'awaitingApproval') {
+      run.push(item)
+      continue
+    }
+    flush()
+    rows.push({ kind: 'item', item })
+  }
+  flush()
+  return rows
+}
 
 /** Ids of the messages that open a new day, as in editor chats; messages without a time open none. */
 function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
@@ -116,7 +144,11 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
           {t('agent.messages.showEarlier', { count: hidden })}
         </Button>
       )}
-      {shown.map((item) => {
+      {groupToolRuns(shown).map((row) => {
+        if (row.kind === 'tools') {
+          return <ToolCallGroup key={row.id} tools={row.tools} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
+        }
+        const { item } = row
         switch (item.kind) {
           case 'user':
             return (
@@ -238,6 +270,45 @@ function AgentCodeBlock({ text, lang }: { text: string; lang?: string }) {
   )
 }
 
+interface ToolCallGroupProps {
+  tools: ToolItem[]
+  onApprove: (callId: string) => void
+  onDecline: (callId: string) => void
+  onRevert: (callId: string) => void
+}
+
+/** A collapsed chain of tool calls: what is running now, or how many ran; expanding lists each one. */
+function ToolCallGroup({ tools, onApprove, onDecline, onRevert }: ToolCallGroupProps) {
+  const { t } = useLanguage()
+  const [expanded, setExpanded] = useState(false)
+  const bodyId = useId()
+  const running = tools.find((tool) => tool.state === 'running')
+  const failed = tools.filter((tool) => tool.state === 'failed').length
+  const icon = running ? <Spinner size={12} /> : failed > 0 ? <AlertIcon size={12} /> : <CheckIcon size={12} />
+  return (
+    <div className="agent-tool-group" data-state={running ? 'running' : failed > 0 ? 'failed' : 'done'}>
+      <button type="button" className="agent-tool-group-toggle" aria-expanded={expanded} aria-controls={bodyId} onClick={() => setExpanded((open) => !open)}>
+        <ChevronRightIcon size={10} className="agent-tool-group-chevron" />
+        <span className="agent-tool-icon">{icon}</span>
+        <span className="agent-tool-label">
+          {t(running ? 'agent.toolGroup.running' : 'agent.toolGroup.done', { count: tools.length })}
+          {failed > 0 && ` · ${t('agent.toolGroup.failed', { count: failed })}`}
+        </span>
+        {running && <span className="agent-tool-summary">{toolLabel(running.name, t)}</span>}
+      </button>
+      {expanded && (
+        <div id={bodyId} className="agent-tool-group-items">
+          {tools.map((tool) => <ToolCallCard key={tool.id} item={tool} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function toolLabel(name: string, t: ReturnType<typeof useLanguage>['t']) {
+  return KNOWN_TOOLS.has(name) ? t(`agent.tool.${name}` as TranslationKey) : name
+}
+
 interface ToolCallCardProps {
   item: Extract<AgentChatItem, { kind: 'tool' }>
   onApprove: (callId: string) => void
@@ -247,7 +318,7 @@ interface ToolCallCardProps {
 
 function ToolCallCard({ item, onApprove, onDecline, onRevert }: ToolCallCardProps) {
   const { t } = useLanguage()
-  const label = KNOWN_TOOLS.has(item.name) ? t(`agent.tool.${item.name}` as TranslationKey) : item.name
+  const label = toolLabel(item.name, t)
   const icon =
     item.state === 'running' ? (
       <Spinner size={12} />
