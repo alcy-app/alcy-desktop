@@ -2,6 +2,7 @@
 
 mod agent_session_store;
 mod agent_settings_store;
+mod agent_usage_store;
 mod api_docs_store;
 mod collection_run_history_store;
 mod collection_run_report;
@@ -40,6 +41,7 @@ pub use agent_session_store::{
     MAX_AGENT_SESSIONS, is_valid_session_id,
 };
 pub use agent_settings_store::AgentSettingsStore;
+pub use agent_usage_store::{AgentTokenTotals, AgentUsageStore, is_valid_usage_day};
 pub use api_docs_store::{ApiDocsStore, OperationDocs};
 pub use collection_run_history_store::{
     CollectionRunHistoryStore, CollectionRunRecord, CollectionRunStatus, CollectionRunSummaryEntry,

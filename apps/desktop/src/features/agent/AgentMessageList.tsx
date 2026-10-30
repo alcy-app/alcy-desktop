@@ -1,10 +1,13 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
-import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, Spinner } from '../../shared/ui/icons'
+import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, FlowIcon, GlobeIcon, MockServerIcon, PanelRightIcon, Spinner } from '../../shared/ui/icons'
 import { MarkdownView } from '../notifications/MarkdownView'
+import { highlightSpans } from '../request-workbench/screenshot/screenshot-highlight'
+import { codeBlockLanguage, splitUserMessage } from './agent-code'
+import { isAgentReferenceKind, type AgentReferenceKind } from './agent-references'
 import type { AgentChatItem } from './use-agent-session'
 import { RESOURCE_TOOL_NAMES } from './agent-resource-tools'
 import { AgentThinking } from './AgentThinking'
@@ -41,7 +44,13 @@ interface AgentMessageListProps {
   onApprove: (callId: string) => void
   onDecline: (callId: string) => void
   onRevert: (callId: string) => void
+  /** Opens an item the reply links to; resolves false when it is gone. */
+  onOpenReference?: (kind: AgentReferenceKind, id: string) => Promise<boolean>
+  /** Item named by a bolded or code-formatted word of a reply, when it is unambiguous. */
+  resolveReference?: (text: string) => { kind: AgentReferenceKind; id: string } | null
 }
+
+const REFERENCE_ICONS = { request: GlobeIcon, flow: FlowIcon, mock: MockServerIcon, tab: PanelRightIcon }
 
 /** Ids of the messages that open a new day, as in editor chats; messages without a time open none. */
 function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
@@ -56,7 +65,7 @@ function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
   return ids
 }
 
-export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert }: AgentMessageListProps) {
+export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference }: AgentMessageListProps) {
   const { t, language } = useLanguage()
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -118,7 +127,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                   {item.context.length > 0 && (
                     <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
                   )}
-                  <p className="agent-message-text">{item.text}</p>
+                  <UserMessageText text={item.text} />
                 </div>
               </Fragment>
             )
@@ -128,7 +137,19 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                 {dayLine(item.id, item.atMs)}
                 {timeLabel(item.atMs)}
                 <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
-                  <MarkdownView source={item.text} headingOffset={2} renderCodeBlock={(text) => <AgentCodeBlock text={text} />} />
+                  <MarkdownView
+                    source={item.text}
+                    headingOffset={2}
+                    renderCodeBlock={(text, lang) => <AgentCodeBlock text={text} lang={lang} />}
+                    resolveReference={resolveReference}
+                    renderReference={(kind, id, children, key) =>
+                      onOpenReference && isAgentReferenceKind(kind) ? (
+                        <AgentReference key={key} kind={kind} id={id} onOpen={onOpenReference}>{children}</AgentReference>
+                      ) : (
+                        <strong key={key}>{children}</strong>
+                      )
+                    }
+                  />
                   {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
                 </div>
               </Fragment>
@@ -149,8 +170,47 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
   )
 }
 
-function AgentCodeBlock({ text }: { text: string }) {
+/** A request, flow, mock or tab named in a reply; clicking opens its tab. */
+function AgentReference({ kind, id, onOpen, children }: { kind: AgentReferenceKind; id: string; onOpen: (kind: AgentReferenceKind, id: string) => Promise<boolean>; children: ReactNode }) {
   const { t } = useLanguage()
+  const [state, setState] = useState<'idle' | 'opening' | 'missing'>('idle')
+  const Icon = REFERENCE_ICONS[kind]
+  const open = async () => {
+    if (state === 'opening') return
+    setState('opening')
+    setState((await onOpen(kind, id)) ? 'idle' : 'missing')
+  }
+  return (
+    <button
+      type="button"
+      className="agent-reference"
+      data-state={state}
+      title={state === 'missing' ? t('agent.reference.missing') : t(`agent.reference.${kind}`)}
+      aria-busy={state === 'opening' || undefined}
+      onClick={() => void open()}
+    >
+      <Icon size={11} />
+      <span>{children}</span>
+    </button>
+  )
+}
+
+/** The user's words stay literal; only their fenced (or pasted JSON) blocks become code blocks. */
+function UserMessageText({ text }: { text: string }) {
+  const segments = useMemo(() => splitUserMessage(text), [text])
+  return segments.map((segment, index) =>
+    segment.type === 'code' ? (
+      <AgentCodeBlock key={index} text={segment.text} lang={segment.lang} />
+    ) : (
+      <p key={index} className="agent-message-text">{segment.text}</p>
+    ),
+  )
+}
+
+function AgentCodeBlock({ text, lang }: { text: string; lang?: string }) {
+  const { t } = useLanguage()
+  const language = useMemo(() => codeBlockLanguage(lang, text), [lang, text])
+  const spans = useMemo(() => (language.highlight === 'text' ? null : highlightSpans(text, language.highlight)), [language.highlight, text])
   const [status, setStatus] = useState<'idle' | 'copied' | 'error'>('idle')
   const copy = async () => {
     try {
@@ -163,10 +223,17 @@ function AgentCodeBlock({ text }: { text: string }) {
   return (
     <div className="agent-code-block">
       <div className="agent-code-toolbar">
+        {language.label && <span className="agent-code-language">{language.label}</span>}
         <span role="status">{status === 'copied' ? t('agent.code.copied') : status === 'error' ? t('agent.code.copyError') : ''}</span>
         <IconButton icon={<CopyIcon size={12} />} label={t('agent.code.copy')} onClick={() => void copy()} />
       </div>
-      <pre><code>{text}</code></pre>
+      <pre>
+        <code>
+          {spans
+            ? spans.map((span, index) => span.tone === 'plain' ? span.text : <span key={index} className={`agent-code-token agent-code-token--${span.tone}`}>{span.text}</span>)
+            : text}
+        </code>
+      </pre>
     </div>
   )
 }

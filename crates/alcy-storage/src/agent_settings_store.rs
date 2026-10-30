@@ -25,6 +25,11 @@ struct PersistedProvider {
     label: String,
     base_url: String,
     model: String,
+    /// Optional since they were added; files without them load as "no limit".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    daily_token_limit: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    weekly_token_limit: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,6 +77,8 @@ impl AgentSettingsStore {
                     label: provider.label,
                     base_url: provider.base_url,
                     model: provider.model,
+                    daily_token_limit: provider.daily_token_limit,
+                    weekly_token_limit: provider.weekly_token_limit,
                 })
                 .collect(),
             active_provider_id: file.active_provider_id,
@@ -96,6 +103,8 @@ impl AgentSettingsStore {
                     label: provider.label.clone(),
                     base_url: provider.base_url.clone(),
                     model: provider.model.clone(),
+                    daily_token_limit: provider.daily_token_limit,
+                    weekly_token_limit: provider.weekly_token_limit,
                 })
                 .collect(),
         };
@@ -136,6 +145,8 @@ mod tests {
                 label: "OpenCode Zen".into(),
                 base_url: "https://opencode.ai/inference/openai/v1".into(),
                 model: "kimi-k2.6".into(),
+                daily_token_limit: Some(200_000),
+                weekly_token_limit: None,
             }],
             active_provider_id: Some("opencode".into()),
         };
@@ -143,7 +154,23 @@ mod tests {
         assert_eq!(store.load().unwrap(), settings);
         let raw = fs::read_to_string(&path).unwrap();
         assert!(raw.contains("\"openaiCompatible\""));
+        assert!(raw.contains("\"dailyTokenLimit\": 200000"));
+        assert!(!raw.contains("weeklyTokenLimit"));
         assert!(!raw.to_lowercase().contains("key"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn files_without_token_limits_still_load() {
+        let path = temp_path();
+        fs::write(
+            &path,
+            r#"{"version":1,"activeProviderId":null,"providers":[{"id":"claude","kind":"anthropic","label":"Claude","baseUrl":"https://api.anthropic.com","model":"m"}]}"#,
+        )
+        .unwrap();
+        let settings = AgentSettingsStore::new(path.clone()).load().unwrap();
+        assert_eq!(settings.providers[0].daily_token_limit, None);
+        assert_eq!(settings.providers[0].weekly_token_limit, None);
         let _ = fs::remove_file(path);
     }
 

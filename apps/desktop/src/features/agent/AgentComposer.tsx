@@ -4,6 +4,7 @@ import { IconButton } from '../../shared/ui/IconButton'
 import { AtIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SelectionIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
 import { useEditorSelection, type EditorSelection } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
+import { pasteJsonAsBlock } from './agent-code'
 import { agentContextOptions, mentionAt, selectionContext, type AgentContextOption } from './agent-context'
 
 interface AgentComposerProps {
@@ -30,7 +31,7 @@ function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
 }
 const CATEGORY_ICONS = CONTEXT_ICONS
 
-/** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items. */
+/** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items, pasted JSON becomes a block. */
 export function AgentComposer({ host, running, disabled, text, onTextChange: setText, textareaRef, footer, onSend, onStop }: AgentComposerProps) {
   const { t } = useLanguage()
   const [context, setContext] = useState<AgentContextOption[]>([])
@@ -309,6 +310,9 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
         value={text}
         rows={3}
         disabled={disabled}
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
         placeholder={disabled ? t('agent.composer.disabledPlaceholder') : t('agent.composer.placeholder')}
         aria-label={t('agent.composer.aria')}
         aria-controls={mention ? menuId : undefined}
@@ -325,6 +329,15 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
           updateMention(value, selectionStart)
         }}
         onKeyDown={onKeyDown}
+        onPaste={(event) => {
+          const input = event.currentTarget
+          const pasted = pasteJsonAsBlock(input.value, input.selectionStart, input.selectionEnd, event.clipboardData.getData('text/plain'))
+          if (!pasted) return
+          event.preventDefault()
+          setText(pasted.value)
+          updateMention(pasted.value, pasted.caret)
+          requestAnimationFrame(() => input.setSelectionRange(pasted.caret, pasted.caret))
+        }}
       />
       <div className="agent-composer-footer">
         {footer}

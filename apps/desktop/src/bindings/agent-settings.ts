@@ -8,6 +8,9 @@ export interface AgentProviderDto {
   label: string
   baseUrl: string
   model: string
+  /** Tokens per local day / week the user wants to stay under; `null` is no limit. Only warns. */
+  dailyTokenLimit: number | null
+  weeklyTokenLimit: number | null
   /** The key itself never leaves the keyring. */
   hasApiKey: boolean
 }
@@ -55,6 +58,21 @@ export function setAgentApiKey(providerId: string, apiKey: string) {
 
 export function clearAgentApiKey(providerId: string) {
   return invokeResult<void, AgentCommandError>('clear_agent_api_key', { input: { providerId } })
+}
+
+export interface AgentTokenTotalsDto {
+  input: number
+  output: number
+}
+
+export interface AgentUsageDto {
+  today: AgentTokenTotalsDto
+  week: AgentTokenTotalsDto
+}
+
+/** Tokens the provider used today and this week, counted on this machine. Days are local `YYYY-MM-DD`. */
+export function getAgentUsage(providerId: string, today: string, week: string[]) {
+  return invokeResult<AgentUsageDto, AgentCommandError>('get_agent_usage', { input: { providerId, today, week } })
 }
 
 /** Also tests the connection and the key. */

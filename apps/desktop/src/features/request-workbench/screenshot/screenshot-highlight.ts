@@ -60,7 +60,8 @@ function lezerSpans(text: string, language: LRLanguage): HighlightSpan[] {
   return spans
 }
 
-function spansOf(text: string, language: HighlightLanguage): HighlightSpan[] {
+/** Colored spans of a whole text; joined, they rebuild it. Also used by the agent chat code blocks. */
+export function highlightSpans(text: string, language: HighlightLanguage): HighlightSpan[] {
   if (language === 'graphql') return tokenizeGraphql(text).map((token) => ({ text: token.text, tone: GRAPHQL_TONES[token.type] }))
   const lezer = LEZER_LANGUAGES[language]
   return lezer ? lezerSpans(text, lezer) : [{ text, tone: 'plain' }]
@@ -74,7 +75,7 @@ function spansOf(text: string, language: HighlightLanguage): HighlightSpan[] {
  */
 export function highlightLines(lines: string[], language: HighlightLanguage): HighlightSpan[][] {
   const result: HighlightSpan[][] = [[]]
-  for (const span of spansOf(lines.join('\n'), language)) {
+  for (const span of highlightSpans(lines.join('\n'), language)) {
     const parts = span.text.split('\n')
     parts.forEach((part, index) => {
       if (index > 0) result.push([])

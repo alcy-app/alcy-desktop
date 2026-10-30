@@ -112,6 +112,8 @@ mod tests {
             label: "P".into(),
             base_url,
             model: "m".into(),
+            daily_token_limit: None,
+            weekly_token_limit: None,
         }
     }
 

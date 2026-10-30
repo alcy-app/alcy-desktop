@@ -32,6 +32,8 @@ export interface StartAgentTurnInput {
   context: AgentContextInput[]
   /** Interface language, the default answer language. */
   language: 'pt-BR' | 'en'
+  /** Local day (`YYYY-MM-DD`) the turn's tokens count in. */
+  localDay: string
 }
 
 export interface AgentTurnResultDto {

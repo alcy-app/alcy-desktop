@@ -353,6 +353,11 @@ chat near the provider's context budget has its oldest part summarized by the
 model; the summary is saved with the chat, the transcript keeps everything
 (spec 0135).
 
+Token usage is counted locally (ADR 0065): at the end of a turn Rust adds its
+tokens to `agent-usage.json` in app data, per provider and local day named by
+the interface, keeping two weeks. The chat shows today and the current week
+against optional per-provider limits, which only warn.
+
 ### gRPC
 
 `alcy-grpc` calls any method of any service without generated code (spec

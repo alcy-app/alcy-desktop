@@ -173,6 +173,63 @@
   margin-top: 0;
 }
 
+/* The few words the reply bolds read as highlights. */
+.agent-message--assistant .markdown-view strong {
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-softer);
+  color: var(--text-heading);
+  font-weight: var(--font-weight-semibold);
+  box-decoration-break: clone;
+}
+
+.agent-message--assistant .markdown-view :is(h3, h4, h5, h6, th) strong {
+  padding: 0;
+  background: transparent;
+}
+
+.agent-reference {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--accent-softer);
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+.agent-reference > svg {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.agent-reference:hover {
+  border-color: var(--accent);
+}
+
+.agent-reference:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-reference[data-state='opening'] {
+  cursor: progress;
+}
+
+.agent-reference[data-state='missing'] {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
 .agent-message--assistant pre {
   max-width: 100%;
   overflow-x: auto;
@@ -195,6 +252,48 @@
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+.agent-code-language {
+  margin-right: auto;
+  font-family: var(--font-mono);
+}
+
+.agent-message--user .agent-code-block {
+  margin: var(--space-1) 0;
+  background: var(--surface);
+}
+
+.agent-message--user .agent-code-block pre {
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* Same groupings and colors as the request and response editors. */
+.agent-code-token--key {
+  color: var(--accent-strong);
+  font-weight: var(--font-weight-semibold);
+}
+
+.agent-code-token--string {
+  color: var(--success);
+}
+
+.agent-code-token--number {
+  color: var(--warning);
+}
+
+.agent-code-token--keyword {
+  color: var(--accent);
+}
+
+.agent-code-token--comment {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.agent-code-token--punctuation {
+  color: var(--text-muted);
 }
 
 .agent-code-block > pre {
@@ -380,6 +479,64 @@
   background: transparent;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+.agent-usage {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) var(--space-3) calc(-1 * var(--space-1));
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.agent-usage-title {
+  font-weight: var(--font-weight-semibold);
+}
+
+.agent-usage-period {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.agent-usage-amount {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-usage-meter {
+  position: relative;
+  width: 48px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+}
+
+.agent-usage-meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+}
+
+.agent-usage-period[data-level='warning'] .agent-usage-amount {
+  color: var(--warning);
+}
+
+.agent-usage-period[data-level='warning'] .agent-usage-meter > span {
+  background: var(--warning);
+}
+
+.agent-usage-period[data-level='exceeded'] .agent-usage-amount,
+.agent-usage-alert {
+  color: var(--error);
+}
+
+.agent-usage-period[data-level='exceeded'] .agent-usage-meter > span {
+  background: var(--error);
 }
 
 .agent-composer {

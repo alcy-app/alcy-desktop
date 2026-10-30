@@ -10,6 +10,9 @@ import type { WorkbenchAgentHost } from './agent-host'
 import { AgentComposer } from './AgentComposer'
 import { AgentHistoryPopover } from './AgentHistoryPopover'
 import { AgentMessageList } from './AgentMessageList'
+import { agentReferenceResolver, openAgentReference } from './agent-references'
+import { useAgentUsage } from './agent-usage'
+import { AgentUsageBar } from './AgentUsageBar'
 import { useAgentSession } from './use-agent-session'
 import { isProviderUsable, useAgentSettings } from './use-agent-settings'
 import { useAgentApprovalMode, type AgentApprovalMode } from './use-agent-approval-mode'
@@ -60,6 +63,9 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
     defaultRequestName: t('collections.newRequestName'),
     autoApprove: approvalMode === 'autoApprove',
   })
+  // Rebuilt each render so names follow renames and new items while chatting.
+  const resolveReference = agentReferenceResolver(host)
+  const usage = useAgentUsage(provider?.id ?? null, session.running)
 
   const toolbar = (
     <>
@@ -156,8 +162,18 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
           </div>
         </div>
       ) : (
-        <AgentMessageList items={session.items} running={session.running} onApprove={session.approve} onDecline={session.decline} onRevert={session.revert} />
+        <AgentMessageList
+          items={session.items}
+          running={session.running}
+          onApprove={session.approve}
+          onDecline={session.decline}
+          onRevert={session.revert}
+          onOpenReference={(kind, id) => openAgentReference(host, kind, id)}
+          resolveReference={resolveReference}
+        />
       )}
+
+      {provider && usage && <AgentUsageBar provider={provider} usage={usage} />}
 
       <AgentComposer
         host={host}

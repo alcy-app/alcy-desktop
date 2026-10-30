@@ -20,7 +20,8 @@ use alcy_domain::{
 };
 use alcy_platform::KeyringCredentialStore;
 use alcy_storage::{
-    AgentSessionRecord, AgentSessionStore, AgentSettingsStore, StorageError, is_valid_session_id,
+    AgentSessionRecord, AgentSessionStore, AgentSettingsStore, AgentTokenTotals, AgentUsageStore,
+    StorageError, is_valid_session_id, is_valid_usage_day,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,6 +42,7 @@ const MAX_VIEW_TEXT_BYTES: usize = 64 * 1024;
 pub struct AgentPaths {
     pub settings: PathBuf,
     pub sessions: PathBuf,
+    pub usage: PathBuf,
 }
 
 impl AgentPaths {
@@ -50,6 +52,10 @@ impl AgentPaths {
 
     fn session_store(&self) -> AgentSessionStore {
         AgentSessionStore::new(self.sessions.clone())
+    }
+
+    fn usage_store(&self) -> AgentUsageStore {
+        AgentUsageStore::new(self.usage.clone())
     }
 }
 
@@ -108,6 +114,8 @@ pub struct AgentProviderDto {
     pub label: String,
     pub base_url: String,
     pub model: String,
+    pub daily_token_limit: Option<u64>,
+    pub weekly_token_limit: Option<u64>,
     pub has_api_key: bool,
 }
 
@@ -126,6 +134,10 @@ pub struct AgentProviderInput {
     pub label: String,
     pub base_url: String,
     pub model: String,
+    #[serde(default)]
+    pub daily_token_limit: Option<u64>,
+    #[serde(default)]
+    pub weekly_token_limit: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +199,32 @@ pub struct StartAgentTurnInput {
     #[serde(default)]
     pub context: Vec<AgentContextInput>,
     pub language: AgentLanguageDto,
+    /// The interface's local day (`YYYY-MM-DD`) the turn's tokens count in.
+    #[serde(default)]
+    pub local_day: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUsageInput {
+    pub provider_id: String,
+    pub today: String,
+    /// Local days of the current week so far, today included.
+    pub week: Vec<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTokenTotalsDto {
+    pub input: u64,
+    pub output: u64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUsageDto {
+    pub today: AgentTokenTotalsDto,
+    pub week: AgentTokenTotalsDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -411,6 +449,8 @@ fn settings_dto(settings: AgentSettings, credentials: &dyn CredentialStore) -> A
                 label: provider.label,
                 base_url: provider.base_url,
                 model: provider.model,
+                daily_token_limit: provider.daily_token_limit,
+                weekly_token_limit: provider.weekly_token_limit,
             })
             .collect(),
         active_provider_id: settings.active_provider_id,
@@ -497,6 +537,8 @@ pub async fn save_agent_settings(
                     label: provider.label,
                     base_url: provider.base_url,
                     model: provider.model,
+                    daily_token_limit: provider.daily_token_limit,
+                    weekly_token_limit: provider.weekly_token_limit,
                 })
                 .collect(),
             active_provider_id: input.active_provider_id,
@@ -889,12 +931,60 @@ async fn run_turn(
     .await?;
 
     let outcome = outcome?;
+    if let Some(day) = input.local_day.filter(|day| is_valid_usage_day(day)) {
+        let store = paths.usage_store();
+        let provider_id = provider.id.clone();
+        let tokens = AgentTokenTotals {
+            input: outcome.usage.input_tokens,
+            output: outcome.usage.output_tokens,
+        };
+        // Usage is a guide value: failing to count it never fails the turn.
+        let recorded = run_blocking(move || Ok(store.record(&provider_id, &day, tokens)?)).await;
+        let _ = crate::logging::logged("alcy::agent", "record agent usage", recorded);
+    }
     Ok(AgentTurnResultDto {
         session_id,
         stop_reason: turn_stop_dto(outcome.stop),
         input_tokens: outcome.usage.input_tokens,
         output_tokens: outcome.usage.output_tokens,
     })
+}
+
+/// Tokens the provider used today and this week, counted locally (ADR 0065).
+#[tauri::command]
+pub async fn get_agent_usage(
+    input: AgentUsageInput,
+    paths: State<'_, AgentPaths>,
+) -> Result<AgentUsageDto, AgentCommandError> {
+    let store = paths.usage_store();
+    let result = async {
+        if !is_valid_usage_day(&input.today)
+            || input.week.len() > 7
+            || !input.week.iter().all(|day| is_valid_usage_day(day))
+        {
+            return Err(AgentCommandError::Invalid {
+                message: "usage days must be YYYY-MM-DD, at most 7 for the week".into(),
+            });
+        }
+        run_blocking(move || {
+            let today = store.totals(&input.provider_id, std::slice::from_ref(&input.today))?;
+            let week = store.totals(&input.provider_id, &input.week)?;
+            Ok(AgentUsageDto {
+                today: totals_dto(today),
+                week: totals_dto(week),
+            })
+        })
+        .await
+    }
+    .await;
+    crate::logging::logged("alcy::agent", "load agent usage", result)
+}
+
+fn totals_dto(totals: AgentTokenTotals) -> AgentTokenTotalsDto {
+    AgentTokenTotalsDto {
+        input: totals.input,
+        output: totals.output,
+    }
 }
 
 /// Idempotent: an unknown or finished run is ignored.
@@ -1089,6 +1179,8 @@ mod tests {
             label: id.into(),
             base_url: base_url.into(),
             model: model.into(),
+            daily_token_limit: None,
+            weekly_token_limit: None,
         }
     }
 
@@ -1178,6 +1270,8 @@ mod tests {
             label: "P".into(),
             base_url: base_url.into(),
             model: "m".into(),
+            daily_token_limit: None,
+            weekly_token_limit: None,
         };
         assert_eq!(
             context_budget_tokens(&provider(

@@ -12,10 +12,12 @@ const saveAgentSettings = vi.fn()
 const startAgentTurn = vi.fn()
 const submitAgentToolResult = vi.fn()
 const loadAgentSession = vi.fn()
+const getAgentUsage = vi.fn()
 
 vi.mock('../../bindings/agent-settings', () => ({
   getAgentSettings: () => getAgentSettings(),
   saveAgentSettings: (...args: unknown[]) => saveAgentSettings(...args),
+  getAgentUsage: (...args: unknown[]) => getAgentUsage(...args),
 }))
 vi.mock('../../bindings/agent-turn', () => ({
   startAgentTurn: (...args: unknown[]) => startAgentTurn(...args),
@@ -28,7 +30,8 @@ vi.mock('../../bindings/agent-sessions', () => ({
   deleteAgentSession: vi.fn(),
 }))
 
-const claude = { id: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', hasApiKey: true }
+const claude = { id: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', dailyTokenLimit: null, weeklyTokenLimit: null, hasApiKey: true }
+const noUsage = { today: { input: 0, output: 0 }, week: { input: 0, output: 0 } }
 
 function host(): WorkbenchAgentHost {
   const content = { ...emptyRequestContent('rest'), endpointUrl: 'https://api.example.com/users' }
@@ -89,6 +92,7 @@ beforeEach(() => {
   saveAgentSettings.mockReset()
   startAgentTurn.mockReset()
   submitAgentToolResult.mockReset()
+  getAgentUsage.mockReset().mockResolvedValue({ ok: true, value: noUsage })
 })
 
 describe('AgentPanel', () => {
@@ -176,6 +180,19 @@ describe('AgentPanel', () => {
     expect(trigger).not.toHaveFocus()
     sendMessage('olá')
     expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ providerId: local.id, model: local.model }), expect.any(Function))
+  })
+
+  it('shows the active provider token usage above the composer and counts turns in the local day', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [{ ...claude, dailyTokenLimit: 1000 }], activeProviderId: 'claude' } })
+    getAgentUsage.mockResolvedValue({ ok: true, value: { today: { input: 900, output: 200 }, week: { input: 900, output: 200 } } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    expect(await screen.findByRole('group', { name: 'Uso de tokens de Claude' })).toBeInTheDocument()
+    expect(screen.getByText('Limite diário atingido')).toBeInTheDocument()
+    expect(getAgentUsage).toHaveBeenCalledWith('claude', expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), expect.any(Array))
+    sendMessage('olá')
+    expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ localDay: getAgentUsage.mock.calls[0][1] }), expect.any(Function))
+    await waitFor(() => expect(getAgentUsage).toHaveBeenCalledTimes(2))
   })
 
   it('closes the provider menu when clicking outside', async () => {
@@ -343,6 +360,20 @@ describe('AgentPanel', () => {
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
     expect(startAgentTurn).not.toHaveBeenCalled()
     expect(input).toHaveValue('olá')
+  })
+
+  it('turns pasted JSON into a json block and pastes other text normally', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    const input = screen.getByLabelText('Mensagem para o agente') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'Valide:' } })
+    input.setSelectionRange(7, 7)
+    const paste = (text: string) => fireEvent.paste(input, { clipboardData: { getData: () => text } })
+    expect(paste('{"id": 1}')).toBe(false)
+    expect(input).toHaveValue('Valide:\n```json\n{"id": 1}\n```\n')
+    expect(paste('texto')).toBe(true)
+    expect(input).toHaveAttribute('spellcheck', 'false')
   })
 
   it('sends the editor selection first in the context, once, and lets it be dismissed', async () => {

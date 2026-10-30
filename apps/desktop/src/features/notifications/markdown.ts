@@ -1,8 +1,10 @@
 /**
- * Subconjunto de Markdown (CommonMark/GitLab) usado nos detalhes das
- * notificações, como as notas de uma release. Gera uma árvore simples que a
- * interface transforma em elementos React: nada vira HTML cru, e só URLs
- * http(s) viram links. HTML e tabelas aparecem como texto literal.
+ * Markdown subset (CommonMark/GFM) used in notification details, such as
+ * release notes, and in agent replies. It builds a simple tree that the
+ * interface turns into React elements: nothing becomes raw HTML, and only
+ * http(s) URLs become links. `alcy://<kind>/<id>` links become references to
+ * workspace items, which the view may render as actions. HTML shows up as
+ * literal text.
  */
 
 export type MarkdownInline =
@@ -12,23 +14,29 @@ export type MarkdownInline =
   | { type: 'em'; children: MarkdownInline[] }
   | { type: 'del'; children: MarkdownInline[] }
   | { type: 'link'; url: string; children: MarkdownInline[] }
+  | { type: 'reference'; kind: string; id: string; children: MarkdownInline[] }
   | { type: 'break' }
 
 export type MarkdownBlock =
   | { type: 'heading'; level: number; children: MarkdownInline[] }
   | { type: 'paragraph'; children: MarkdownInline[] }
-  | { type: 'code'; text: string }
+  | { type: 'code'; text: string; /** First word of the fence info string, lowercased. */ lang?: string }
+  | { type: 'table'; align: TableAlign[]; header: MarkdownInline[][]; rows: MarkdownInline[][][] }
   | { type: 'quote'; children: MarkdownBlock[] }
   | { type: 'list'; ordered: boolean; start: number; tight: boolean; items: MarkdownBlock[][] }
   | { type: 'rule' }
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/
+export type TableAlign = 'left' | 'center' | 'right' | null
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)/
 const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/
 const QUOTE = /^ {0,3}> ?(.*)$/
 const LIST_ITEM = /^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$/
 const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/
+const TABLE_DELIMITER = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/
 const SAFE_URL = /^https?:\/\/[^\s<>]+$/i
+const REFERENCE_URL = /^alcy:\/\/([a-z]+)\/([^\s/<>()]+)$/
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 const ESCAPABLE = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/
 
@@ -36,7 +44,7 @@ interface ListMarker {
   indent: number
   ordered: boolean
   start: number
-  /** Coluna onde começa o conteúdo do item; linhas de continuação recuam até ela. */
+  /** Column where the item content starts; continuation lines are indented up to it. */
   contentIndent: number
   content: string
 }
@@ -59,12 +67,12 @@ function matchListItem(line: string): ListMarker | null {
   if (!match) return null
   const [, spaces, marker, gap, content] = match
   const ordered = /\d/.test(marker)
-  // Recuo de 5+ espaços após o marcador é código no CommonMark; aqui só limita a coluna.
+  // 5+ spaces after the marker is code in CommonMark; here it only caps the column.
   const contentIndent = spaces.length + marker.length + (gap.length === 0 || gap.length > 4 ? 1 : gap.length)
   return { indent: spaces.length, ordered, start: ordered ? Number.parseInt(marker, 10) : 1, contentIndent, content }
 }
 
-/** Linha que encerra um parágrafo por começar outro bloco. */
+/** Line that ends a paragraph because it starts another block. */
 function startsBlock(line: string): boolean {
   return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || QUOTE.test(line) || matchListItem(line) !== null
 }
@@ -92,7 +100,8 @@ function parseBlocks(lines: string[]): MarkdownBlock[] {
         index++
       }
       index++
-      blocks.push({ type: 'code', text: code.join('\n') })
+      const lang = fence[2].toLowerCase()
+      blocks.push({ type: 'code', text: code.join('\n'), ...(lang && { lang }) })
       continue
     }
 
@@ -120,6 +129,12 @@ function parseBlocks(lines: string[]): MarkdownBlock[] {
       continue
     }
 
+    const align = tableAt(lines, index)
+    if (align) {
+      index = parseTable(lines, index, align, blocks)
+      continue
+    }
+
     const marker = matchListItem(line)
     if (marker) {
       index = parseList(lines, index, marker, blocks)
@@ -136,7 +151,7 @@ function parseBlocks(lines: string[]): MarkdownBlock[] {
           index++
           break
         }
-        if (startsBlock(lines[index])) break
+        if (startsBlock(lines[index]) || tableAt(lines, index)) break
       }
       paragraph.push(lines[index].trimStart())
       index++
@@ -146,6 +161,57 @@ function parseBlocks(lines: string[]): MarkdownBlock[] {
   }
 
   return blocks
+}
+
+/** GFM table: a header row with pipes over a delimiter row with the same number of cells. */
+function tableAt(lines: string[], index: number): TableAlign[] | null {
+  const header = lines[index]
+  const delimiter = lines[index + 1]
+  if (delimiter === undefined || !header.includes('|') || !delimiter.includes('|') || indentOf(header) > 3) return null
+  if (!TABLE_DELIMITER.test(delimiter)) return null
+  const cells = splitTableRow(delimiter)
+  if (cells.length !== splitTableRow(header).length) return null
+  return cells.map((cell) => {
+    const left = cell.startsWith(':')
+    const right = cell.endsWith(':')
+    return left && right ? 'center' : right ? 'right' : left ? 'left' : null
+  })
+}
+
+function parseTable(lines: string[], start: number, align: TableAlign[], blocks: MarkdownBlock[]): number {
+  // Rows are padded or cut to the header width, as GFM does.
+  const toCells = (line: string) => align.map((_, column) => parseInline(splitTableRow(line)[column] ?? ''))
+  const header = toCells(lines[start])
+  const rows: MarkdownInline[][][] = []
+  let index = start + 2
+  while (index < lines.length && !isBlank(lines[index]) && !startsBlock(lines[index])) {
+    rows.push(toCells(lines[index]))
+    index++
+  }
+  blocks.push({ type: 'table', align, header, rows })
+  return index
+}
+
+/** Cells of a table row; outer pipes are optional and `\|` is a literal pipe. */
+function splitTableRow(line: string): string[] {
+  let row = line.trim()
+  if (row.startsWith('|')) row = row.slice(1)
+  if (row.endsWith('|') && !row.endsWith('\\|')) row = row.slice(0, -1)
+  const cells: string[] = []
+  let cell = ''
+  for (let index = 0; index < row.length; index++) {
+    if (row[index] === '\\' && row[index + 1] === '|') {
+      cell += '|'
+      index++
+    } else if (row[index] === '|') {
+      cells.push(cell.trim())
+      cell = ''
+    } else {
+      cell += row[index]
+    }
+  }
+  cells.push(cell.trim())
+  return cells
 }
 
 function parseList(lines: string[], start: number, first: ListMarker, blocks: MarkdownBlock[]): number {
@@ -172,7 +238,7 @@ function parseList(lines: string[], start: number, first: ListMarker, blocks: Ma
       if (indent >= marker.contentIndent || nested) {
         item.push(line.slice(Math.min(indent, marker.contentIndent)))
       } else if (!lastBlank && !startsBlock(line)) {
-        // Continuação "preguiçosa" do parágrafo do item, sem recuo.
+        // "Lazy" continuation of the item paragraph, without indentation.
         item.push(line.trimStart())
       } else {
         break
@@ -199,9 +265,9 @@ function parseList(lines: string[], start: number, first: ListMarker, blocks: Ma
 }
 
 /**
- * Converte o texto de um bloco em trechos; `\n` vira espaço, ou quebra se a
- * linha terminar em dois espaços ou `\`. `autolink` desliga as URLs soltas
- * dentro do texto de um link, que não pode conter outro link.
+ * Turns the text of a block into inline nodes; `\n` becomes a space, or a
+ * break when the line ends in two spaces or `\`. `autolink` turns off bare
+ * URLs inside the text of a link, which cannot hold another link.
  */
 export function parseInline(text: string, autolink = true): MarkdownInline[] {
   const nodes: MarkdownInline[] = []
@@ -311,7 +377,7 @@ function findCodeClose(text: string, from: number, length: number): number {
   return -1
 }
 
-/** Posição do `]` que fecha o `[` em `open`, respeitando colchetes aninhados e escapes. */
+/** Position of the `]` that closes the `[` at `open`, honoring nested brackets and escapes. */
 function findLabelClose(text: string, open: number): number {
   let depth = 0
   for (let index = open; index < text.length; index++) {
@@ -323,7 +389,7 @@ function findLabelClose(text: string, open: number): number {
   return -1
 }
 
-/** `[texto](url "título")` e `![alt](url)`; imagens não são carregadas, viram link para o arquivo. */
+/** `[text](url "title")` and `![alt](url)`; images are not loaded, they become a link to the file. */
 function parseLink(text: string, index: number): { nodes: MarkdownInline[]; end: number } | null {
   const image = text[index] === '!' && text[index + 1] === '['
   const open = image ? index + 1 : index
@@ -337,7 +403,9 @@ function parseLink(text: string, index: number): { nodes: MarkdownInline[]; end:
   const url = target[1]
   const children = image ? [{ type: 'text' as const, text: label || url }] : parseInline(label, false)
   const end = close + 1 + target[0].length
-  // Sem esquema http(s) (caminho relativo, mailto:, javascript:…) só o texto aparece.
+  const reference = image ? null : REFERENCE_URL.exec(url)
+  if (reference) return { nodes: [{ type: 'reference', kind: reference[1], id: reference[2], children }], end }
+  // Without an http(s) scheme (relative path, mailto:, javascript:…) only the text shows.
   return { nodes: SAFE_URL.test(url) ? [{ type: 'link', url, children }] : children, end }
 }
 
@@ -350,7 +418,7 @@ function parseEmphasis(text: string, index: number, autolink: boolean): { node: 
   const delimiter = double ? char + char : char
   const contentStart = index + delimiter.length
   if (contentStart >= text.length || /\s/.test(text[contentStart])) return null
-  // `_` dentro de palavras (snake_case) é texto.
+  // `_` inside words (snake_case) is text.
   if (char === '_' && index > 0 && /\w/.test(text[index - 1])) return null
 
   let search = contentStart + 1
@@ -372,7 +440,7 @@ function parseEmphasis(text: string, index: number, autolink: boolean): { node: 
   return null
 }
 
-/** Texto comum, com URLs soltas viradas em link (como o GitLab faz). */
+/** Plain text, with bare URLs turned into links (as GitLab does). */
 function pushText(nodes: MarkdownInline[], text: string, autolink: boolean) {
   if (!autolink) {
     nodes.push({ type: 'text', text })
@@ -380,7 +448,7 @@ function pushText(nodes: MarkdownInline[], text: string, autolink: boolean) {
   }
   let cursor = 0
   for (const match of text.matchAll(BARE_URL)) {
-    // Pontuação no fim pertence à frase, não à URL.
+    // Trailing punctuation belongs to the sentence, not the URL.
     const url = match[0].replace(/[.,;:!?'")\]]+$/, '')
     if (match.index > cursor) nodes.push({ type: 'text', text: text.slice(cursor, match.index) })
     nodes.push({ type: 'link', url, children: [{ type: 'text', text: url }] })

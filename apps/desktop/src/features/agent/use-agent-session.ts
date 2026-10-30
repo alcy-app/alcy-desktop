@@ -14,6 +14,7 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import type { WorkbenchAgentHost } from './agent-host'
 import { rememberSession, rememberedSession } from './agent-session-memory'
 import { runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tools'
+import { localDay } from './agent-usage'
 
 export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' | 'declined' | 'reverted'
 
@@ -185,7 +186,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       setRunning(true)
       setItems((current) => [...current, { kind: 'user', id: nextItemId('user'), text: trimmed, context, atMs: Date.now() }])
       const result = await startAgentTurn(
-        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language },
+        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, localDay: localDay(new Date()) },
         handleEvent,
       )
       runIdRef.current = null

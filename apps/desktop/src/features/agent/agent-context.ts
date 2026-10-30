@@ -16,7 +16,7 @@ function matches(query: string, ...values: string[]) {
   return needle === '' || values.some((value) => value.toLowerCase().includes(needle))
 }
 
-function savedRequests(nodes: TreeNode[], path: string[] = []): AgentContextOption[] {
+export function savedRequests(nodes: TreeNode[], path: string[] = []): AgentContextOption[] {
   return nodes.flatMap((node) => {
     const nodePath = [...path, node.name]
     const requests = node.requests.map((request): AgentContextOption => {

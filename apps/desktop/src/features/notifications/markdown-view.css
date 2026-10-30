@@ -34,7 +34,7 @@
   font-size: var(--font-size-md);
 }
 
-.markdown-view :is(p, ul, ol, pre, blockquote) {
+.markdown-view :is(p, ul, ol, pre, blockquote, .markdown-table) {
   margin: 0 0 var(--space-3);
 }
 
@@ -46,7 +46,7 @@
   margin-top: var(--space-1);
 }
 
-/* Sublistas e parágrafos dentro de itens não abrem espaço extra. */
+/* Sublists and paragraphs inside items add no extra space. */
 .markdown-view li > :is(ul, ol, p:last-child) {
   margin-bottom: 0;
 }
@@ -90,4 +90,39 @@
   margin: var(--space-6) 0;
   border: 0;
   border-top: 1px solid var(--border);
+}
+
+.markdown-table {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.markdown-table table {
+  min-width: 100%;
+  border-collapse: collapse;
+  /* Break long words only when needed, so columns keep their natural width. */
+  overflow-wrap: break-word;
+}
+
+.markdown-table :is(th, td) {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-table :is(th, td) + :is(th, td) {
+  border-left: 1px solid var(--border-subtle);
+}
+
+.markdown-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-table th {
+  background: var(--surface-raised);
+  color: var(--text-heading);
+  font-weight: var(--font-weight-semibold);
 }

@@ -51,6 +51,55 @@ describe('AgentMessageList', () => {
     expect(screen.getByText('GET /users')).toBeInTheDocument()
   })
 
+  it('renders reply tables and colors code by its language', () => {
+    const { container } = render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: false, text: '| Campo | Tipo |\n|---|---|\n| id | int |\n\n```json\n{"ok": true}\n```' }]} {...actions} />)
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Campo' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'int' })).toBeInTheDocument()
+    expect(screen.getByText('json')).toBeInTheDocument()
+    expect(container.querySelector('.agent-code-token--key')).toHaveTextContent('"ok"')
+    expect(container.querySelector('.agent-code-token--keyword')).toHaveTextContent('true')
+  })
+
+  it('opens the requests, flows and mocks a reply links to, and marks the ones that are gone', async () => {
+    const onOpenReference = vi.fn(async (kind: string) => kind !== 'mock')
+    render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: false, text: 'Veja [Listar usuários](alcy://request/r1), [Checkout](alcy://flow/f1), [Pagamentos](alcy://mock/m1) e [Outro](alcy://monitor/x).' }]} {...actions} onOpenReference={onOpenReference} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Listar usuários' }))
+    await waitFor(() => expect(onOpenReference).toHaveBeenCalledWith('request', 'r1'))
+    expect(screen.getByRole('button', { name: 'Checkout' })).toHaveAttribute('title', 'Abrir flow')
+    const mock = screen.getByRole('button', { name: 'Pagamentos' })
+    fireEvent.click(mock)
+    await waitFor(() => expect(mock).toHaveAttribute('data-state', 'missing'))
+    expect(mock).toHaveAttribute('title', 'Não encontrado no workspace')
+    expect(screen.queryByRole('button', { name: 'Outro' })).not.toBeInTheDocument()
+    expect(screen.getByText('Outro').tagName).toBe('STRONG')
+  })
+
+  it('turns bolded names and code-formatted ids of known items into references', () => {
+    const onOpenReference = vi.fn(async () => true)
+    const resolveReference = (text: string) => (text === 'Get Users' || text === 'r1' ? { kind: 'request' as const, id: 'r1' } : null)
+    render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: false, text: 'Escolhi **Get Users** (`r1`), **Método:** GET, `{{rota}}`.' }]} {...actions} onOpenReference={onOpenReference} resolveReference={resolveReference} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Get Users' }))
+    expect(onOpenReference).toHaveBeenCalledWith('request', 'r1')
+    expect(screen.getByRole('button', { name: 'r1' })).toBeInTheDocument()
+    expect(screen.getByText('Método:').tagName).toBe('STRONG')
+    expect(screen.getByText('{{rota}}').tagName).toBe('CODE')
+  })
+
+  it('shows fenced and pasted JSON in user messages as copyable code blocks', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    render(<AgentMessageList items={[
+      { kind: 'user', id: 'u1', text: 'Valide:\n```json\n{"a": 1}\n```', context: [] },
+      { kind: 'user', id: 'u2', text: '[1, 2]', context: [] },
+    ]} {...actions} />)
+    expect(screen.getByText('Valide:')).toBeInTheDocument()
+    const buttons = screen.getAllByRole('button', { name: 'Copiar código' })
+    expect(buttons).toHaveLength(2)
+    fireEvent.click(buttons[1])
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('[1, 2]'))
+  })
+
   it('shows the time of each message and a line when the day changes', () => {
     const at = (day: number, hour: number, minute: number) => new Date(2026, 9, day, hour, minute).getTime()
     render(

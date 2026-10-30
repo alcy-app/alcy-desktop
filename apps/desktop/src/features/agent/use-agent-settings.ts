@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getAgentSettings, saveAgentSettings, type AgentProviderDto, type AgentSettingsDto } from '../../bindings/agent-settings'
+import { getAgentSettings, saveAgentSettings, type AgentProviderDto, type AgentProviderInput, type AgentSettingsDto } from '../../bindings/agent-settings'
 
 export type AgentSettingsState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; settings: AgentSettingsDto }
+
+/** What `save_agent_settings` takes back from a loaded provider: every field but the key flag. */
+export function providerInput({ id, kind, label, baseUrl, model, dailyTokenLimit, weeklyTokenLimit }: AgentProviderDto): AgentProviderInput {
+  return { id, kind, label, baseUrl, model, dailyTokenLimit, weeklyTokenLimit }
+}
 
 /** A provider the chat can use: it has a key, or speaks the OpenAI format (local servers need none). */
 export function isProviderUsable(provider: AgentProviderDto): boolean {
@@ -36,7 +41,7 @@ export function useAgentSettings() {
       if (state.status !== 'ready') return
       const { providers } = state.settings
       const result = await saveAgentSettings({
-        providers: providers.map(({ id, kind, label, baseUrl, model }) => ({ id, kind, label, baseUrl, model })),
+        providers: providers.map(providerInput),
         activeProviderId: providerId,
       })
       if (result.ok) setState({ status: 'ready', settings: result.value })
