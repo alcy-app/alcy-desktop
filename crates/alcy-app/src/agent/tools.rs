@@ -141,6 +141,20 @@ const TOOLS: &[ToolSpec] = &[
         schema: save_request_arguments,
     },
     ToolSpec {
+        name: "import_from_text",
+        class: ToolClass::SideEffect,
+        description: "Import text using Alcy's native format detection: Alcy, Postman, Insomnia or Bruno collections, OpenAPI JSON/YAML, HAR, or curl/wget/grpcurl commands (including multiple commands). Pass the original content without Markdown fences; call separately for independent documents. Saves collections, folders, requests, environments and documentation without executing requests or scripts. Silent by default; set openFirstRequest to true only when the user needs to see the first imported request. Returns counts, saved ids and warnings. Follows the chat approval mode.",
+        schema: || {
+            object(
+                json!({
+                    "content": { "type": "string", "minLength": 1 },
+                    "openFirstRequest": { "type": "boolean", "default": false },
+                }),
+                &["content"],
+            )
+        },
+    },
+    ToolSpec {
         name: "create_collection",
         class: ToolClass::SideEffect,
         description: "Create an empty collection. Returns its id. The user approves it first.",
@@ -436,6 +450,7 @@ mod tests {
             "cancel_request",
             "send_grpc_message",
             "close_grpc_send",
+            "import_from_text",
         ] {
             assert_eq!(
                 agent_tool_class(name),

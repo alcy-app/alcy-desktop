@@ -510,6 +510,14 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
     }
     case 'create_collection':
       return ok({ collectionId: await host.createCollection(requiredString(input, 'name').trim()) })
+    case 'import_from_text': {
+      const content = requiredString(input, 'content')
+      if (content.includes(AGENT_SECRET_MASK) || content.includes('[agent:truncated]')) return failure('Import the original content, without secret masks or truncated values.')
+      if (input.openFirstRequest !== undefined && typeof input.openFirstRequest !== 'boolean') throw new ToolInputError("'openFirstRequest' must be a boolean.")
+      const result = await host.importFromText(content)
+      const tabId = input.openFirstRequest === true && result.firstRequestId ? await host.openRequest(result.firstRequestId) : null
+      return ok({ ...result, tabId })
+    }
     case 'create_folder': {
       const parentId = requiredString(input, 'parentId')
       if (!findNode(host.collections(), parentId)) return failure('parentId is not a collection or folder.')
@@ -577,6 +585,8 @@ export function summarizeToolCall(name: string, input: Input, host: WorkbenchAge
     }
     case 'search_collections':
       return string('query')
+    case 'import_from_text':
+      return `${new TextEncoder().encode(string('content')).byteLength} B`
     case 'create_collection':
     case 'create_folder':
       return string('name')

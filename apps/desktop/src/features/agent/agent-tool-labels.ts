@@ -18,6 +18,7 @@ const KNOWN_TOOLS = new Set([
   'send_grpc_message',
   'close_grpc_send',
   'save_request',
+  'import_from_text',
   'create_collection',
   'create_folder',
   'set_environment_variable',

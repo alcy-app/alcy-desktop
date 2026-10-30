@@ -2832,6 +2832,7 @@ const ptBR = {
   'agent.tool.send_request': 'Enviar a requisição',
   'agent.tool.save_request': 'Salvar a requisição',
   'agent.tool.create_collection': 'Criar collection',
+  'agent.tool.import_from_text': 'Importar a partir de texto',
   'agent.tool.create_folder': 'Criar pasta',
   'agent.tool.set_environment_variable': 'Definir variável de ambiente',
   'agent.tool.set_active_environment': 'Trocar o ambiente ativo',

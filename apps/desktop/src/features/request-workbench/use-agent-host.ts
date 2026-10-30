@@ -1,10 +1,11 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
+import { importCollectionsFromText } from '../../bindings/import-collections-from-text'
 import type { AgentHostTab, WorkbenchAgentHost } from '../agent/agent-host'
 import type { useEnvironmentsState } from '../environments/use-environments-state'
-import { findNode, findRequest, insertFolder, insertRequest, updateRequestContent, type RequestContent } from './collection-tree'
+import { findNode, findRequest, insertFolder, insertRequest, regenerateIds, uniqueChildName, updateRequestContent, type RequestContent, type TreeNode } from './collection-tree'
 import { editorHighlighter, revealEditor, type EditorField, type EditorHighlighter, type EditorSlot } from './editor-bridge'
 import type { useCollectionsState } from './use-collections-state'
-import { requestToDto } from './use-collections-state'
+import { requestToDto, treeFromDto } from './use-collections-state'
 import type { useFlowsState } from '../flows/use-flows-state'
 import type { useOpenTabs } from './use-open-tabs'
 import { contentOf, isTabDirty, type useWorkbenchState } from './use-workbench-state'
@@ -12,6 +13,7 @@ import type { RequestTabId, WorkbenchTab } from './request-workbench.types'
 import type { AgentResourceHost } from '../agent/use-agent-resources'
 
 interface AgentHostSources {
+  workspaceRootPath: string
   resources?: AgentResourceHost
   flows?: ReturnType<typeof useFlowsState>
   workbench: ReturnType<typeof useWorkbenchState>
@@ -243,6 +245,57 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         await latest.current.collections.commitCollections((current) => insertFolder(current, null, { id, name, folders: [], requests: [], authentication: { type: 'none' }, variables: [] }))
         await afterRender()
         return id
+      },
+      async importFromText(content) {
+        const { workspaceRootPath, collections, environments } = latest.current
+        if (!collections.loaded || collections.loadError) throw new Error(collections.loadError ?? 'Collections are not loaded.')
+        if (!environments.loaded || environments.loadError) throw new Error(environments.loadError ?? 'Environments are not loaded.')
+        const result = await importCollectionsFromText(content, workspaceRootPath)
+        if (!result.ok) throw new Error(result.error.message)
+        if (latest.current.workspaceRootPath !== workspaceRootPath) throw new Error('The workspace is no longer available.')
+        const data = result.value
+        const imported = treeFromDto(data.collections).map((node) => regenerateIds(node))
+        const importedEnvironments = data.environments.map((environment) => ({
+          ...environment, id: crypto.randomUUID(),
+          variables: environment.variables.map((variable) => ({ ...variable, id: crypto.randomUUID() })),
+        }))
+        if (imported.length > 0) {
+          await collections.commitCollections((current) => {
+            let next = current
+            for (const node of imported) {
+              node.name = uniqueChildName(next, null, 'folder', node.name)
+              next = insertFolder(next, null, node)
+            }
+            return next
+          })
+          await afterRender()
+        }
+        if (importedEnvironments.length > 0) {
+          try {
+            if (latest.current.workspaceRootPath !== workspaceRootPath) throw new Error('The workspace is no longer available.')
+            await environments.commitEnvironments((current) => ({ ...current, environments: [...current.environments, ...importedEnvironments] }))
+            await afterRender()
+          } catch (error) {
+            if (imported.length > 0) throw new Error(`Collections were imported, but environments could not be saved: ${error instanceof Error ? error.message : String(error)}. Do not repeat the whole import; it would duplicate collections.`, { cause: error })
+            throw error
+          }
+        }
+        let folderCount = 0
+        let requestCount = 0
+        let firstRequestId: string | null = null
+        const count = (node: TreeNode) => {
+          firstRequestId ??= node.requests[0]?.id ?? null
+          requestCount += node.requests.length
+          folderCount += node.folders.length
+          node.folders.forEach(count)
+        }
+        imported.forEach(count)
+        return {
+          collectionCount: imported.length, folderCount, requestCount, environmentCount: importedEnvironments.length,
+          collections: imported.slice(0, 50).map(({ id, name }) => ({ id, name })),
+          environments: importedEnvironments.slice(0, 50).map(({ id, name }) => ({ id, name })),
+          firstRequestId, scriptCount: data.scriptCount, warningCount: data.warnings.length, warnings: data.warnings.slice(0, 20),
+        }
       },
       async createFolder(parentId, name) {
         if (!findNode(latest.current.collections.collections, parentId)) return null

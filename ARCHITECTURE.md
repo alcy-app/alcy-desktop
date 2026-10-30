@@ -324,6 +324,16 @@ remain session-only; no additional persisted resource format is introduced.
 Flow graph edits merge nodes and edges by identity, while explicit node
 renaming reuses reference rewriting and preserves linked request drafts.
 
+The `import_from_text` side-effect tool reuses the native text import binding
+and its existing format detection, documentation and script translation. It
+regenerates identities and commits collections and environments through the
+same explicit persistence paths as other agent writes. Imports return bounded
+metadata and warnings, without request bodies or variable values. No tab opens
+unless `openFirstRequest` is requested; importing never executes requests or
+scripts. Independent documents use separate calls; shell command batches use
+the native parser. Collection and environment saves are separate, so an
+environment save failure reports that collections have already been imported.
+
 Explicit resource writes cancel pending debounced saves, await native
 validation/persistence and then publish their state. Concurrent manual
 edits win; an outdated approval or save returns a recoverable conflict.

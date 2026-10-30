@@ -2838,6 +2838,7 @@ const en: Record<TranslationKey, string> = {
   'agent.tool.send_request': 'Send the request',
   'agent.tool.save_request': 'Save the request',
   'agent.tool.create_collection': 'Create collection',
+  'agent.tool.import_from_text': 'Import from text',
   'agent.tool.create_folder': 'Create folder',
   'agent.tool.set_environment_variable': 'Set environment variable',
   'agent.tool.set_active_environment': 'Change the active environment',

@@ -50,6 +50,7 @@ function fakeHost(tabs: AgentHostTab[], overrides: Partial<WorkbenchAgentHost> =
     }),
     send: vi.fn(async () => null),
     saveTab: vi.fn(async () => ({ ok: false as const, reason: 'needsParent' as const })),
+    importFromText: vi.fn(async () => ({ collectionCount: 1, folderCount: 0, requestCount: 1, environmentCount: 0, collections: [{ id: 'imported', name: 'Imported' }], environments: [], firstRequestId: 'imported-request', scriptCount: 0, warningCount: 0, warnings: [] })),
     createCollection: vi.fn(() => 'c2'),
     createFolder: vi.fn(() => 'f1'),
     setVariable: vi.fn(),
@@ -61,6 +62,53 @@ function fakeHost(tabs: AgentHostTab[], overrides: Partial<WorkbenchAgentHost> =
 const parse = (content: string) => JSON.parse(content) as Record<string, unknown>
 
 describe('runAgentTool', () => {
+  it('imports original text silently by default and returns saved ids', async () => {
+    const host = fakeHost([])
+    const content = 'curl https://example.test/a\ncurl https://example.test/b'
+    const outcome = await runAgentTool('import_from_text', { content }, host, 'New request')
+    expect(outcome.isError).toBe(false)
+    expect(host.importFromText).toHaveBeenCalledWith(content)
+    expect(parse(outcome.content)).toMatchObject({ requestCount: 1, firstRequestId: 'imported-request', tabId: null })
+    expect(host.openRequest).not.toHaveBeenCalled()
+    expect(host.send).not.toHaveBeenCalled()
+  })
+
+  it('opens the first imported request only when requested', async () => {
+    const host = fakeHost([])
+    const outcome = await runAgentTool('import_from_text', { content: 'curl https://example.test', openFirstRequest: true }, host, 'New request')
+    expect(host.openRequest).toHaveBeenCalledWith('imported-request')
+    expect(parse(outcome.content).tabId).toBe('opened')
+  })
+
+  it('does not open a tab for an environment-only import', async () => {
+    const host = fakeHost([], { importFromText: vi.fn(async () => ({ collectionCount: 0, folderCount: 0, requestCount: 0, environmentCount: 1, collections: [], environments: [{ id: 'new-env', name: 'Imported' }], firstRequestId: null, scriptCount: 0, warningCount: 0, warnings: [] })) })
+    const outcome = await runAgentTool('import_from_text', { content: '{}', openFirstRequest: true }, host, 'New request')
+    expect(outcome.isError).toBe(false)
+    expect(host.openRequest).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {}, { content: '' }, { content: 3 }, { content: 'curl https://example.test', openFirstRequest: 'false' },
+    { content: `curl -H 'Authorization: ${AGENT_SECRET_MASK}' https://example.test` },
+    { content: '{[agent:truncated]}' },
+  ])('rejects invalid or incomplete import arguments before saving: %j', async (input) => {
+    const host = fakeHost([])
+    const outcome = await runAgentTool('import_from_text', input, host, 'New request')
+    expect(outcome.isError).toBe(true)
+    expect(host.importFromText).not.toHaveBeenCalled()
+    expect(host.openRequest).not.toHaveBeenCalled()
+  })
+
+  it('reports import failures without opening tabs or exposing content in the card', async () => {
+    const host = fakeHost([], { importFromText: vi.fn(async () => { throw new Error('Unsupported format') }) })
+    const input = { content: 'private document content' }
+    const outcome = await runAgentTool('import_from_text', input, host, 'New request')
+    expect(outcome.isError).toBe(true)
+    expect(outcome.content).toContain('Unsupported format')
+    expect(host.openRequest).not.toHaveBeenCalled()
+    expect(summarizeToolCall('import_from_text', input, host)).not.toContain(input.content)
+  })
+
   it('edits gRPC payloads and supports digest and OAuth credentials without losing masked values', () => {
     const grpc = emptyRequestContent('grpc')
     expect(applyRequestPatch(grpc, { grpc: { service: 'users.Users', method: 'Get', message: '{"id":1}', deadlineMs: 5000 } }).grpc).toMatchObject({ service: 'users.Users', method: 'Get', message: '{"id":1}', deadlineMs: 5000 })

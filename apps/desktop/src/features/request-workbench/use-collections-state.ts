@@ -177,7 +177,7 @@ export function requestToDto(request: RequestSummary): SavedRequestDto {
   }
 }
 
-function treeFromDto(nodes: (CollectionDto | FolderDto)[]): TreeNode[] {
+export function treeFromDto(nodes: (CollectionDto | FolderDto)[]): TreeNode[] {
   return nodes.map((node) => ({
     id: node.id,
     name: node.name,

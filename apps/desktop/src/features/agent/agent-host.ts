@@ -3,6 +3,7 @@ import type { EditorField, EditorSlot } from '../request-workbench/editor-bridge
 import type { ExecutionState, WorkbenchProtocol } from '../request-workbench/request-workbench.types'
 import type { AgentResourceHost } from './use-agent-resources'
 import type { GrpcStreamState } from '../request-workbench/grpc-stream'
+import type { ImportWarningDto } from '../../bindings/import-collections'
 
 /** A request tab as the agent tools see it. */
 export interface AgentHostTab {
@@ -29,6 +30,19 @@ export type AgentHighlightResult =
   | { ok: false; reason: 'notFound' | 'noResponse' | 'noEditor' | 'noMatch' }
 
 export type AgentSaveResult = { ok: true; requestId: string; name: string } | { ok: false; reason: 'notFound' | 'flowNode' | 'needsParent' | 'unknownParent' }
+
+export interface AgentTextImportResult {
+  collectionCount: number
+  folderCount: number
+  requestCount: number
+  environmentCount: number
+  collections: { id: string; name: string }[]
+  environments: { id: string; name: string }[]
+  firstRequestId: string | null
+  scriptCount: number
+  warningCount: number
+  warnings: ImportWarningDto[]
+}
 
 /**
  * What the agent can read and do on the workbench (ADR 0064). Built by the
@@ -58,6 +72,7 @@ export interface WorkbenchAgentHost {
   cancelRequest?(tabId: string): Promise<boolean>
   controlGrpcStream?(tabId: string, close: boolean): Promise<boolean>
   saveTab(tabId: string, target: { parentId: string; name: string } | null): Promise<AgentSaveResult>
+  importFromText(content: string): Promise<AgentTextImportResult>
   createCollection(name: string): string | Promise<string>
   createFolder(parentId: string, name: string): string | null | Promise<string | null>
   setVariable(environmentId: string, name: string, value: string, sensitive: boolean | undefined): void | Promise<void>
