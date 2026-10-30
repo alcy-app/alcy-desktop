@@ -7,6 +7,7 @@ mod context_window;
 mod conversation;
 mod prompt;
 mod run_turn;
+mod session_title;
 mod tools;
 
 pub use chat_model::{
@@ -26,4 +27,5 @@ pub use run_turn::{
     AgentToolHost, AgentTurnOutcome, AgentTurnRequest, AgentTurnSink, DEFAULT_MAX_OUTPUT_TOKENS,
     MAX_TOOL_RESULT_BYTES, MAX_TOOL_ROUNDS, ToolCall, ToolOutcome, TurnStop, run_agent_turn,
 };
+pub use session_title::{MAX_SESSION_TITLE_CHARS, generate_session_title};
 pub use tools::{ToolClass, agent_tool_catalog, agent_tool_class};

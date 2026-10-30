@@ -272,6 +272,19 @@ describe('AgentPanel', () => {
     expect(startAgentTurn.mock.calls[1][0].context).toEqual([expect.objectContaining({ kind: 'quote', summary: 'Use o endpoint /orders.' })])
   })
 
+  it('shows the title the model gives a new chat in place of its first line', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+      onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'me liste os usuarios da api de teste' })
+      onEvent({ type: 'titleChanged', title: 'Listar usuários da API' })
+      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
+    })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('me liste os usuarios da api de teste')
+    expect(await screen.findByRole('heading', { name: 'Listar usuários da API' })).toBeInTheDocument()
+  })
+
   it('closes the provider menu when clicking outside', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)

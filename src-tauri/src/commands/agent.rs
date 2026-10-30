@@ -13,8 +13,8 @@ use alcy_app::{
     AgentConversation, AgentLanguage, AgentRole, AgentToolHost, AgentTurnRequest, AgentTurnSink,
     ChatModelError, ContentBlock, ContextReference, CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS,
     MAX_CONTEXT_REFERENCES, ToolCall, ToolClass, ToolOutcome, TurnStop, agent_system_prompt,
-    agent_tool_catalog, compose_user_message, last_user_text_index, push_user_text,
-    remove_last_user_text, run_agent_turn,
+    agent_tool_catalog, compose_user_message, generate_session_title, last_user_text_index,
+    push_user_text, remove_last_user_text, run_agent_turn,
 };
 use alcy_domain::{
     AgentProvider, AgentProviderKind, AgentSettings, AgentSettingsError, agent_credential_key,
@@ -277,6 +277,10 @@ pub enum AgentEventDto {
     },
     /// The oldest part of the chat was summarized to fit the model's context.
     ContextCompacted,
+    /// The model named a new chat from its first message.
+    TitleChanged {
+        title: String,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -905,20 +909,45 @@ async fn run_turn(
         title: session.title.clone(),
     });
 
-    let system_prompt = agent_system_prompt(match input.language {
+    let language = match input.language {
         AgentLanguageDto::PortugueseBrazil => AgentLanguage::PortugueseBrazil,
         AgentLanguageDto::English => AgentLanguage::English,
-    });
+    };
+    let system_prompt = agent_system_prompt(language);
     let tools = agent_tool_catalog();
-    let outcome = run_agent_turn(
+    // A new chat gets a title from the model, alongside the reply so the turn
+    // does not wait for it; until then (or if it fails) the first line stays.
+    let title = async {
+        if !is_new {
+            return None;
+        }
+        match generate_session_title(&chat, &model, &text, language).await {
+            Ok((title, usage)) => {
+                if let Some(title) = &title {
+                    let _ = channel.send(AgentEventDto::TitleChanged {
+                        title: title.clone(),
+                    });
+                }
+                Some((title, usage))
+            }
+            Err(error) => {
+                log::warn!(target: "alcy::agent", "session title failed ({error})");
+                None
+            }
+        }
+    };
+    let tool_host = UiToolBridge {
+        channel,
+        runs,
+        run_id: &input.run_id,
+    };
+    let sink = ChannelSink { channel };
+    let cancellation = WatchCancellation(receiver);
+    let turn = run_agent_turn(
         &chat,
-        &UiToolBridge {
-            channel,
-            runs,
-            run_id: &input.run_id,
-        },
-        &ChannelSink { channel },
-        &WatchCancellation(receiver),
+        &tool_host,
+        &sink,
+        &cancellation,
         &mut conversation,
         AgentTurnRequest {
             model: &model,
@@ -927,8 +956,15 @@ async fn run_turn(
             max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             context_budget_tokens: context_budget_tokens(&provider),
         },
-    )
-    .await;
+    );
+    let (outcome, title) = tokio::join!(turn, title);
+    let mut title_usage = alcy_app::TokenUsage::default();
+    if let Some((title, usage)) = title {
+        title_usage = usage;
+        if let Some(title) = title {
+            session.title = title;
+        }
+    }
     session.messages = conversation.messages;
     session.summary = conversation.summary;
     session.summarized_until = conversation.summarized_until;
@@ -960,9 +996,10 @@ async fn run_turn(
     if let Some(day) = input.local_day.filter(|day| is_valid_usage_day(day)) {
         let store = paths.usage_store();
         let provider_id = provider.id.clone();
+        // The title call is counted with the turn that asked for it.
         let tokens = AgentTokenTotals {
-            input: outcome.usage.input_tokens,
-            output: outcome.usage.output_tokens,
+            input: outcome.usage.input_tokens + title_usage.input_tokens,
+            output: outcome.usage.output_tokens + title_usage.output_tokens,
         };
         // Usage is a guide value: failing to count it never fails the turn.
         let recorded = run_blocking(move || Ok(store.record(&provider_id, &day, tokens)?)).await;

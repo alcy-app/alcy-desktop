@@ -177,6 +177,9 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
           return
         case 'toolCallFinished':
           return
+        case 'titleChanged':
+          setTitle(event.title)
+          return
         case 'contextCompacted':
           setItems((current) => [
             ...current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item)),

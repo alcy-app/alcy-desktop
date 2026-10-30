@@ -13,6 +13,8 @@ export type AgentEventDto =
   | { type: 'toolCallFinished'; callId: string; isError: boolean }
   /** The oldest part of the chat was summarized to fit the model's context. */
   | { type: 'contextCompacted' }
+  /** The model named a new chat from its first message. */
+  | { type: 'titleChanged'; title: string }
 
 export interface AgentContextInput {
   kind: string
