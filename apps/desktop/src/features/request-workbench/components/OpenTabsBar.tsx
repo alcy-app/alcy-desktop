@@ -1,5 +1,5 @@
-import { memo, useEffect, useState } from 'react'
-import type { FocusEvent, MouseEvent as ReactMouseEvent } from 'react'
+import { Fragment, memo, useEffect, useRef, useState } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { DragPreview } from '../../../shared/DragPreview'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { findShortcutAction, isShortcutEventConsumed } from '../../../shared/shortcuts/shortcuts'
@@ -7,13 +7,17 @@ import { useShortcuts } from '../../../shared/shortcuts/use-shortcuts'
 import { hasOpenModal } from '../../../shared/ui/open-modals'
 import { usePointerDrag } from '../../../shared/use-pointer-drag'
 import type { DropEdge } from '../../../shared/use-pointer-drag'
-import { CloseIcon, PinIcon, PlusIcon } from '../../../shared/ui/icons'
+import { ChevronRightIcon, CloseIcon, PinIcon, PlusIcon } from '../../../shared/ui/icons'
 import { IconButton } from '../../../shared/ui/IconButton'
-import { MenuItem } from '../../../shared/ui/Menu'
+import { MenuItem, MenuSeparator } from '../../../shared/ui/Menu'
 import { useTooltip } from '../../../shared/ui/use-tooltip'
 import '../../../shared/ui/menu.css'
 import type { OpenTabDescriptor } from '../use-open-tabs'
 import type { WorkbenchEnvironment } from '../request-workbench.types'
+import { arrangeGroupedTabs } from '../tab-groups'
+import type { useTabGroups } from '../use-tab-groups'
+import { TabGroupEditor } from './TabGroupEditor'
+import { TabMenuSurface } from './TabMenuSurface'
 import { DiscardTabModal } from './DiscardTabModal'
 import { EnvironmentSelect } from './EnvironmentSelect'
 import { RequestMethodBadge } from './RequestMethodBadge'
@@ -21,6 +25,7 @@ import './open-tabs-bar.css'
 
 interface OpenTabsBarProps {
   tabs: OpenTabDescriptor[]
+  tabGroups: ReturnType<typeof useTabGroups>
   activeTabId: string | null
   onSelect: (id: string) => void
   onPin: (id: string) => void
@@ -66,8 +71,16 @@ function TabContextMenu({
   onCloseUnfixedTabs,
   onCloseSelectedTabs,
   onToggleFix,
+  canGroup,
+  grouped,
+  onGroup,
+  onUngroup,
 }: {
   menu: TabContextMenuState
+  canGroup: boolean
+  grouped: boolean
+  onGroup: () => void
+  onUngroup: () => void
   onClose: () => void
   onSaveTab: () => void
   onCloseTab: () => void
@@ -79,23 +92,11 @@ function TabContextMenu({
 }) {
   const { t } = useLanguage()
 
-  const closeOnBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      onClose()
-    }
-  }
-
   return (
-    <div
-      className="ui-menu rw-tab-context-menu"
-      role="menu"
-      aria-label={t('workbench.openTabs.contextMenuAria', { name: menu.label })}
-      style={{ left: menu.x, top: menu.y }}
-      onBlur={closeOnBlur}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') onClose()
-      }}
-    >
+    <TabMenuSurface x={menu.x} y={menu.y} label={t('workbench.openTabs.contextMenuAria', { name: menu.label })} onClose={onClose}>
+      {canGroup && <MenuItem label={t('workbench.tabGroups.add')} shortcutAction="groupTabs" onSelect={onGroup} />}
+      {grouped && <MenuItem label={t('workbench.tabGroups.remove')} onSelect={() => { onUngroup(); onClose() }} />}
+      {(canGroup || grouped) && <MenuSeparator />}
       {menu.selectionCount > 1 && (
         <MenuItem
           label={t('workbench.openTabs.closeSelectedTabsMenuItem', { count: menu.selectionCount })}
@@ -126,6 +127,7 @@ function TabContextMenu({
             onClose()
           }}
         />
+        <MenuSeparator />
         <MenuItem
           label={t('workbench.openTabs.closeTabMenuItem')}
           shortcutAction="closeTab"
@@ -158,12 +160,13 @@ function TabContextMenu({
           onClose()
         }}
       />
-    </div>
+    </TabMenuSurface>
   )
 }
 
 export const OpenTabsBar = memo(function OpenTabsBar({
-  tabs,
+  tabs: baseTabs,
+  tabGroups,
   activeTabId,
   onSelect,
   onPin,
@@ -182,6 +185,25 @@ export const OpenTabsBar = memo(function OpenTabsBar({
   onEnvironmentChange,
 }: OpenTabsBarProps) {
   const { t } = useLanguage()
+  const groups = tabGroups.groups
+  const tabs = arrangeGroupedTabs(baseTabs, groups)
+  const membership = new Map(groups.flatMap((group) => group.tabIds.map((id) => [id, group] as const)))
+  const visibleTabs = tabs.filter((tab) => !membership.get(tab.id)?.collapsed)
+  const [groupPicker, setGroupPicker] = useState<{ ids: string[]; x: number; y: number } | null>(null)
+  const [groupEditor, setGroupEditor] = useState<{ id: string; x: number; y: number } | null>(null)
+  const editingGroup = groups.find((group) => group.id === groupEditor?.id)
+  const previousActiveRef = useRef(activeTabId)
+  const hadTabsRef = useRef(baseTabs.length > 0)
+  const barRef = useRef<HTMLDivElement>(null)
+  // Reveal tabs activated from the sidebar, search, shortcuts or a close action.
+  useEffect(() => {
+    if (previousActiveRef.current === activeTabId) return
+    previousActiveRef.current = activeTabId
+    if (!hadTabsRef.current) { hadTabsRef.current = baseTabs.length > 0; return }
+    const group = activeTabId ? membership.get(activeTabId) : undefined
+    if (group?.collapsed) tabGroups.updateGroup(group.id, { collapsed: false })
+    barRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  })
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null)
   /** Ctrl/Cmd+click toggles a tab; Shift+click selects a range from the anchor (initially the active tab).
@@ -199,12 +221,12 @@ export const OpenTabsBar = memo(function OpenTabsBar({
   /** Return true when the click changes selection and should not activate the tab. */
   const handleSelectClick = (id: string, event: ReactMouseEvent): boolean => {
     const additive = event.ctrlKey || event.metaKey
-    const anchor = anchorId !== null && tabs.some((tab) => tab.id === anchorId) ? anchorId : activeTabId
+    const anchor = anchorId !== null && visibleTabs.some((tab) => tab.id === anchorId) ? anchorId : activeTabId
     if (event.shiftKey && anchor !== null) {
-      const from = tabs.findIndex((tab) => tab.id === anchor)
-      const to = tabs.findIndex((tab) => tab.id === id)
+      const from = visibleTabs.findIndex((tab) => tab.id === anchor)
+      const to = visibleTabs.findIndex((tab) => tab.id === id)
       if (from !== -1 && to !== -1) {
-        const range = tabs.slice(Math.min(from, to), Math.max(from, to) + 1).map((tab) => tab.id)
+        const range = visibleTabs.slice(Math.min(from, to), Math.max(from, to) + 1).map((tab) => tab.id)
         setSelectedIds((current) => new Set(additive ? [...current, ...range] : range))
         setAnchorId(anchor)
         return true
@@ -212,7 +234,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     }
     if (additive || event.shiftKey) {
       setSelectedIds((current) => {
-        const next = new Set(current.size === 0 && activeTabId !== null ? [activeTabId] : current)
+        const next = new Set(current.size === 0 && activeTabId !== null && visibleTabs.some((tab) => tab.id === activeTabId) ? [activeTabId] : current)
         if (next.has(id)) next.delete(id)
         else next.add(id)
         return next
@@ -224,24 +246,26 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     return false
   }
 
-  const { draggedId, draggedLabel, dragOverId, dragOverEdge, position, startDrag } = usePointerDrag<'tab'>({
+  const { draggedId, draggedLabel, dragOverId, dragOverEdge, position, startDrag } = usePointerDrag<'tab' | 'group'>({
     dropTargetAttribute: 'data-tab-drop-id',
     dropKindAttribute: 'data-tab-drop-kind',
     orientation: 'horizontal',
     onDrop: (dragged, target, edge) => {
-      if (isGroupDrag(dragged.id)) {
-        onReorderGroup(
-          selection.map((tab) => tab.id),
-          target.id,
-          edge,
-        )
+      const ids = isGroupDrag(dragged.id) ? selection.map((tab) => tab.id) : [dragged.id]
+      if (target.kind === 'group') {
+        tabGroups.moveTabs(ids, target.id)
         return
       }
-      // Fixed tabs stay before the others; dragging between the two groups does nothing.
       const draggedTab = tabs.find((tab) => tab.id === dragged.id)
       const targetTab = tabs.find((tab) => tab.id === target.id)
-      if (draggedTab && targetTab && draggedTab.fixed !== targetTab.fixed) return
-      onReorder(dragged.id, target.id, edge)
+      if (!draggedTab || !targetTab || draggedTab.fixed !== targetTab.fixed) return
+      const targetGroup = membership.get(target.id)
+      const fromGroup = membership.get(dragged.id)
+      if (targetGroup || fromGroup) tabGroups.moveTabs(ids, targetGroup?.id ?? null, target.id, edge)
+      if (!targetGroup) {
+        if (ids.length > 1) onReorderGroup(ids, target.id, edge)
+        else onReorder(dragged.id, target.id, edge)
+      }
     },
   })
 
@@ -250,6 +274,8 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     // Right-clicking outside the selection clears it; on a selected tab, the menu acts on the group.
     const inGroup = selection.length > 1 && selectedIds.has(tab.id)
     if (!inGroup && selectedIds.size > 0) clearSelection()
+    setGroupPicker(null)
+    setGroupEditor(null)
     setContextMenu({
       tabId: tab.id,
       kind: tab.kind,
@@ -306,16 +332,42 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     }
   }
 
-  // Handle the active tab's close shortcut (Ctrl+W by default) here to confirm discarding changes.
-  // Ignore it while a modal is open.
+  const createGroupAt = (ids: string[], point: { x: number; y: number }) => {
+    const id = tabGroups.createGroup(ids, t('workbench.tabGroups.defaultName'))
+    if (id) setGroupEditor({ id, ...point })
+    setGroupPicker(null)
+    clearSelection()
+  }
+
+  // The bar owns selection and close confirmations, so it dispatches both tab shortcuts.
   const { bindings } = useShortcuts()
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isShortcutEventConsumed(event) || event.isComposing) return
-      if (findShortcutAction(bindings, event) !== 'closeTab') return
+      const action = findShortcutAction(bindings, event)
+      if (action !== 'closeTab' && action !== 'groupTabs') return
       event.preventDefault()
+      if (hasOpenModal()) return
       const active = tabs.find((tab) => tab.id === activeTabId)
-      if (!active || hasOpenModal()) return
+      if (action === 'groupTabs') {
+        if (event.repeat || event.target instanceof Element && event.target.closest('.rw-tab-context-menu')) return
+        const targets = (selection.length ? selection : active ? [active] : []).filter((tab) => !tab.fixed && tab.fixable !== false)
+        if (!targets.length) return
+        const targetGroup = membership.get(targets[0].id)
+        const anchorId = targetGroup?.collapsed ? targetGroup.id : targets[0].id
+        const anchors = barRef.current?.querySelectorAll<HTMLElement>('[data-tab-drop-id]') ?? []
+        const anchor = [...anchors].find((element) => element.dataset.tabDropId === anchorId)
+        const rect = (anchor ?? barRef.current)?.getBoundingClientRect()
+        if (!rect) return
+        const point = { x: rect.left, y: rect.bottom + 6 }
+        setContextMenu(null)
+        setGroupEditor(null)
+        const ids = targets.map((tab) => tab.id)
+        if (groups.length === 0) createGroupAt(ids, point)
+        else setGroupPicker({ ids, ...point })
+        return
+      }
+      if (!active) return
       if (isGroupDrag(active.id)) requestCloseMany(selection.map((tab) => tab.id))
       else requestCloseTab(active.id, active.label)
     }
@@ -338,17 +390,36 @@ export const OpenTabsBar = memo(function OpenTabsBar({
   return (
     <div className="rw-open-tabs-row">
       <div
+        ref={barRef}
         className="rw-open-tabs"
         role="tablist"
         aria-label={t('workbench.openTabs.ariaLabel')}
         onKeyDown={(event) => {
           if (event.key === 'Escape' && selectedIds.size > 0) clearSelection()
+          if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const at = visibleTabs.findIndex((tab) => tab.id === activeTabId)
+          const index = event.key === 'Home' ? 0 : event.key === 'End' ? visibleTabs.length - 1
+            : (at + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length
+          const next = visibleTabs[index]
+          if (next) {
+            onSelect(next.id)
+            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index]?.focus()
+          }
         }}
       >
         {tabs.map((tab) => {
+          const group = membership.get(tab.id)
+          const groupCountLabel = group ? t(group.tabIds.length === 1 ? 'workbench.tabGroups.singleTab' : 'workbench.tabGroups.tabCount', { count: group.tabIds.length }) : ''
+          const firstInGroup = group?.tabIds[0] === tab.id
+          const lastInGroup = group?.tabIds.at(-1) === tab.id
+          const groupStyle = group ? { '--tab-group-color': `var(--label-${group.color})` } as CSSProperties : undefined
           const isActive = tab.id === activeTabId
           const label = tab.label
           const classNames = ['rw-open-tab']
+          if (group) classNames.push('rw-open-tab--grouped')
+          if (lastInGroup) classNames.push('rw-open-tab--group-end')
           if (isActive) classNames.push('rw-open-tab--active')
           if (tab.preview) classNames.push('rw-open-tab--preview')
           if (tab.fixed) classNames.push('rw-open-tab--fixed')
@@ -359,9 +430,37 @@ export const OpenTabsBar = memo(function OpenTabsBar({
           if (dragOverId === tab.id && dragOverEdge) classNames.push(`rw-open-tab--drop-${dragOverEdge}`)
 
           return (
-            <div
-              key={tab.id}
+            <Fragment key={tab.id}>
+            {group && firstInGroup && (
+              <div
+                className={`rw-tab-group${group.collapsed ? ' rw-tab-group--collapsed' : ''}${group.collapsed && group.tabIds.includes(activeTabId ?? '') ? ' rw-tab-group--active' : ''}${dragOverId === group.id ? ' rw-tab-group--drop' : ''}`}
+                style={groupStyle}
+                data-tab-drop-id={group.id}
+                data-tab-drop-kind="group"
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setContextMenu(null)
+                  setGroupPicker(null)
+                  setGroupEditor({ id: group.id, x: event.clientX, y: event.clientY })
+                }}
+              >
+                <button
+                  type="button"
+                  className="rw-tab-group-label"
+                  aria-expanded={!group.collapsed}
+                  aria-label={t(group.collapsed ? 'workbench.tabGroups.expandAria' : 'workbench.tabGroups.collapseAria', { name: group.name, tabs: groupCountLabel })}
+                  onClick={() => { clearSelection(); tabGroups.updateGroup(group.id, { collapsed: !group.collapsed }) }}
+                >
+                  <ChevronRightIcon size={11} className="rw-tab-group-chevron" />
+                  <span className="rw-tab-group-name">{group.name}</span>
+                  <span className="rw-tab-group-count">{group.tabIds.length}</span>
+                  {group.collapsed && group.tabIds.some((id) => tabs.some((member) => member.id === id && member.dirty)) && <span className="rw-tab-group-dirty" aria-label={t('workbench.tabGroups.unsaved')} />}
+                </button>
+              </div>
+            )}
+            {!group?.collapsed && <div
               className={classNames.join(' ')}
+              style={groupStyle}
               data-tab-drop-id={tab.id}
               data-tab-drop-kind="tab"
               onPointerDown={(event) => {
@@ -377,6 +476,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
                 type="button"
                 role="tab"
                 aria-selected={isActive}
+                tabIndex={isActive || !visibleTabs.some((candidate) => candidate.id === activeTabId) && visibleTabs[0]?.id === tab.id ? 0 : -1}
                 className="rw-open-tab-label"
                 onClick={(event) => {
                   if (handleSelectClick(tab.id, event)) return
@@ -409,7 +509,8 @@ export const OpenTabsBar = memo(function OpenTabsBar({
                   onClose={() => requestCloseTab(tab.id, label)}
                 />
               </div>
-            </div>
+            </div>}
+            </Fragment>
           )
         })}
         <IconButton
@@ -433,6 +534,13 @@ export const OpenTabsBar = memo(function OpenTabsBar({
       {contextMenu && (
         <TabContextMenu
           menu={contextMenu}
+          canGroup={(contextMenu.selectionCount > 1 ? selection : tabs.filter((tab) => tab.id === contextMenu.tabId)).some((tab) => !tab.fixed && tab.fixable !== false)}
+          grouped={(contextMenu.selectionCount > 1 ? selection : tabs.filter((tab) => tab.id === contextMenu.tabId)).some((tab) => membership.has(tab.id))}
+          onGroup={() => {
+            setGroupPicker({ ids: contextMenu.selectionCount > 1 ? selection.map((tab) => tab.id) : [contextMenu.tabId], x: contextMenu.x, y: contextMenu.y })
+            setContextMenu(null)
+          }}
+          onUngroup={() => tabGroups.moveTabs(contextMenu.selectionCount > 1 ? selection.map((tab) => tab.id) : [contextMenu.tabId], null)}
           onClose={() => setContextMenu(null)}
           onSaveTab={() => onSaveTab(contextMenu.tabId)}
           onCloseTab={() => requestCloseTab(contextMenu.tabId, contextMenu.label)}
@@ -441,6 +549,35 @@ export const OpenTabsBar = memo(function OpenTabsBar({
           onCloseUnfixedTabs={requestCloseUnfixed}
           onCloseSelectedTabs={() => requestCloseMany(selection.map((tab) => tab.id))}
           onToggleFix={() => onToggleFix(contextMenu.tabId)}
+        />
+      )}
+
+      {groupPicker && (
+        <TabMenuSurface x={groupPicker.x} y={groupPicker.y} label={t('workbench.tabGroups.add')} onClose={() => setGroupPicker(null)}>
+          <MenuItem label={t('workbench.tabGroups.new')} icon={<PlusIcon size={13} />} onSelect={() => {
+            createGroupAt(groupPicker.ids, { x: groupPicker.x, y: groupPicker.y })
+          }} />
+          {groups.length > 0 && <MenuSeparator />}
+          {groups.map((group) => (
+            <MenuItem key={group.id} label={group.name} icon={<span className="rw-tab-group-dot" style={{ background: `var(--label-${group.color})` }} />} onSelect={() => {
+              tabGroups.moveTabs(groupPicker.ids, group.id)
+              setGroupPicker(null)
+              clearSelection()
+            }} />
+          ))}
+        </TabMenuSurface>
+      )}
+
+      {groupEditor && editingGroup && (
+        <TabGroupEditor
+          key={editingGroup.id}
+          group={editingGroup}
+          x={groupEditor.x}
+          y={groupEditor.y}
+          onClose={() => setGroupEditor(null)}
+          onUpdate={(patch) => tabGroups.updateGroup(editingGroup.id, patch)}
+          onUngroup={() => tabGroups.ungroup(editingGroup.id)}
+          onCloseTabs={() => requestCloseMany(editingGroup.tabIds)}
         />
       )}
 

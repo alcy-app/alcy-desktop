@@ -1,10 +1,11 @@
+import { parseTabGroups } from './tab-groups'
+import type { TabGroup } from './tab-groups'
 import type { TabSessionEnvelope } from '../../bindings/save-tab-session'
 import { emptyRequestContent, findRequest } from './collection-tree'
 import type { RequestContent, TreeNode } from './collection-tree'
 import type { WorkbenchTab } from './request-workbench.types'
 
-/** Uma aba na sessão gravada (ADR 0039). `draft` é o conteúdo em edição quando há alterações não
- * salvas; `null` numa requisição salva sem edições, cujo conteúdo vem da coleção ao restaurar. */
+/** A saved session tab (ADR 0039). Drafts contain unsaved edits; clean requests reload from their collection. */
 export interface PersistedTab {
   id: string
   requestId: string | null
@@ -16,10 +17,10 @@ export interface PersistedTab {
 export interface TabSession {
   activeTabId: string | null
   tabs: PersistedTab[]
+  groups?: TabGroup[]
 }
 
-/** Aba pronta para o workbench recriar: `content` é o que aparece no editor e `savedContent` a
- * base de comparação para o indicador de não salvo. */
+/** Resolved editor content and its saved baseline for the unsaved indicator. */
 export interface RestoredTab {
   id: string
   requestId: string | null
@@ -29,8 +30,7 @@ export interface RestoredTab {
   fixed: boolean
 }
 
-/** Abas que entram na sessão: as de requisição fixadas. Pré-visualizações não fixadas (histórico)
- * são efêmeras, e abas de node de flow gravam no próprio flow. */
+/** Recover request tabs; history previews are ephemeral and inline requests belong to their flow. */
 function isRecoverable(tab: WorkbenchTab): boolean {
   if (tab.flowNodeRef) return false
   return tab.pinned || tab.requestId !== null
@@ -40,8 +40,10 @@ export function snapshotTabSession(
   tabs: WorkbenchTab[],
   activeTabId: string | null,
   contentOf: (tab: WorkbenchTab) => RequestContent,
+  groups: readonly TabGroup[] = [],
 ): TabSessionEnvelope {
   const recoverable = tabs.filter(isRecoverable)
+  const persistedGroups = parseTabGroups(groups, new Set(recoverable.filter((tab) => !tab.fixed).map((tab) => tab.id)))
   return {
     version: 1,
     activeTabId: recoverable.some((tab) => tab.id === activeTabId) ? activeTabId : null,
@@ -50,10 +52,12 @@ export function snapshotTabSession(
         id: tab.id,
         requestId: tab.requestId,
         name: tab.name,
-        draft: tab.dirty ? contentOf(tab) : null,
+        // Tabs without a saved request need a content snapshot even when promoted from a clean preview.
+        draft: tab.dirty || tab.requestId === null ? contentOf(tab) : null,
         ...(tab.fixed ? { fixed: true } : {}),
       }),
     ),
+    ...(persistedGroups.length ? { groups: persistedGroups } : {}),
   }
 }
 
@@ -128,8 +132,7 @@ function isValidGrpcCall(grpc: unknown): grpc is RequestContent['grpc'] {
   return source.type === 'protoFiles' && isStringList(source.files) && isStringList(source.importPaths)
 }
 
-/** Conteúdo gravado, completado com os padrões do protocolo para campos ausentes (formato
- * aditivo). `null` se algum campo presente tiver forma inválida. */
+/** Fill missing additive fields with protocol defaults; reject malformed existing fields. */
 function parseContent(raw: unknown): RequestContent | null {
   if (!isRecord(raw) || (raw.protocol !== 'rest' && raw.protocol !== 'graphql' && raw.protocol !== 'grpc')) return null
   const content = { ...emptyRequestContent(raw.protocol) }
@@ -165,15 +168,14 @@ function parseTab(raw: unknown): PersistedTab | null {
   const name = typeof raw.name === 'string' ? raw.name : ''
   const fixed = raw.fixed === true ? { fixed: true } : {}
   if (raw.draft === null || raw.draft === undefined) {
-    // Sem rascunho só faz sentido para uma requisição salva: o conteúdo vem da coleção.
+    // Only saved requests can reload content without a draft.
     return requestId === null ? null : { id: raw.id, requestId, name, draft: null, ...fixed }
   }
   const draft = parseContent(raw.draft)
   return draft === null ? null : { id: raw.id, requestId, name, draft, ...fixed }
 }
 
-/** Lê a sessão devolvida pelo backend. Abas inválidas (e ids repetidos) são descartadas uma a
- * uma, sem invalidar as demais. `null` quando não há sessão utilizável. */
+/** Parse native session data, discarding invalid or duplicate tabs independently. */
 export function parseTabSession(raw: unknown): TabSession | null {
   if (!isRecord(raw) || raw.version !== 1 || !Array.isArray(raw.tabs)) return null
   const seen = new Set<string>()
@@ -185,11 +187,11 @@ export function parseTabSession(raw: unknown): TabSession | null {
     tabs.push(tab)
   }
   const activeTabId = typeof raw.activeTabId === 'string' && seen.has(raw.activeTabId) ? raw.activeTabId : null
-  return { activeTabId, tabs }
+  const groups = parseTabGroups(raw.groups, new Set(tabs.filter((tab) => !tab.fixed).map((tab) => tab.id)))
+  return { activeTabId, tabs, ...(groups.length ? { groups } : {}) }
 }
 
-/** Resolve a sessão contra as coleções atuais. Uma requisição salva sem edições que não existe mais
- * é descartada; uma com edições volta como rascunho, para a edição não se perder. */
+/** Resolve against current collections; retain edits to removed requests as independent drafts. */
 export function resolveTabSession(session: TabSession, collections: TreeNode[]): RestoredTab[] {
   return session.tabs.flatMap((tab): RestoredTab[] => {
     const saved = tab.requestId === null ? null : findRequest(collections, tab.requestId)
@@ -211,7 +213,7 @@ export function resolveTabSession(session: TabSession, collections: TreeNode[]):
   })
 }
 
-/** Converte a lista legada do `localStorage` (só ids de requisições salvas) numa sessão. */
+/** Migrate the legacy localStorage list of saved request IDs. */
 export function sessionFromLegacy(legacy: { openRequestIds: string[]; activeRequestId: string | null }): TabSession {
   const tabs = legacy.openRequestIds.map((requestId) => ({ id: crypto.randomUUID(), requestId, name: '', draft: null }))
   const active = tabs.find((tab) => tab.requestId === legacy.activeRequestId)

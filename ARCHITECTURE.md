@@ -47,6 +47,21 @@ Responsible for:
 
 The frontend does not access the file system, database, shell or network directly.
 
+### Workbench tab groups
+
+React owns named, colored, collapsible tab groups as visual workspace state. Membership
+keeps tabs contiguous without changing the resources, collections or flow execution.
+Fixed tabs remain outside groups. Grouping promotes previews to regular tabs, and closing
+a group uses the existing unsaved-change confirmation and resource cleanup paths.
+
+The local `alcy-tab-session.json` v1 envelope accepts an optional additive `groups` list
+with IDs, names, palette colors, collapsed state and ordered tab IDs. The existing native
+session binding and atomic storage persist it; React validates individual groups and
+memberships against recoverable request tabs. Existing v1 sessions need no migration.
+Session-only views can be grouped while open but retain their existing restoration
+lifecycle; only recoverable request memberships survive restart. Older builds ignore
+this optional organization metadata and retain the request tabs.
+
 ### IPC bindings
 
 Responsible for:

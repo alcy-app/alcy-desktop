@@ -5,6 +5,8 @@ import { emptyRequestContent } from './collection-tree'
 import type { RequestContent, TreeNode } from './collection-tree'
 import { useTabSession } from './use-tab-session'
 import { contentOf, useWorkbenchState } from './use-workbench-state'
+import { useTabGroups } from './use-tab-groups'
+import type { OpenTabDescriptor } from './use-open-tabs'
 
 const loadTabSession = vi.fn()
 const saveTabSession = vi.fn()
@@ -36,6 +38,8 @@ const collections: TreeNode[] = [
 function renderSession() {
   return renderHook(() => {
     const workbench = useWorkbenchState([], '/workspace', collections)
+    const descriptors: OpenTabDescriptor[] = workbench.tabs.map((tab) => ({ id: tab.id, label: tab.name, kind: 'request', fixed: tab.fixed === true, dirty: tab.dirty, preview: !tab.pinned }))
+    const groups = useTabGroups(descriptors, workbench.pinTab)
     const session = useTabSession({
       rootPath: '/workspace',
       tabs: workbench.tabs,
@@ -44,8 +48,10 @@ function renderSession() {
       collectionsLoaded: true,
       contentOf,
       restoreTabs: workbench.restoreTabs,
+      groups: groups.groups,
+      restoreGroups: groups.restoreGroups,
     })
-    return { workbench, session }
+    return { workbench, session, groups }
   })
 }
 
@@ -56,7 +62,20 @@ beforeEach(() => {
 })
 
 describe('useTabSession', () => {
-  it('não regrava a sessão carregada quando o snapshot continua igual', async () => {
+  it('restores collapsed groups and flushes organization changes without editing requests', async () => {
+    const group = { id: 'billing', name: 'Billing', color: 'blue', collapsed: true, tabIds: ['tab-1'] }
+    loadTabSession.mockResolvedValue({ ok: true, value: { version: 1, activeTabId: 'tab-1', tabs: [{ id: 'tab-1', requestId: 'request-1', name: 'Ping', draft: null }], groups: [group] } })
+    const { result } = renderSession()
+    await waitFor(() => expect(result.current.session.restored).toBe(true))
+    expect(result.current.groups.groups).toEqual([group])
+    await act(async () => runBeforeExit())
+    expect(saveTabSession).not.toHaveBeenCalled()
+    act(() => result.current.groups.updateGroup('billing', { name: 'Orders', color: 'green' }))
+    await act(async () => runBeforeExit())
+    expect(saveTabSession).toHaveBeenLastCalledWith('/workspace', expect.objectContaining({ groups: [{ ...group, name: 'Orders', color: 'green' }] }))
+  })
+
+  it('does not rewrite a loaded session when its snapshot is unchanged', async () => {
     loadTabSession.mockResolvedValue({
       ok: true,
       value: {
@@ -75,7 +94,7 @@ describe('useTabSession', () => {
     expect(saveTabSession).not.toHaveBeenCalled()
   })
 
-  it('grava imediatamente a edição pendente e limpa dirty depois de salvar', async () => {
+  it('flushes pending edits and clears dirty state after saving', async () => {
     loadTabSession.mockResolvedValue({
       ok: true,
       value: {

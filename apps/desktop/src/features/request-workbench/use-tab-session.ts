@@ -7,11 +7,16 @@ import type { WorkbenchTab } from './request-workbench.types'
 import { parseTabSession, resolveTabSession, sessionFromLegacy, snapshotTabSession } from './tab-session'
 import type { RestoredTab, TabSession } from './tab-session'
 import { clearLegacyTabs, loadLegacyTabs } from './workbench-tabs-storage'
+import { parseTabGroups } from './tab-groups'
+import type { TabGroup } from './tab-groups'
 
+const EMPTY_GROUPS: TabGroup[] = []
 const SAVE_DEBOUNCE_MS = 800
 
 interface UseTabSessionOptions {
   rootPath: string
+  groups?: TabGroup[]
+  restoreGroups?: (groups: TabGroup[]) => void
   tabs: WorkbenchTab[]
   activeTabId: string | null
   collections: TreeNode[]
@@ -20,16 +25,12 @@ interface UseTabSessionOptions {
   restoreTabs: (tabs: RestoredTab[], activeTabId: string | null) => void
 }
 
-/**
- * Sessão de abas do workspace (ADR 0039): restaura as abas abertas, inclusive as não salvas, assim
- * que sessão e coleções estão carregadas, e grava de volta com debounce a cada mudança. Fechar a
- * janela, trocar de workspace (desmontagem) e reiniciar para atualizar gravam o que está pendente.
- *
- * `restored` fica `false` até a restauração rodar. Antes disso não dá para saber se a tela vazia
- * é real, e nada é gravado, para não sobrescrever a sessão com uma lista ainda vazia.
- */
+/** Restore after collections load, then debounce snapshots and flush before exit or unmount.
+ * No snapshot is saved until restoration finishes, preserving existing drafts on startup. */
 export function useTabSession({
   rootPath,
+  groups = EMPTY_GROUPS,
+  restoreGroups,
   tabs,
   activeTabId,
   collections,
@@ -37,18 +38,18 @@ export function useTabSession({
   contentOf,
   restoreTabs,
 }: UseTabSessionOptions) {
-  // `undefined` enquanto carrega; `null` quando não há sessão (nem legada) para restaurar.
+  // Undefined while loading; null when no current or legacy session exists.
   const [session, setSession] = useState<TabSession | null | undefined>(undefined)
   const [restored, setRestored] = useState(false)
   const restoredRef = useRef(false)
   const legacyPendingRef = useRef(false)
   const lastSavedRef = useRef<string | null>(null)
   const saveTimeoutRef = useRef<number | null>(null)
-  const latestRef = useRef({ tabs, activeTabId, contentOf })
+  const latestRef = useRef({ tabs, activeTabId, contentOf, groups })
 
   useEffect(() => {
-    latestRef.current = { tabs, activeTabId, contentOf }
-  }, [tabs, activeTabId, contentOf])
+    latestRef.current = { tabs, activeTabId, contentOf, groups }
+  }, [tabs, activeTabId, contentOf, groups])
 
   useEffect(() => {
     let cancelled = false
@@ -57,15 +58,13 @@ export function useTabSession({
       if (result.ok && result.value !== null) {
         const parsed = parseTabSession(result.value)
         if (parsed !== null) {
-          // A comparação parte do snapshot já persistido. Assim, só abrir o workspace (ou
-          // executar uma requisição, que não muda o snapshot) não regrava o mesmo arquivo.
+          // Compare against the loaded snapshot to avoid rewriting an unchanged session.
           lastSavedRef.current = JSON.stringify({ version: 1, ...parsed })
         }
         setSession(parsed)
         return
       }
-      // Sem arquivo ainda: migra a lista legada do `localStorage`, se houver. Um arquivo ilegível
-      // não impede a abertura; ele é substituído na próxima gravação.
+      // Migrate legacy storage when no file exists; unreadable sessions do not block startup.
       const legacy = result.ok ? loadLegacyTabs(rootPath) : null
       legacyPendingRef.current = legacy !== null
       setSession(legacy === null ? null : sessionFromLegacy(legacy))
@@ -78,11 +77,15 @@ export function useTabSession({
   useEffect(() => {
     if (restoredRef.current || session === undefined || !collectionsLoaded) return
     restoredRef.current = true
-    if (session !== null) restoreTabs(resolveTabSession(session, collections), session.activeTabId)
+    if (session !== null) {
+      const resolved = resolveTabSession(session, collections)
+      restoreTabs(resolved, session.activeTabId)
+      restoreGroups?.(parseTabGroups(session.groups, new Set(resolved.filter((tab) => !tab.fixed).map((tab) => tab.id))))
+    }
     setRestored(true)
-  }, [session, collectionsLoaded, collections, restoreTabs])
+  }, [session, collectionsLoaded, collections, restoreTabs, restoreGroups])
 
-  /** Grava agora o snapshot atual, se mudou desde a última gravação. */
+  /** Flush only when the current snapshot differs from the last successful save. */
   const flush = useCallback(async () => {
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current)
@@ -90,15 +93,15 @@ export function useTabSession({
     }
     if (!restoredRef.current) return
 
-    const { tabs: currentTabs, activeTabId: currentActiveTabId, contentOf: currentContentOf } = latestRef.current
-    const snapshot = snapshotTabSession(currentTabs, currentActiveTabId, currentContentOf)
+    const { tabs: currentTabs, activeTabId: currentActiveTabId, contentOf: currentContentOf, groups: currentGroups } = latestRef.current
+    const snapshot = snapshotTabSession(currentTabs, currentActiveTabId, currentContentOf, currentGroups)
     const serialized = JSON.stringify(snapshot)
     if (serialized === lastSavedRef.current) return
 
     lastSavedRef.current = serialized
     const result = await saveTabSession(rootPath, snapshot)
     if (!result.ok) {
-      // Deixa a próxima mudança (ou o flush ao sair) tentar de novo.
+      // Retry on the next change or exit flush.
       lastSavedRef.current = null
       return
     }
@@ -115,7 +118,7 @@ export function useTabSession({
       saveTimeoutRef.current = null
       void flush()
     }, SAVE_DEBOUNCE_MS)
-  }, [tabs, activeTabId, restored, flush])
+  }, [tabs, activeTabId, groups, restored, flush])
 
   useEffect(() => {
     const unregister = registerBeforeExit(flush)

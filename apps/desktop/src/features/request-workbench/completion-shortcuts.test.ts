@@ -141,7 +141,7 @@ describe('teclas do autocompletar', () => {
     second.destroy()
   })
 
-  it('cede Ctrl+Enter ao atalho de enviar em vez de inserir uma linha', () => {
+  it('yields Ctrl+Enter to the send shortcut instead of inserting a line', () => {
     const view = scriptEditor('a')
     const event = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true })
 
@@ -152,7 +152,17 @@ describe('teclas do autocompletar', () => {
     view.destroy()
   })
 
-  it('sem o atalho global, Ctrl+Enter segue para o editor', () => {
+  it('yields Ctrl+G to tab grouping while an editor has focus', () => {
+    const view = scriptEditor('a')
+    const event = new KeyboardEvent('keydown', { key: 'g', ctrlKey: true, cancelable: true })
+    expect(runScopeHandlers(view, event, 'editor')).toBe(true)
+    event.preventDefault()
+    expect(isShortcutEventConsumed(event)).toBe(false)
+    expect(view.state.doc.toString()).toBe('a')
+    view.destroy()
+  })
+
+  it('leaves Ctrl+Enter to the editor when no global shortcut uses it', () => {
     const view = scriptEditor('a', { ...DEFAULT_SHORTCUTS, sendRequest: [{ ctrl: false, alt: false, shift: false, key: 'Enter' }] })
     const event = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true })
 

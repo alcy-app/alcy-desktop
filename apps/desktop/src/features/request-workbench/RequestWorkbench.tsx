@@ -50,6 +50,8 @@ import { DocsPanel } from './components/DocsPanel'
 import { EndpointBar } from './components/EndpointBar'
 import { HeadersPanel, type GeneratedHeaderEntry } from './components/HeadersPanel'
 import { SessionCookiesModal } from './components/SessionCookiesModal'
+import { useTabGroups } from './use-tab-groups'
+import { arrangeGroupedTabs } from './tab-groups'
 import { OpenTabsBar } from './components/OpenTabsBar'
 import { WorkspaceLoadErrors } from './components/WorkspaceLoadErrors'
 import { ParamsPanel } from './components/ParamsPanel'
@@ -354,6 +356,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const valueMonitors = useValueMonitorsState(workspace.rootPath, notifyLocalChange, FEATURE_FLAGS.valueMonitors)
   const [valueMonitorEnabled, setValueMonitorEnabled] = useState(loadPersistedValueMonitorEnabled)
   const openTabs = useOpenTabs(workbench, flows)
+  const tabGroups = useTabGroups(openTabs.descriptors, openTabs.pinOpenTab)
   const agentBridge = useMemo(() => new AgentResourceBridge(workspace.rootPath), [workspace.rootPath])
   const agentResources = useAgentResources({ rootPath: workspace.rootPath, bridge: agentBridge, flows, monitors: valueMonitors, collections, environments, openTabs, workbench, onSaved: notifyLocalChange })
   const openFlowSessionIds = openTabs.descriptors.filter((tab) => tab.kind === 'flow').map((tab) => tab.id)
@@ -598,6 +601,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     collectionsLoaded: collections.loaded,
     contentOf,
     restoreTabs: workbench.restoreTabs,
+    groups: tabGroups.groups,
+    restoreGroups: tabGroups.restoreGroups,
   })
 
   const { openRequest, openHistoryEntry, openDraft } = workbench
@@ -1606,10 +1611,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     if (versionTabActive) for (const tab of extensionTabsRef.current) tab.deactivate()
   }, [versionTabActive])
 
-  const barTabs: OpenTabDescriptor[] = [
+  const barTabs: OpenTabDescriptor[] = arrangeGroupedTabs([
     ...openTabs.descriptors,
     ...pseudoTabs.map((tab) => ({ id: tab.id, kind: 'runLog' as const, label: tab.label, dirty: tab.dirty, preview: tab.preview ?? false, fixed: false, fixable: false })),
-  ]
+  ], tabGroups.groups)
   const barActiveTabId = activePseudoTab?.id ?? openTabs.activeOpenTab?.id ?? null
 
   const selectBarTab = (id: string) => {
@@ -1652,6 +1657,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         if (!FEATURE_FLAGS.agent) return false
         return !hasOpenModal()
       case 'closeTab':
+      case 'groupTabs':
       case 'openBlockPalette':
       case 'renameItem':
       case 'duplicateItem':
@@ -1711,6 +1717,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         setSettingsOpen(true)
         return
       case 'closeTab':
+      case 'groupTabs':
       case 'openBlockPalette':
       case 'renameItem':
       case 'duplicateItem':
@@ -1836,6 +1843,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             />
             <OpenTabsBar
               tabs={barTabs}
+              tabGroups={tabGroups}
               activeTabId={barActiveTabId}
               onSelect={selectBarTab}
               onPin={(id) => { if (!pseudoTabById(id)) openTabs.pinOpenTab(id) }}

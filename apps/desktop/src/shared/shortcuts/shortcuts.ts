@@ -3,6 +3,7 @@ export const SHORTCUT_ACTIONS = [
   'saveRequest',
   'newRequest',
   'closeTab',
+  'groupTabs',
   'nextTab',
   'previousTab',
   'newCollection',
@@ -60,6 +61,7 @@ const LOCAL_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
   ...EDITOR_ACTIONS,
   ...ITEM_ACTIONS,
   'closeTab',
+  'groupTabs',
 ])
 
 export function isLocalAction(action: ShortcutAction): boolean {
@@ -101,6 +103,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBindings = {
   saveRequest: [{ ...CTRL, key: 'S' }],
   newRequest: [{ ...CTRL, key: 'N' }, { ...CTRL, key: 'T' }],
   closeTab: [{ ...CTRL, key: 'W' }],
+  groupTabs: [{ ...CTRL, key: 'G' }],
   nextTab: [{ ...CTRL, key: 'Tab' }],
   previousTab: [{ ...CTRL_SHIFT, key: 'Tab' }],
   newCollection: [{ ...CTRL_SHIFT, key: 'N' }],

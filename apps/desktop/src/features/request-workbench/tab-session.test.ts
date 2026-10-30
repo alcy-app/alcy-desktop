@@ -4,6 +4,7 @@ import type { RequestContent, TreeNode } from './collection-tree'
 import type { WorkbenchTab } from './request-workbench.types'
 import { parseTabSession, resolveTabSession, sessionFromLegacy, snapshotTabSession } from './tab-session'
 import type { TabSession } from './tab-session'
+import type { TabGroup } from './tab-groups'
 
 function content(overrides: Partial<RequestContent> = {}): RequestContent {
   return {
@@ -90,7 +91,32 @@ function collectionsWith(requestContent: RequestContent): TreeNode[] {
 }
 
 describe('snapshotTabSession', () => {
-  it('preserva ordem e aba ativa, guardando conteúdo apenas quando há alterações', () => {
+  it('retains content when grouping promotes a clean history preview with no saved request', () => {
+    const promoted = tab({ id: 'history', requestId: null, pinned: true, dirty: false })
+    const groups: TabGroup[] = [{ id: 'g', name: 'History', color: 'blue', collapsed: false, tabIds: ['history'] }]
+    const snapshot = snapshotTabSession([promoted], 'history', contentOfTab, groups)
+    const parsed = parseTabSession(snapshot)!
+    expect(parsed.groups).toEqual(groups)
+    expect(resolveTabSession(parsed, [])).toEqual([
+      { id: 'history', requestId: null, name: 'Ping', content: contentOfTab(promoted), savedContent: contentOfTab(promoted), fixed: false },
+    ])
+  })
+
+  it('round trips group metadata and only retains recoverable, non-fixed members', () => {
+    const groups: TabGroup[] = [{ id: 'billing', name: 'Billing', color: 'purple', collapsed: true, tabIds: ['flow', 'saved', 'fixed', 'draft'] }]
+    const snapshot = snapshotTabSession([
+      tab({ id: 'saved' }),
+      tab({ id: 'draft', requestId: null, dirty: true }),
+      tab({ id: 'fixed', fixed: true }),
+      tab({ id: 'flow', flowNodeRef: { flowId: 'f', nodeId: 'n' } }),
+    ], 'saved', contentOfTab, groups)
+    expect(parseTabSession(snapshot)?.groups).toEqual([{ ...groups[0], tabIds: ['saved', 'draft'] }])
+    expect(resolveTabSession(parseTabSession(snapshot)!, collectionsWith(content())).map((entry) => entry.id))
+      .toEqual(['saved', 'draft', 'fixed'])
+    expect(parseTabSession({ ...snapshot, groups: [{ ...groups[0], color: 'invalid' }] })?.tabs).toHaveLength(3)
+  })
+
+  it('preserves order and the active tab, snapshotting edits and independent drafts', () => {
     const draft = tab({
       id: 'draft',
       requestId: null,
@@ -111,7 +137,7 @@ describe('snapshotTabSession', () => {
     ])
   })
 
-  it('ignora pré-visualização de histórico e aba de node de flow', () => {
+  it('excludes history previews and inline flow node tabs', () => {
     const historyPreview = tab({ id: 'history', requestId: null, pinned: false, dirty: false })
     const flowNode = tab({ id: 'flow', flowNodeRef: { flowId: 'flow-1', nodeId: 'node-1' }, dirty: true })
     const savedPreview = tab({ id: 'saved-preview', pinned: false })
@@ -123,7 +149,7 @@ describe('snapshotTabSession', () => {
     })
   })
 
-  it('não muda quando apenas o estado de execução da aba muda', () => {
+  it('does not change when only execution state changes', () => {
     const beforeSend = tab()
     const duringSend = tab({ execution: { status: 'loading', startedAt: 0 }, executionId: 'send-1' })
 
@@ -134,7 +160,7 @@ describe('snapshotTabSession', () => {
 })
 
 describe('parseTabSession', () => {
-  it('completa campos aditivos com os padrões do protocolo', () => {
+  it('fills additive fields with protocol defaults', () => {
     const parsed = parseTabSession({
       version: 1,
       activeTabId: 'draft',
@@ -154,7 +180,7 @@ describe('parseTabSession', () => {
     })
   })
 
-  it('descarta entradas inválidas e ids repetidos sem perder as válidas', () => {
+  it('discards malformed entries and duplicate IDs independently', () => {
     const parsed = parseTabSession({
       version: 1,
       activeTabId: 'missing',
@@ -176,7 +202,7 @@ describe('parseTabSession', () => {
     expect(parsed?.tabs.map((entry) => entry.id)).toEqual(['saved', 'draft'])
   })
 
-  it('trata envelope corrompido ou de versão desconhecida como sessão vazia', () => {
+  it('rejects corrupt envelopes and unknown versions', () => {
     expect(parseTabSession(null)).toBeNull()
     expect(parseTabSession({ version: 1, tabs: {} })).toBeNull()
     expect(parseTabSession({ version: 2, tabs: [] })).toBeNull()
@@ -184,7 +210,7 @@ describe('parseTabSession', () => {
 })
 
 describe('resolveTabSession', () => {
-  it('usa a coleção atual para aba salva limpa e como base da aba editada', () => {
+  it('uses current collection content for clean tabs and as the baseline for edited tabs', () => {
     const current = content({ query: 'query { current }' })
     const edited = content({ query: 'query { edited }' })
     const session: TabSession = {
@@ -201,7 +227,7 @@ describe('resolveTabSession', () => {
     ])
   })
 
-  it('recupera edição de requisição removida como rascunho e descarta aba limpa removida', () => {
+  it('recovers edits to removed requests as drafts and drops clean removed requests', () => {
     const edited = content({ query: 'query { edited }' })
     const session: TabSession = {
       activeTabId: 'edited',
@@ -218,7 +244,7 @@ describe('resolveTabSession', () => {
 })
 
 describe('sessionFromLegacy', () => {
-  it('migra ids na mesma ordem e aponta a aba ativa para o novo id', () => {
+  it('migrates IDs in order and maps the active request to its new tab ID', () => {
     const migrated = sessionFromLegacy({
       openRequestIds: ['request-1', 'request-2'],
       activeRequestId: 'request-2',
@@ -230,8 +256,8 @@ describe('sessionFromLegacy', () => {
   })
 })
 
-describe('abas fixadas na sessão', () => {
-  it('grava e restaura o estado fixado, omitindo-o nas demais', () => {
+describe('fixed session tabs', () => {
+  it('persists and restores fixed state, omitting the field for movable tabs', () => {
     const fixed = tab({ id: 'fixed', requestId: 'request-1', fixed: true })
     const loose = tab({ id: 'loose', requestId: 'request-2' })
 
