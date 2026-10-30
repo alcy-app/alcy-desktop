@@ -192,7 +192,7 @@
 .agent-message::selection,
 .agent-message ::selection,
 .agent-notice > span::selection {
-  background: color-mix(in srgb, var(--text-muted) 55%, var(--surface));
+  background: var(--selection-bg);
   color: var(--text-heading);
 }
 
