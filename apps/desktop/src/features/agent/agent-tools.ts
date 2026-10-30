@@ -365,11 +365,21 @@ function searchCollections(nodes: TreeNode[], query: string, limit: number): Sea
   return hits
 }
 
+/** The environment a call names by id, or by a name only one environment has; without one, the active environment. */
+function findEnvironment(host: WorkbenchAgentHost, input: Input) {
+  const given = optionalString(input, 'environmentId')?.trim()
+  const environments = host.environments()
+  if (!given) return environments.find((environment) => environment.id === host.activeEnvironmentId()) ?? null
+  const byName = environments.filter((environment) => environment.name.trim().toLowerCase() === given.toLowerCase())
+  return environments.find((environment) => environment.id === given) ?? (byName.length === 1 ? byName[0] : null)
+}
+
 function environmentId(host: WorkbenchAgentHost, input: Input): string {
-  const id = optionalString(input, 'environmentId') ?? host.activeEnvironmentId()
-  if (!id) throw new ToolInputError('There is no active environment; pass environmentId from list_environments.')
-  if (!host.environments().some((environment) => environment.id === id)) throw new ToolInputError(`No environment '${id}'.`)
-  return id
+  const environment = findEnvironment(host, input)
+  if (environment) return environment.id
+  const given = optionalString(input, 'environmentId')
+  if (given) throw new ToolInputError(`No environment '${given}'. Use an id from list_environments.`)
+  throw new ToolInputError('There is no active environment; pass environmentId from list_environments.')
 }
 
 async function run(name: string, input: Input, host: WorkbenchAgentHost, defaultRequestName: string): Promise<AgentToolOutcome> {
@@ -570,8 +580,11 @@ export function summarizeToolCall(name: string, input: Input, host: WorkbenchAge
     case 'create_collection':
     case 'create_folder':
       return string('name')
-    case 'set_environment_variable':
-      return string('name')
+    case 'set_environment_variable': {
+      // The approval names the environment, which may not be the active one.
+      const environment = host ? findEnvironment(host, input) : null
+      return environment ? `${environment.name} · ${string('name')}` : string('name')
+    }
     case 'open_request': {
       const request = host ? findRequest(host.collections(), string('requestId')) : null
       return request?.name ?? ''

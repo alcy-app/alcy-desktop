@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { emptyRequestContent, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
 import type { ExecutionState } from '../request-workbench/request-workbench.types'
 import type { AgentHostTab, WorkbenchAgentHost } from './agent-host'
-import { AGENT_SECRET_MASK, applyRequestPatch, runAgentTool, toolNeedsApproval } from './agent-tools'
+import { AGENT_SECRET_MASK, applyRequestPatch, runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tools'
 
 function restContent(patch: Partial<RequestContent> = {}): RequestContent {
   return { ...emptyRequestContent('rest'), ...patch }
@@ -37,6 +37,7 @@ function fakeHost(tabs: AgentHostTab[], overrides: Partial<WorkbenchAgentHost> =
           { name: 'token', value: 'super-secret', sensitive: true },
         ],
       },
+      { id: 'e2', name: 'Prod', variables: [{ name: 'base', value: 'https://example.com', sensitive: false }] },
     ],
     activeEnvironmentId: () => 'e1',
     openRequest: vi.fn(async () => 'opened'),
@@ -219,6 +220,19 @@ describe('runAgentTool', () => {
     const outcome = await runAgentTool('set_environment_variable', { name: 'token', value: AGENT_SECRET_MASK }, host, 'New request')
     expect(outcome.isError).toBe(true)
     expect(host.setVariable).not.toHaveBeenCalled()
+  })
+
+  it('changes variables of environments that are not active, by id or name, without switching', async () => {
+    const host = fakeHost([])
+    expect((await runAgentTool('set_environment_variable', { environmentId: 'e2', name: 'base', value: 'https://new.example.com' }, host, 'New request')).isError).toBe(false)
+    expect(host.setVariable).toHaveBeenLastCalledWith('e2', 'base', 'https://new.example.com', undefined)
+    expect((await runAgentTool('set_environment_variable', { environmentId: 'prod', name: 'region', value: 'us' }, host, 'New request')).isError).toBe(false)
+    expect(host.setVariable).toHaveBeenLastCalledWith('e2', 'region', 'us', undefined)
+    expect(host.setActiveEnvironment).not.toHaveBeenCalled()
+    const missing = await runAgentTool('set_environment_variable', { environmentId: 'Staging', name: 'base', value: 'x' }, host, 'New request')
+    expect(missing).toEqual(expect.objectContaining({ isError: true, content: expect.stringContaining("No environment 'Staging'") }))
+    expect(summarizeToolCall('set_environment_variable', { environmentId: 'e2', name: 'base', value: 'x' }, host)).toBe('Prod · base')
+    expect(summarizeToolCall('set_environment_variable', { name: 'base', value: 'x' }, host)).toBe('Dev · base')
   })
 
   it('searches saved requests by name, URL or method', async () => {

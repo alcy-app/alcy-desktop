@@ -155,7 +155,8 @@ const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "set_environment_variable",
         class: ToolClass::SideEffect,
-        description: "Create or update a variable in an environment (the active one without environmentId). The user approves it first.",
+        description: "Create or update a variable in any environment, active or not, without switching the active environment. \
+Pass environmentId from list_environments (its name also works); without it the active environment is used. The user approves it first.",
         schema: set_variable_arguments,
     },
     ToolSpec {
