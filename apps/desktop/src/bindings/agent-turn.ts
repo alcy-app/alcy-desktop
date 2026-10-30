@@ -34,6 +34,8 @@ export interface StartAgentTurnInput {
   language: 'pt-BR' | 'en'
   /** Local day (`YYYY-MM-DD`) the turn's tokens count in. */
   localDay: string
+  /** The text replaces the user's last message and what came after it (retry or edit). */
+  replaceLastTurn?: boolean
 }
 
 export interface AgentTurnResultDto {

@@ -3,7 +3,7 @@ import type { TreeNode } from '../request-workbench/collection-tree'
 import type { EditorSelection, EditorSlot } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
 
-export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response' | 'selection' | 'flow' | 'monitor' | 'runner' | 'mock'
+export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response' | 'selection' | 'flow' | 'monitor' | 'runner' | 'mock' | 'quote'
 
 export interface AgentContextOption extends AgentContextInput {
   kind: AgentContextKind
@@ -67,6 +67,11 @@ export function agentContextOptions(host: WorkbenchAgentHost, query: string): Ag
     .filter((option) => matches(query, option.label, option.summary))
     .filter((option, index, all) => all.slice(0, index).filter((previous) => previous.kind === option.kind).length < MAX_OPTIONS_PER_KIND) as AgentContextOption[]
   return [...responseOptions, ...tabOptions, ...requestOptions, ...environmentOptions, ...resourceOptions]
+}
+
+/** A message of the chat, or part of one, attached as context (`quote` kind in the prompt). */
+export function quoteContext(text: string, label: string): AgentContextOption {
+  return { kind: 'quote', id: `quote-${crypto.randomUUID()}`, label, summary: text }
 }
 
 /** The `@query` being typed right before the caret, if any. */

@@ -143,6 +143,21 @@
   color: var(--text);
 }
 
+/* The app turns selection off by default; chat text can be selected to copy or quote it. */
+.agent-message,
+.agent-notice > span {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* An explicit color keeps the selection visible while the right-click menu has the focus
+   (WebKit otherwise paints it as an inactive, faint selection). */
+.agent-message ::selection,
+.agent-notice > span::selection {
+  background: var(--selection-bg);
+}
+
 .agent-message-group {
   display: flex;
   flex-shrink: 0;
@@ -424,6 +439,52 @@
   border-radius: var(--radius-md);
   background: var(--error-soft);
   color: var(--error);
+}
+
+.agent-notice-action.ui-button {
+  flex-shrink: 0;
+  min-height: 0;
+  margin: calc(-1 * var(--space-1)) 0 calc(-1 * var(--space-1)) auto;
+  padding: var(--space-1) var(--space-2);
+  color: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.agent-message-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 90%;
+  padding: var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+
+.agent-message-editor-input {
+  min-height: var(--control-height-sm);
+  max-height: 320px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  resize: none;
+}
+
+.agent-message-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.agent-selection-menu {
+  position: fixed;
+  z-index: var(--z-overlay);
+  min-width: 160px;
 }
 
 .agent-tool {

@@ -1,9 +1,10 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from 'react'
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
-import { AlertIcon, CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, FlowIcon, GlobeIcon, MockServerIcon, PanelRightIcon, Spinner } from '../../shared/ui/icons'
+import { AlertIcon, AtIcon, CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, FlowIcon, GlobeIcon, MockServerIcon, PanelRightIcon, PencilIcon, Spinner } from '../../shared/ui/icons'
+import { MenuItem } from '../../shared/ui/Menu'
 import { MarkdownView } from '../notifications/MarkdownView'
 import { highlightSpans } from '../request-workbench/screenshot/screenshot-highlight'
 import { codeBlockLanguage, splitUserMessage } from './agent-code'
@@ -48,7 +49,15 @@ interface AgentMessageListProps {
   onOpenReference?: (kind: AgentReferenceKind, id: string) => Promise<boolean>
   /** Item named by a bolded or code-formatted word of a reply, when it is unambiguous. */
   resolveReference?: (text: string) => { kind: AgentReferenceKind; id: string } | null
+  /** Sends the last message again after its turn failed. */
+  onRetry?: () => void
+  /** Sends an edited last message in place of the original. */
+  onEditLast?: (text: string) => void
+  /** Attaches a message, or a selected part of one, as context of the next message. */
+  onQuote?: (text: string, label: string) => void
 }
+
+const EXCERPT_LABEL_CHARS = 32
 
 const REFERENCE_ICONS = { request: GlobeIcon, flow: FlowIcon, mock: MockServerIcon, tab: PanelRightIcon }
 
@@ -93,12 +102,17 @@ function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
   return ids
 }
 
-export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference }: AgentMessageListProps) {
+export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference, onRetry, onEditLast, onQuote }: AgentMessageListProps) {
   const { t, language } = useLanguage()
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; range: Range } | null>(null)
   const last = items.at(-1)
+  const lastUserId = items.findLast((item) => item.kind === 'user')?.id
+  // Only the last message can be edited, and not while a turn runs.
+  const editing = editingId !== null && editingId === lastUserId && !running ? editingId : null
   const thinking = running
     && !(last?.kind === 'assistant' && last.streaming)
     && !(last?.kind === 'tool' && (last.state === 'running' || last.state === 'awaitingApproval'))
@@ -126,6 +140,9 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
         {timeFormat.format(atMs)}
       </time>
     )
+  const quoteLabel = (labelKey: 'agent.quote.prompt' | 'agent.quote.reply', atMs: number | undefined) =>
+    atMs === undefined ? t(labelKey) : t('agent.quote.at', { label: t(labelKey), time: timeFormat.format(atMs) })
+  const quote = (text: string, label: string) => (onQuote ? () => onQuote(text, label) : undefined)
 
   return (
     <div
@@ -137,6 +154,14 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
       onScroll={(event) => {
         const element = event.currentTarget
         pinnedToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 32
+      }}
+      onContextMenu={(event) => {
+        // With text selected in the chat, the right button offers it as context; otherwise the usual menu.
+        const selection = window.getSelection()
+        const text = selection?.toString().trim() ?? ''
+        if (!onQuote || !text || !selection?.anchorNode || !event.currentTarget.contains(selection.anchorNode)) return
+        event.preventDefault()
+        setSelectionMenu({ x: event.clientX, y: event.clientY, text, range: selection.getRangeAt(0).cloneRange() })
       }}
     >
       {hidden > 0 && (
@@ -156,13 +181,30 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                 {dayLine(item.id, item.atMs)}
                 {timeLabel(item.atMs)}
                 <div className="agent-message-group agent-message-group--user">
-                  <div className="agent-message agent-message--user">
-                    {item.context.length > 0 && (
-                      <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
-                    )}
-                    <UserMessageText text={item.text} />
-                  </div>
-                  <MessageActions text={item.text} />
+                  {editing === item.id ? (
+                    <UserMessageEditor
+                      text={item.text}
+                      onCancel={() => setEditingId(null)}
+                      onSend={(text) => {
+                        setEditingId(null)
+                        onEditLast?.(text)
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <div className="agent-message agent-message--user">
+                        {item.context.length > 0 && (
+                          <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
+                        )}
+                        <UserMessageText text={item.text} />
+                      </div>
+                      <MessageActions
+                        text={item.text}
+                        onQuote={quote(item.text, quoteLabel('agent.quote.prompt', item.atMs))}
+                        onEdit={onEditLast && !running && item.id === lastUserId ? () => setEditingId(item.id) : undefined}
+                      />
+                    </>
+                  )}
                 </div>
               </Fragment>
             )
@@ -188,7 +230,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                     />
                     {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
                   </div>
-                  {!item.streaming && item.text.trim() !== '' && <MessageActions text={item.text} />}
+                  {!item.streaming && item.text.trim() !== '' && <MessageActions text={item.text} onQuote={quote(item.text, quoteLabel('agent.quote.reply', item.atMs))} />}
                 </div>
               </Fragment>
             )
@@ -197,6 +239,9 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
               <p key={item.id} className="agent-notice" data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}>
                 {item.tone === 'error' && <AlertIcon size={13} />}
                 <span>{item.text}</span>
+                {item.retry && item.id === last?.id && !running && onRetry && (
+                  <Button variant="ghost" className="agent-notice-action" onClick={onRetry}>{t('agent.notice.retry')}</Button>
+                )}
               </p>
             )
           case 'tool':
@@ -204,6 +249,159 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
         }
       })}
       {thinking && <AgentThinking />}
+      {selectionMenu && onQuote && (
+        <SelectionMenu
+          {...selectionMenu}
+          onClose={() => setSelectionMenu(null)}
+          onQuote={() => onQuote(selectionMenu.text, t('agent.quote.excerpt', { text: excerpt(selectionMenu.text) }))}
+        />
+      )}
+    </div>
+  )
+}
+
+function excerpt(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > EXCERPT_LABEL_CHARS ? `${flat.slice(0, EXCERPT_LABEL_CHARS)}…` : flat
+}
+
+interface SelectionMenuProps {
+  x: number
+  y: number
+  text: string
+  /** The selected range, put back after the menu takes the focus. */
+  range: Range
+  onQuote: () => void
+  onClose: () => void
+}
+
+/** Right-click menu for text selected in the chat. */
+function SelectionMenu({ x, y, text, range, onQuote, onClose }: SelectionMenuProps) {
+  const { t } = useLanguage()
+  const ref = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ left: x, top: y })
+
+  // Focusing the first item clears the selection in WebKit; keep it on screen while the menu is open and after.
+  useEffect(() => {
+    const selection = window.getSelection()
+    if (!selection) return
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }, [range])
+
+  // Keep the menu inside the window.
+  useLayoutEffect(() => {
+    const menu = ref.current
+    if (!menu) return
+    const { width, height } = menu.getBoundingClientRect()
+    setPosition({ left: Math.max(8, Math.min(x, window.innerWidth - width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - height - 8)) })
+  }, [x, y])
+
+  useEffect(() => {
+    const closeOutside = (event: globalThis.PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node | null)) onClose()
+    }
+    window.addEventListener('pointerdown', closeOutside)
+    window.addEventListener('resize', onClose)
+    window.addEventListener('scroll', onClose, true)
+    return () => {
+      window.removeEventListener('pointerdown', closeOutside)
+      window.removeEventListener('resize', onClose)
+      window.removeEventListener('scroll', onClose, true)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      className="ui-menu agent-selection-menu"
+      role="menu"
+      aria-label={t('agent.quote.menuAria')}
+      style={position}
+      onBlur={(event: FocusEvent<HTMLDivElement>) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onClose()
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') onClose()
+      }}
+    >
+      <MenuItem
+        label={t('agent.quote.useSelection')}
+        icon={<AtIcon size={12} />}
+        autoFocus
+        onSelect={() => {
+          onQuote()
+          onClose()
+        }}
+      />
+      <MenuItem
+        label={t('agent.quote.copy')}
+        icon={<CopyIcon size={12} />}
+        onSelect={() => {
+          void navigator.clipboard?.writeText(text).catch(() => undefined)
+          onClose()
+        }}
+      />
+    </div>
+  )
+}
+
+interface UserMessageEditorProps {
+  text: string
+  onSend: (text: string) => void
+  onCancel: () => void
+}
+
+/** The last message, edited in place: Enter sends it again, Shift+Enter breaks the line, Esc cancels. */
+function UserMessageEditor({ text, onSend, onCancel }: UserMessageEditorProps) {
+  const { t } = useLanguage()
+  const [value, setValue] = useState(text)
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  useLayoutEffect(() => {
+    const input = ref.current
+    if (!input) return
+    input.focus()
+    input.setSelectionRange(input.value.length, input.value.length)
+  }, [])
+
+  useLayoutEffect(() => {
+    const input = ref.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${input.scrollHeight}px`
+  }, [value])
+
+  const submit = () => {
+    if (value.trim() !== '') onSend(value)
+  }
+
+  return (
+    <div className="agent-message-editor">
+      <textarea
+        ref={ref}
+        className="agent-message-editor-input"
+        aria-label={t('agent.message.editAria')}
+        value={value}
+        rows={1}
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onCancel()
+          } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            submit()
+          }
+        }}
+      />
+      <div className="agent-message-editor-actions">
+        <Button variant="ghost" onClick={onCancel}>{t('agent.message.editCancel')}</Button>
+        <Button disabled={value.trim() === ''} onClick={submit}>{t('agent.message.editSend')}</Button>
+      </div>
     </div>
   )
 }
@@ -275,7 +473,7 @@ function useCopy(text: string) {
 }
 
 /** Actions under a message, as in other chats: copies its text as written (Markdown for replies). */
-function MessageActions({ text }: { text: string }) {
+function MessageActions({ text, onQuote, onEdit }: { text: string; onQuote?: () => void; onEdit?: () => void }) {
   const { t } = useLanguage()
   const { status, copy } = useCopy(text)
   return (
@@ -287,6 +485,8 @@ function MessageActions({ text }: { text: string }) {
         onPointerUp={releasePointerFocus}
         onClick={() => void copy()}
       />
+      {onQuote && <IconButton icon={<AtIcon size={13} />} label={t('agent.message.quote')} onPointerUp={releasePointerFocus} onClick={onQuote} />}
+      {onEdit && <IconButton icon={<PencilIcon size={13} />} label={t('agent.message.edit')} onPointerUp={releasePointerFocus} onClick={onEdit} />}
     </div>
   )
 }

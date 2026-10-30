@@ -20,10 +20,12 @@ export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' 
 
 export type AgentChatItem =
   /** `atMs`: when the message was sent or started arriving; unknown in older chats. */
-  | { kind: 'user'; id: string; text: string; context: AgentContextInput[]; atMs?: number }
+  /** `sent`: the message reached the saved transcript (false until its turn starts). */
+  | { kind: 'user'; id: string; text: string; context: AgentContextInput[]; atMs?: number; sent?: boolean }
   | { kind: 'assistant'; id: string; text: string; streaming: boolean; atMs?: number }
   | { kind: 'tool'; id: string; name: string; toolClass: AgentToolClass; summary: string; state: AgentToolState; canRevert: boolean; autoApproved: boolean }
-  | { kind: 'notice'; id: string; tone: 'error' | 'info'; text: string }
+  /** `retry`: the turn failed and its message can be sent again. */
+  | { kind: 'notice'; id: string; tone: 'error' | 'info'; text: string; retry?: boolean }
 
 interface UseAgentSessionOptions {
   rootPath: string
@@ -70,6 +72,10 @@ function nextItemId(prefix: string) {
 }
 
 /** One chat with the agent: streaming, tool calls on the workbench, approvals and history. */
+function lastUserIndex(items: AgentChatItem[]): number {
+  return items.findLastIndex((item) => item.kind === 'user')
+}
+
 export function useAgentSession({ rootPath, host, providerId, model, defaultRequestName, autoApprove }: UseAgentSessionOptions) {
   const { t, language } = useLanguage()
   const [items, setItems] = useState<AgentChatItem[]>([])
@@ -177,31 +183,62 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     [handleToolCall, rootPath, t],
   )
 
-  const send = useCallback(
-    async (text: string, context: AgentContextInput[]) => {
+  /**
+   * `replaceLast` sends the text in place of the user's last message and what
+   * followed it; the saved transcript changes only when that message reached it.
+   */
+  const startTurn = useCallback(
+    async (text: string, context: AgentContextInput[], replaceLast: boolean) => {
       const trimmed = text.trim()
       if (trimmed === '' || runIdRef.current !== null || providerId === null) return
       const runId = crypto.randomUUID()
       runIdRef.current = runId
       setRunning(true)
-      setItems((current) => [...current, { kind: 'user', id: nextItemId('user'), text: trimmed, context, atMs: Date.now() }])
+      const userId = nextItemId('user')
+      const replaced = replaceLast ? items[lastUserIndex(items)] : undefined
+      const replaceLastTurn = replaced?.kind === 'user' && replaced.sent !== false
+      setItems((current) => {
+        const last = replaceLast ? lastUserIndex(current) : -1
+        return [...(last >= 0 ? current.slice(0, last) : current), { kind: 'user', id: userId, text: trimmed, context, atMs: Date.now(), sent: false }]
+      })
       const result = await startAgentTurn(
-        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, localDay: localDay(new Date()) },
-        handleEvent,
+        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, localDay: localDay(new Date()), replaceLastTurn },
+        (event) => {
+          // The message is in the transcript once its turn starts.
+          if (event.type === 'sessionStarted') setItems((current) => current.map((item) => (item.id === userId && item.kind === 'user' ? { ...item, sent: true } : item)))
+          handleEvent(event)
+        },
       )
       runIdRef.current = null
       declinePendingApprovals()
       setRunning(false)
       setItems((current) => {
         const settled = current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item))
-        if (!result.ok) return [...settled, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t) }]
+        if (!result.ok) return [...settled, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t), retry: true }]
         const stop = result.value.stopReason
         if (stop === 'endTurn') return settled
         return [...settled, { kind: 'notice', id: nextItemId('notice'), tone: 'info', text: t(`agent.stop.${stop}`) }]
       })
       if (result.ok) setSessionId(result.value.sessionId)
     },
-    [declinePendingApprovals, handleEvent, language, model, providerId, rootPath, sessionId, t],
+    [declinePendingApprovals, handleEvent, items, language, model, providerId, rootPath, sessionId, t],
+  )
+
+  const send = useCallback((text: string, context: AgentContextInput[]) => startTurn(text, context, false), [startTurn])
+
+  /** Sends the last message again after its turn failed. */
+  const retry = useCallback(() => {
+    const last = items[lastUserIndex(items)]
+    if (last?.kind === 'user') void startTurn(last.text, last.context, true)
+  }, [items, startTurn])
+
+  /** Sends an edited version of the last message in its place. */
+  const editLast = useCallback(
+    (text: string) => {
+      const last = items[lastUserIndex(items)]
+      if (last?.kind === 'user') void startTurn(text, last.context, true)
+    },
+    [items, startTurn],
   )
 
   const stop = useCallback(() => {
@@ -321,5 +358,5 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     [rootPath],
   )
 
-  return { items, running, sessionId, title, send, stop, approve: (callId: string) => resolveApproval(callId, true), decline: (callId: string) => resolveApproval(callId, false), revert, newChat, openSession }
+  return { items, running, sessionId, title, send, retry, editLast, stop, approve: (callId: string) => resolveApproval(callId, true), decline: (callId: string) => resolveApproval(callId, false), revert, newChat, openSession }
 }

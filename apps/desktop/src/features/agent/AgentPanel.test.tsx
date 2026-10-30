@@ -195,6 +195,78 @@ describe('AgentPanel', () => {
     await waitFor(() => expect(getAgentUsage).toHaveBeenCalledTimes(2))
   })
 
+  it('retries a failed turn in place of its message, replacing it in the transcript only once it was saved', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn
+      .mockImplementationOnce(async () => ({ ok: false, error: { kind: 'missingApiKey' } }))
+      .mockImplementationOnce(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+        onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'Oi' })
+        return { ok: false, error: { kind: 'network', message: 'offline' } }
+      })
+      .mockImplementation(async () => ({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }))
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('oi')
+
+    // Failed before the turn started: nothing was saved, so nothing is replaced.
+    fireEvent.click(await screen.findByRole('button', { name: 'Tentar novamente' }))
+    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
+    expect(startAgentTurn.mock.calls[1][0]).toEqual(expect.objectContaining({ text: 'oi', replaceLastTurn: false }))
+
+    // Failed after it started: the saved message is replaced, not repeated.
+    fireEvent.click(await screen.findByRole('button', { name: 'Tentar novamente' }))
+    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(3))
+    expect(startAgentTurn.mock.calls[2][0]).toEqual(expect.objectContaining({ text: 'oi', sessionId: 's1', replaceLastTurn: true }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Tentar novamente' })).not.toBeInTheDocument())
+    expect(screen.getAllByText('oi')).toHaveLength(1)
+  })
+
+  it('edits the last message in place and sends it instead of the original', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+      onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'Oi' })
+      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
+    })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('liste os usuarios')
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar mensagem' }))
+    const editor = screen.getByLabelText('Editar a mensagem')
+    expect(editor).toHaveValue('liste os usuarios')
+    fireEvent.change(editor, { target: { value: 'liste os pedidos' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
+    expect(startAgentTurn.mock.calls[1][0]).toEqual(expect.objectContaining({ text: 'liste os pedidos', replaceLastTurn: true }))
+    expect(await screen.findByText('liste os pedidos')).toBeInTheDocument()
+    expect(screen.queryByText('liste os usuarios')).not.toBeInTheDocument()
+
+    // Escape leaves the message as it was.
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar mensagem' }))
+    fireEvent.keyDown(screen.getByLabelText('Editar a mensagem'), { key: 'Escape' })
+    expect(screen.queryByLabelText('Editar a mensagem')).not.toBeInTheDocument()
+    expect(startAgentTurn).toHaveBeenCalledTimes(2)
+  })
+
+  it('attaches a reply as a quote in the composer and sends it as context', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+      onEvent({ type: 'textDelta', text: 'Use o endpoint /orders.' })
+      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
+    })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('qual endpoint?')
+    await screen.findByText('Use o endpoint /orders.')
+    const [, replyQuote] = screen.getAllByRole('button', { name: 'Usar como contexto' })
+    fireEvent.click(replyQuote)
+    const chips = screen.getByRole('list', { name: 'Contexto anexado' })
+    expect(chips).toHaveTextContent('Resposta')
+    expect(screen.getByLabelText('Mensagem para o agente')).toHaveFocus()
+    sendMessage('detalhe isso')
+    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
+    expect(startAgentTurn.mock.calls[1][0].context).toEqual([expect.objectContaining({ kind: 'quote', summary: 'Use o endpoint /orders.' })])
+  })
+
   it('closes the provider menu when clicking outside', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)

@@ -13,7 +13,8 @@ use alcy_app::{
     AgentConversation, AgentLanguage, AgentRole, AgentToolHost, AgentTurnRequest, AgentTurnSink,
     ChatModelError, ContentBlock, ContextReference, CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS,
     MAX_CONTEXT_REFERENCES, ToolCall, ToolClass, ToolOutcome, TurnStop, agent_system_prompt,
-    agent_tool_catalog, compose_user_message, push_user_text, run_agent_turn,
+    agent_tool_catalog, compose_user_message, last_user_text_index, push_user_text,
+    remove_last_user_text, run_agent_turn,
 };
 use alcy_domain::{
     AgentProvider, AgentProviderKind, AgentSettings, AgentSettingsError, agent_credential_key,
@@ -202,6 +203,10 @@ pub struct StartAgentTurnInput {
     /// The interface's local day (`YYYY-MM-DD`) the turn's tokens count in.
     #[serde(default)]
     pub local_day: Option<String>,
+    /// The text replaces the user's last message and what came after it
+    /// (retry of a failed turn, or an edit of the last message).
+    #[serde(default)]
+    pub replace_last_turn: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -743,6 +748,24 @@ fn context_budget_tokens(provider: &AgentProvider) -> usize {
 /// Times of the messages a turn added. The user's text lands in a new message,
 /// or in the last one when it joined an interrupted turn's tool results; the
 /// replies get the time the turn ended. Earlier messages without a time get 0.
+/// Drops the user's last message and what came after it, before the turn is
+/// sent again. The summarized part of a long chat cannot change.
+fn replace_last_turn(session: &mut AgentSessionRecord) -> Result<(), AgentCommandError> {
+    match last_user_text_index(&session.messages) {
+        None => Err(AgentCommandError::Invalid {
+            message: "there is no message to replace".into(),
+        }),
+        Some(index) if index < session.summarized_until => Err(AgentCommandError::Invalid {
+            message: "that message is part of the summarized history".into(),
+        }),
+        Some(_) => {
+            remove_last_user_text(&mut session.messages);
+            session.message_times_ms.truncate(session.messages.len());
+            Ok(())
+        }
+    }
+}
+
 fn record_message_times(
     times: &mut Vec<u64>,
     previous_len: usize,
@@ -840,6 +863,9 @@ async fn run_turn(
         }
     };
     let is_new = input.session_id.is_none();
+    if input.replace_last_turn {
+        replace_last_turn(&mut session)?;
+    }
 
     if !lock(&runs.busy_sessions).insert(session.id.clone()) {
         return Err(AgentCommandError::Busy);
@@ -1260,6 +1286,47 @@ mod tests {
         let mut joined = vec![1, 2, 3];
         record_message_times(&mut joined, 3, 3, 100, 200);
         assert_eq!(joined, vec![1, 2, 100]);
+    }
+
+    #[test]
+    fn replacing_the_last_turn_drops_it_and_its_times() {
+        let reply = alcy_app::AgentMessage {
+            role: AgentRole::Assistant,
+            content: vec![ContentBlock::Text { text: "two".into() }],
+        };
+        let mut session = AgentSessionRecord {
+            id: "s".into(),
+            title: "t".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            provider_id: "p".into(),
+            model: "m".into(),
+            messages: vec![
+                alcy_app::AgentMessage::user_text("first"),
+                reply.clone(),
+                alcy_app::AgentMessage::user_text("second"),
+                reply,
+            ],
+            summary: None,
+            summarized_until: 0,
+            message_times_ms: vec![1, 2, 3, 4],
+        };
+        replace_last_turn(&mut session).unwrap();
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(session.message_times_ms, vec![1, 2]);
+
+        // The summarized part of a long chat cannot be replaced.
+        session.summarized_until = 1;
+        assert!(matches!(
+            replace_last_turn(&mut session),
+            Err(AgentCommandError::Invalid { .. })
+        ));
+        session.messages.clear();
+        session.summarized_until = 0;
+        assert!(matches!(
+            replace_last_turn(&mut session),
+            Err(AgentCommandError::Invalid { .. })
+        ));
     }
 
     #[test]

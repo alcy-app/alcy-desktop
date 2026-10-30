@@ -12,7 +12,14 @@ pub const MAX_CONTEXT_REFERENCES: usize = 20;
 const MAX_CONTEXT_SUMMARY_BYTES: usize = 2 * 1024;
 /// Text the user selected in an editor; it is the subject of the message.
 pub const SELECTION_CONTEXT_KIND: &str = "selection";
+/// A message of this chat, or part of one, the user points at.
+pub const QUOTE_CONTEXT_KIND: &str = "quote";
 const MAX_SELECTION_BYTES: usize = 8 * 1024;
+
+/// Selections and quotes are what the message is about: they go first, with more room.
+fn is_subject(kind: &str) -> bool {
+    kind == SELECTION_CONTEXT_KIND || kind == QUOTE_CONTEXT_KIND
+}
 
 /// Language of the interface, used to answer in the same one by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +45,7 @@ if the user declines, do not retry the same call, ask what to change.\n\
 - Reference environment variables as {{{{name}}}}. Never ask for or write secret values; masked values appear as ••••.\n\
 - When explaining a response, be concrete: status, the fields that matter, errors and likely causes.\n\
 - A `selection` in the attached context is what the user selected in an editor: treat it as the main subject of the message.\n\
+- A `quote` in the attached context is a message of this chat, or part of one, that the user points at: the message is about it.\n\
 - When the user cannot find something, or you mention a specific value, highlight it with highlight_in_editor.\n\
 - Scripts use the `al` API described in update_request; prefer al.test assertions for checks on the response.\n\
 - Discover resources with their list/search tools, then read details before editing; never guess ids or replace a list from an incomplete page.\n\
@@ -64,17 +72,16 @@ pub fn compose_user_message(text: &str, context: &[ContextReference]) -> String 
     }
     let mut message = String::from(text);
     message.push_str("\n\n<attached_context>\n");
-    // The selection goes first, with more room than other references.
     let (selections, others): (Vec<_>, Vec<_>) = context
         .iter()
         .take(MAX_CONTEXT_REFERENCES)
-        .partition(|reference| reference.kind == SELECTION_CONTEXT_KIND);
+        .partition(|reference| is_subject(&reference.kind));
     for reference in selections.into_iter().chain(others) {
         message.push_str(&format!(
             "- {} \"{}\" (id: {})\n",
             reference.kind, reference.label, reference.id
         ));
-        let limit = if reference.kind == SELECTION_CONTEXT_KIND {
+        let limit = if is_subject(&reference.kind) {
             MAX_SELECTION_BYTES
         } else {
             MAX_CONTEXT_SUMMARY_BYTES
@@ -154,6 +161,29 @@ mod tests {
         let selection = message.find("- selection").unwrap();
         assert!(selection < message.find("- tab").unwrap());
         assert!(message.contains(&"x".repeat(5000)));
+    }
+
+    #[test]
+    fn quotes_of_the_chat_get_the_selection_budget() {
+        let message = compose_user_message(
+            "explain",
+            &[
+                ContextReference {
+                    kind: "tab".into(),
+                    id: "t".into(),
+                    label: "t".into(),
+                    summary: "GET /users".into(),
+                },
+                ContextReference {
+                    kind: QUOTE_CONTEXT_KIND.into(),
+                    id: "q1".into(),
+                    label: "Reply".into(),
+                    summary: "y".repeat(5000),
+                },
+            ],
+        );
+        assert!(message.find("- quote").unwrap() < message.find("- tab").unwrap());
+        assert!(message.contains(&"y".repeat(5000)));
     }
 
     #[test]

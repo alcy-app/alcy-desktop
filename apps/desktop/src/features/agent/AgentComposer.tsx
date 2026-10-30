@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type ReactNode, type RefObject, type SetStateAction } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { IconButton } from '../../shared/ui/IconButton'
 import { AtIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SelectionIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
@@ -13,6 +13,9 @@ interface AgentComposerProps {
   disabled: boolean
   text: string
   onTextChange: (text: string) => void
+  /** Attached items; owned by the panel so chat quotes can be added from the messages. */
+  context: AgentContextOption[]
+  onContextChange: Dispatch<SetStateAction<AgentContextOption[]>>
   textareaRef: RefObject<HTMLTextAreaElement | null>
   /** Provider/model picker shown under the text. */
   footer: ReactNode
@@ -23,7 +26,7 @@ interface AgentComposerProps {
 const CATEGORY_KINDS = ['tab', 'request', 'environment', 'flow', 'monitor', 'runner', 'mock'] as const
 type CategoryKind = (typeof CATEGORY_KINDS)[number]
 type ContextMenuEntry = { type: 'context'; option: AgentContextOption } | { type: 'category'; kind: CategoryKind; disabled: boolean }
-const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon, flow: FolderIcon, monitor: SelectionIcon, runner: SendIcon, mock: GlobeIcon }
+const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon, flow: FolderIcon, monitor: SelectionIcon, runner: SendIcon, mock: GlobeIcon, quote: AtIcon }
 const SELECTION_PREVIEW_CHARS = 48
 
 function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
@@ -32,9 +35,8 @@ function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
 const CATEGORY_ICONS = CONTEXT_ICONS
 
 /** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items, pasted JSON becomes a block. */
-export function AgentComposer({ host, running, disabled, text, onTextChange: setText, textareaRef, footer, onSend, onStop }: AgentComposerProps) {
+export function AgentComposer({ host, running, disabled, text, onTextChange: setText, context, onContextChange: setContext, textareaRef, footer, onSend, onStop }: AgentComposerProps) {
   const { t } = useLanguage()
-  const [context, setContext] = useState<AgentContextOption[]>([])
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
   const [highlight, setHighlight] = useState(0)
   const [category, setCategory] = useState<CategoryKind | null>(null)
@@ -290,7 +292,7 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
           {context.map((item) => {
             const ContextIcon = CONTEXT_ICONS[item.kind]
             return (
-              <li key={`${item.kind}:${item.id}`} className="agent-context-chip">
+              <li key={`${item.kind}:${item.id}`} className="agent-context-chip" title={item.kind === 'quote' ? item.summary.slice(0, 400) : undefined}>
                 <span className="agent-context-chip-kind" title={t(`agent.context.kind.${item.kind}`)}><ContextIcon size={12} /></span>
                 <span className="agent-context-chip-label">{item.label}</span>
                 <IconButton

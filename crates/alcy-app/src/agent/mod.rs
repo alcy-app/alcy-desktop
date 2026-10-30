@@ -14,10 +14,13 @@ pub use chat_model::{
     ToolDefinition,
 };
 pub use context_window::{AgentConversation, KEEP_FULL_TOOL_RESULTS};
-pub use conversation::{AgentMessage, AgentRole, ContentBlock, push_user_text};
+pub use conversation::{
+    AgentMessage, AgentRole, ContentBlock, last_user_text_index, push_user_text,
+    remove_last_user_text,
+};
 pub use prompt::{
-    AgentLanguage, ContextReference, MAX_CONTEXT_REFERENCES, SELECTION_CONTEXT_KIND,
-    agent_system_prompt, compose_user_message,
+    AgentLanguage, ContextReference, MAX_CONTEXT_REFERENCES, QUOTE_CONTEXT_KIND,
+    SELECTION_CONTEXT_KIND, agent_system_prompt, compose_user_message,
 };
 pub use run_turn::{
     AgentToolHost, AgentTurnOutcome, AgentTurnRequest, AgentTurnSink, DEFAULT_MAX_OUTPUT_TOKENS,

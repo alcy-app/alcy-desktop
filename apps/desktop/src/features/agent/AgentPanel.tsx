@@ -11,6 +11,7 @@ import { AgentComposer } from './AgentComposer'
 import { AgentHistoryPopover } from './AgentHistoryPopover'
 import { AgentMessageList } from './AgentMessageList'
 import { agentReferenceResolver, openAgentReference } from './agent-references'
+import { quoteContext, type AgentContextOption } from './agent-context'
 import { useAgentUsage } from './agent-usage'
 import { AgentUsageBar } from './AgentUsageBar'
 import { useAgentSession } from './use-agent-session'
@@ -36,6 +37,7 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
   const { state, reload, setActiveProvider } = useAgentSettings()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [draft, setDraft] = useState('')
+  const [context, setContext] = useState<AgentContextOption[]>([])
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -168,6 +170,12 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
           onApprove={session.approve}
           onDecline={session.decline}
           onRevert={session.revert}
+          onRetry={session.retry}
+          onEditLast={session.editLast}
+          onQuote={(text, label) => {
+            setContext((current) => [...current, quoteContext(text, label)])
+            composerRef.current?.focus()
+          }}
           onOpenReference={(kind, id) => openAgentReference(host, kind, id)}
           resolveReference={resolveReference}
         />
@@ -179,6 +187,8 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
         host={host}
         text={draft}
         onTextChange={setDraft}
+        context={context}
+        onContextChange={setContext}
         textareaRef={composerRef}
         running={session.running}
         disabled={provider === null}

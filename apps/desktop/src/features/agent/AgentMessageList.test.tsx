@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '../../test-utils'
+import { fireEvent, render, screen, waitFor, within } from '../../test-utils'
 import { AgentMessageList } from './AgentMessageList'
 import type { AgentChatItem } from './use-agent-session'
 
@@ -90,6 +90,29 @@ describe('AgentMessageList', () => {
     fireEvent.click(user)
     expect(user).toHaveFocus()
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('Liste os usuários'))
+  })
+
+  it('offers selected chat text as context with the right button', () => {
+    const onQuote = vi.fn()
+    render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: false, text: 'O campo results.sunset traz o horario do por do sol em UTC.' }]} {...actions} onQuote={onQuote} />)
+    const paragraph = screen.getByText(/results\.sunset/)
+    const range = document.createRange()
+    range.selectNodeContents(paragraph)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    fireEvent.contextMenu(screen.getByRole('log'), { clientX: 20, clientY: 30 })
+    const menu = screen.getByRole('menu', { name: 'Ações do texto selecionado' })
+    // The menu takes the focus, and the selection stays on screen.
+    expect(within(menu).getByRole('menuitem', { name: 'Usar como contexto' })).toHaveFocus()
+    expect(window.getSelection()?.toString()).toContain('results.sunset')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Usar como contexto' }))
+    expect(onQuote).toHaveBeenCalledWith('O campo results.sunset traz o horario do por do sol em UTC.', 'Trecho: “O campo results.sunset traz o ho…”')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+    // Without a selection the usual menu stays.
+    window.getSelection()?.removeAllRanges()
+    fireEvent.contextMenu(screen.getByRole('log'))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
   it('reports clipboard failure without losing the code', async () => {
