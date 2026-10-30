@@ -220,7 +220,7 @@ export const ResponsePanel = memo(function ResponsePanel({
             >
               <button type="button" className="rw-monitor-toggle" aria-pressed={monitorOn} disabled={!hasMonitors} onClick={monitor.onToggle}>
                 <MonitorIcon size={14} />
-                {t('monitor.toggle')}
+                <span className="rw-monitor-toggle-label">{t('monitor.toggle')}</span>
                 {failedBadge !== null && (
                   <span className="rw-monitor-toggle-count">
                     <span aria-hidden="true">{failedBadge}</span>

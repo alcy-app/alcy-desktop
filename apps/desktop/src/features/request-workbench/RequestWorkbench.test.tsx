@@ -1712,6 +1712,33 @@ describe('RequestWorkbench', () => {
     expect(document.querySelector('.rw-response-wrapper--bottom')).toBeInTheDocument()
   })
 
+  it('keeps the response under the request when the area is too narrow for both side by side', async () => {
+    // An open chat or sidebar narrows the request/response area without shrinking the window.
+    class NarrowAreaObserver {
+      callback: ResizeObserverCallback
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback
+      }
+      observe(element: Element) {
+        if (element.classList.contains('rw-request-response-layout')) {
+          this.callback([{ contentRect: { width: 600 } } as ResizeObserverEntry], this as unknown as ResizeObserver)
+        }
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', NarrowAreaObserver)
+    try {
+      render()
+      await screen.findByLabelText('Ambiente')
+      createRequestFromTabsBar('GraphQL')
+      expect(document.querySelector('.rw-response-wrapper--bottom')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Mover painel de resposta para a lateral direita' })).toBeDisabled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('mantém a posição do painel de resposta entre sessões', async () => {
     const { unmount } = render()
     await screen.findByLabelText('Ambiente')

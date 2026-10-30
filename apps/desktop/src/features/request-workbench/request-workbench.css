@@ -1061,6 +1061,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   min-height: var(--workbench-bar-height);
   padding: 2px 8px;
   border-bottom: 1px solid var(--border);
@@ -1069,6 +1070,7 @@
 
 .rw-response-toolbar-actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 4px;
 }
@@ -1085,7 +1087,9 @@
 
 .rw-response-status {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
+  white-space: nowrap;
   min-height: 22px;
   padding: 2px 7px;
   border-radius: var(--radius-full);
@@ -1115,8 +1119,10 @@
 }
 
 .rw-response-metric {
+  flex-shrink: 0;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Connection globe in the response summary (ResponseNetworkBadge). */
@@ -1527,7 +1533,38 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/*
+ * The response toolbar adapts to its own width (an open chat or sidebar can
+ * leave little room): labels give way to icons first, then the least
+ * important figures, so the status never wraps or runs into the actions.
+ */
+.rw-response {
+  container: rw-response / inline-size;
+}
+
+@container rw-response (max-width: 520px) {
+  .rw-response-toolbar .rw-history-trigger-label {
+    display: none;
+  }
+
+  .rw-response-toolbar .rw-monitor-toggle-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+
+@container rw-response (max-width: 400px) {
+  .rw-response-summary .rw-network-badge,
+  .rw-response-summary .rw-response-metric + .rw-response-metric {
+    display: none;
+  }
 }
 
 .rw-response-content {

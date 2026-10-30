@@ -250,6 +250,12 @@ const REQUEST_PANE_MIN_WIDTH = 360
 const COMMAND_IMPORT_MIN_MS = 350
 const RESPONSE_RIGHT_MIN_WIDTH = 280
 const RESPONSE_RIGHT_MAX_WIDTH = 900
+/**
+ * Below this width of the request/response area the response goes under the
+ * request, whatever the window size: an open chat or sidebar leaves too little
+ * room for both side by side. Switching layout does not change the area's width.
+ */
+const SIDE_BY_SIDE_MIN_WIDTH = REQUEST_PANE_MIN_WIDTH + RESPONSE_RIGHT_MIN_WIDTH + 180
 const SIDEBAR_MAX_SIZE = 440
 
 function useElementWidth(element: HTMLElement | null): number | null {
@@ -486,8 +492,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   )
   const [queryExplorerCollapsed, setQueryExplorerCollapsed] = useState(false)
   const [responseLayout, setResponseLayout] = useState<ResponsePanelLayout>(loadPersistedResponseLayout)
-  const compactResponseLayout = useCompactResponseLayout()
-  const effectiveResponseLayout: ResponsePanelLayout = compactResponseLayout ? 'bottom' : responseLayout
+  const compactWindow = useCompactResponseLayout()
   const sidebarPanel = useResizablePanel({
     initialSize: 320,
     minSize: 220,
@@ -512,6 +517,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   })
   const [requestResponseLayout, setRequestResponseLayout] = useState<HTMLDivElement | null>(null)
   const requestResponseLayoutWidth = useElementWidth(requestResponseLayout)
+  const compactResponseLayout = compactWindow || (requestResponseLayoutWidth !== null && requestResponseLayoutWidth < SIDE_BY_SIDE_MIN_WIDTH)
+  const effectiveResponseLayout: ResponsePanelLayout = compactResponseLayout ? 'bottom' : responseLayout
   const responsePanelRight = useResizablePanel({
     initialSize: 420,
     minSize: RESPONSE_RIGHT_MIN_WIDTH,
