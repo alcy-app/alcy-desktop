@@ -677,62 +677,28 @@
   font-size: var(--font-size-xs);
 }
 
-.agent-usage {
+.agent-session-tokens {
   display: flex;
   flex-shrink: 0;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1) var(--space-3);
+  gap: var(--space-2);
   margin: var(--space-2) var(--space-3) calc(-1 * var(--space-1));
   color: var(--text-muted);
   font-size: var(--font-size-xs);
-}
-
-.agent-usage-title {
-  font-weight: var(--font-weight-semibold);
-}
-
-.agent-usage-period {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.agent-usage-amount {
-  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
-.agent-usage-meter {
-  position: relative;
-  width: 48px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: var(--border);
+.agent-session-tokens-label {
+  font-weight: var(--font-weight-semibold);
 }
 
-.agent-usage-meter > span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--accent);
-}
-
-.agent-usage-period[data-level='warning'] .agent-usage-amount {
-  color: var(--warning);
-}
-
-.agent-usage-period[data-level='warning'] .agent-usage-meter > span {
-  background: var(--warning);
-}
-
-.agent-usage-period[data-level='exceeded'] .agent-usage-amount,
-.agent-usage-alert {
-  color: var(--error);
-}
-
-.agent-usage-period[data-level='exceeded'] .agent-usage-meter > span {
-  background: var(--error);
+/* What one answer cost, right under it. */
+.agent-turn-tokens {
+  flex-shrink: 0;
+  margin: calc(-1 * var(--space-3)) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .agent-composer {

@@ -12,6 +12,7 @@ import type { AgentChatItem } from './use-agent-session'
 import { toolLabel } from './agent-tool-labels'
 import { AgentThinking } from './AgentThinking'
 import { splitAgentReply } from './agent-follow-ups'
+import { TurnTokens } from './AgentTokens'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
@@ -89,6 +90,8 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
   const [editingId, setEditingId] = useState<string | null>(null)
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; range: Range } | null>(null)
   const last = items.at(-1)
+  // The token line of a turn does not end it: follow-ups still belong to the reply above it.
+  const lastContent = items.findLast((item) => item.kind !== 'usage')
   const lastUserId = items.findLast((item) => item.kind === 'user')?.id
   // Only the last message can be edited, and not while a turn runs.
   const editing = editingId !== null && editingId === lastUserId && !running ? editingId : null
@@ -211,7 +214,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                     {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
                   </div>
                   {!item.streaming && reply.text.trim() !== '' && <MessageActions text={reply.text} onQuote={quote(reply.text, quoteLabel('agent.quote.reply', item.atMs))} />}
-                  {!running && !item.streaming && item.id === last?.id && onFollowUp && reply.suggestions.length > 0 && (
+                  {!running && !item.streaming && item.id === lastContent?.id && onFollowUp && reply.suggestions.length > 0 && (
                     <div className="agent-follow-ups" role="group" aria-label={t('agent.followUps.title')}>
                       <p className="agent-follow-ups-title">{t('agent.followUps.title')}</p>
                       <div className="agent-follow-ups-options">
@@ -239,6 +242,8 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
             )
           case 'tool':
             return <ToolCallCard key={item.id} item={item} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
+          case 'usage':
+            return <TurnTokens key={item.id} tokens={item} />
         }
       })}
       {thinking && <AgentThinking />}

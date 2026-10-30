@@ -22,10 +22,6 @@ pub struct AgentProvider {
     /// Model used when the chat does not pick another one. May be empty for
     /// a custom provider until the user chooses one.
     pub model: String,
-    /// Tokens (input + output) per local day the user wants to stay under.
-    /// Only a warning: sending is never blocked (ADR 0065).
-    pub daily_token_limit: Option<u64>,
-    pub weekly_token_limit: Option<u64>,
 }
 
 pub const MAX_AGENT_PROVIDERS: usize = 16;
@@ -66,9 +62,6 @@ impl AgentSettings {
             provider.label = provider.label.trim().to_string();
             provider.base_url = provider.base_url.trim().trim_end_matches('/').to_string();
             provider.model = provider.model.trim().to_string();
-            // Zero reads as "no limit".
-            provider.daily_token_limit = provider.daily_token_limit.filter(|limit| *limit > 0);
-            provider.weekly_token_limit = provider.weekly_token_limit.filter(|limit| *limit > 0);
             if !is_valid_id(&provider.id) {
                 return Err(AgentSettingsError::InvalidId);
             }
@@ -127,8 +120,6 @@ mod tests {
             label: "Claude".into(),
             base_url: base_url.into(),
             model: "claude-sonnet-5-5".into(),
-            daily_token_limit: None,
-            weekly_token_limit: None,
         }
     }
 
@@ -181,16 +172,6 @@ mod tests {
             missing.validated(),
             Err(AgentSettingsError::UnknownActiveProvider("missing".into()))
         );
-    }
-
-    #[test]
-    fn a_zero_token_limit_means_no_limit() {
-        let mut limited = provider("claude", "https://api.anthropic.com");
-        limited.daily_token_limit = Some(0);
-        limited.weekly_token_limit = Some(500_000);
-        let validated = settings(vec![limited]).validated().unwrap();
-        assert_eq!(validated.providers[0].daily_token_limit, None);
-        assert_eq!(validated.providers[0].weekly_token_limit, Some(500_000));
     }
 
     #[test]

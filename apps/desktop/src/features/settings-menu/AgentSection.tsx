@@ -56,16 +56,6 @@ function providerStatus(provider: AgentProviderDto): ProviderStatus {
   return keyRequired && !provider.hasApiKey ? 'needsKey' : 'ready'
 }
 
-function limitText(limit: number | null): string {
-  return limit === null ? '' : String(limit)
-}
-
-/** Empty or zero is no limit. */
-function parseLimit(text: string): number | null {
-  const value = Number.parseInt(text, 10)
-  return Number.isSafeInteger(value) && value > 0 ? value : null
-}
-
 function uniqueId(base: string, providers: AgentProviderDto[]): string {
   const taken = new Set(providers.map((provider) => provider.id))
   if (!taken.has(base)) return base
@@ -126,8 +116,6 @@ export function AgentSection() {
       label: preset.label ?? t('settings.agent.preset.openaiCompatible'),
       baseUrl: preset.baseUrl,
       model: preset.model,
-      dailyTokenLimit: null,
-      weeklyTokenLimit: null,
       hasApiKey: false,
     }
     const result = await save([...settings.providers, provider], settings.activeProviderId)
@@ -236,8 +224,6 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
   const [label, setLabel] = useState(provider.label)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl)
   const [model, setModel] = useState(provider.model)
-  const [dailyLimit, setDailyLimit] = useState(limitText(provider.dailyTokenLimit))
-  const [weeklyLimit, setWeeklyLimit] = useState(limitText(provider.weeklyTokenLimit))
   const [apiKey, setApiKey] = useState('')
   const [replacingKey, setReplacingKey] = useState(false)
   const [models, setModels] = useState<AgentModelDto[]>([])
@@ -249,7 +235,6 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
 
   const status = providerStatus(provider)
   const dirty = label.trim() !== provider.label || baseUrl.trim() !== provider.baseUrl || model.trim() !== provider.model
-    || parseLimit(dailyLimit) !== provider.dailyTokenLimit || parseLimit(weeklyLimit) !== provider.weeklyTokenLimit
   const local = isLocalUrl(provider.baseUrl)
   const keyOptional = provider.kind === 'openaiCompatible' && local
   const editingKey = !provider.hasApiKey || replacingKey
@@ -267,14 +252,7 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
 
   const saveFields = () =>
     run('save', async () => {
-      const result = await onSave({
-        ...provider,
-        label: label.trim() || provider.label,
-        baseUrl: baseUrl.trim(),
-        model: model.trim(),
-        dailyTokenLimit: parseLimit(dailyLimit),
-        weeklyTokenLimit: parseLimit(weeklyLimit),
-      })
+      const result = await onSave({ ...provider, label: label.trim() || provider.label, baseUrl: baseUrl.trim(), model: model.trim() })
       if (result.ok) setSaved(true)
       else setError(t('settings.agent.saveError'))
     })
@@ -366,16 +344,7 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
                 placeholder={t('settings.agent.modelPlaceholder')}
               />
             </div>
-            <label className="settings-agent-field">
-              <span>{t('settings.agent.dailyTokenLimit')}</span>
-              <Input mono inputMode="numeric" value={dailyLimit} placeholder={t('settings.agent.noTokenLimit')} onChange={(event) => setDailyLimit(event.target.value.replace(/\D/g, ''))} />
-            </label>
-            <label className="settings-agent-field">
-              <span>{t('settings.agent.weeklyTokenLimit')}</span>
-              <Input mono inputMode="numeric" value={weeklyLimit} placeholder={t('settings.agent.noTokenLimit')} onChange={(event) => setWeeklyLimit(event.target.value.replace(/\D/g, ''))} />
-            </label>
           </div>
-          <p className="settings-proxy-hint">{t('settings.agent.tokenLimitHint')}</p>
 
           <div className="settings-agent-key">
             <span className="settings-agent-key-title">{t('settings.agent.apiKey')}</span>

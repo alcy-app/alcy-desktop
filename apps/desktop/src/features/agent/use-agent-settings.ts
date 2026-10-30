@@ -4,8 +4,8 @@ import { getAgentSettings, saveAgentSettings, type AgentProviderDto, type AgentP
 export type AgentSettingsState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; settings: AgentSettingsDto }
 
 /** What `save_agent_settings` takes back from a loaded provider: every field but the key flag. */
-export function providerInput({ id, kind, label, baseUrl, model, dailyTokenLimit, weeklyTokenLimit }: AgentProviderDto): AgentProviderInput {
-  return { id, kind, label, baseUrl, model, dailyTokenLimit, weeklyTokenLimit }
+export function providerInput({ id, kind, label, baseUrl, model }: AgentProviderDto): AgentProviderInput {
+  return { id, kind, label, baseUrl, model }
 }
 
 /** A provider the chat can use: it has a key, or speaks the OpenAI format (local servers need none). */

@@ -21,8 +21,8 @@ use alcy_domain::{
 };
 use alcy_platform::KeyringCredentialStore;
 use alcy_storage::{
-    AgentSessionRecord, AgentSessionStore, AgentSettingsStore, AgentTokenTotals, AgentUsageStore,
-    StorageError, is_valid_session_id, is_valid_usage_day,
+    AgentSessionRecord, AgentSessionStore, AgentSettingsStore, AgentTokenTotals, AgentTurnTokens,
+    StorageError, is_valid_session_id,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,7 +43,6 @@ const MAX_VIEW_TEXT_BYTES: usize = 64 * 1024;
 pub struct AgentPaths {
     pub settings: PathBuf,
     pub sessions: PathBuf,
-    pub usage: PathBuf,
 }
 
 impl AgentPaths {
@@ -53,10 +52,6 @@ impl AgentPaths {
 
     fn session_store(&self) -> AgentSessionStore {
         AgentSessionStore::new(self.sessions.clone())
-    }
-
-    fn usage_store(&self) -> AgentUsageStore {
-        AgentUsageStore::new(self.usage.clone())
     }
 }
 
@@ -115,8 +110,6 @@ pub struct AgentProviderDto {
     pub label: String,
     pub base_url: String,
     pub model: String,
-    pub daily_token_limit: Option<u64>,
-    pub weekly_token_limit: Option<u64>,
     pub has_api_key: bool,
 }
 
@@ -135,10 +128,6 @@ pub struct AgentProviderInput {
     pub label: String,
     pub base_url: String,
     pub model: String,
-    #[serde(default)]
-    pub daily_token_limit: Option<u64>,
-    #[serde(default)]
-    pub weekly_token_limit: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,22 +189,10 @@ pub struct StartAgentTurnInput {
     #[serde(default)]
     pub context: Vec<AgentContextInput>,
     pub language: AgentLanguageDto,
-    /// The interface's local day (`YYYY-MM-DD`) the turn's tokens count in.
-    #[serde(default)]
-    pub local_day: Option<String>,
     /// The text replaces the user's last message and what came after it
     /// (retry of a failed turn, or an edit of the last message).
     #[serde(default)]
     pub replace_last_turn: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentUsageInput {
-    pub provider_id: String,
-    pub today: String,
-    /// Local days of the current week so far, today included.
-    pub week: Vec<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -223,13 +200,6 @@ pub struct AgentUsageInput {
 pub struct AgentTokenTotalsDto {
     pub input: u64,
     pub output: u64,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentUsageDto {
-    pub today: AgentTokenTotalsDto,
-    pub week: AgentTokenTotalsDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -351,6 +321,11 @@ pub enum AgentViewItemDto {
         input: Value,
         is_error: bool,
     },
+    /// The tokens of the turn that ended just before.
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -363,6 +338,8 @@ pub struct AgentSessionViewDto {
     pub items: Vec<AgentViewItemDto>,
     /// Older items left out of `items`.
     pub omitted_items: usize,
+    /// Every token the chat used, also of replaced turns.
+    pub total_tokens: AgentTokenTotalsDto,
 }
 
 /// Never carries API keys or message contents.
@@ -458,8 +435,6 @@ fn settings_dto(settings: AgentSettings, credentials: &dyn CredentialStore) -> A
                 label: provider.label,
                 base_url: provider.base_url,
                 model: provider.model,
-                daily_token_limit: provider.daily_token_limit,
-                weekly_token_limit: provider.weekly_token_limit,
             })
             .collect(),
         active_provider_id: settings.active_provider_id,
@@ -546,8 +521,6 @@ pub async fn save_agent_settings(
                     label: provider.label,
                     base_url: provider.base_url,
                     model: provider.model,
-                    daily_token_limit: provider.daily_token_limit,
-                    weekly_token_limit: provider.weekly_token_limit,
                 })
                 .collect(),
             active_provider_id: input.active_provider_id,
@@ -764,7 +737,10 @@ fn replace_last_turn(session: &mut AgentSessionRecord) -> Result<(), AgentComman
         }),
         Some(_) => {
             remove_last_user_text(&mut session.messages);
-            session.message_times_ms.truncate(session.messages.len());
+            let len = session.messages.len();
+            session.message_times_ms.truncate(len);
+            // The replaced turn's cost leaves the view; the chat total keeps it.
+            session.turn_tokens.retain(|turn| turn.after_message <= len);
             Ok(())
         }
     }
@@ -863,6 +839,8 @@ async fn run_turn(
                 summary: None,
                 summarized_until: 0,
                 message_times_ms: Vec::new(),
+                turn_tokens: Vec::new(),
+                total_tokens: AgentTokenTotals::default(),
             }
         }
     };
@@ -976,6 +954,20 @@ async fn run_turn(
         now_ms(),
     );
 
+    // The title call is counted with the turn that asked for it.
+    let turn_tokens = outcome.as_ref().ok().map(|outcome| AgentTokenTotals {
+        input: outcome.usage.input_tokens + title_usage.input_tokens,
+        output: outcome.usage.output_tokens + title_usage.output_tokens,
+    });
+    if let Some(tokens) = turn_tokens.filter(|tokens| !tokens.is_empty()) {
+        session.turn_tokens.push(AgentTurnTokens {
+            after_message: session.messages.len(),
+            input: tokens.input,
+            output: tokens.output,
+        });
+        session.total_tokens.add(tokens);
+    }
+
     // The chat is saved even when the turn failed: what happened before the
     // failure (and the user's message) stays in the history.
     session.updated_at_ms = now_ms();
@@ -993,61 +985,13 @@ async fn run_turn(
     .await?;
 
     let outcome = outcome?;
-    if let Some(day) = input.local_day.filter(|day| is_valid_usage_day(day)) {
-        let store = paths.usage_store();
-        let provider_id = provider.id.clone();
-        // The title call is counted with the turn that asked for it.
-        let tokens = AgentTokenTotals {
-            input: outcome.usage.input_tokens + title_usage.input_tokens,
-            output: outcome.usage.output_tokens + title_usage.output_tokens,
-        };
-        // Usage is a guide value: failing to count it never fails the turn.
-        let recorded = run_blocking(move || Ok(store.record(&provider_id, &day, tokens)?)).await;
-        let _ = crate::logging::logged("alcy::agent", "record agent usage", recorded);
-    }
+    let tokens = turn_tokens.unwrap_or_default();
     Ok(AgentTurnResultDto {
         session_id,
         stop_reason: turn_stop_dto(outcome.stop),
-        input_tokens: outcome.usage.input_tokens,
-        output_tokens: outcome.usage.output_tokens,
+        input_tokens: tokens.input,
+        output_tokens: tokens.output,
     })
-}
-
-/// Tokens the provider used today and this week, counted locally (ADR 0065).
-#[tauri::command]
-pub async fn get_agent_usage(
-    input: AgentUsageInput,
-    paths: State<'_, AgentPaths>,
-) -> Result<AgentUsageDto, AgentCommandError> {
-    let store = paths.usage_store();
-    let result = async {
-        if !is_valid_usage_day(&input.today)
-            || input.week.len() > 7
-            || !input.week.iter().all(|day| is_valid_usage_day(day))
-        {
-            return Err(AgentCommandError::Invalid {
-                message: "usage days must be YYYY-MM-DD, at most 7 for the week".into(),
-            });
-        }
-        run_blocking(move || {
-            let today = store.totals(&input.provider_id, std::slice::from_ref(&input.today))?;
-            let week = store.totals(&input.provider_id, &input.week)?;
-            Ok(AgentUsageDto {
-                today: totals_dto(today),
-                week: totals_dto(week),
-            })
-        })
-        .await
-    }
-    .await;
-    crate::logging::logged("alcy::agent", "load agent usage", result)
-}
-
-fn totals_dto(totals: AgentTokenTotals) -> AgentTokenTotalsDto {
-    AgentTokenTotalsDto {
-        input: totals.input,
-        output: totals.output,
-    }
 }
 
 /// Idempotent: an unknown or finished run is ignored.
@@ -1191,6 +1135,16 @@ fn session_view(session: AgentSessionRecord) -> AgentSessionViewDto {
                 _ => {}
             }
         }
+        for turn in session
+            .turn_tokens
+            .iter()
+            .filter(|turn| turn.after_message == index + 1)
+        {
+            items.push(AgentViewItemDto::Usage {
+                input_tokens: turn.input,
+                output_tokens: turn.output,
+            });
+        }
     }
     let omitted_items = items.len().saturating_sub(MAX_VIEW_ITEMS);
     let items = items.split_off(omitted_items);
@@ -1201,6 +1155,10 @@ fn session_view(session: AgentSessionRecord) -> AgentSessionViewDto {
         model: session.model,
         items,
         omitted_items,
+        total_tokens: AgentTokenTotalsDto {
+            input: session.total_tokens.input,
+            output: session.total_tokens.output,
+        },
     }
 }
 
@@ -1242,8 +1200,6 @@ mod tests {
             label: id.into(),
             base_url: base_url.into(),
             model: model.into(),
-            daily_token_limit: None,
-            weekly_token_limit: None,
         }
     }
 
@@ -1347,10 +1303,29 @@ mod tests {
             summary: None,
             summarized_until: 0,
             message_times_ms: vec![1, 2, 3, 4],
+            turn_tokens: vec![
+                AgentTurnTokens {
+                    after_message: 2,
+                    input: 10,
+                    output: 1,
+                },
+                AgentTurnTokens {
+                    after_message: 4,
+                    input: 20,
+                    output: 2,
+                },
+            ],
+            total_tokens: AgentTokenTotals {
+                input: 30,
+                output: 3,
+            },
         };
         replace_last_turn(&mut session).unwrap();
         assert_eq!(session.messages.len(), 2);
         assert_eq!(session.message_times_ms, vec![1, 2]);
+        // The replaced turn's cost leaves the view, not the chat total.
+        assert_eq!(session.turn_tokens.len(), 1);
+        assert_eq!(session.total_tokens.input, 30);
 
         // The summarized part of a long chat cannot be replaced.
         session.summarized_until = 1;
@@ -1374,8 +1349,6 @@ mod tests {
             label: "P".into(),
             base_url: base_url.into(),
             model: "m".into(),
-            daily_token_limit: None,
-            weekly_token_limit: None,
         };
         assert_eq!(
             context_budget_tokens(&provider(
@@ -1426,6 +1399,15 @@ mod tests {
             summary: None,
             summarized_until: 0,
             message_times_ms: vec![1000, 2000, 0],
+            turn_tokens: vec![AgentTurnTokens {
+                after_message: 3,
+                input: 900,
+                output: 40,
+            }],
+            total_tokens: AgentTokenTotals {
+                input: 900,
+                output: 40,
+            },
             messages: vec![
                 AgentMessage::user_text(
                     "explain\n\n<attached_context>\n- secret\n</attached_context>",
@@ -1470,9 +1452,21 @@ mod tests {
                     input: json!({}),
                     is_error: true,
                 },
+                // The turn's tokens come after the messages it covers.
+                AgentViewItemDto::Usage {
+                    input_tokens: 900,
+                    output_tokens: 40,
+                },
             ]
         );
         assert_eq!(view.omitted_items, 0);
+        assert_eq!(
+            view.total_tokens,
+            AgentTokenTotalsDto {
+                input: 900,
+                output: 40
+            }
+        );
     }
 
     #[test]

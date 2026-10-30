@@ -359,10 +359,10 @@ finishes. Clicking sends a new message through the existing turn and approval
 paths. The trailer stays in the transcript text, so saved chats need no contract
 change; it is hidden from rendered prose, copying and quoting.
 
-Token usage is counted locally (ADR 0065): at the end of a turn Rust adds its
-tokens to `agent-usage.json` in app data, per provider and local day named by
-the interface, keeping two weeks. The chat shows today and the current week
-against optional per-provider limits, which only warn.
+Token usage is kept with each chat (ADR 0066): every finished turn records
+its tokens (the title call of a new chat included) and the chat keeps a total,
+also of turns later replaced. The chat shows each answer's cost under it and
+the chat total above the composer.
 
 ### gRPC
 

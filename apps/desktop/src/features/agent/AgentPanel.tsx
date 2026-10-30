@@ -12,8 +12,7 @@ import { AgentHistoryPopover } from './AgentHistoryPopover'
 import { AgentMessageList } from './AgentMessageList'
 import { agentReferenceResolver, openAgentReference } from './agent-references'
 import { quoteContext, type AgentContextOption } from './agent-context'
-import { useAgentUsage } from './agent-usage'
-import { AgentUsageBar } from './AgentUsageBar'
+import { SessionTokens } from './AgentTokens'
 import { useAgentSession } from './use-agent-session'
 import { isProviderUsable, useAgentSettings } from './use-agent-settings'
 import { useAgentApprovalMode, type AgentApprovalMode } from './use-agent-approval-mode'
@@ -67,7 +66,6 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
   })
   // Rebuilt each render so names follow renames and new items while chatting.
   const resolveReference = agentReferenceResolver(host)
-  const usage = useAgentUsage(provider?.id ?? null, session.running)
 
   const toolbar = (
     <>
@@ -185,7 +183,7 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
         />
       )}
 
-      {provider && usage && <AgentUsageBar provider={provider} usage={usage} />}
+      {session.tokens.input + session.tokens.output > 0 && <SessionTokens tokens={session.tokens} />}
 
       <AgentComposer
         host={host}

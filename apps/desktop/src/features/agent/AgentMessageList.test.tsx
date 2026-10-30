@@ -75,6 +75,14 @@ describe('AgentMessageList', () => {
     expect(screen.getByText('t4')).toBeInTheDocument()
   })
 
+  it('shows what each answer cost under it, without hiding its follow-ups', () => {
+    const reply: AgentChatItem = { kind: 'assistant', id: 'a', streaming: false, text: 'Pronto.\n\n```alcy-suggestions\n["Adicione testes"]\n```' }
+    render(<AgentMessageList items={[reply, { kind: 'usage', id: 'u', input: 1234, output: 40 }]} {...actions} onFollowUp={vi.fn()} />)
+    const line = screen.getByText(/↑ 1,2 mil · ↓ 40 tokens/)
+    expect(line).toHaveAttribute('title', 'Entrada: 1.234 tokens · Saída: 40 tokens')
+    expect(screen.getByRole('button', { name: 'Adicione testes' })).toBeInTheDocument()
+  })
+
   it('copies individual code blocks, including blocks nested in Markdown lists', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })

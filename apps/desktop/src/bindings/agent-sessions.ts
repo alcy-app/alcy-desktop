@@ -12,6 +12,8 @@ export type AgentViewItemDto =
   | { kind: 'user'; text: string; atMs?: number }
   | { kind: 'assistant'; text: string; atMs?: number }
   | { kind: 'tool'; callId: string; name: string; input: Record<string, unknown>; isError: boolean }
+  /** Tokens of the turn that ended just before. */
+  | { kind: 'usage'; inputTokens: number; outputTokens: number }
 
 export interface AgentSessionViewDto {
   id: string
@@ -21,6 +23,8 @@ export interface AgentSessionViewDto {
   items: AgentViewItemDto[]
   /** Older items left out of `items`. */
   omittedItems: number
+  /** Every token the chat used, also of replaced turns; zero in chats saved before. */
+  totalTokens: { input: number; output: number }
 }
 
 export function listAgentSessions(rootPath: string) {

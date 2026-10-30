@@ -30,6 +30,37 @@ pub struct AgentSessionRecord {
     /// When each message was written, aligned with `messages`; `0` (or a
     /// missing entry, in chats saved before) means unknown.
     pub message_times_ms: Vec<u64>,
+    /// Tokens of each finished turn, shown after the messages it covers (ADR 0066).
+    pub turn_tokens: Vec<AgentTurnTokens>,
+    /// Every token the chat used, also of turns later replaced (retry or edit).
+    pub total_tokens: AgentTokenTotals,
+}
+
+/// Tokens a provider used, input and output apart.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentTokenTotals {
+    pub input: u64,
+    pub output: u64,
+}
+
+impl AgentTokenTotals {
+    pub fn is_empty(&self) -> bool {
+        self.input == 0 && self.output == 0
+    }
+
+    pub fn add(&mut self, other: AgentTokenTotals) {
+        self.input = self.input.saturating_add(other.input);
+        self.output = self.output.saturating_add(other.output);
+    }
+}
+
+/// The tokens of one turn, which ended with `messages[..after_message]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTurnTokens {
+    pub after_message: usize,
+    pub input: u64,
+    pub output: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +89,11 @@ struct PersistedSession {
     /// Additive, like the summary: older chats have no times.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     message_times_ms: Vec<u64>,
+    /// Additive too: chats saved before token usage was kept show none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    turn_tokens: Vec<AgentTurnTokens>,
+    #[serde(default, skip_serializing_if = "AgentTokenTotals::is_empty")]
+    total_tokens: AgentTokenTotals,
 }
 
 /// Only the header, to list chats without keeping their messages.
@@ -143,6 +179,8 @@ impl AgentSessionStore {
             model: file.model,
             summarized_until: file.summarized_until.min(file.messages.len()),
             message_times_ms: file.message_times_ms,
+            turn_tokens: file.turn_tokens,
+            total_tokens: file.total_tokens,
             messages: file.messages.into_iter().map(message_from).collect(),
             summary: file.summary,
         }))
@@ -162,6 +200,8 @@ impl AgentSessionStore {
             summary: session.summary.clone(),
             summarized_until: session.summarized_until,
             message_times_ms: session.message_times_ms.clone(),
+            turn_tokens: session.turn_tokens.clone(),
+            total_tokens: session.total_tokens,
         };
         let json =
             serde_json::to_vec(&file).map_err(|error| StorageError::Write(error.to_string()))?;
@@ -358,6 +398,15 @@ mod tests {
             summary: None,
             summarized_until: 0,
             message_times_ms: vec![10, 11, 12],
+            turn_tokens: vec![AgentTurnTokens {
+                after_message: 3,
+                input: 120,
+                output: 30,
+            }],
+            total_tokens: AgentTokenTotals {
+                input: 150,
+                output: 40,
+            },
         }
     }
 
@@ -398,6 +447,8 @@ mod tests {
         fs::write(path, old).unwrap();
         let loaded = store.load("/w", "o").unwrap().unwrap();
         assert_eq!((loaded.summary, loaded.summarized_until), (None, 0));
+        assert!(loaded.turn_tokens.is_empty());
+        assert!(loaded.total_tokens.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 

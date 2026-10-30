@@ -17,8 +17,8 @@ vi.mock('../../bindings/agent-settings', () => ({
   listAgentModels: (...args: unknown[]) => listAgentModels(...args),
 }))
 
-const claude: AgentProviderDto = { id: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', dailyTokenLimit: null, weeklyTokenLimit: null, hasApiKey: false }
-const local: AgentProviderDto = { id: 'custom', kind: 'openaiCompatible', label: 'Custom', baseUrl: 'http://localhost:11434/v1', model: '', dailyTokenLimit: null, weeklyTokenLimit: null, hasApiKey: false }
+const claude: AgentProviderDto = { id: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', hasApiKey: false }
+const local: AgentProviderDto = { id: 'custom', kind: 'openaiCompatible', label: 'Custom', baseUrl: 'http://localhost:11434/v1', model: '', hasApiKey: false }
 
 let current: AgentSettingsDto
 
@@ -93,16 +93,6 @@ describe('AgentSection', () => {
     fireEvent.click(within(claudeCard).getByRole('button', { name: 'Salvar alterações' }))
     await waitFor(() => expect(saveAgentSettings).toHaveBeenCalled())
     expect(saveAgentSettings.mock.calls[0][0].providers[0].model).toBe('claude-opus-5-5')
-  })
-
-  it('saves daily and weekly token limits, empty meaning no limit', async () => {
-    render(<AgentSection />)
-    const claudeCard = await waitFor(() => card('Claude'))
-    fireEvent.change(within(claudeCard).getByLabelText('Limite diário de tokens'), { target: { value: '200.000' } })
-    expect(within(claudeCard).getByLabelText('Limite diário de tokens')).toHaveValue('200000')
-    fireEvent.click(within(claudeCard).getByRole('button', { name: 'Salvar alterações' }))
-    await waitFor(() => expect(saveAgentSettings).toHaveBeenCalled())
-    expect(saveAgentSettings.mock.calls[0][0].providers[0]).toEqual(expect.objectContaining({ dailyTokenLimit: 200000, weeklyTokenLimit: null }))
   })
 
   it('adds a provider from a preset and removes it with its key', async () => {

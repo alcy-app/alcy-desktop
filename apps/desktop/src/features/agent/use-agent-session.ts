@@ -15,7 +15,6 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import type { WorkbenchAgentHost } from './agent-host'
 import { rememberSession, rememberedSession } from './agent-session-memory'
 import { runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tools'
-import { localDay } from './agent-usage'
 import { toolLabel } from './agent-tool-labels'
 
 export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' | 'declined' | 'reverted'
@@ -28,6 +27,8 @@ export type AgentChatItem =
   | { kind: 'tool'; id: string; name: string; toolClass: AgentToolClass; summary: string; state: AgentToolState; canRevert: boolean; autoApproved: boolean }
   /** `retry`: the turn failed and its message can be sent again. */
   | { kind: 'notice'; id: string; tone: 'error' | 'info'; text: string; retry?: boolean }
+  /** Tokens one turn used, shown after its reply. */
+  | { kind: 'usage'; id: string; input: number; output: number }
 
 interface UseAgentSessionOptions {
   rootPath: string
@@ -74,6 +75,8 @@ function nextItemId(prefix: string) {
 }
 
 /** One chat with the agent: streaming, tool calls on the workbench, approvals and history. */
+const NO_TOKENS = { input: 0, output: 0 }
+
 function lastUserIndex(items: AgentChatItem[]): number {
   return items.findLastIndex((item) => item.kind === 'user')
 }
@@ -84,6 +87,8 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   const [running, setRunning] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [title, setTitle] = useState<string | null>(null)
+  /** Every token the chat used, also of turns replaced by a retry or an edit. */
+  const [tokens, setTokens] = useState(NO_TOKENS)
   const runIdRef = useRef<string | null>(null)
   const approvalsRef = useRef(new Map<string, (approved: boolean) => void>())
   const revertsRef = useRef(new Map<string, () => void | boolean>())
@@ -210,7 +215,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
         return [...(last >= 0 ? current.slice(0, last) : current), { kind: 'user', id: userId, text: trimmed, context, atMs: Date.now(), sent: false }]
       })
       const result = await startAgentTurn(
-        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, localDay: localDay(new Date()), replaceLastTurn },
+        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, replaceLastTurn },
         (event) => {
           // The message is in the transcript once its turn starts.
           if (event.type === 'sessionStarted') setItems((current) => current.map((item) => (item.id === userId && item.kind === 'user' ? { ...item, sent: true } : item)))
@@ -223,10 +228,14 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       setItems((current) => {
         const settled = current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item))
         if (!result.ok) return [...settled, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t), retry: true }]
-        const stop = result.value.stopReason
-        if (stop === 'endTurn') return settled
-        return [...settled, { kind: 'notice', id: nextItemId('notice'), tone: 'info', text: t(`agent.stop.${stop}`) }]
+        const { stopReason: stop, inputTokens, outputTokens } = result.value
+        const withUsage: AgentChatItem[] = inputTokens + outputTokens > 0
+          ? [...settled, { kind: 'usage', id: nextItemId('usage'), input: inputTokens, output: outputTokens }]
+          : settled
+        if (stop === 'endTurn') return withUsage
+        return [...withUsage, { kind: 'notice', id: nextItemId('notice'), tone: 'info', text: t(`agent.stop.${stop}`) }]
       })
+      if (result.ok) setTokens((current) => ({ input: current.input + result.value.inputTokens, output: current.output + result.value.outputTokens }))
       if (result.ok) setSessionId(result.value.sessionId)
     },
     [declinePendingApprovals, handleEvent, items, language, model, providerId, rootPath, sessionId, t],
@@ -288,6 +297,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   const newChat = useCallback(() => {
     if (runIdRef.current !== null) return
     setItems([])
+    setTokens(NO_TOKENS)
     setSessionId(null)
     setTitle(null)
     revertsRef.current.clear()
@@ -301,6 +311,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       revertsRef.current.clear()
       setSessionId(view.id)
       setTitle(view.title)
+      setTokens(view.totalTokens ?? NO_TOKENS)
       setItems([
         ...(view.omittedItems > 0 ? [{ kind: 'notice' as const, id: nextItemId('notice'), tone: 'info' as const, text: t('agent.history.omitted', { count: view.omittedItems }) }] : []),
         ...view.items.map((item): AgentChatItem => {
@@ -320,6 +331,8 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
                 canRevert: false,
                 autoApproved: false,
               }
+            case 'usage':
+              return { kind: 'usage', id: nextItemId('usage'), input: item.inputTokens, output: item.outputTokens }
           }
         }),
       ])
@@ -366,5 +379,5 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     [rootPath],
   )
 
-  return { items, running, sessionId, title, send, retry, editLast, stop, approve: (callId: string) => resolveApproval(callId, true), decline: (callId: string) => resolveApproval(callId, false), revert, newChat, openSession }
+  return { items, running, sessionId, title, tokens, send, retry, editLast, stop, approve: (callId: string) => resolveApproval(callId, true), decline: (callId: string) => resolveApproval(callId, false), revert, newChat, openSession }
 }

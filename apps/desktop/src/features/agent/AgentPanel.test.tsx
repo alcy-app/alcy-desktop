@@ -12,13 +12,11 @@ const saveAgentSettings = vi.fn()
 const startAgentTurn = vi.fn()
 const submitAgentToolResult = vi.fn()
 const loadAgentSession = vi.fn()
-const getAgentUsage = vi.fn()
 const notifyWhenUnfocused = vi.fn()
 
 vi.mock('../../bindings/agent-settings', () => ({
   getAgentSettings: () => getAgentSettings(),
   saveAgentSettings: (...args: unknown[]) => saveAgentSettings(...args),
-  getAgentUsage: (...args: unknown[]) => getAgentUsage(...args),
 }))
 vi.mock('../../bindings/agent-turn', () => ({
   startAgentTurn: (...args: unknown[]) => startAgentTurn(...args),
@@ -34,8 +32,7 @@ vi.mock('../../bindings/agent-sessions', () => ({
   deleteAgentSession: vi.fn(),
 }))
 
-const claude = { id: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', dailyTokenLimit: null, weeklyTokenLimit: null, hasApiKey: true }
-const noUsage = { today: { input: 0, output: 0 }, week: { input: 0, output: 0 } }
+const claude = { id: 'claude', kind: 'anthropic', label: 'Claude', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-5-5', hasApiKey: true }
 
 function host(): WorkbenchAgentHost {
   const content = { ...emptyRequestContent('rest'), endpointUrl: 'https://api.example.com/users' }
@@ -53,6 +50,7 @@ function host(): WorkbenchAgentHost {
     replaceContent: vi.fn(),
     send: vi.fn(async () => ({ status: 'error', error: { kind: 'timeout' } }) as const),
     saveTab: vi.fn(),
+    importFromText: vi.fn(),
     createCollection: vi.fn(),
     createFolder: vi.fn(),
     setVariable: vi.fn(),
@@ -96,7 +94,6 @@ beforeEach(() => {
   saveAgentSettings.mockReset()
   startAgentTurn.mockReset()
   submitAgentToolResult.mockReset()
-  getAgentUsage.mockReset().mockResolvedValue({ ok: true, value: noUsage })
   notifyWhenUnfocused.mockReset().mockResolvedValue(true)
 })
 
@@ -212,102 +209,31 @@ describe('AgentPanel', () => {
     expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ providerId: local.id, model: local.model }), expect.any(Function))
   })
 
-  it('shows the active provider token usage above the composer and counts turns in the local day', async () => {
-    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [{ ...claude, dailyTokenLimit: 1000 }], activeProviderId: 'claude' } })
-    getAgentUsage.mockResolvedValue({ ok: true, value: { today: { input: 900, output: 200 }, week: { input: 900, output: 200 } } })
-    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
-    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
-    expect(await screen.findByRole('group', { name: 'Uso de tokens de Claude' })).toBeInTheDocument()
-    expect(screen.getByText('Limite diário atingido')).toBeInTheDocument()
-    expect(getAgentUsage).toHaveBeenCalledWith('claude', expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), expect.any(Array))
-    sendMessage('olá')
-    expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ localDay: getAgentUsage.mock.calls[0][1] }), expect.any(Function))
-    await waitFor(() => expect(getAgentUsage).toHaveBeenCalledTimes(2))
-  })
-
-  it('retries a failed turn in place of its message, replacing it in the transcript only once it was saved', async () => {
-    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
-    startAgentTurn
-      .mockImplementationOnce(async () => ({ ok: false, error: { kind: 'missingApiKey' } }))
-      .mockImplementationOnce(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
-        onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'Oi' })
-        return { ok: false, error: { kind: 'network', message: 'offline' } }
-      })
-      .mockImplementation(async () => ({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }))
-    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
-    await screen.findByText('Como posso ajudar?')
-    sendMessage('oi')
-
-    // Failed before the turn started: nothing was saved, so nothing is replaced.
-    fireEvent.click(await screen.findByRole('button', { name: 'Tentar novamente' }))
-    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
-    expect(startAgentTurn.mock.calls[1][0]).toEqual(expect.objectContaining({ text: 'oi', replaceLastTurn: false }))
-
-    // Failed after it started: the saved message is replaced, not repeated.
-    fireEvent.click(await screen.findByRole('button', { name: 'Tentar novamente' }))
-    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(3))
-    expect(startAgentTurn.mock.calls[2][0]).toEqual(expect.objectContaining({ text: 'oi', sessionId: 's1', replaceLastTurn: true }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Tentar novamente' })).not.toBeInTheDocument())
-    expect(screen.getAllByText('oi')).toHaveLength(1)
-  })
-
-  it('edits the last message in place and sends it instead of the original', async () => {
+  it('adds each turn cost under the answer and to the chat total, also when reopening a chat', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
       onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'Oi' })
-      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
+      onEvent({ type: 'textDelta', text: 'Olá!' })
+      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1200, outputTokens: 30 } }
     })
-    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    const { unmount } = render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
     await screen.findByText('Como posso ajudar?')
-    sendMessage('liste os usuarios')
-    fireEvent.click(await screen.findByRole('button', { name: 'Editar mensagem' }))
-    const editor = screen.getByLabelText('Editar a mensagem')
-    expect(editor).toHaveValue('liste os usuarios')
-    fireEvent.change(editor, { target: { value: 'liste os pedidos' } })
-    fireEvent.keyDown(editor, { key: 'Enter' })
-    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
-    expect(startAgentTurn.mock.calls[1][0]).toEqual(expect.objectContaining({ text: 'liste os pedidos', replaceLastTurn: true }))
-    expect(await screen.findByText('liste os pedidos')).toBeInTheDocument()
-    expect(screen.queryByText('liste os usuarios')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nesta conversa')).not.toBeInTheDocument()
+    sendMessage('oi')
+    expect(await screen.findByText('↑ 1,2 mil · ↓ 30 tokens', { selector: '.agent-turn-tokens' })).toBeInTheDocument()
+    sendMessage('e agora?')
+    await waitFor(() => expect(screen.getByText('Nesta conversa').parentElement).toHaveTextContent('↑ 2,4 mil · ↓ 60 tokens'))
+    unmount()
 
-    // Escape leaves the message as it was.
-    fireEvent.click(await screen.findByRole('button', { name: 'Editar mensagem' }))
-    fireEvent.keyDown(screen.getByLabelText('Editar a mensagem'), { key: 'Escape' })
-    expect(screen.queryByLabelText('Editar a mensagem')).not.toBeInTheDocument()
-    expect(startAgentTurn).toHaveBeenCalledTimes(2)
-  })
-
-  it('attaches a reply as a quote in the composer and sends it as context', async () => {
-    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
-    startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
-      onEvent({ type: 'textDelta', text: 'Use o endpoint /orders.' })
-      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
-    })
+    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 's-old' }))
+    loadAgentSession.mockResolvedValue({ ok: true, value: {
+      id: 's-old', title: 'Users', providerId: 'claude', model: 'm', omittedItems: 0,
+      items: [{ kind: 'user', text: 'oi' }, { kind: 'assistant', text: 'Olá!' }, { kind: 'usage', inputTokens: 900, outputTokens: 12 }],
+      totalTokens: { input: 1500, output: 20 },
+    } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
-    await screen.findByText('Como posso ajudar?')
-    sendMessage('qual endpoint?')
-    await screen.findByText('Use o endpoint /orders.')
-    const [, replyQuote] = screen.getAllByRole('button', { name: 'Usar como contexto' })
-    fireEvent.click(replyQuote)
-    const chips = screen.getByRole('list', { name: 'Contexto anexado' })
-    expect(chips).toHaveTextContent('Resposta')
-    expect(screen.getByLabelText('Mensagem para o agente')).toHaveFocus()
-    sendMessage('detalhe isso')
-    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
-    expect(startAgentTurn.mock.calls[1][0].context).toEqual([expect.objectContaining({ kind: 'quote', summary: 'Use o endpoint /orders.' })])
-  })
-
-  it('shows the title the model gives a new chat in place of its first line', async () => {
-    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
-    startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
-      onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'me liste os usuarios da api de teste' })
-      onEvent({ type: 'titleChanged', title: 'Listar usuários da API' })
-      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
-    })
-    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
-    await screen.findByText('Como posso ajudar?')
-    sendMessage('me liste os usuarios da api de teste')
-    expect(await screen.findByRole('heading', { name: 'Listar usuários da API' })).toBeInTheDocument()
+    expect(await screen.findByText('↑ 900 · ↓ 12 tokens', { selector: '.agent-turn-tokens' })).toBeInTheDocument()
+    expect(screen.getByText('Nesta conversa').parentElement).toHaveTextContent('↑ 1,5 mil · ↓ 20 tokens')
   })
 
   it('closes the provider menu when clicking outside', async () => {
