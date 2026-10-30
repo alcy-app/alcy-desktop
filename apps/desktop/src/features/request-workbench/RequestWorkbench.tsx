@@ -3,6 +3,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { WorkspaceDto } from '../../bindings/create-workspace'
 import type { ExecuteGraphqlRequestOutput } from '../../bindings/execute-graphql-request'
 import type { ExecuteRestRequestOutput } from '../../bindings/execute-rest-request'
+import { expandImportPaths } from '../../bindings/expand-import-paths'
 import { exportHar } from '../../bindings/export-har'
 import { pickExportFile } from '../../bindings/pick-export-file'
 import { pickResponseFile } from '../../bindings/pick-response-file'
@@ -59,11 +60,12 @@ import { QueryExplorer } from './components/QueryExplorer'
 import { QueryPanel } from './components/QueryPanel'
 import { RequestBreadcrumb } from './components/RequestBreadcrumb'
 import { ShareMenu } from './components/ShareMenu'
-import { ImageImportDropOverlay } from './components/ImageImportDropOverlay'
+import { ImportDropOverlay } from './components/ImportDropOverlay'
 import { usePseudoTab } from './use-pseudo-tab'
 import { useExtensionWorkbenchTabs } from '../../extensions/registry'
 import type { PseudoTab } from '../../extensions/types'
 import { isPngPath, readImageRequest } from './image-import'
+import { importDropPathName } from './import-drop'
 import { readShellRequest } from './shell-paste-import'
 import { Tabs } from '../../shared/ui/Tabs'
 import { QueryValidationWarnings } from './components/QueryValidationWarnings'
@@ -651,16 +653,30 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [closeRunLogPreview, openRequest],
   )
 
-  // Shared images become unsaved drafts; other formats create collections.
+  // Shared images become unsaved drafts; files and folders become collections.
   const { importCollectionsFromPath } = collections
   const importFromPath = useCallback(
     async (path: string): Promise<ImportOutcome> => {
-      if (!isPngPath(path)) return importCollectionsFromPath(path)
-      const result = await readImageRequest(path, workspace.rootPath)
-      if (!result.ok) return { ok: false, message: result.message ?? t('imageImport.noRequest') }
-      closeRunLogPreview()
-      openDraft(result.request.name, result.request.content)
-      return { ok: true }
+      if (isPngPath(path)) {
+        const result = await readImageRequest(path, workspace.rootPath)
+        if (!result.ok) return { ok: false, message: result.message ?? t('imageImport.noRequest') }
+        closeRunLogPreview()
+        openDraft(result.request.name, result.request.content)
+        return { ok: true }
+      }
+
+      const expanded = await expandImportPaths([path])
+      if (!expanded.ok) return { ok: false, message: expanded.error.message }
+      if (expanded.value.length === 0) return { ok: false, message: t('collections.importFolderEmpty') }
+
+      const failures: string[] = []
+      for (const file of expanded.value) {
+        const result = await importCollectionsFromPath(file)
+        if (!result.ok) {
+          failures.push(expanded.value.length > 1 ? `${importDropPathName(file)}: ${result.message}` : result.message)
+        }
+      }
+      return failures.length > 0 ? { ok: false, message: failures.join('\n') } : { ok: true }
     },
     [importCollectionsFromPath, closeRunLogPreview, openDraft, t, workspace.rootPath],
   )
@@ -830,6 +846,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   }, [])
 
   const agentHost = useAgentHost({
+    workspaceRootPath: workspace.rootPath,
     flows,
     resources: agentResources,
     workbench,
@@ -2489,7 +2506,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         )}
         </Suspense>
 
-        {!activePseudoTab?.capturesInput && <ImageImportDropOverlay onImportFromPath={importFromPath} />}
+        {!activePseudoTab?.capturesInput && <ImportDropOverlay onImportFromPath={importFromPath} />}
 
         <Suspense fallback={null}>
         {screenshotModalOpen && (

@@ -3220,7 +3220,7 @@ describe('RequestWorkbench', () => {
       })
     })
 
-    describe('importar pela imagem', () => {
+    describe('importar arrastando para a janela', () => {
       const imageCollection = {
         id: 'shared-collection',
         name: 'Listar usuários',
@@ -3257,7 +3257,7 @@ describe('RequestWorkbench', () => {
         await vi.waitFor(() => expect(onFileDrop).toHaveBeenCalled())
 
         act(() => dropHandler({ type: 'enter', paths: ['/tmp/listar.png'] }))
-        expect(screen.getByRole('status')).toHaveTextContent('Solte para importar a requisição')
+        expect(screen.getByRole('status')).toHaveTextContent('Solte para importar')
         act(() => dropHandler({ type: 'drop', paths: ['/tmp/listar.png'] }))
 
         const openTabsBar = () => screen.getByRole('tablist', { name: 'Requisições abertas' })
@@ -3265,6 +3265,55 @@ describe('RequestWorkbench', () => {
         expect(importCollections).toHaveBeenCalledWith('/tmp/listar.png', '/workspace')
         openCollectionsTab()
         expect(within(collectionsSidebar()).queryByText('Listar usuários')).not.toBeInTheDocument()
+      })
+
+      it('ao soltar um arquivo de texto com curl, importa sem abrir a modal', async () => {
+        let dropHandler: (event: { type: string; paths?: string[] }) => void = () => {}
+        onFileDrop.mockImplementation(async (handler: typeof dropHandler) => {
+          dropHandler = handler
+          return () => {}
+        })
+        importCollections.mockResolvedValue({
+          ok: true,
+          value: { collections: [{ id: 'imported-1', name: 'Curl API', folders: [], requests: [] }], environments: [] },
+        })
+
+        render()
+        await screen.findByLabelText('Ambiente')
+        await vi.waitFor(() => expect(onFileDrop).toHaveBeenCalled())
+
+        act(() => dropHandler({ type: 'enter', paths: ['/tmp/login.sh'] }))
+        expect(screen.getByRole('status')).toHaveTextContent('Solte para importar')
+        act(() => dropHandler({ type: 'drop', paths: ['/tmp/login.sh'] }))
+
+        expect(await within(collectionsSidebar()).findByText('Curl API')).toBeInTheDocument()
+        expect(importCollections).toHaveBeenCalledWith('/tmp/login.sh', '/workspace')
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      })
+
+      it('ao soltar uma pasta, importa cada arquivo importável sem abrir a modal', async () => {
+        let dropHandler: (event: { type: string; paths?: string[] }) => void = () => {}
+        onFileDrop.mockImplementation(async (handler: typeof dropHandler) => {
+          dropHandler = handler
+          return () => {}
+        })
+        expandImportPaths.mockResolvedValueOnce({ ok: true, value: ['/tmp/pasta/a.json', '/tmp/pasta/b.txt'] })
+        importCollections.mockResolvedValue({
+          ok: true,
+          value: { collections: [{ id: 'imported-1', name: 'Pasta API', folders: [], requests: [] }], environments: [] },
+        })
+
+        render()
+        await screen.findByLabelText('Ambiente')
+        await vi.waitFor(() => expect(onFileDrop).toHaveBeenCalled())
+
+        act(() => dropHandler({ type: 'drop', paths: ['/tmp/pasta'] }))
+
+        expect(await within(collectionsSidebar()).findByText('Pasta API')).toBeInTheDocument()
+        expect(expandImportPaths).toHaveBeenCalledWith(['/tmp/pasta'])
+        expect(importCollections).toHaveBeenNthCalledWith(1, '/tmp/pasta/a.json', '/workspace')
+        expect(importCollections).toHaveBeenNthCalledWith(2, '/tmp/pasta/b.txt', '/workspace')
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       })
     })
 

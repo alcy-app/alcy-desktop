@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileDropEvent } from '../../../bindings/on-file-drop'
 import { openModals } from '../../../shared/ui/open-modals'
 import { render, screen, waitFor } from '../../../test-utils'
-import { ImageImportDropOverlay } from './ImageImportDropOverlay'
+import { ImportDropOverlay } from './ImportDropOverlay'
 
 let dropHandler: ((event: FileDropEvent) => void) | undefined
 const unlisten = vi.fn()
@@ -18,12 +18,12 @@ vi.mock('../../../bindings/on-file-drop', () => ({
 const emit = (event: FileDropEvent) => act(() => dropHandler?.(event))
 
 async function renderOverlay(onImportFromPath = vi.fn().mockResolvedValue({ ok: true })) {
-  const view = render(<ImageImportDropOverlay onImportFromPath={onImportFromPath} />)
+  const view = render(<ImportDropOverlay onImportFromPath={onImportFromPath} />)
   await waitFor(() => expect(dropHandler).toBeDefined())
   return { ...view, onImportFromPath }
 }
 
-describe('ImageImportDropOverlay', () => {
+describe('ImportDropOverlay', () => {
   beforeEach(() => {
     dropHandler = undefined
     unlisten.mockReset()
@@ -40,14 +40,28 @@ describe('ImageImportDropOverlay', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
 
     emit({ type: 'enter', paths: ['/tmp/Listar usuários.PNG'] })
-    expect(screen.getByRole('status')).toHaveTextContent('Solte para importar a requisição')
+    expect(screen.getByRole('status')).toHaveTextContent('Solte para importar')
 
-    emit({ type: 'drop', paths: ['/tmp/Listar usuários.PNG', '/tmp/notas.txt'] })
-    expect(screen.getByRole('status')).toHaveTextContent('Importando a requisição da imagem…')
+    emit({ type: 'drop', paths: ['/tmp/Listar usuários.PNG', '/tmp/notas.pdf'] })
+    expect(screen.getByRole('status')).toHaveTextContent('Importando…')
     expect(onImportFromPath).toHaveBeenCalledWith('/tmp/Listar usuários.PNG')
     expect(onImportFromPath).toHaveBeenCalledTimes(1)
 
     await act(async () => finish({ ok: true }))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('importa arquivos de coleção, arquivos de texto e pastas arrastados', async () => {
+    const { onImportFromPath } = await renderOverlay()
+
+    emit({ type: 'enter', paths: ['/tmp/requests.sh', '/tmp/colecao.json', '/tmp/pasta'] })
+    expect(screen.getByRole('status')).toHaveTextContent('Solte para importar')
+
+    emit({ type: 'drop', paths: ['/tmp/requests.sh', '/tmp/colecao.json', '/tmp/pasta'] })
+    await waitFor(() => expect(onImportFromPath).toHaveBeenCalledTimes(3))
+    expect(onImportFromPath).toHaveBeenNthCalledWith(1, '/tmp/requests.sh')
+    expect(onImportFromPath).toHaveBeenNthCalledWith(2, '/tmp/colecao.json')
+    expect(onImportFromPath).toHaveBeenNthCalledWith(3, '/tmp/pasta')
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
@@ -65,16 +79,16 @@ describe('ImageImportDropOverlay', () => {
     expect(onImportFromPath).toHaveBeenCalledTimes(2)
   })
 
-  it('some ao sair da janela e ignora arquivos que não são PNG', async () => {
+  it('some ao sair da janela e ignora arquivos sem formato importável', async () => {
     const { onImportFromPath } = await renderOverlay()
 
     emit({ type: 'enter', paths: ['/tmp/a.png'] })
     emit({ type: 'leave' })
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
 
-    emit({ type: 'enter', paths: ['/tmp/colecao.json'] })
+    emit({ type: 'enter', paths: ['/tmp/foto.pdf'] })
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
-    emit({ type: 'drop', paths: ['/tmp/colecao.json'] })
+    emit({ type: 'drop', paths: ['/tmp/foto.pdf'] })
     expect(onImportFromPath).not.toHaveBeenCalled()
   })
 
@@ -90,12 +104,12 @@ describe('ImageImportDropOverlay', () => {
   })
 
   it('mostra o erro da importação', async () => {
-    await renderOverlay(vi.fn().mockResolvedValue({ ok: false, message: 'a imagem não tem dados de importação do Alcy' }))
+    await renderOverlay(vi.fn().mockResolvedValue({ ok: false, message: 'o arquivo não tem dados de importação' }))
 
     emit({ type: 'drop', paths: ['/tmp/foto.png'] })
 
     expect(
-      await screen.findByText('Não foi possível importar a imagem: a imagem não tem dados de importação do Alcy'),
+      await screen.findByText('Não foi possível importar: o arquivo não tem dados de importação'),
     ).toBeInTheDocument()
   })
 

@@ -1,4 +1,4 @@
-.image-drop-overlay {
+.import-drop-overlay {
   position: fixed;
   inset: 0;
   display: flex;
@@ -9,10 +9,10 @@
   backdrop-filter: blur(2px);
   z-index: var(--z-overlay);
   pointer-events: none;
-  animation: image-drop-fade-in var(--duration-base) var(--ease-out);
+  animation: import-drop-fade-in var(--duration-base) var(--ease-out);
 }
 
-.image-drop-overlay-card {
+.import-drop-overlay-card {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -27,25 +27,25 @@
   box-shadow: var(--shadow-lg);
 }
 
-.image-drop-overlay-icon {
+.import-drop-overlay-icon {
   display: flex;
   color: var(--accent-strong);
 }
 
-.image-drop-overlay-title {
+.import-drop-overlay-title {
   margin: 0;
   color: var(--text);
   font-size: var(--font-size-lg);
   font-weight: 600;
 }
 
-.image-drop-overlay-hint {
+.import-drop-overlay-hint {
   margin: 0;
   color: var(--text-muted);
   font-size: var(--font-size-md);
 }
 
-@keyframes image-drop-fade-in {
+@keyframes import-drop-fade-in {
   from {
     opacity: 0;
   }
