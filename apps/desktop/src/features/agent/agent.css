@@ -163,12 +163,11 @@
 
 /* Copy buttons appear over their own text, or while the keyboard focuses them
    (mouse clicks let go of the focus); hidden, they keep their space so the chat
-   does not shift. No `:has()`: WebKitGTK may not restyle it when hover or focus
-   ends, leaving the button shown. */
+   does not shift. Same pattern as the console actions: no `:has()` and no
+   opacity transition, which WebKitGTK may leave painted after hover ends. */
 .agent-message-actions,
 .agent-code-toolbar .ui-icon-button {
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-out);
 }
 
 .agent-message-group:hover > .agent-message-actions,
