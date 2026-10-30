@@ -19,7 +19,7 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    */
   onedrive: false,
   /** Notification bell on the right side of the status bar. */
-  notifications: true,
+  notifications: false,
   /** Value monitors: sidebar entry, Monitor button and response highlights. */
   valueMonitors: true,
   /**
