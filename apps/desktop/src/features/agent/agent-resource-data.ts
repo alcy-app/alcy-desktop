@@ -3,6 +3,14 @@ const SECRET_NAME = /authorization|token|secret|api[-_]?key|cookie|password|sess
 const SECRET_PROPERTY = /^(token|password|clientSecret)$/i
 const VARIABLE_REFERENCE = /^\s*\{\{[^{}]+\}\}\s*$/
 const TRUNCATED = '[agent:truncated]'
+/**
+ * Secrets are also searched inside other text (a token in a URL, an error);
+ * shorter ones would match everywhere: a password `a` masked every `a` of every
+ * id and name, and no tool call could name an item. Their own fields stay masked.
+ */
+const MIN_EMBEDDED_SECRET_LENGTH = 6
+/** Identifiers the app generates are never secret, and the model needs them intact. */
+const ID_KEY = /^(id|.*Id|.*Ids)$/
 
 export function record(value: unknown, label = 'input'): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object.`)
@@ -42,10 +50,11 @@ export function resourceSecrets(value: unknown): string[] {
 /** Secret fields are redacted at every nesting level, including inline requests and mocks. */
 export function redactResource(value: unknown, secrets: readonly string[] = []): unknown {
   const mask = (text: string) => text === '' || VARIABLE_REFERENCE.test(text) ? text : SECRET_MASK
+  const embedded = secrets.filter((secret) => secret.length >= MIN_EMBEDDED_SECRET_LENGTH && !VARIABLE_REFERENCE.test(secret))
   const walk = (item: unknown): unknown => {
     if (typeof item === 'string') {
       let text = item
-      for (const secret of secrets) if (secret && !VARIABLE_REFERENCE.test(secret)) text = text.split(secret).join(SECRET_MASK)
+      for (const secret of embedded) text = text.split(secret).join(SECRET_MASK)
       return text
     }
     if (Array.isArray(item)) return item.map(walk)
@@ -56,7 +65,9 @@ export function redactResource(value: unknown, secrets: readonly string[] = []):
       if (key === 'config' && typeof child === 'string') {
         try { return [key, JSON.stringify(walk(JSON.parse(child)))] } catch { /* Preserve invalid draft text. */ }
       }
-      return [key, typeof child === 'string' && (SECRET_PROPERTY.test(key) || (key === 'value' && sensitiveValue)) ? mask(child) : walk(child)]
+      if (typeof child === 'string' && (SECRET_PROPERTY.test(key) || (key === 'value' && sensitiveValue))) return [key, mask(child)]
+      if (ID_KEY.test(key) && (typeof child === 'string' || (Array.isArray(child) && child.every((entry) => typeof entry === 'string')))) return [key, child]
+      return [key, walk(child)]
     }))
   }
   return walk(value)

@@ -19,6 +19,26 @@ describe('agent resource data boundaries', () => {
     expect(text).toContain('{{base}}')
   })
 
+  it('keeps ids and other text intact when a secret is too short to search for', () => {
+    const input = {
+      variables: [{ name: 'password', value: 'a', sensitive: true }],
+      requests: [{ id: 'cf3a9e10-2451d', name: 'Get Users', url: 'https://api.test/users?pass=a', requestIds: ['ab1', 'cd2'] }],
+      changes: ['addFields'],
+    }
+    const redacted = redactResource(input, resourceSecrets(input)) as typeof input
+    expect(redacted.variables[0].value).toBe(SECRET_MASK)
+    expect(redacted.requests[0]).toEqual(input.requests[0])
+    expect(redacted.changes).toEqual(['addFields'])
+  })
+
+  it('never masks identifiers, even when a secret appears inside them', () => {
+    const input = { flowId: 'flow-sensitive-value', nodeIds: ['n-sensitive-value'], note: 'uses sensitive-value', variables: [{ name: 'k', value: 'sensitive-value', sensitive: true }] }
+    const redacted = redactResource(input, resourceSecrets(input)) as typeof input
+    expect(redacted.flowId).toBe('flow-sensitive-value')
+    expect(redacted.nodeIds).toEqual(['n-sensitive-value'])
+    expect(redacted.note).toBe(`uses ${SECRET_MASK}`)
+  })
+
   it('restores masked fields by stable identity and preserves omitted properties', () => {
     const previous = { name: 'Mock', port: 3001, routes: [{ id: 'route', headers: [{ name: 'Authorization', value: 'saved-secret' }], enabled: true }] }
     const next = mergeResource(previous, { routes: [{ id: 'route', headers: [{ name: 'Authorization', value: SECRET_MASK }], enabled: false }] })
