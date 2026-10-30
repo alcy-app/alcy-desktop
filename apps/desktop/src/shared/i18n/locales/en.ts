@@ -2758,6 +2758,7 @@ const en: Record<TranslationKey, string> = {
   'agent.code.copy': 'Copy code',
   'agent.code.copied': 'Copied',
   'agent.code.copyError': 'Could not copy',
+  'agent.message.copy': 'Copy message',
   'agent.reference.request': 'Open request',
   'agent.reference.flow': 'Open flow',
   'agent.reference.mock': 'Open mock server',

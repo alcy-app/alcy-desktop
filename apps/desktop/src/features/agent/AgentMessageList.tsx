@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
@@ -155,11 +155,14 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
               <Fragment key={item.id}>
                 {dayLine(item.id, item.atMs)}
                 {timeLabel(item.atMs)}
-                <div className="agent-message agent-message--user">
-                  {item.context.length > 0 && (
-                    <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
-                  )}
-                  <UserMessageText text={item.text} />
+                <div className="agent-message-group agent-message-group--user">
+                  <div className="agent-message agent-message--user">
+                    {item.context.length > 0 && (
+                      <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
+                    )}
+                    <UserMessageText text={item.text} />
+                  </div>
+                  <MessageActions text={item.text} />
                 </div>
               </Fragment>
             )
@@ -168,21 +171,24 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
               <Fragment key={item.id}>
                 {dayLine(item.id, item.atMs)}
                 {timeLabel(item.atMs)}
-                <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
-                  <MarkdownView
-                    source={item.text}
-                    headingOffset={2}
-                    renderCodeBlock={(text, lang) => <AgentCodeBlock text={text} lang={lang} />}
-                    resolveReference={resolveReference}
-                    renderReference={(kind, id, children, key) =>
-                      onOpenReference && isAgentReferenceKind(kind) ? (
-                        <AgentReference key={key} kind={kind} id={id} onOpen={onOpenReference}>{children}</AgentReference>
-                      ) : (
-                        <strong key={key}>{children}</strong>
-                      )
-                    }
-                  />
-                  {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
+                <div className="agent-message-group">
+                  <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
+                    <MarkdownView
+                      source={item.text}
+                      headingOffset={2}
+                      renderCodeBlock={(text, lang) => <AgentCodeBlock text={text} lang={lang} />}
+                      resolveReference={resolveReference}
+                      renderReference={(kind, id, children, key) =>
+                        onOpenReference && isAgentReferenceKind(kind) ? (
+                          <AgentReference key={key} kind={kind} id={id} onOpen={onOpenReference}>{children}</AgentReference>
+                        ) : (
+                          <strong key={key}>{children}</strong>
+                        )
+                      }
+                    />
+                    {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
+                  </div>
+                  {!item.streaming && item.text.trim() !== '' && <MessageActions text={item.text} />}
                 </div>
               </Fragment>
             )
@@ -219,6 +225,7 @@ function AgentReference({ kind, id, onOpen, children }: { kind: AgentReferenceKi
       data-state={state}
       title={state === 'missing' ? t('agent.reference.missing') : t(`agent.reference.${kind}`)}
       aria-busy={state === 'opening' || undefined}
+      onPointerUp={releasePointerFocus}
       onClick={() => void open()}
     >
       <Icon size={11} />
@@ -239,11 +246,23 @@ function UserMessageText({ text }: { text: string }) {
   )
 }
 
-function AgentCodeBlock({ text, lang }: { text: string; lang?: string }) {
-  const { t } = useLanguage()
-  const language = useMemo(() => codeBlockLanguage(lang, text), [lang, text])
-  const spans = useMemo(() => (language.highlight === 'text' ? null : highlightSpans(text, language.highlight)), [language.highlight, text])
+/**
+ * WebKitGTK treats focus from a click as :focus-visible, so a clicked button
+ * would keep its ring (and keep hover-only actions shown) until focus moves.
+ * A pointer press lets go of the focus; the keyboard never fires `pointerup`.
+ */
+function releasePointerFocus(event: PointerEvent<HTMLButtonElement>) {
+  event.currentTarget.blur()
+}
+
+/** Clipboard copy whose outcome shows for a moment. */
+function useCopy(text: string) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+  useEffect(() => {
+    if (status === 'idle') return
+    const timer = window.setTimeout(() => setStatus('idle'), 2000)
+    return () => window.clearTimeout(timer)
+  }, [status])
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text)
@@ -252,12 +271,42 @@ function AgentCodeBlock({ text, lang }: { text: string; lang?: string }) {
       setStatus('error')
     }
   }
+  return { status, copy }
+}
+
+/** Actions under a message, as in other chats: copies its text as written (Markdown for replies). */
+function MessageActions({ text }: { text: string }) {
+  const { t } = useLanguage()
+  const { status, copy } = useCopy(text)
+  return (
+    <div className="agent-message-actions">
+      <IconButton
+        icon={<CopyIcon size={13} />}
+        label={status === 'copied' ? t('agent.code.copied') : status === 'error' ? t('agent.code.copyError') : t('agent.message.copy')}
+        data-status={status}
+        onPointerUp={releasePointerFocus}
+        onClick={() => void copy()}
+      />
+    </div>
+  )
+}
+
+function AgentCodeBlock({ text, lang }: { text: string; lang?: string }) {
+  const { t } = useLanguage()
+  const language = useMemo(() => codeBlockLanguage(lang, text), [lang, text])
+  const spans = useMemo(() => (language.highlight === 'text' ? null : highlightSpans(text, language.highlight)), [language.highlight, text])
+  const { status, copy } = useCopy(text)
   return (
     <div className="agent-code-block">
       <div className="agent-code-toolbar">
         {language.label && <span className="agent-code-language">{language.label}</span>}
         <span role="status">{status === 'copied' ? t('agent.code.copied') : status === 'error' ? t('agent.code.copyError') : ''}</span>
-        <IconButton icon={<CopyIcon size={12} />} label={t('agent.code.copy')} onClick={() => void copy()} />
+        <IconButton
+          icon={<CopyIcon size={12} />}
+          label={t('agent.code.copy')}
+          onPointerUp={releasePointerFocus}
+          onClick={() => void copy()}
+        />
       </div>
       <pre>
         <code>
@@ -287,7 +336,7 @@ function ToolCallGroup({ tools, onApprove, onDecline, onRevert }: ToolCallGroupP
   const icon = running ? <Spinner size={12} /> : failed > 0 ? <AlertIcon size={12} /> : <CheckIcon size={12} />
   return (
     <div className="agent-tool-group" data-state={running ? 'running' : failed > 0 ? 'failed' : 'done'}>
-      <button type="button" className="agent-tool-group-toggle" aria-expanded={expanded} aria-controls={bodyId} onClick={() => setExpanded((open) => !open)}>
+      <button type="button" className="agent-tool-group-toggle" aria-expanded={expanded} aria-controls={bodyId} onPointerUp={releasePointerFocus} onClick={() => setExpanded((open) => !open)}>
         <ChevronRightIcon size={10} className="agent-tool-group-chevron" />
         <span className="agent-tool-icon">{icon}</span>
         <span className="agent-tool-label">

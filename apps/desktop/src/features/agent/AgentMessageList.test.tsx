@@ -65,6 +65,33 @@ describe('AgentMessageList', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('echo ok'))
   })
 
+  it('copies user messages and finished replies as written', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const { rerender } = render(<AgentMessageList items={[
+      { kind: 'user', id: 'u', text: 'Liste os usuários', context: [] },
+      { kind: 'assistant', id: 'a', streaming: true, text: 'Encontrei **2**' },
+    ]} {...actions} />)
+    expect(screen.getAllByRole('button', { name: 'Copiar mensagem' })).toHaveLength(1)
+
+    rerender(<AgentMessageList items={[
+      { kind: 'user', id: 'u', text: 'Liste os usuários', context: [] },
+      { kind: 'assistant', id: 'a', streaming: false, text: 'Encontrei **2**' },
+    ]} {...actions} />)
+    const [user, reply] = screen.getAllByRole('button', { name: 'Copiar mensagem' })
+    reply.focus()
+    fireEvent.pointerUp(reply)
+    fireEvent.click(reply)
+    // A mouse click lets go of the focus, so no ring lingers; the keyboard keeps it.
+    expect(reply).not.toHaveFocus()
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Encontrei **2**'))
+    expect(await screen.findByRole('button', { name: 'Copiado' })).toBeInTheDocument()
+    user.focus()
+    fireEvent.click(user)
+    expect(user).toHaveFocus()
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('Liste os usuários'))
+  })
+
   it('reports clipboard failure without losing the code', async () => {
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn().mockRejectedValue(new Error('unavailable')) } })
     render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: false, text: '```\nGET /users\n```' }]} {...actions} />)

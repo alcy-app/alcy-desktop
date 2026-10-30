@@ -143,6 +143,45 @@
   color: var(--text);
 }
 
+.agent-message-group {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agent-message-group--user {
+  align-items: flex-end;
+}
+
+.agent-message-actions {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+}
+
+/* Copy buttons appear over their own text, or while the keyboard focuses them
+   (mouse clicks let go of the focus); hidden, they keep their space so the chat
+   does not shift. No `:has()`: WebKitGTK may not restyle it when hover or focus
+   ends, leaving the button shown. */
+.agent-message-actions,
+.agent-code-toolbar .ui-icon-button {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.agent-message-group:hover > .agent-message-actions,
+.agent-message-actions:focus-within,
+.agent-code-block:hover .agent-code-toolbar .ui-icon-button,
+.agent-code-toolbar .ui-icon-button:focus {
+  opacity: 1;
+}
+
+.agent-message-actions .ui-icon-button[data-status='error'] {
+  color: var(--error);
+}
+
 .agent-message-text {
   margin: 0;
   white-space: pre-wrap;

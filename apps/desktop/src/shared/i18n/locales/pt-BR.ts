@@ -2752,6 +2752,7 @@ const ptBR = {
   'agent.code.copy': 'Copiar código',
   'agent.code.copied': 'Copiado',
   'agent.code.copyError': 'Não foi possível copiar',
+  'agent.message.copy': 'Copiar mensagem',
   'agent.reference.request': 'Abrir requisição',
   'agent.reference.flow': 'Abrir flow',
   'agent.reference.mock': 'Abrir mock server',
