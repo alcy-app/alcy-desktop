@@ -201,6 +201,9 @@ interface AgentPillPickerProps {
 /** Compact pill trigger in the composer toolbar with a menu of options. */
 function AgentPillPicker({ options, selectedId, triggerLabel, ariaLabel, tooltip: tooltipText, disabled, tone, action, onSelect }: AgentPillPickerProps) {
   const [open, setOpen] = useState(false)
+  // WebKitGTK applies :focus-visible to pointer-driven focus, so the picker
+  // tracks the last interaction and draws the ring only for the keyboard.
+  const [pointerInteraction, setPointerInteraction] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -223,6 +226,7 @@ function AgentPillPicker({ options, selectedId, triggerLabel, ariaLabel, tooltip
     const closeOutside = (event: PointerEvent) => {
       if (rootRef.current?.contains(event.target as Node)) return
       setOpen(false)
+      setPointerInteraction(false)
       const active = document.activeElement
       if (active instanceof HTMLElement && rootRef.current?.contains(active)) active.blur()
     }
@@ -230,23 +234,30 @@ function AgentPillPicker({ options, selectedId, triggerLabel, ariaLabel, tooltip
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [])
 
-  const close = () => {
+  // Focus returns to the trigger only after a keyboard choice; moved by script
+  // after a mouse click, it would leave the focus ring behind.
+  const close = (restoreFocus: boolean) => {
     setOpen(false)
-    buttonRef.current?.focus()
+    if (restoreFocus) buttonRef.current?.focus()
   }
 
   return (
     <div
       ref={rootRef}
       className="agent-provider-picker"
+      data-pointer-interaction={pointerInteraction || undefined}
+      onPointerDown={() => setPointerInteraction(true)}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setOpen(false)
+        setPointerInteraction(false)
       }}
       onKeyDown={(event) => {
+        setPointerInteraction(false)
         if (event.key === 'Escape' && open) {
           event.preventDefault()
           event.stopPropagation()
-          close()
+          close(true)
           return
         }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || disabled) return
@@ -291,7 +302,7 @@ function AgentPillPicker({ options, selectedId, triggerLabel, ariaLabel, tooltip
                 selected={option.id === selectedId}
                 onSelect={() => {
                   onSelect(option.id)
-                  close()
+                  close(!pointerInteraction)
                 }}
               />
             </div>

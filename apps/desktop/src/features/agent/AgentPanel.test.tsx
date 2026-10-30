@@ -191,6 +191,29 @@ describe('AgentPanel', () => {
     expect(trigger).not.toHaveFocus()
   })
 
+  it('keeps the focus ring for the keyboard only', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    saveAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    const trigger = await screen.findByRole('button', { name: 'Provedor e modelo' })
+    const picker = trigger.parentElement
+
+    fireEvent.pointerDown(trigger)
+    fireEvent.click(trigger)
+    expect(picker).toHaveAttribute('data-pointer-interaction')
+
+    // A mouse choice neither restores the focus to the trigger nor leaves a ring behind.
+    const option = screen.getByRole('menuitemradio', { name: /Claude/ })
+    fireEvent.pointerDown(option)
+    fireEvent.click(option, { detail: 1 })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).not.toHaveFocus()
+
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    expect(picker).not.toHaveAttribute('data-pointer-interaction')
+    expect(screen.getByRole('menuitemradio', { name: /Claude/ })).toHaveFocus()
+  })
+
   it('fills and focuses the composer from each prompt starter without sending', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)

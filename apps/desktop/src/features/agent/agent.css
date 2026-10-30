@@ -507,6 +507,12 @@
   font-weight: var(--font-weight-normal);
 }
 
+/* WebKitGTK treats pointer clicks as :focus-visible; the ring is keyboard-only. */
+.agent-provider-picker[data-pointer-interaction] .agent-provider-trigger:focus-visible,
+.agent-provider-picker[data-pointer-interaction] .agent-provider-option .ui-menu-item:focus-visible {
+  outline: none;
+}
+
 .agent-provider-option .ui-menu-item--selected .ui-menu-item-icon {
   color: var(--accent-strong);
 }
