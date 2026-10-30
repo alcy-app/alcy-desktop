@@ -13,6 +13,7 @@ const startAgentTurn = vi.fn()
 const submitAgentToolResult = vi.fn()
 const loadAgentSession = vi.fn()
 const getAgentUsage = vi.fn()
+const notifyWhenUnfocused = vi.fn()
 
 vi.mock('../../bindings/agent-settings', () => ({
   getAgentSettings: () => getAgentSettings(),
@@ -23,6 +24,9 @@ vi.mock('../../bindings/agent-turn', () => ({
   startAgentTurn: (...args: unknown[]) => startAgentTurn(...args),
   submitAgentToolResult: (...args: unknown[]) => submitAgentToolResult(...args),
   cancelAgentTurn: vi.fn(async () => ({ ok: true, value: undefined })),
+}))
+vi.mock('../../bindings/system-notification', () => ({
+  notifyWhenUnfocused: (...args: unknown[]) => notifyWhenUnfocused(...args),
 }))
 vi.mock('../../bindings/agent-sessions', () => ({
   listAgentSessions: vi.fn(async () => ({ ok: true, value: [] })),
@@ -93,6 +97,7 @@ beforeEach(() => {
   startAgentTurn.mockReset()
   submitAgentToolResult.mockReset()
   getAgentUsage.mockReset().mockResolvedValue({ ok: true, value: noUsage })
+  notifyWhenUnfocused.mockReset().mockResolvedValue(true)
 })
 
 describe('AgentPanel', () => {
@@ -488,6 +493,25 @@ describe('AgentPanel', () => {
     startAgentTurn.mockResolvedValueOnce({ ok: false, error: { kind: 'credentials', message: 'Server GUID mismatch' } })
     sendMessage('de novo')
     expect(await screen.findByRole('alert')).toHaveTextContent('O chaveiro do sistema não está disponível: Server GUID mismatch')
+  })
+
+  it('notifies the system when an action waits for approval, not when it is approved automatically', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    scriptSendTurn()
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('envie')
+    fireEvent.click(await screen.findByRole('button', { name: 'Aprovar' }))
+    expect(notifyWhenUnfocused).toHaveBeenCalledTimes(1)
+    expect(notifyWhenUnfocused).toHaveBeenCalledWith('O Alcy precisa da sua aprovação', expect.stringMatching(/^Enviar a requisição/))
+    await waitFor(() => expect(submitAgentToolResult).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Modo de aprovação' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Auto-aprovação' }))
+    scriptSendTurn()
+    sendMessage('envie de novo')
+    await waitFor(() => expect(submitAgentToolResult).toHaveBeenCalledTimes(2))
+    expect(notifyWhenUnfocused).toHaveBeenCalledTimes(1)
   })
 
   it('runs side effects without asking in auto-approve mode and remembers the mode', async () => {

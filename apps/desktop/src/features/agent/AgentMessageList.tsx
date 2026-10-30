@@ -1,5 +1,4 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from 'react'
-import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -10,34 +9,11 @@ import { highlightSpans } from '../request-workbench/screenshot/screenshot-highl
 import { codeBlockLanguage, splitUserMessage } from './agent-code'
 import { isAgentReferenceKind, type AgentReferenceKind } from './agent-references'
 import type { AgentChatItem } from './use-agent-session'
-import { RESOURCE_TOOL_NAMES } from './agent-resource-tools'
+import { toolLabel } from './agent-tool-labels'
 import { AgentThinking } from './AgentThinking'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
-const KNOWN_TOOLS = new Set([
-  ...RESOURCE_TOOL_NAMES,
-  'list_open_tabs',
-  'get_request',
-  'get_response',
-  'search_collections',
-  'list_environments',
-  'open_request',
-  'select_tab',
-  'new_request_tab',
-  'update_request',
-  'send_request',
-  'cancel_request',
-  'send_grpc_message',
-  'close_grpc_send',
-  'save_request',
-  'create_collection',
-  'create_folder',
-  'set_environment_variable',
-  'set_active_environment',
-  'close_tab',
-  'highlight_in_editor',
-])
 
 interface AgentMessageListProps {
   items: AgentChatItem[]
@@ -552,10 +528,6 @@ function ToolCallGroup({ tools, onApprove, onDecline, onRevert }: ToolCallGroupP
       )}
     </div>
   )
-}
-
-function toolLabel(name: string, t: ReturnType<typeof useLanguage>['t']) {
-  return KNOWN_TOOLS.has(name) ? t(`agent.tool.${name}` as TranslationKey) : name
 }
 
 interface ToolCallCardProps {

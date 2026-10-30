@@ -1,3 +1,4 @@
+import { notifyWhenUnfocused } from '../../bindings/system-notification'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentCommandError } from '../../bindings/agent-settings'
 import { loadAgentSession, type AgentSessionViewDto } from '../../bindings/agent-sessions'
@@ -15,6 +16,7 @@ import type { WorkbenchAgentHost } from './agent-host'
 import { rememberSession, rememberedSession } from './agent-session-memory'
 import { runAgentTool, summarizeToolCall, toolNeedsApproval } from './agent-tools'
 import { localDay } from './agent-usage'
+import { toolLabel } from './agent-tool-labels'
 
 export type AgentToolState = 'running' | 'awaitingApproval' | 'done' | 'failed' | 'declined' | 'reverted'
 
@@ -110,6 +112,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       const needsApproval = gated && !autoApproveRef.current
       let fingerprint: string | undefined
       try { if (needsApproval) fingerprint = hostRef.current.resources?.fingerprint(event.name, event.input) } catch { /* Invalid targets are reported by the executor. */ }
+      const summary = summarizeToolCall(event.name, event.input, hostRef.current)
       setItems((current) => [
         ...current.map((item) => (item.kind === 'assistant' && item.streaming ? { ...item, streaming: false } : item)),
         {
@@ -117,13 +120,15 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
           id: event.callId,
           name: event.name,
           toolClass: event.class,
-          summary: summarizeToolCall(event.name, event.input, hostRef.current),
+          summary,
           state: needsApproval ? 'awaitingApproval' : 'running',
           canRevert: false,
           autoApproved: gated && !needsApproval,
         },
       ])
       if (needsApproval) {
+        // Someone working in another window learns that the chat is waiting for them.
+        void notifyWhenUnfocused(t('agent.notify.approvalTitle'), [toolLabel(event.name, t), summary].filter(Boolean).join(' · '))
         const approved = await new Promise<boolean>((resolve) => approvalsRef.current.set(event.callId, resolve))
         approvalsRef.current.delete(event.callId)
         if (!approved) {
@@ -147,7 +152,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       updateTool(event.callId, { state: outcome.isError ? 'failed' : 'done', canRevert: outcome.revert !== undefined })
       await submitAgentToolResult(event.waitId, outcome.content, outcome.isError)
     },
-    [updateTool],
+    [t, updateTool],
   )
 
   const handleEvent = useCallback(

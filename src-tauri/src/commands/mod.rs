@@ -40,6 +40,7 @@ pub mod load_dataset_assets;
 pub mod load_schema;
 pub mod load_test_import;
 pub mod mock_servers;
+pub mod notify_when_unfocused;
 pub mod onedrive;
 pub mod open_external_url;
 pub mod ordered_save;

@@ -2860,6 +2860,7 @@ const en: Record<TranslationKey, string> = {
   'agent.context.kind.selection': 'Selection',
   'agent.context.kind.quote': 'Chat quote',
   'agent.notice.retry': 'Try again',
+  'agent.notify.approvalTitle': 'Alcy needs your approval',
   'agent.message.edit': 'Edit message',
   'agent.message.editAria': 'Edit the message',
   'agent.message.editSend': 'Send',

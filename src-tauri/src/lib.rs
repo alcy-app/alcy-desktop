@@ -82,6 +82,7 @@ use commands::mock_servers::{
     MockServerRuntime, clear_mock_calls, delete_mock_server, get_mock_server, list_mock_calls,
     list_mock_servers, save_mock_server, start_mock_server, stop_mock_server, validate_mock_server,
 };
+use commands::notify_when_unfocused::notify_when_unfocused;
 use commands::onedrive::{
     OnedriveProvider, begin_onedrive_login, create_onedrive_team_workspace, get_onedrive_root,
     get_onedrive_team_catalog, list_onedrive_accounts, list_onedrive_folders, list_onedrive_teams,
@@ -253,6 +254,8 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(PendingUpdate::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // Only Rust uses it (notify_when_unfocused); the WebView gets no notification permission.
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(window_state::plugin())
         .on_page_load(|webview, payload| {
@@ -395,6 +398,7 @@ pub fn run_with(extensions: Vec<Extension>) {
             log_invocations(tauri::generate_handler![
                 get_agent_settings,
                 get_agent_usage,
+                notify_when_unfocused,
                 save_agent_settings,
                 set_agent_api_key,
                 clear_agent_api_key,

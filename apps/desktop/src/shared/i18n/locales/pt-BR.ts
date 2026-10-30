@@ -2854,6 +2854,7 @@ const ptBR = {
   'agent.context.kind.selection': 'Seleção',
   'agent.context.kind.quote': 'Citação do chat',
   'agent.notice.retry': 'Tentar novamente',
+  'agent.notify.approvalTitle': 'O Alcy precisa da sua aprovação',
   'agent.message.edit': 'Editar mensagem',
   'agent.message.editAria': 'Editar a mensagem',
   'agent.message.editSend': 'Enviar',
