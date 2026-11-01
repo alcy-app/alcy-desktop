@@ -7,6 +7,9 @@ export type AgentContextKind = 'tab' | 'request' | 'environment' | 'response' | 
 
 export interface AgentContextOption extends AgentContextInput {
   kind: AgentContextKind
+  /** Presentation metadata; quotes keep the existing native contract. */
+  quoteKind?: 'message' | 'reply' | 'selection'
+  preview?: string
 }
 
 const MAX_OPTIONS_PER_KIND = 8
@@ -70,8 +73,8 @@ export function agentContextOptions(host: WorkbenchAgentHost, query: string): Ag
 }
 
 /** A message of the chat, or part of one, attached as context (`quote` kind in the prompt). */
-export function quoteContext(text: string, label: string): AgentContextOption {
-  return { kind: 'quote', id: `quote-${crypto.randomUUID()}`, label, summary: text }
+export function quoteContext(text: string, label: string, quoteKind: 'message' | 'reply' | 'selection'): AgentContextOption {
+  return { kind: 'quote', id: `quote-${crypto.randomUUID()}`, label, summary: text, quoteKind }
 }
 
 /** The `@query` being typed right before the caret, if any. */
@@ -98,5 +101,5 @@ const SLOT_DESCRIPTIONS: Record<EditorSlot, string> = {
 export function selectionContext(selection: EditorSelection, host: WorkbenchAgentHost, label: string): AgentContextOption {
   const tab = host.tabs().find((candidate) => candidate.id === host.activeTabId())
   const where = tab ? `${SLOT_DESCRIPTIONS[selection.slot]} of tab "${tab.name}" (tabId ${tab.id})` : SLOT_DESCRIPTIONS[selection.slot]
-  return { kind: 'selection', id: selection.slot, label, summary: `${where}, selected text:\n${selection.text}` }
+  return { kind: 'selection', id: selection.slot, label, summary: `${where}, selected text:\n${selection.text}`, preview: selection.text }
 }

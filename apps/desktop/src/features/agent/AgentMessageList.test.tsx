@@ -137,13 +137,32 @@ describe('AgentMessageList', () => {
     expect(within(menu).getByRole('menuitem', { name: 'Usar como contexto' })).toHaveFocus()
     expect(window.getSelection()?.toString()).toContain('results.sunset')
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Usar como contexto' }))
-    expect(onQuote).toHaveBeenCalledWith('O campo results.sunset traz o horario do por do sol em UTC.', 'Trecho: “O campo results.sunset traz o ho…”')
+    expect(onQuote).toHaveBeenCalledWith('O campo results.sunset traz o horario do por do sol em UTC.', 'Trecho: “O campo results.sunset traz o ho…”', 'selection')
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
     // Without a selection the usual menu stays.
     window.getSelection()?.removeAllRanges()
     fireEvent.contextMenu(screen.getByRole('log'))
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('shows a floating action for a partial selection and keeps full replies separate', () => {
+    const onQuote = vi.fn()
+    render(<AgentMessageList items={[{ kind: 'assistant', id: 'a', streaming: false, text: 'O campo **status** indica uma falha.' }]} {...actions} onQuote={onQuote} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Responder à mensagem completa' }))
+    expect(onQuote).toHaveBeenLastCalledWith('O campo **status** indica uma falha.', 'Resposta', 'reply')
+    const word = screen.getByText('status')
+    const range = document.createRange()
+    range.selectNodeContents(word)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    fireEvent.mouseUp(word, { button: 0 })
+    const menu = screen.getByRole('menu', { name: 'Ações do texto selecionado' })
+    expect(menu).toHaveClass('agent-selection-menu--floating')
+    expect(window.getSelection()?.toString()).toBe('status')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Usar como contexto' }))
+    expect(onQuote).toHaveBeenLastCalledWith('status', 'Trecho: “status”', 'selection')
+    window.getSelection()?.removeAllRanges()
   })
 
   it('reports clipboard failure without losing the code', async () => {

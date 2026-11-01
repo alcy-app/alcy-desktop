@@ -1,10 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type ReactNode, type RefObject, type SetStateAction } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { IconButton } from '../../shared/ui/IconButton'
-import { AtIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SelectionIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
+import { AtIcon, ChevronLeftIcon, ChevronRightIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SelectionIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
 import { useEditorSelection, type EditorSelection } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
 import { pasteJsonAsBlock } from './agent-code'
+import { AgentContextAttachments } from './AgentContextAttachments'
 import { agentContextOptions, mentionAt, selectionContext, type AgentContextOption } from './agent-context'
 
 interface AgentComposerProps {
@@ -27,7 +28,6 @@ const CATEGORY_KINDS = ['tab', 'request', 'environment', 'flow', 'monitor', 'run
 type CategoryKind = (typeof CATEGORY_KINDS)[number]
 type ContextMenuEntry = { type: 'context'; option: AgentContextOption } | { type: 'category'; kind: CategoryKind; disabled: boolean }
 const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon, flow: FolderIcon, monitor: SelectionIcon, runner: SendIcon, mock: GlobeIcon, quote: AtIcon }
-const SELECTION_PREVIEW_CHARS = 48
 
 function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
   return a !== null && b !== null && a.slot === b.slot && a.text === b.text
@@ -142,7 +142,8 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
 
   const submit = () => {
     if (running || disabled || text.trim() === '') return
-    onSend(text, activeSelection ? [selectionContext(activeSelection, host, selectionLabel), ...context] : context)
+    const attached = activeSelection ? [selectionContext(activeSelection, host, selectionLabel), ...context] : context
+    onSend(text, attached.map(({ kind, id, label, summary }) => ({ kind, id, label, summary })))
     if (activeSelection) setDismissedSelection(activeSelection)
     setText('')
     setContext([])
@@ -269,43 +270,19 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
           </div>
         </div>
       )}
-      {(context.length > 0 || activeSelection) && (
-        <ul className="agent-context-chips" aria-label={t('agent.context.attachedAria')}>
-          {activeSelection && (
-            <li className="agent-context-chip agent-context-chip--selection" title={activeSelection.text}>
-              <span className="agent-context-chip-kind" title={t('agent.context.kind.selection')}><SelectionIcon size={12} /></span>
-              <span className="agent-context-chip-label">
-                {selectionLabel}
-                <span className="agent-context-chip-preview">
-                  {' · '}
-                  {activeSelection.text.length > SELECTION_PREVIEW_CHARS ? `${activeSelection.text.slice(0, SELECTION_PREVIEW_CHARS)}…` : activeSelection.text}
-                </span>
-              </span>
-              <IconButton
-                icon={<CloseIcon size={10} />}
-                label={t('agent.context.removeAria', { name: selectionLabel })}
-                tooltip={false}
-                onClick={() => setDismissedSelection(activeSelection)}
-              />
-            </li>
-          )}
-          {context.map((item) => {
-            const ContextIcon = CONTEXT_ICONS[item.kind]
-            return (
-              <li key={`${item.kind}:${item.id}`} className="agent-context-chip" title={item.kind === 'quote' ? item.summary.slice(0, 400) : undefined}>
-                <span className="agent-context-chip-kind" title={t(`agent.context.kind.${item.kind}`)}><ContextIcon size={12} /></span>
-                <span className="agent-context-chip-label">{item.label}</span>
-                <IconButton
-                  icon={<CloseIcon size={10} />}
-                  label={t('agent.context.removeAria', { name: item.label })}
-                  tooltip={false}
-                  onClick={() => setContext((current) => current.filter((candidate) => candidate !== item))}
-                />
-              </li>
-            )
-          })}
-        </ul>
-      )}
+      {(context.length > 0 || activeSelection) && <AgentContextAttachments
+        items={activeSelection ? [selectionContext(activeSelection, host, selectionLabel), ...context] : context}
+        onRemove={(item) => {
+          if (item.kind === 'selection') setDismissedSelection(activeSelection)
+          else setContext((current) => current.filter((candidate) => candidate !== item))
+        }}
+        onClear={() => {
+          setContext([])
+          setDismissedSelection(activeSelection)
+        }}
+        onEdit={(item, summary) => setContext((current) => current.map((candidate) => candidate === item ? { ...candidate, summary } : candidate))}
+        onReturnFocus={() => textareaRef.current?.focus()}
+      />}
       <textarea
         ref={textareaRef}
         className="agent-composer-input"
@@ -344,10 +321,14 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
       <div className="agent-composer-footer">
         {footer}
         {running ? (
-          <IconButton icon={<StopIcon size={13} />} label={t('agent.composer.stop')} size="md" className="agent-composer-send" onClick={onStop} />
+          <IconButton icon={<StopIcon size={16} />} label={t('agent.composer.stop')} size="md" className="agent-composer-send" data-state="running" onClick={onStop} />
         ) : (
           <IconButton
-            icon={<SendIcon size={13} />}
+            icon={
+              <svg className="agent-composer-send-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7" />
+              </svg>
+            }
             label={t('agent.composer.send')}
             size="md"
             className="agent-composer-send"

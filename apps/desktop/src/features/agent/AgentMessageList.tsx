@@ -13,6 +13,7 @@ import { toolLabel } from './agent-tool-labels'
 import { AgentThinking } from './AgentThinking'
 import { splitAgentReply } from './agent-follow-ups'
 import { TurnTokens } from './AgentTokens'
+import type { AgentContextOption } from './agent-context'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
@@ -32,7 +33,7 @@ interface AgentMessageListProps {
   /** Sends an edited last message in place of the original. */
   onEditLast?: (text: string) => void
   /** Attaches a message, or a selected part of one, as context of the next message. */
-  onQuote?: (text: string, label: string) => void
+  onQuote?: (text: string, label: string, kind: NonNullable<AgentContextOption['quoteKind']>) => void
   /** Sends a suggested continuation as a new user message. */
   onFollowUp?: (text: string) => void
 }
@@ -88,7 +89,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; range: Range } | null>(null)
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; range: Range; floating?: boolean } | null>(null)
   const last = items.at(-1)
   // The token line of a turn does not end it: follow-ups still belong to the reply above it.
   const lastContent = items.findLast((item) => item.kind !== 'usage')
@@ -124,7 +125,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
     )
   const quoteLabel = (labelKey: 'agent.quote.prompt' | 'agent.quote.reply', atMs: number | undefined) =>
     atMs === undefined ? t(labelKey) : t('agent.quote.at', { label: t(labelKey), time: timeFormat.format(atMs) })
-  const quote = (text: string, label: string) => (onQuote ? () => onQuote(text, label) : undefined)
+  const quote = (text: string, label: string, kind: 'message' | 'reply') => (onQuote ? () => onQuote(text, label, kind) : undefined)
 
   return (
     <div
@@ -136,6 +137,17 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
       onScroll={(event) => {
         const element = event.currentTarget
         pinnedToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 32
+      }}
+      onMouseUp={(event) => {
+        if (event.button !== 0 || !onQuote) return
+        const selection = window.getSelection()
+        const text = selection?.toString().trim()
+        if (!text || !selection?.anchorNode || !selection.focusNode) return
+        const message = selection.anchorNode.parentElement?.closest('.agent-message')
+        if (!message || !event.currentTarget.contains(message) || !message.contains(selection.focusNode)) return
+        const range = selection.getRangeAt(0).cloneRange()
+        const bounds = range.getBoundingClientRect()
+        setSelectionMenu({ x: bounds.left, y: bounds.bottom + 8, text, range, floating: true })
       }}
       onContextMenu={(event) => {
         // With text selected in the chat, the right button offers it as context; otherwise the usual menu.
@@ -182,7 +194,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                       </div>
                       <MessageActions
                         text={item.text}
-                        onQuote={quote(item.text, quoteLabel('agent.quote.prompt', item.atMs))}
+                        onQuote={quote(item.text, quoteLabel('agent.quote.prompt', item.atMs), 'message')}
                         onEdit={onEditLast && !running && item.id === lastUserId ? () => setEditingId(item.id) : undefined}
                       />
                     </>
@@ -213,7 +225,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
                     />
                     {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
                   </div>
-                  {!item.streaming && reply.text.trim() !== '' && <MessageActions text={reply.text} onQuote={quote(reply.text, quoteLabel('agent.quote.reply', item.atMs))} />}
+                  {!item.streaming && reply.text.trim() !== '' && <MessageActions text={reply.text} onQuote={quote(reply.text, quoteLabel('agent.quote.reply', item.atMs), 'reply')} />}
                   {!running && !item.streaming && item.id === lastContent?.id && onFollowUp && reply.suggestions.length > 0 && (
                     <div className="agent-follow-ups" role="group" aria-label={t('agent.followUps.title')}>
                       <p className="agent-follow-ups-title">{t('agent.followUps.title')}</p>
@@ -251,7 +263,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
         <SelectionMenu
           {...selectionMenu}
           onClose={() => setSelectionMenu(null)}
-          onQuote={() => onQuote(selectionMenu.text, t('agent.quote.excerpt', { text: excerpt(selectionMenu.text) }))}
+          onQuote={() => onQuote(selectionMenu.text, t('agent.quote.excerpt', { text: excerpt(selectionMenu.text) }), 'selection')}
         />
       )}
     </div>
@@ -264,6 +276,7 @@ function excerpt(text: string): string {
 }
 
 interface SelectionMenuProps {
+  floating?: boolean
   x: number
   y: number
   text: string
@@ -274,7 +287,7 @@ interface SelectionMenuProps {
 }
 
 /** Right-click menu for text selected in the chat. */
-function SelectionMenu({ x, y, text, range, onQuote, onClose }: SelectionMenuProps) {
+function SelectionMenu({ x, y, text, range, floating = false, onQuote, onClose }: SelectionMenuProps) {
   const { t } = useLanguage()
   const ref = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState({ left: x, top: y })
@@ -312,7 +325,7 @@ function SelectionMenu({ x, y, text, range, onQuote, onClose }: SelectionMenuPro
   return (
     <div
       ref={ref}
-      className="ui-menu agent-selection-menu"
+      className={`ui-menu agent-selection-menu${floating ? ' agent-selection-menu--floating' : ''}`}
       role="menu"
       aria-label={t('agent.quote.menuAria')}
       style={position}
@@ -326,7 +339,7 @@ function SelectionMenu({ x, y, text, range, onQuote, onClose }: SelectionMenuPro
       <MenuItem
         label={t('agent.quote.useSelection')}
         icon={<AtIcon size={12} />}
-        autoFocus
+        autoFocus={!floating}
         onSelect={() => {
           onQuote()
           onClose()

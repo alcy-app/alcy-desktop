@@ -174,8 +174,8 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
             void session.send(text, [])
             composerRef.current?.focus()
           }}
-          onQuote={(text, label) => {
-            setContext((current) => [...current, quoteContext(text, label)])
+          onQuote={(text, label, kind) => {
+            setContext((current) => [...current, quoteContext(text, label, kind)])
             composerRef.current?.focus()
           }}
           onOpenReference={(kind, id) => openAgentReference(host, kind, id)}
