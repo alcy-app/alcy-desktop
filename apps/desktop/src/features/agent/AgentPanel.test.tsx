@@ -6,6 +6,7 @@ import type { AgentEventDto } from '../../bindings/agent-turn'
 import { emptyRequestContent } from '../request-workbench/collection-tree'
 import type { WorkbenchAgentHost } from './agent-host'
 import { AgentPanel } from './AgentPanel'
+import { forgetRememberedSessions, rememberSession, rememberedSession } from './agent-session-memory'
 
 const getAgentSettings = vi.fn()
 const saveAgentSettings = vi.fn()
@@ -88,6 +89,7 @@ const sendMessage = (text: string) => {
 }
 
 beforeEach(() => {
+  forgetRememberedSessions()
   loadAgentSession.mockReset().mockResolvedValue({ ok: false, error: { kind: 'notFound' } })
   window.localStorage.removeItem('alcy:agent:approval-mode')
   getAgentSettings.mockReset()
@@ -100,7 +102,7 @@ beforeEach(() => {
 describe('AgentPanel', () => {
   it('sends a suggested continuation once without consuming the composer draft and still asks for tool approval', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
-    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 's-old' }))
+    rememberSession('/w', 's-old')
     loadAgentSession.mockResolvedValue({ ok: true, value: {
       id: 's-old', title: 'Users', providerId: 'claude', model: 'm', omittedItems: 0,
       items: [{ kind: 'assistant', text: 'Pronto.\n\n```alcy-suggestions\n["Envie a requisição"]\n```' }],
@@ -225,7 +227,7 @@ describe('AgentPanel', () => {
     await waitFor(() => expect(screen.getByText('Nesta conversa').parentElement).toHaveTextContent('↑ 2,4 mil · ↓ 60 tokens'))
     unmount()
 
-    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 's-old' }))
+    rememberSession('/w', 's-old')
     loadAgentSession.mockResolvedValue({ ok: true, value: {
       id: 's-old', title: 'Users', providerId: 'claude', model: 'm', omittedItems: 0,
       items: [{ kind: 'user', text: 'oi' }, { kind: 'assistant', text: 'Olá!' }, { kind: 'usage', inputTokens: 900, outputTokens: 12 }],
@@ -602,7 +604,8 @@ describe('AgentPanel', () => {
 
   it('reopens the chat last open in the workspace and remembers new ones', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
-    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 's-old', '/other': 's-other' }))
+    rememberSession('/w', 's-old')
+    rememberSession('/other', 's-other')
     loadAgentSession.mockResolvedValue({
       ok: true,
       value: { id: 's-old', title: 'Users API', providerId: 'claude', model: 'm', omittedItems: 0, items: [{ kind: 'user', text: 'liste os usuários' }] },
@@ -614,18 +617,44 @@ describe('AgentPanel', () => {
     expect(loadAgentSession).toHaveBeenCalledWith('/w', 's-old')
 
     fireEvent.click(screen.getByRole('button', { name: 'Novo chat' }))
-    expect(JSON.parse(window.localStorage.getItem('alcy:agent:sessions') ?? '{}')).toEqual({ '/other': 's-other' })
+    expect(rememberedSession('/w')).toBeNull()
+    expect(rememberedSession('/other')).toBe('s-other')
   })
 
   it('forgets a remembered chat that no longer exists, without an error', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
-    window.localStorage.setItem('alcy:agent:sessions', JSON.stringify({ '/w': 'gone' }))
+    rememberSession('/w', 'gone')
     loadAgentSession.mockResolvedValue({ ok: false, error: { kind: 'notFound' } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
 
     await screen.findByText('Como posso ajudar?')
-    await waitFor(() => expect(window.localStorage.getItem('alcy:agent:sessions')).toBe('{}'))
+    await waitFor(() => expect(rememberedSession('/w')).toBeNull())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('starts a new chat instead of reopening the previous one when the app starts again', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
+    startAgentTurn.mockImplementation(async (_input: unknown, onEvent: (event: AgentEventDto) => void) => {
+      onEvent({ type: 'sessionStarted', sessionId: 's1', title: 'Conversa anterior' })
+      onEvent({ type: 'textDelta', text: 'Tudo certo.' })
+      return { ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } }
+    })
+    const { unmount } = render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('Mensagem anterior')
+    expect(await screen.findByText('Tudo certo.')).toBeInTheDocument()
+    await waitFor(() => expect(rememberedSession('/w')).toBe('s1'))
+    unmount()
+
+    // Starting the app again drops the in-memory memory of the last chat.
+    forgetRememberedSessions()
+    loadAgentSession.mockClear()
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+
+    expect(await screen.findByText('Como posso ajudar?')).toBeInTheDocument()
+    expect(screen.queryByText('Mensagem anterior')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Novo chat' })).toBeInTheDocument()
+    expect(loadAgentSession).not.toHaveBeenCalled()
   })
 
   it('asks to set up a provider before chatting', async () => {

@@ -350,8 +350,9 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     [applyView, rootPath, t],
   )
 
-  // Bring back the chat last open in this workspace when the panel mounts.
-  // A remembered chat that no longer exists is forgotten quietly.
+  // Bring back the chat last open in this workspace when the panel mounts
+  // during the same app run. A remembered chat that no longer exists is
+  // forgotten quietly.
   useEffect(() => {
     const id = rememberedSession(rootPath)
     if (id === null) return

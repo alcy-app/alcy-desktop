@@ -358,7 +358,10 @@ next message as its main context.
 
 The transcript stays in Rust: each turn sends only the new message, and chats
 are saved per workspace under app data (`agent-sessions/`), never in the
-workspace folder. Requests carry only the latest tool results in full, and a
+workspace folder. React remembers only in memory which chat is open in each
+workspace, so switching workspaces brings it back but a new app start always
+begins with a new chat; the previous ones stay in history. Requests carry
+only the latest tool results in full, and a
 chat near the provider's context budget has its oldest part summarized by the
 model; the summary is saved with the chat, the transcript keeps everything
 (spec 0135).
