@@ -9,11 +9,21 @@
   background: var(--bg);
 }
 
+/* Holds the strip with the new-tab and overflow buttons right after the last tab. */
+.rw-open-tabs-area {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Sized by its tabs up to the available space; tabs then shrink to their minimum and the strip scrolls. */
 .rw-open-tabs {
   display: flex;
   align-items: center;
   gap: 0;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -39,7 +49,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 104px;
   max-width: 180px;
   min-height: var(--control-height-sm);
   padding: 0 3px 0 8px;
@@ -202,12 +213,15 @@
   background: var(--error-soft);
 }
 
-.rw-open-tab-new {
+.rw-open-tab-new,
+.rw-open-tabs-overflow {
   flex-shrink: 0;
   border: 1px solid transparent;
 }
 
-.rw-open-tab-new:hover:not(:disabled) {
+.rw-open-tab-new:hover:not(:disabled),
+.rw-open-tabs-overflow:hover:not(:disabled),
+.rw-open-tabs-overflow[aria-expanded="true"] {
   background: transparent;
   border-color: var(--border);
   color: var(--text-heading);
@@ -221,6 +235,44 @@
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow: auto;
+}
+
+/* Dropdown listing every open tab once they no longer fit the strip. */
+.rw-open-tabs-overflow-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 300px;
+  max-width: calc(100vw - 32px);
+}
+
+.rw-open-tabs-overflow-list {
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, calc(100vh - 120px));
+  overflow-y: auto;
+}
+
+.rw-open-tabs-overflow-list .ui-menu-item {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm);
+}
+
+.rw-open-tabs-overflow-preview {
+  font-style: italic;
+}
+
+.rw-open-tab-dirty-dot.rw-open-tabs-overflow-dirty {
+  position: static;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.rw-open-tabs-overflow-empty {
+  margin: 0;
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 /* Group colors reuse the theme-aware collection label palette. */
@@ -376,7 +428,8 @@
   background: var(--surface-raised);
 }
 
-.rw-open-tab-new {
+.rw-open-tab-new,
+.rw-open-tabs-overflow {
   transition:
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),

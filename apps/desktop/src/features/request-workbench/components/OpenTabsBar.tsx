@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { DragPreview } from '../../../shared/DragPreview'
 import { useLanguage } from '../../../shared/i18n/use-language'
@@ -19,6 +19,7 @@ import type { useTabGroups } from '../use-tab-groups'
 import { TabGroupEditor } from './TabGroupEditor'
 import { TabMenuSurface } from './TabMenuSurface'
 import { DiscardTabModal } from './DiscardTabModal'
+import { OpenTabsOverflowMenu } from './OpenTabsOverflowMenu'
 import { EnvironmentSelect } from './EnvironmentSelect'
 import { RequestMethodBadge } from './RequestMethodBadge'
 import './open-tabs-bar.css'
@@ -195,6 +196,17 @@ export const OpenTabsBar = memo(function OpenTabsBar({
   const previousActiveRef = useRef(activeTabId)
   const hadTabsRef = useRef(baseTabs.length > 0)
   const barRef = useRef<HTMLDivElement>(null)
+  // Tabs shrink down to their minimum width first; once the strip still overflows, the dropdown lists every tab.
+  const [overflowing, setOverflowing] = useState(false)
+  // Opening, renaming or collapsing tabs changes the content width without resizing the strip.
+  useLayoutEffect(() => setOverflowing(isStripOverflowing(barRef.current)), [baseTabs, groups])
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const observer = new ResizeObserver(() => setOverflowing(isStripOverflowing(bar)))
+    observer.observe(bar)
+    return () => observer.disconnect()
+  }, [])
   // Reveal tabs activated from the sidebar, search, shortcuts or a close action.
   useEffect(() => {
     if (previousActiveRef.current === activeTabId) return
@@ -389,6 +401,7 @@ export const OpenTabsBar = memo(function OpenTabsBar({
 
   return (
     <div className="rw-open-tabs-row">
+      <div className="rw-open-tabs-area">
       <div
         ref={barRef}
         className="rw-open-tabs"
@@ -513,12 +526,14 @@ export const OpenTabsBar = memo(function OpenTabsBar({
             </Fragment>
           )
         })}
+      </div>
         <IconButton
           className="rw-open-tab-new"
           icon={<PlusIcon size={13} />}
           label={t('workbench.openTabs.newTabAria')}
           onClick={(event) => onNewTab(event.currentTarget.getBoundingClientRect())}
         />
+        {overflowing && <OpenTabsOverflowMenu tabs={tabs} activeTabId={activeTabId} onSelect={onSelect} />}
       </div>
 
       <div className="rw-open-tabs-divider" aria-hidden="true" />
@@ -595,6 +610,10 @@ export const OpenTabsBar = memo(function OpenTabsBar({
     </div>
   )
 })
+
+function isStripOverflowing(strip: HTMLElement | null): boolean {
+  return strip !== null && strip.scrollWidth > strip.clientWidth + 1
+}
 
 function CloseTabButton({ label, onClose }: { label: string; onClose: () => void }) {
   const { triggerProps, tooltip } = useTooltip(label)

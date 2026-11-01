@@ -199,3 +199,41 @@ describe('OpenTabsBar groups', () => {
     expect(onCloseMany).not.toHaveBeenCalled()
   })
 })
+
+describe('OpenTabsBar overflow', () => {
+  it('hides the tab list while every tab fits', () => {
+    setup()
+    expect(screen.queryByRole('button', { name: 'Lista de abas abertas' })).not.toBeInTheDocument()
+  })
+
+  it('lists every tab once they no longer fit and selects one from the search', () => {
+    const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('rw-open-tabs') ? 900 : 0
+    })
+    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('rw-open-tabs') ? 400 : 0
+    })
+    try {
+      setup()
+      fireEvent.click(screen.getByRole('tab', { name: 'Payments' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Lista de abas abertas' }))
+      const menu = screen.getByRole('dialog', { name: 'Lista de abas abertas' })
+      const search = within(menu).getByRole('textbox', { name: 'Buscar abas' })
+      expect(search).toHaveFocus()
+      expect(within(menu).getAllByRole('button')).toHaveLength(3)
+      expect(within(menu).getByRole('button', { name: /^Payments/ })).toHaveAttribute('aria-current', 'true')
+
+      fireEvent.change(search, { target: { value: 'nothing' } })
+      expect(within(menu).getByText('Nenhuma aba encontrada')).toBeInTheDocument()
+      fireEvent.change(search, { target: { value: 'use' } })
+      expect(within(menu).getAllByRole('button').map((button) => button.textContent)).toEqual(['Users'])
+      fireEvent.keyDown(search, { key: 'Enter' })
+
+      expect(screen.queryByRole('dialog', { name: 'Lista de abas abertas' })).not.toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: 'Users' })).toHaveAttribute('aria-selected', 'true')
+    } finally {
+      scrollWidth.mockRestore()
+      clientWidth.mockRestore()
+    }
+  })
+})
