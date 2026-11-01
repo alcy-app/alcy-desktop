@@ -483,6 +483,7 @@ const ptBR = {
   'workbench.modules.hide': 'Ocultar {name}',
   'workbench.navigationAria': 'Navegação principal',
   'workbench.breadcrumb.ariaLabel': 'Caminho da requisição',
+  'workbench.breadcrumb.renameAria': 'Renomear requisição {name}',
 
   // open request tabs (open-request tab strip, above the endpoint bar)
   'workbench.openTabs.ariaLabel': 'Requisições abertas',

@@ -12,6 +12,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Changed
 - Novas conversas com o agente começam no lugar de recuperar o chat da última vez que o Alcy foi aberto. O chat anterior continua disponível no histórico.
+- O nome da requisição aparece completo no caminho acima da URL e pode ser renomeado clicando nele.
 - As abas abertas têm todas a mesma largura, com o botão de fechar sempre no mesmo lugar, e diminuem juntas conforme novas abas são abertas. Quando não cabem mais na barra, um menu ao lado do botão de nova aba lista todas elas, com busca pelo nome.
 - O agente monta flows passo a passo: adiciona e conecta etapas, organiza o canvas, parte de exemplos prontos e confere o flow antes de executar. As alterações no grafo podem ser desfeitas pelo chat.
 - O agente entende melhor pedidos feitos com modelos menores e, quando erra, recebe instruções de como corrigir.

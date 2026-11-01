@@ -339,6 +339,87 @@
   font-weight: var(--font-weight-medium);
 }
 
+/* The request name is always shown in full; only the parent segments shrink. */
+.rw-request-breadcrumb-item--current {
+  flex-shrink: 0;
+  max-width: none;
+}
+
+.rw-request-breadcrumb-item--current .rw-request-breadcrumb-label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Name button and rename field share the same box so switching between them does not shift the row. */
+.rw-request-breadcrumb-rename,
+.rw-request-breadcrumb-input,
+.rw-request-breadcrumb-edit-mirror {
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  line-height: inherit;
+}
+
+.rw-request-breadcrumb-rename {
+  background: transparent;
+  color: var(--text-heading);
+  cursor: text;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.rw-request-breadcrumb-rename:hover {
+  background: var(--surface-raised);
+}
+
+.rw-request-breadcrumb-rename:focus-visible {
+  outline: none;
+  border-color: var(--accent-strong);
+}
+
+/* While editing, the field fits the space left and long names scroll inside it, keeping the border visible. */
+.rw-request-breadcrumb-item--current:has(.rw-request-breadcrumb-edit) {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.rw-request-breadcrumb-edit {
+  display: inline-grid;
+  grid-template-columns: minmax(2ch, max-content);
+  min-width: 0;
+}
+
+/* Pull back over the separator gap so the text lines up with the read-only segments. Only after a
+   separator, and only to the left: anything past the list edges is clipped. */
+.rw-request-breadcrumb-separator + .rw-request-breadcrumb-rename,
+.rw-request-breadcrumb-separator + .rw-request-breadcrumb-edit {
+  margin-left: -4px;
+}
+
+.rw-request-breadcrumb-edit-mirror,
+.rw-request-breadcrumb-input {
+  grid-area: 1 / 1;
+  white-space: pre;
+}
+
+.rw-request-breadcrumb-edit-mirror {
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.rw-request-breadcrumb-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border-color: var(--accent-strong);
+  color: var(--text-heading);
+}
+
+.rw-request-breadcrumb-input:focus-visible {
+  outline: none;
+}
+
 .rw-endpoint-bar {
   position: relative;
   display: flex;

@@ -489,6 +489,7 @@ const en: Record<TranslationKey, string> = {
   'workbench.modules.hide': 'Hide {name}',
   'workbench.navigationAria': 'Main navigation',
   'workbench.breadcrumb.ariaLabel': 'Request path',
+  'workbench.breadcrumb.renameAria': 'Rename request {name}',
 
   // open request tabs (open-request tab strip, above the endpoint bar)
   'workbench.openTabs.ariaLabel': 'Open requests',
