@@ -782,6 +782,66 @@
 .agent-composer-input::placeholder { color: var(--text-muted); }
 .agent-composer-input:focus { outline: none; }
 
+/* Mentions are drawn by a copy of the text right behind the transparent textarea. */
+.agent-composer-field {
+  position: relative;
+  min-width: 0;
+}
+
+.agent-composer-input,
+.agent-composer-mirror {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  tab-size: 4;
+}
+
+.agent-composer-mirror {
+  position: absolute;
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  pointer-events: none;
+  scrollbar-color: transparent transparent;
+}
+
+.agent-composer-field[data-mentions] .agent-composer-input {
+  position: relative;
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.agent-composer-field[data-mentions] .agent-composer-input::selection {
+  background: var(--accent-soft);
+  color: transparent;
+}
+
+.agent-mention {
+  border-radius: var(--radius-sm);
+  background: var(--accent-softer);
+  color: var(--accent-strong);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* The `@` keeps its width and stays in copied text; the icon covers it. */
+.agent-mention-at {
+  position: relative;
+  color: transparent;
+}
+
+.agent-mention-at > svg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: var(--accent-strong);
+  transform: translate(-50%, -50%);
+}
+
 .agent-composer-footer {
   position: relative;
   display: flex;

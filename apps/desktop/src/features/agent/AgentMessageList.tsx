@@ -13,7 +13,10 @@ import { toolLabel } from './agent-tool-labels'
 import { AgentThinking } from './AgentThinking'
 import { splitAgentReply } from './agent-follow-ups'
 import { TurnTokens } from './AgentTokens'
-import type { AgentContextOption } from './agent-context'
+import type { AgentContextKind, AgentContextOption } from './agent-context'
+import { findMentions, splitMentions } from './agent-mentions'
+import { AgentMentionChip } from './AgentMentionChip'
+import type { AgentContextInput } from '../../bindings/agent-turn'
 
 /** Items rendered at once; older ones appear on demand. */
 const PAGE_SIZE = 150
@@ -206,10 +209,7 @@ export function AgentMessageList({ items, running = false, compacting = false, o
                     ) : (
                       <>
                         <div className="agent-message agent-message--user">
-                          {item.context.length > 0 && (
-                            <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
-                          )}
-                          <UserMessageText text={item.text} />
+                          <UserMessage text={item.text} context={item.context} />
                         </div>
                         <MessageActions
                           text={item.text}
@@ -484,14 +484,31 @@ function AgentReference({ kind, id, onOpen, children }: { kind: AgentReferenceKi
 }
 
 /** The user's words stay literal; only their fenced (or pasted JSON) blocks become code blocks. */
-function UserMessageText({ text }: { text: string }) {
+/** A sent message: `@` mentions stay inline; references it does not mention head it. */
+function UserMessage({ text, context }: { text: string; context: AgentContextInput[] }) {
   const segments = useMemo(() => splitUserMessage(text), [text])
-  return segments.map((segment, index) =>
-    segment.type === 'code' ? (
-      <AgentCodeBlock key={index} text={segment.text} lang={segment.lang} />
-    ) : (
-      <p key={index} className="agent-message-text">{segment.text}</p>
-    ),
+  const mentionable = useMemo(() => context.filter((reference) => reference.kind !== 'quote' && reference.kind !== 'selection'), [context])
+  const inline = new Set(segments.flatMap((segment) => (segment.type === 'code' ? [] : findMentions(segment.text, mentionable).map((found) => found.reference))))
+  const unmentioned = context.filter((reference) => !inline.has(reference))
+  return (
+    <>
+      {unmentioned.length > 0 && (
+        <p className="agent-message-context">{unmentioned.map((reference) => `@${reference.label}`).join(' ')}</p>
+      )}
+      {segments.map((segment, index) =>
+        segment.type === 'code' ? (
+          <AgentCodeBlock key={index} text={segment.text} lang={segment.lang} />
+        ) : (
+          <p key={index} className="agent-message-text">
+            {splitMentions(segment.text, findMentions(segment.text, mentionable)).map((part, partIndex) =>
+              part.type === 'text' ? part.text : (
+                <AgentMentionChip key={partIndex} kind={part.mention.reference.kind as AgentContextKind} text={part.text} />
+              ),
+            )}
+          </p>
+        ),
+      )}
+    </>
   )
 }
 

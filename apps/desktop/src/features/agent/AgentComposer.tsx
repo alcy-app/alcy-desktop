@@ -1,13 +1,16 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type ReactNode, type RefObject, type SetStateAction } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { IconButton } from '../../shared/ui/IconButton'
-import { AtIcon, ChevronLeftIcon, ChevronRightIcon, FolderIcon, GlobeIcon, PanelBottomIcon, PanelRightIcon, SelectionIcon, SendIcon, StopIcon, VariablesIcon } from '../../shared/ui/icons'
+import { AtIcon, ChevronLeftIcon, ChevronRightIcon, StopIcon } from '../../shared/ui/icons'
 import { useEditorSelection, type EditorSelection } from '../request-workbench/editor-bridge'
 import type { WorkbenchAgentHost } from './agent-host'
 import { pasteJsonAsBlock } from './agent-code'
 import { AgentContextAttachments } from './AgentContextAttachments'
+import { AgentMentionChip } from './AgentMentionChip'
+import { CONTEXT_ICONS } from './agent-context-icons'
 import { AGENT_COMMANDS, agentCommandQuery, parseAgentCommand, type AgentCommand } from './agent-commands'
 import { agentContextOptions, mentionAt, selectionContext, type AgentContextOption } from './agent-context'
+import { applyEdit, liveMentions, mentionDeletion, mentionInside, mentionToken, splitMentions, textEdit, type InlineMention, type TextEdit } from './agent-mentions'
 
 interface AgentComposerProps {
   host: WorkbenchAgentHost
@@ -30,14 +33,13 @@ interface AgentComposerProps {
 const CATEGORY_KINDS = ['tab', 'request', 'environment', 'flow', 'monitor', 'runner', 'mock'] as const
 type CategoryKind = (typeof CATEGORY_KINDS)[number]
 type ContextMenuEntry = { type: 'context'; option: AgentContextOption } | { type: 'category'; kind: CategoryKind; disabled: boolean }
-const CONTEXT_ICONS = { response: PanelBottomIcon, tab: PanelRightIcon, request: GlobeIcon, environment: VariablesIcon, selection: SelectionIcon, flow: FolderIcon, monitor: SelectionIcon, runner: SendIcon, mock: GlobeIcon, quote: AtIcon }
 
 function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
   return a !== null && b !== null && a.slot === b.slot && a.text === b.text
 }
 const CATEGORY_ICONS = CONTEXT_ICONS
 
-/** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items, pasted JSON becomes a block. */
+/** Message box: Enter sends, Shift+Enter breaks the line, `@` mentions workbench items inline, pasted JSON becomes a block. */
 export function AgentComposer({ host, running, disabled, text, onTextChange: setText, context, onContextChange: setContext, textareaRef, footer, onSend, onStop, onCommand, canCompact }: AgentComposerProps) {
   const { t } = useLanguage()
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
@@ -46,6 +48,10 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const [commandError, setCommandError] = useState<string | null>(null)
   const [category, setCategory] = useState<CategoryKind | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const mirrorRef = useRef<HTMLDivElement>(null)
+  // `@` references live in the text as tokens; this keeps where each one is.
+  const [mentionRanges, setMentionRanges] = useState<InlineMention[]>([])
+  const mentions = useMemo(() => liveMentions(mentionRanges, text), [mentionRanges, text])
   const lastCaretRef = useRef<{ value: string; caret: number } | null>(null)
   const menuId = useId()
   const mentionOpen = mention !== null || commandQuery !== null
@@ -105,9 +111,11 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const options = useMemo(
     () =>
       mention
-        ? agentContextOptions(host, mention.query).filter((option) => !context.some((item) => item.kind === option.kind && item.id === option.id))
+        ? agentContextOptions(host, mention.query).filter(
+            (option) => ![...context, ...mentions.map((item) => item.option)].some((item) => item.kind === option.kind && item.id === option.id),
+          )
         : [],
-    [context, host, mention],
+    [context, host, mention, mentions],
   )
 
   const searching = Boolean(mention?.query)
@@ -138,6 +146,7 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
     setCommandQuery(null)
     setCommandError(null)
     setMention(null)
+    setMentionRanges([])
     if (command === 'clear') {
       setContext([])
       setDismissedSelection(activeSelection)
@@ -146,12 +155,29 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
     textareaRef.current?.focus()
   }
 
-  const updateMention = (value: string, caret: number) => {
+  /** New text from the user; mentions the edit touched turn back into plain text. */
+  const changeText = (value: string, edit: TextEdit) => {
+    const next = applyEdit(mentions, edit)
+    setMentionRanges(next)
+    setText(value)
+    return next
+  }
+
+  const moveCaret = (caret: number) => {
+    const input = textareaRef.current
+    if (!input) return
+    input.setSelectionRange(caret, caret)
+    lastCaretRef.current = { value: input.value, caret }
+  }
+
+  const updateMention = (value: string, caret: number, current: InlineMention[] = mentions) => {
     lastCaretRef.current = { value, caret }
     const query = agentCommandQuery(value, caret)
     setCommandQuery(query)
     setCommandError(null)
-    const next = query === null ? mentionAt(value, caret) : null
+    const found = query === null ? mentionAt(value, caret) : null
+    // Right after a one-word mention the caret would read it as a new `@query`.
+    const next = found && current.some((item) => item.start === found.start) ? null : found
     if (next?.start !== mention?.start || next?.query !== mention?.query) setCategory(null)
     setMention(next)
     setHighlight(0)
@@ -160,14 +186,20 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const pick = (option: AgentContextOption) => {
     if (!mention) return
     const caret = textareaRef.current?.selectionStart ?? text.length
-    const next = text.slice(0, mention.start) + text.slice(caret)
-    setText(next)
-    setContext((current) => [...current, option])
+    const token = mentionToken(option)
+    const after = text.slice(caret)
+    const spacer = /^\s/.test(after) ? '' : ' '
+    const next = text.slice(0, mention.start) + token + spacer + after
+    const end = mention.start + token.length
+    const shifted = changeText(next, { start: mention.start, oldEnd: caret, insertedLength: token.length + spacer.length })
+    setMentionRanges([...shifted, { option, start: mention.start, end }])
     setMention(null)
     setCategory(null)
+    const target = end + 1
+    lastCaretRef.current = { value: next, caret: target }
     requestAnimationFrame(() => {
       textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(mention.start, mention.start)
+      textareaRef.current?.setSelectionRange(target, target)
     })
   }
 
@@ -179,11 +211,13 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
       else setCommandError(t('agent.command.unknown'))
       return
     }
-    const attached = activeSelection ? [selectionContext(activeSelection, host, selectionLabel), ...context] : context
+    const attached = [...(activeSelection ? [selectionContext(activeSelection, host, selectionLabel)] : []), ...context, ...mentions.map((item) => item.option)]
+      .filter((item, index, all) => all.findIndex((other) => other.kind === item.kind && other.id === item.id) === index)
     onSend(text, attached.map(({ kind, id, label, summary }) => ({ kind, id, label, summary })))
     if (activeSelection) setDismissedSelection(activeSelection)
     setText('')
     setContext([])
+    setMentionRanges([])
     setMention(null)
     setCategory(null)
   }
@@ -259,6 +293,30 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
       event.preventDefault()
       setMention(null)
       return
+    }
+    if (mentions.length > 0 && !event.altKey && !event.ctrlKey && !event.metaKey && event.currentTarget instanceof HTMLTextAreaElement) {
+      const { selectionStart: from, selectionEnd: to } = event.currentTarget
+      // A mention is one piece: deleting or crossing it takes it whole.
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        const removed = mentionDeletion(mentions, from, to, event.key)
+        if (removed) {
+          event.preventDefault()
+          const next = text.slice(0, removed.start) + text.slice(removed.end)
+          const remaining = changeText(next, { start: removed.start, oldEnd: removed.end, insertedLength: 0 })
+          updateMention(next, removed.start, remaining)
+          requestAnimationFrame(() => moveCaret(removed.start))
+          return
+        }
+      }
+      if (!event.shiftKey && from === to && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        const left = event.key === 'ArrowLeft'
+        const crossed = mentions.find((item) => (left ? from > item.start && from <= item.end : from >= item.start && from < item.end))
+        if (crossed) {
+          event.preventDefault()
+          moveCaret(left ? crossed.start : crossed.end)
+          return
+        }
+      }
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
@@ -368,6 +426,15 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
         onEdit={(item, summary) => setContext((current) => current.map((candidate) => candidate === item ? { ...candidate, summary } : candidate))}
         onReturnFocus={() => textareaRef.current?.focus()}
       />}
+      <div className="agent-composer-field" data-mentions={mentions.length > 0 || undefined}>
+        {mentions.length > 0 && (
+          <div ref={mirrorRef} className="agent-composer-mirror" aria-hidden="true">
+            {splitMentions(text, mentions).map((segment, index) =>
+              segment.type === 'text' ? segment.text : <AgentMentionChip key={index} kind={segment.mention.option.kind} text={segment.text} />,
+            )}
+            {'​'}
+          </div>
+        )}
       <textarea
         ref={textareaRef}
         className="agent-composer-input"
@@ -384,13 +451,24 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
         aria-describedby={commandError ? `${menuId}-error` : undefined}
         aria-activedescendant={commandQuery !== null && selectedCommand ? `${menuId}-command-${commands.indexOf(selectedCommand)}` : mention && selected ? `${menuId}-${entries.indexOf(selected)}` : undefined}
         onChange={(event) => {
-          setText(event.target.value)
-          updateMention(event.target.value, event.target.selectionStart)
+          const { value, selectionStart } = event.target
+          updateMention(value, selectionStart, changeText(value, textEdit(text, value, selectionStart)))
+        }}
+        onScroll={(event) => {
+          if (mirrorRef.current) mirrorRef.current.scrollTop = event.currentTarget.scrollTop
         }}
         onSelect={(event) => {
-          const { value, selectionStart } = event.currentTarget
+          const { value, selectionStart, selectionEnd } = event.currentTarget
           // Focus changes can emit select without moving the caret.
           if (lastCaretRef.current?.value === value && lastCaretRef.current.caret === selectionStart) return
+          // The caret never rests inside a mention: a click there lands on its nearest edge.
+          const inside = selectionStart === selectionEnd ? mentionInside(mentions, selectionStart) : undefined
+          if (inside) {
+            const edge = selectionStart - inside.start < inside.end - selectionStart ? inside.start : inside.end
+            moveCaret(edge)
+            updateMention(value, edge)
+            return
+          }
           updateMention(value, selectionStart)
         }}
         onKeyDown={onKeyDown}
@@ -399,11 +477,11 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
           const pasted = pasteJsonAsBlock(input.value, input.selectionStart, input.selectionEnd, event.clipboardData.getData('text/plain'))
           if (!pasted) return
           event.preventDefault()
-          setText(pasted.value)
-          updateMention(pasted.value, pasted.caret)
+          updateMention(pasted.value, pasted.caret, changeText(pasted.value, textEdit(input.value, pasted.value, pasted.caret)))
           requestAnimationFrame(() => input.setSelectionRange(pasted.caret, pasted.caret))
         }}
       />
+      </div>
       {commandError && <p className="agent-command-error" id={`${menuId}-error`} role="alert">{commandError}</p>}
       <div className="agent-composer-footer">
         {footer}

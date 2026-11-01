@@ -86,6 +86,12 @@ const typeMention = () => {
   fireEvent.change(input, { target: { value: '@' } })
 }
 
+/** Types at the end of the current text, keeping what is already there (and its mentions). */
+const typeAtEnd = (text: string) => {
+  const input = screen.getByLabelText('Mensagem para o agente') as HTMLTextAreaElement
+  fireEvent.change(input, { target: { value: input.value + text } })
+}
+
 const sendMessage = (text: string) => {
   fireEvent.change(screen.getByLabelText('Mensagem para o agente'), { target: { value: text } })
   fireEvent.keyDown(screen.getByLabelText('Mensagem para o agente'), { key: 'Enter' })
@@ -144,11 +150,11 @@ describe('AgentPanel', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Novo chat' })).toBeEnabled())
     typeMention()
     fireEvent.keyDown(screen.getByLabelText('Mensagem para o agente'), { key: 'Enter' })
-    expect(screen.getByRole('button', { name: '1 contexto' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Mensagem para o agente')).toHaveValue('@Users ')
     fireEvent.change(screen.getByLabelText('Mensagem para o agente'), { target: { value: '/cl' } })
     fireEvent.click(screen.getByRole('option', { name: /\/clear/ }))
     expect(screen.queryByText('Mensagem anterior')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '1 contexto' })).not.toBeInTheDocument()
+    expect(document.querySelector('.agent-composer .agent-mention')).toBeNull()
     expect(screen.getByText('Como posso ajudar?')).toBeInTheDocument()
     expect(screen.getByLabelText('Mensagem para o agente')).toHaveValue('')
     expect(startAgentTurn).toHaveBeenCalledTimes(1)
@@ -398,7 +404,7 @@ describe('AgentPanel', () => {
     expect(startAgentTurn).not.toHaveBeenCalled()
   })
 
-  it('opens context by typing @ and attaches the highlighted item with the keyboard', async () => {
+  it('opens context by typing @ and mentions the highlighted item inline with the keyboard', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
     render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
@@ -410,10 +416,18 @@ describe('AgentPanel', () => {
     expect(screen.getByRole('option', { name: /Users/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '1 contexto' }))
-    expect(screen.getByLabelText('Contexto anexado')).toHaveTextContent('Users')
-    sendMessage('explique')
-    expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ context: [expect.objectContaining({ kind: 'tab', id: 't1' })] }), expect.any(Function))
+    expect(input).toHaveValue('@Users ')
+    expect(screen.queryByRole('button', { name: '1 contexto' })).not.toBeInTheDocument()
+    expect(document.querySelector('.agent-composer .agent-mention')).toHaveTextContent('@Users')
+    typeAtEnd('explique')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(startAgentTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '@Users explique', context: [expect.objectContaining({ kind: 'tab', id: 't1' })] }),
+      expect.any(Function),
+    )
+    const sent = await screen.findByText('explique', { exact: false, selector: '.agent-message-text' })
+    expect(sent.querySelector('.agent-mention')).toHaveTextContent('@Users')
+    expect(document.querySelector('.agent-message-context')).toBeNull()
   })
 
   it('browses context categories with the keyboard and attaches an environment', async () => {
@@ -440,9 +454,9 @@ describe('AgentPanel', () => {
     expect(screen.getByRole('option', { name: /Development/ })).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(input, { key: 'Tab' })
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '1 contexto' }))
-    expect(screen.getByLabelText('Contexto anexado')).toHaveTextContent('Development')
-    sendMessage('use este ambiente')
+    expect(input).toHaveValue('@Development ')
+    typeAtEnd('use este ambiente')
+    fireEvent.keyDown(input, { key: 'Enter' })
     expect(startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({ context: [expect.objectContaining({ kind: 'environment', id: 'dev' })] }), expect.any(Function))
   })
 
@@ -499,8 +513,7 @@ describe('AgentPanel', () => {
     fireEvent.mouseUp(environment)
     fireEvent.click(environment)
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '1 contexto' }))
-    expect(screen.getByLabelText('Contexto anexado')).toHaveTextContent('Development')
+    expect(input).toHaveValue('@Development ')
     await waitFor(() => expect(input).toHaveFocus())
 
     typeMention()
@@ -582,25 +595,41 @@ describe('AgentPanel', () => {
     expect(screen.queryByRole('button', { name: '2 contextos' })).not.toBeInTheDocument()
   })
 
-  it('removes one attached context or clears the group and restores composer focus', async () => {
+  it('treats a mention as one piece: deleted whole and crossed by the arrows', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
     const workbench = host()
     workbench.environments = () => [{ id: 'dev', name: 'Development', variables: [] }]
     render(<AgentPanel rootPath="/w" host={workbench} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
     await screen.findByText('Como posso ajudar?')
+    const input = screen.getByLabelText('Mensagem para o agente') as HTMLTextAreaElement
     typeMention()
-    fireEvent.keyDown(screen.getByLabelText('Mensagem para o agente'), { key: 'Enter' })
-    typeMention()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    typeAtEnd('e @')
     fireEvent.click(screen.getByRole('option', { name: 'Ambientes' }))
     fireEvent.click(screen.getByRole('option', { name: /Development/ }))
-    fireEvent.click(screen.getByRole('button', { name: '2 contextos' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Remover Users do contexto' }))
-    expect(screen.getByRole('button', { name: '1 contexto' })).toHaveFocus()
-    expect(screen.queryByText('Users')).not.toBeInTheDocument()
-    expect(screen.getByText('Development')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Remover todos os contextos' }))
-    expect(screen.queryByRole('button', { name: '1 contexto' })).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Mensagem para o agente')).toHaveFocus()
+    expect(input).toHaveValue('@Users e @Development ')
+    expect(document.querySelectorAll('.agent-composer .agent-mention')).toHaveLength(2)
+
+    input.setSelectionRange(21, 21)
+    fireEvent.keyDown(input, { key: 'ArrowLeft' })
+    expect(input.selectionStart).toBe(9)
+    fireEvent.keyDown(input, { key: 'ArrowRight' })
+    expect(input.selectionStart).toBe(21)
+
+    input.setSelectionRange(6, 6)
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    expect(input).toHaveValue(' e @Development ')
+    expect(document.querySelectorAll('.agent-composer .agent-mention')).toHaveLength(1)
+
+    // Typing inside the text before a mention keeps it in place.
+    fireEvent.change(input, { target: { value: 'Veja e @Development ', selectionStart: 4 } })
+    expect(document.querySelector('.agent-composer .agent-mention')).toHaveTextContent('@Development')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(startAgentTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Veja e @Development', context: [expect.objectContaining({ kind: 'environment', id: 'dev' })] }),
+      expect.any(Function),
+    )
   })
 
   it('sends the editor selection first in the context, once, and lets it be dismissed', async () => {
