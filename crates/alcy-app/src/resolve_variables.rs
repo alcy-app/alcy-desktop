@@ -59,6 +59,22 @@ fn resolve_placeholders(
     Ok(result)
 }
 
+/// Names written as `{{name}}` in a template, trimmed, in order. Unclosed
+/// braces are text, as in [`resolve_placeholders`].
+pub(crate) fn placeholder_names(template: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let after_open = &rest[start + 2..];
+        let Some(end) = after_open.find("}}") else {
+            break;
+        };
+        names.push(after_open[..end].trim());
+        rest = &after_open[end + 2..];
+    }
+    names
+}
+
 fn lookup_environment_variable(
     name: &str,
     variables: &[EnvironmentVariable],

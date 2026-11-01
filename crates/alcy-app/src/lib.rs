@@ -8,6 +8,8 @@ mod evaluate_condition;
 mod evaluate_value_monitors;
 mod execute_flow;
 mod execute_request;
+mod flow_check;
+pub use flow_check::{FlowIssue, FlowIssueSeverity, check_flow};
 mod flow_form;
 mod flow_graph;
 pub use flow_form::{

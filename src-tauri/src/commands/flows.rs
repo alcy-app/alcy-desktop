@@ -756,6 +756,62 @@ pub async fn save_flows(input: SaveFlowsInput) -> Result<(), FlowsError> {
     crate::logging::logged("alcy::flow", "salvar flows", result)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckFlowInput {
+    pub flow: FlowInput,
+    /// Names the run can read besides its Set variables; absent skips the
+    /// unknown-variable warnings.
+    #[serde(default)]
+    pub known_variables: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowIssueDto {
+    pub severity: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub message: String,
+    pub fix: String,
+}
+
+/// Static checks of a flow before it runs (spec 0139). A flow that cannot
+/// even be built becomes an issue, never a command failure.
+#[tauri::command]
+pub async fn check_flow(input: CheckFlowInput) -> Vec<FlowIssueDto> {
+    check_flow_inner(input)
+}
+
+fn check_flow_inner(input: CheckFlowInput) -> Vec<FlowIssueDto> {
+    let flow = match flow_from_input(input.flow) {
+        Ok(flow) => flow,
+        Err(FlowsError::Invalid { message } | FlowsError::Storage { message }) => {
+            return vec![FlowIssueDto {
+                severity: "error",
+                node_id: None,
+                message,
+                fix: "Fix the node or connection named in the message. Outputs must match the node: request success/failure, if true/false, while loop/done, others none.".into(),
+            }];
+        }
+    };
+    let known = input
+        .known_variables
+        .map(|names| names.into_iter().collect::<std::collections::HashSet<_>>());
+    alcy_app::check_flow(&flow, known.as_ref())
+        .into_iter()
+        .map(|issue| FlowIssueDto {
+            severity: match issue.severity {
+                alcy_app::FlowIssueSeverity::Error => "error",
+                alcy_app::FlowIssueSeverity::Warning => "warning",
+            },
+            node_id: issue.node_id,
+            message: issue.message,
+            fix: issue.fix,
+        })
+        .collect()
+}
+
 /// Run whole-file I/O on the blocking pool, away from the UI thread.
 async fn run_blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, FlowsError> + Send + 'static,
@@ -894,6 +950,39 @@ mod tests {
             serde_json::to_value(node_to_dto(&nodes[3])).unwrap(),
             serde_json::json!({"id":"sleep","kind":"sleep","durationMs":1500,"x":0.0,"y":0.0})
         );
+    }
+
+    #[test]
+    fn check_flow_turns_an_invalid_graph_into_an_issue_and_checks_references() {
+        let input = |edges: &str, log: &str| -> CheckFlowInput {
+            serde_json::from_value(serde_json::json!({
+                "flow": {
+                    "id": "f", "name": "F", "createdAtMs": 0, "updatedAtMs": 0,
+                    "nodes": [
+                        {"id":"start","kind":"start","x":0.0,"y":0.0},
+                        {"id":"log","kind":"log","message":log,"x":0.0,"y":0.0}
+                    ],
+                    "edges": serde_json::from_str::<serde_json::Value>(edges).unwrap(),
+                },
+                "knownVariables": ["base"],
+            }))
+            .unwrap()
+        };
+
+        let invalid = check_flow_inner(input(
+            r#"[{"id":"e","sourceNodeId":"start","targetNodeId":"log","sourceHandle":"success"}]"#,
+            "",
+        ));
+        assert_eq!(invalid.len(), 1);
+        assert_eq!(invalid[0].severity, "error");
+
+        let unknown = check_flow_inner(input(
+            r#"[{"id":"e","sourceNodeId":"start","targetNodeId":"log"}]"#,
+            "{{base}} {{other}}",
+        ));
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0].severity, "warning");
+        assert_eq!(unknown[0].node_id.as_deref(), Some("log"));
     }
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);

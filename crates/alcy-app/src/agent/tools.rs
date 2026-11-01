@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 
 use super::chat_model::ToolDefinition;
+mod arguments;
 mod resources;
 
 /// How much the user has to be involved before a tool runs.
@@ -189,9 +190,57 @@ pub fn agent_tool_catalog() -> Vec<ToolDefinition> {
         .map(|tool| ToolDefinition {
             name: tool.name.into(),
             description: tool.description.into(),
-            input_schema: (tool.schema)(),
+            input_schema: schema_of(tool),
         })
         .collect()
+}
+
+/// Where each kind of id comes from, so no model has to guess it.
+const ID_SOURCES: &[(&str, &str)] = &[
+    ("flowId", "Flow id from list_flows."),
+    ("nodeId", "Node id from get_flow."),
+    ("folderId", "Folder id from list_flows (flow folders)."),
+    ("monitorId", "Value monitor id from list_value_monitors."),
+    ("runnerId", "Runner id from open_runner or list_runners."),
+    (
+        "scopeId",
+        "Collection or folder id from search_collections.",
+    ),
+    ("serverId", "Mock server id from list_mock_servers."),
+    ("routeId", "Mock route id from get_mock_server."),
+    ("responseId", "Mock response id from get_mock_server."),
+    (
+        "itemId",
+        "Request, folder or collection id from search_collections.",
+    ),
+    (
+        "parentId",
+        "Collection or folder id from search_collections.",
+    ),
+    ("requestId", "Saved request id from search_collections."),
+    ("environmentId", "Environment id from list_environments."),
+    (
+        "tabId",
+        "Open tab id from list_open_tabs; the active tab when omitted.",
+    ),
+    ("edgeId", "Edge id from get_flow view full."),
+    ("startNodeId", "Id of the mockStart node."),
+];
+
+/// The schema with a description for every top-level id that lacks one.
+fn schema_of(tool: &ToolSpec) -> Value {
+    let mut schema = (tool.schema)();
+    if let Some(properties) = schema["properties"].as_object_mut() {
+        for (key, property) in properties.iter_mut() {
+            if property.get("description").is_none()
+                && let Some((_, description)) = ID_SOURCES.iter().find(|(id, _)| id == key)
+                && let Some(property) = property.as_object_mut()
+            {
+                property.insert("description".into(), Value::String((*description).into()));
+            }
+        }
+    }
+    schema
 }
 
 /// `None` for a name outside the catalog.
@@ -201,6 +250,16 @@ pub fn agent_tool_class(name: &str) -> Option<ToolClass> {
         .chain(resources::TOOLS)
         .find(|tool| tool.name == name)
         .map(|tool| tool.class)
+}
+
+/// The arguments fitted to the tool's schema (see `arguments`), or a message
+/// for the model saying what is wrong. `None` for a name outside the catalog.
+pub fn normalize_tool_arguments(name: &str, input: &Value) -> Option<Result<Value, String>> {
+    TOOLS
+        .iter()
+        .chain(resources::TOOLS)
+        .find(|tool| tool.name == name)
+        .map(|tool| arguments::normalize_arguments(&schema_of(tool), input))
 }
 
 fn object(properties: Value, required: &[&str]) -> Value {
@@ -424,6 +483,47 @@ mod tests {
     }
 
     #[test]
+    fn every_id_says_where_it_comes_from_and_descriptions_stay_short() {
+        for tool in agent_tool_catalog() {
+            assert!(
+                tool.description.len() <= 600,
+                "{} has a {}-byte description",
+                tool.name,
+                tool.description.len()
+            );
+            let properties = tool.input_schema["properties"].as_object().unwrap();
+            for (key, property) in properties {
+                if key.ends_with("Id") {
+                    assert!(
+                        property["description"].is_string(),
+                        "{}.{key} needs a description",
+                        tool.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn arguments_are_normalized_with_the_catalog_schema() {
+        let input = json!({ "flow_id": "f", "kind": "INLINE_REQUEST", "method": "POST" });
+        let normalized = normalize_tool_arguments("add_flow_node", &input)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            normalized,
+            json!({ "flowId": "f", "kind": "inlineRequest", "method": "post" })
+        );
+        assert!(
+            normalize_tool_arguments("add_flow_node", &json!({ "kind": "log" }))
+                .unwrap()
+                .unwrap_err()
+                .contains("Flow id from list_flows")
+        );
+        assert!(normalize_tool_arguments("rm_rf", &json!({})).is_none());
+    }
+
+    #[test]
     fn side_effects_are_classified() {
         assert_eq!(agent_tool_class("get_request"), Some(ToolClass::Read));
         assert_eq!(agent_tool_class("update_request"), Some(ToolClass::Edit));
@@ -436,6 +536,19 @@ mod tests {
             Some(ToolClass::Read)
         );
         assert_eq!(agent_tool_class("close_tab"), Some(ToolClass::Edit));
+        for name in [
+            "add_flow_node",
+            "connect_flow_nodes",
+            "disconnect_flow_nodes",
+            "organize_flow",
+            "update_flow",
+            "rename_flow_node",
+        ] {
+            assert_eq!(agent_tool_class(name), Some(ToolClass::Edit), "{name}");
+        }
+        for name in ["check_flow", "get_flow_guide", "get_flow_references"] {
+            assert_eq!(agent_tool_class(name), Some(ToolClass::Read), "{name}");
+        }
         assert_eq!(
             agent_tool_class("create_request"),
             Some(ToolClass::SideEffect)
@@ -443,6 +556,7 @@ mod tests {
         assert_eq!(agent_tool_class("rm_rf"), None);
         for name in [
             "run_flow",
+            "create_flow",
             "run_runner",
             "create_value_monitor",
             "delete_flow",

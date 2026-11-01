@@ -16,33 +16,90 @@ pub(super) const TOOLS: &[ToolSpec] = &[
     tool!(
         "list_flows",
         Read,
-        "Search workspace flows and their folders. Load flows are unavailable while load testing is disabled. Results are paginated.",
+        "Search workspace flows and their folders by name. Returns the flowId the other flow tools take. Load flows are hidden while load testing is disabled.",
         pagination
     ),
     tool!(
         "get_flow",
         Read,
-        "Read a flow's metadata and paginated nodes/edges, or a single node with nodeId. Secrets are masked. Never write truncated content back.",
-        || target_page("flowId", json!({"nodeId":{"type":"string"}}))
+        "Read a flow. The default outline lists each node with id, kind, a summary and next (each output and the node ids it leads to). view full returns the stored nodes and edges; nodeId returns one node in full. Inline requests use the update_request fields. Secrets are masked; never write truncated content back.",
+        || target_page(
+            "flowId",
+            json!({"nodeId":text(),"view":{"type":"string","enum":["outline","full"],"default":"outline"}})
+        )
+    ),
+    tool!(
+        "get_flow_guide",
+        Read,
+        "How flows work: the steps to build one, each node kind (fields, outputs, an add_flow_node example) and the {{nodes.<id>...}} reference syntax. Read the topic of a node kind before adding one you have not used yet.",
+        || object(
+            json!({"topic":{"type":"string","enum":FLOW_GUIDE_TOPICS,"default":"overview"}}),
+            &[]
+        )
+    ),
+    tool!(
+        "get_flow_references",
+        Read,
+        "List what a node can use: values of the nodes that run before it ({{nodes.<id>.response.body.<path>}}, form answers, mock calls), flow variables and active environment variables. Call it before writing a reference.",
+        || object(
+            json!({"flowId":text(),"nodeId":{"type":"string","description":"Node that will use the values (see get_flow)."}}),
+            &["flowId", "nodeId"]
+        )
+    ),
+    tool!(
+        "check_flow",
+        Read,
+        "Check a standard flow without running it: steps not connected to start, cycles, open While loops, references to nodes that do not run earlier, unknown variables, empty URLs and missing saved requests. Each issue says how to fix it. run_flow refuses flows with errors.",
+        || target("flowId", json!({}))
     ),
     tool!(
         "create_flow",
         SideEffect,
-        "Create and persist a standard or load flow. A standard flow starts with Start; a load flow has a starter scenario/request. Optional graph edits use the same format as update_flow. Returns flowId.",
+        "Create, save and open a flow; it starts with the node 'start'. template starts from an example: authentication (log in, use the token), chainedRequests (one response feeds the next request), condition (branch on a status), repeat (While loop), orderForm (forms and a mock), load (load test). requestIds chains saved requests in order. Then add steps with add_flow_node. The other fields batch edits like update_flow.",
         || flow_edit(true)
     ),
     tool!(
+        "add_flow_node",
+        Edit,
+        "Add one step to a flow, placed and connected for you. after: the node it follows; output: which output of after (success/failure, true/false, loop/done), the first by default. before: insert between after and before. The id comes from name when omitted. Fields depend on kind (get_flow_guide). Returns nodeId, its outputs and the references it produces.",
+        add_node_arguments
+    ),
+    tool!(
+        "connect_flow_nodes",
+        Edit,
+        "Connect two nodes so 'to' runs after 'from'. output picks the branch of 'from' (request: success/failure, if: true/false, while: loop/done); omitted, the first one. Repeating a connection changes nothing.",
+        || object(
+            json!({"flowId":text(),"from":{"type":"string","description":"Node id that runs first."},"to":{"type":"string","description":"Node id that runs next."},"output":output()}),
+            &["flowId", "from", "to"]
+        )
+    ),
+    tool!(
+        "disconnect_flow_nodes",
+        Edit,
+        "Remove the connection from one node to another (only the given output, when set), or the edge with edgeId.",
+        || object(
+            json!({"flowId":text(),"from":text(),"to":text(),"output":output(),"edgeId":{"type":"string","description":"Edge id from get_flow view full."}}),
+            &["flowId"]
+        )
+    ),
+    tool!(
+        "organize_flow",
+        Edit,
+        "Arrange the flow's nodes in readable columns, like the canvas Organize action. Only positions change.",
+        || target("flowId", json!({}))
+    ),
+    tool!(
         "update_flow",
-        SideEffect,
-        "Persist partial flow edits: upsertNodes/upsertEdges merge by id; removeNodeIds/removeEdgeIds delete explicitly. Omitted properties, positions and secrets stay unchanged. New nodes need kind. Inline requests use the saved-request DTO (endpoint, restBody, body for GraphQL, headers, authentication). Load config is serialized JSON. Use rename_flow_node to rename ids and references. folderId null moves to root.",
+        Edit,
+        "Change several nodes and connections at once; for one step add_flow_node and connect_flow_nodes are simpler. upsertNodes merges by id: give only the fields to change; new nodes need kind. Inline requests take the update_request fields in request. upsertEdges: sourceNodeId, targetNodeId, sourceHandle (the output); id optional. removeNodeIds/removeEdgeIds delete. folderId null moves to the root. rename_flow_node changes ids.",
         || flow_edit(false)
     ),
     tool!(
         "rename_flow_node",
-        SideEffect,
-        "Rename a node id and update its connections, panel references, mock dependencies and request templates using the editor's existing rename action. Linked request edits remain explicit-save drafts.",
+        Edit,
+        "Rename a node id and update its connections, references, panels and mock dependencies, as the editor does.",
         || object(
-            json!({"flowId":text(),"nodeId":text(),"name":text()}),
+            json!({"flowId":text(),"nodeId":text(),"name":{"type":"string","description":"New node id: letters, digits, _ or -."}}),
             &["flowId", "nodeId", "name"]
         )
     ),
@@ -85,13 +142,13 @@ pub(super) const TOOLS: &[ToolSpec] = &[
     tool!(
         "run_flow",
         SideEffect,
-        "Start the current flow without waiting for completion. Load flows require preview_flow first; approval displays the preview. Request drafts and initial forms open the UI for the user. HumanAction forms are always answered by the user. Query get_flow_run later; do not poll in a tight loop.",
+        "Start the flow without waiting for it to finish; standard flows must pass check_flow. Load flows require preview_flow first. The user answers initial and HumanAction forms in the interface. Read get_flow_run later; do not poll in a tight loop.",
         || target("flowId", json!({}))
     ),
     tool!(
         "get_flow_run",
         Read,
-        "Get flow execution id, progress and paginated node states. Waiting forms must be completed by the user. Load results are aggregate metrics.",
+        "Get the flow's run progress: failed lists failed nodes with their message, waitingForUser the forms the user must answer, statuses every node (paginated). Load results are aggregate metrics.",
         || target_page("flowId", json!({}))
     ),
     tool!(
@@ -402,26 +459,148 @@ fn array(items: Value) -> Value {
     json!({"type":"array","maxItems":100,"items":items})
 }
 
+/// Every node kind; the frontend guide has a topic for each.
+const NODE_KINDS: &[&str] = &[
+    "inlineRequest",
+    "request",
+    "if",
+    "while",
+    "setVariables",
+    "log",
+    "display",
+    "sleep",
+    "humanAction",
+    "note",
+    "break",
+    "continue",
+    "mockStart",
+    "mockStop",
+    "mockWaitRequest",
+    "mockSetResponse",
+    "mockAssertCalls",
+    "block",
+    "load",
+];
+
+const FLOW_GUIDE_TOPICS: [&str; 21] = [
+    "overview",
+    "references",
+    "inlineRequest",
+    "request",
+    "if",
+    "while",
+    "setVariables",
+    "log",
+    "display",
+    "sleep",
+    "humanAction",
+    "note",
+    "break",
+    "continue",
+    "mockStart",
+    "mockStop",
+    "mockWaitRequest",
+    "mockSetResponse",
+    "mockAssertCalls",
+    "block",
+    "load",
+];
+
+fn output() -> Value {
+    json!({"type":"string","enum":["success","failure","true","false","loop","done","iteration","passed","failed","body"],"description":"Output of the source node: request success/failure, if and mock checks true/false, while loop/done. Omit for nodes with one output."})
+}
+
+/// Fields of one node, flat, each saying which kinds use it.
+fn node_fields() -> serde_json::Map<String, Value> {
+    let mut request = super::request_fields();
+    request.insert(
+        "name".into(),
+        json!({"type":"string","description":"Request name (inlineRequest)."}),
+    );
+    request.insert(
+        "protocol".into(),
+        json!({"type":"string","enum":["rest","graphql","grpc"],"description":"inlineRequest protocol; rest by default."}),
+    );
+    let fields = json!({
+        "kind": {"type":"string","enum":NODE_KINDS,"description":"What the node does; get_flow_guide explains each kind."},
+        "label": {"type":"string","description":"Label (block, load)."},
+        "requestId": {"type":"string","description":"Saved request id from search_collections (request)."},
+        "request": object(Value::Object(request), &[]),
+        "condition": object(json!({"left":text(),"operator":{"type":"string","enum":["equals","notEquals","greaterThan","lessThan"]},"right":text()}), &[]),
+        "maxIterations": {"type":"integer","minimum":1,"description":"Most repetitions (while)."},
+        "message": {"type":"string","description":"Text written to the run log (log)."},
+        "template": {"type":"string","description":"Value shown in the node (display)."},
+        "text": {"type":"string","description":"Note text (note)."},
+        "durationMs": {"type":"integer","minimum":0,"description":"Wait in milliseconds (sleep)."},
+        "assignments": array(object(json!({"name":text(),"operation":{"type":"string","enum":["set","increment"]},"value":text(),"by":{"type":"number"}}), &["name","operation"])),
+        "form": {"type":["object","null"],"description":"Form (humanAction, start): {title, description, sections:[{id, title, fields:[{id, label, kind: text|textarea|number|select|radio|checkbox|result, required, initialValue, options:[{value,label}]}]}]}."},
+        "source": {"type":"object","description":"Mock to start (mockStart): {type: saved, serverId} or {type: inline, server}."},
+        "startNodeId": {"type":"string","description":"Id of the mockStart node (mock nodes)."},
+        "routeId": {"type":"string","description":"Mock route id from get_mock_server (mock nodes)."},
+        "timeoutMs": {"type":"integer","minimum":1,"description":"How long to wait (mockWaitRequest)."},
+        "responseId": {"type":["string","null"],"description":"Mock response to force; null restores the rules (mockSetResponse)."},
+        "count": {"type":"integer","minimum":0,"description":"Expected calls (mockAssertCalls)."},
+        "loadKind": {"type":"string","enum":["scenario","request","script","repeat","forEach","oncePerVu","timeBox","select","group","timer","dataset","configureSession","extract","check","metric","threshold"],"description":"Load block kind (load, load flows only)."},
+        "config": {"type":"string","description":"Load block configuration as JSON text (load)."},
+        "x": {"type":"number"},
+        "y": {"type":"number"},
+        "width": {"type":"number"},
+        "height": {"type":"number"},
+    });
+    match fields {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    }
+}
+
+fn add_node_arguments() -> Value {
+    let mut fields = node_fields();
+    for key in ["request", "x", "y", "width", "height"] {
+        fields.remove(key);
+    }
+    fields.extend(super::request_fields());
+    let extra = json!({
+        "flowId": text(),
+        "id": {"type":"string","description":"Node id used in references; generated from name when omitted."},
+        "name": {"type":"string","description":"Step name: the request name for inlineRequest, the source of a generated id otherwise."},
+        "protocol": {"type":"string","enum":["rest","graphql","grpc"],"description":"inlineRequest protocol; rest by default."},
+        "after": {"type":"string","description":"Node id this step follows, e.g. 'start'."},
+        "output": output(),
+        "before": {"type":"string","description":"Node id after 'after' to insert this step before."},
+        "beforeOutput": {"type":"string","enum":["success","failure","true","false","loop","done"],"description":"Output of the new node that leads to 'before'; the first by default."},
+        "left": {"type":"string","description":"Left value of the condition (if, while)."},
+        "operator": {"type":"string","enum":["equals","notEquals","greaterThan","lessThan","atLeast","atMost"],"description":"if/while: equals, notEquals, greaterThan, lessThan. mockAssertCalls: equals, atLeast, atMost."},
+        "right": {"type":"string","description":"Right value of the condition (if, while)."},
+        "serverId": {"type":"string","description":"Saved mock server id from list_mock_servers (mockStart)."},
+    });
+    if let Value::Object(extra) = extra {
+        fields.extend(extra);
+    }
+    object(Value::Object(fields), &["flowId", "kind"])
+}
+
 fn flow_edit(create: bool) -> Value {
-    let condition = object(
-        json!({"left":text(),"operator":{"type":"string","enum":["equals","notEquals","greaterThan","lessThan"]},"right":text()}),
-        &["left", "operator", "right"],
+    let mut node = node_fields();
+    node.insert(
+        "id".into(),
+        json!({"type":"string","description":"Node id; existing ids are updated, new ones added."}),
     );
-    let node = object(
-        json!({
-            "id":text(),"kind":{"type":"string","enum":["start","humanAction","block","request","inlineRequest","if","note","log","display","sleep","setVariables","while","break","continue","load","mockStart","mockStop","mockWaitRequest","mockSetResponse","mockAssertCalls"]},
-            "x":{"type":"number"},"y":{"type":"number"},"label":text(),"requestId":text(),"condition":condition,"text":text(),"width":{"type":"number"},"height":{"type":"number"},"message":text(),"template":text(),"durationMs":{"type":"integer","minimum":0},"maxIterations":{"type":"integer","minimum":1},
-            "assignments":array(object(json!({"name":text(),"operation":{"type":"string","enum":["set","increment"]},"value":text(),"by":{"type":"number"}}), &["name","operation"])),
-            "loadKind":{"type":"string","enum":["scenario","request","script","repeat","forEach","oncePerVu","timeBox","select","group","timer","dataset","configureSession","extract","check","metric","threshold"]},"config":{"type":"string","description":"Serialized JSON configuration for a load block."},
-            "request":{"type":"object","description":"SavedRequest DTO: id,name,protocol,endpoint,method,body,restBody,variables,headers,authentication,preRequestScript,postResponseScript,routeParams,grpc. New nodes fill defaults for omitted fields."},
-            "form":{"type":["object","null"],"description":"FlowForm: title,description,sections[{id,title,collapsed,fields[{id,label,description,kind,required,initialValue,min,max,step,options:[{value,label}],source:{reference,columns:[{path,label}],view}|null,multiple}]}]. kind: text,textarea,number,select,radio,checkbox,result."},
-            "source":{"type":"object","description":"Mock source: {type:saved,serverId} or {type:inline,server:MockServerDto}."},"startNodeId":text(),"routeId":text(),"timeoutMs":{"type":"integer","minimum":1},"responseId":{"type":["string","null"]},"operator":{"type":"string","enum":["equals","atLeast","atMost"]},"count":{"type":"integer","minimum":0}
-        }),
-        &["id"],
+    // Conditions may also be written flat, as in add_flow_node.
+    let condition = add_node_arguments();
+    for key in ["left", "operator", "right"] {
+        node.insert(key.into(), condition["properties"][key].clone());
+    }
+    let node = object(Value::Object(node), &["id"]);
+    let edge = object(
+        json!({"id":{"type":"string","description":"Optional; existing ids are updated."},"sourceNodeId":text(),"targetNodeId":text(),"sourceHandle":output()}),
+        &["sourceNodeId", "targetNodeId"],
     );
-    let mut fields = json!({"name":text(),"folderId":{"type":["string","null"]},"upsertNodes":array(node),"upsertEdges":array(object(json!({"id":text(),"sourceNodeId":text(),"targetNodeId":text(),"sourceHandle":{"type":["string","null"],"enum":["true","false","success","failure","loop","done","iteration","passed","failed","body",null]}}), &["id"])),"removeNodeIds":array(text()),"removeEdgeIds":array(text()),"presentation":object(json!({"panels":array(object(json!({"nodeId":text(),"title":text(),"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}}), &["nodeId","title","x","y","width","height"]))}), &["panels"])});
+    let mut fields = json!({"name":text(),"folderId":{"type":["string","null"],"description":"Flow folder id from list_flows; null is the root."},"upsertNodes":array(node),"upsertEdges":array(edge),"removeNodeIds":array(text()),"removeEdgeIds":array(text()),"presentation":object(json!({"panels":array(object(json!({"nodeId":text(),"title":text(),"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"}}), &["nodeId","title","x","y","width","height"]))}), &["panels"])});
     if create {
-        fields["executionKind"] = json!({"type":"string","enum":["standard","load"]});
+        fields["executionKind"] =
+            json!({"type":"string","enum":["standard","load"],"default":"standard"});
+        fields["template"] = json!({"type":"string","enum":["blank","authentication","chainedRequests","condition","repeat","orderForm","load"],"description":"Example flow to start from."});
+        fields["requestIds"] = json!({"type":"array","maxItems":50,"items":text(),"description":"Saved request ids from search_collections, chained in order."});
         object(fields, &["name"])
     } else {
         target("flowId", fields)
@@ -480,6 +659,16 @@ fn mock_patch() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_flow_guide_covers_every_node_kind() {
+        let guide =
+            include_str!("../../../../../apps/desktop/src/features/agent/agent-flow-guide.ts");
+        for kind in NODE_KINDS {
+            assert!(guide.contains(&format!("\n  {kind}: {{")), "{kind}");
+            assert!(FLOW_GUIDE_TOPICS.contains(kind), "{kind}");
+        }
+    }
 
     #[test]
     fn frontend_dispatch_covers_every_resource_tool() {

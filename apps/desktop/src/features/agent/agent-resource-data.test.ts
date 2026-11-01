@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { boundedResource, mergeResource, page, redactResource, resourceSecrets, SECRET_MASK } from './agent-resource-data'
-import { patchFlow, patchMonitor } from './agent-resource-tools'
+import { patchMonitor } from './agent-resource-tools'
+import { patchFlow as patchFlowResult } from './agent-flow-tools'
+
+const patchFlow = (...args: Parameters<typeof patchFlowResult>) => patchFlowResult(...args).flow
 import { createFlow, dtoFromFlow } from '../flows/use-flows-state'
 
 describe('agent resource data boundaries', () => {
@@ -100,7 +103,7 @@ describe('partial flow and monitor edits', () => {
   })
 
   it('fills inline request defaults and keeps credential masks during partial updates', () => {
-    const original = patchFlow(dtoFromFlow(createFlow('Example')), { upsertNodes: [{ id: 'call', kind: 'inlineRequest', request: { endpoint: '{{base}}/users', authentication: { type: 'bearer', token: 'saved' } } }] })
+    const original = patchFlow(dtoFromFlow(createFlow('Example')), { upsertNodes: [{ id: 'call', kind: 'inlineRequest', request: { url: '{{base}}/users', authentication: { type: 'bearer', token: 'saved' } } }] })
     const edited = patchFlow(original, { upsertNodes: [{ id: 'call', request: { authentication: { type: 'bearer', token: SECRET_MASK } } }] })
     expect(edited.nodes[1]).toMatchObject({ kind: 'inlineRequest', request: { protocol: 'rest', endpoint: '{{base}}/users', headers: [], authentication: { token: 'saved' } } })
   })

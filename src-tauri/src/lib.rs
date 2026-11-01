@@ -52,7 +52,7 @@ use commands::export_webclient::{export_webclient, preview_webclient_export};
 use commands::flow_execution_registry::FlowExecutionRegistry;
 use commands::flow_human_input::{list_flow_form_options, submit_flow_form};
 use commands::flow_run_outputs::{FlowRunOutputs, get_flow_node_output, release_flow_run};
-use commands::flows::{list_flows, save_flows};
+use commands::flows::{check_flow, list_flows, save_flows};
 use commands::general_settings::{
     HistoryPreferencesState, apply_saved_general_settings, get_general_settings,
     is_previous_install, save_general_settings,
@@ -418,6 +418,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 save_environments,
                 list_flows,
                 save_flows,
+                check_flow,
                 list_mock_servers,
                 get_mock_server,
                 save_mock_server,

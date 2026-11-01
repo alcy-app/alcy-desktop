@@ -250,6 +250,7 @@ const QUIET_COMMANDS: &[&str] = &[
     "save_collections",
     "save_environments",
     "save_flows",
+    "check_flow",
     "save_value_monitors",
     "evaluate_value_monitors",
     "get_flow_node_output",

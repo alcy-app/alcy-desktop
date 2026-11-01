@@ -12,7 +12,7 @@ use super::context_window::{
 };
 use super::conversation::{AgentMessage, AgentRole, ContentBlock};
 use super::prompt::truncate_utf8;
-use super::tools::{ToolClass, agent_tool_class};
+use super::tools::{ToolClass, agent_tool_class, normalize_tool_arguments};
 use crate::FlowCancellation;
 
 /// Model rounds that may request tools in one turn before the loop stops.
@@ -275,13 +275,19 @@ async fn run_tool<H: AgentToolHost>(host: &H, id: &str, name: &str, input: &Valu
     let Some(class) = agent_tool_class(name) else {
         return ToolOutcome::error(format!("Unknown tool '{name}'."));
     };
-    if !input.is_object() {
-        return ToolOutcome::error("The tool arguments must be a JSON object.");
-    }
+    let input = match normalize_tool_arguments(name, input) {
+        Some(Ok(input)) => input,
+        Some(Err(message)) => {
+            return ToolOutcome::error(format!(
+                "{message} Fix the arguments and call {name} again."
+            ));
+        }
+        None => return ToolOutcome::error(format!("Unknown tool '{name}'.")),
+    };
     host.call(&ToolCall {
         id,
         name,
-        input,
+        input: &input,
         class,
     })
     .await

@@ -7,7 +7,7 @@ import { ToastProvider } from '../../shared/ui/Toast'
 import { AgentResourceBridge } from '../agent/agent-resource-bridge'
 import { FlowCanvas } from './FlowCanvas'
 import { createFlow, dtoFromFlow } from './use-flows-state'
-import { patchFlow } from '../agent/agent-resource-tools'
+import { patchFlow } from '../agent/agent-flow-tools'
 import { releaseClosedFlowSessions } from './flow-run-session'
 import { executeFlow } from '../../bindings/execute-flow'
 import { cancelFlow } from '../../bindings/cancel-flow'
@@ -29,7 +29,7 @@ describe('flow agent controller', () => {
     const bridge = new AgentResourceBridge('/canvas-agent-tests')
     const view = render(<FlowCanvas agentBridge={bridge} rootPath={bridge.rootPath} flow={flow} collections={[]} environmentVariables={[]} onChange={vi.fn()} />, { wrapper })
     await act(async () => {})
-    const next = patchFlow(dtoFromFlow(flow), { upsertNodes: [{ id: 'log', kind: 'log', message: 'Hello' }] })
+    const next = patchFlow(dtoFromFlow(flow), { upsertNodes: [{ id: 'log', kind: 'log', message: 'Hello' }] }).flow
     act(() => bridge.get('flow', flow.id)!.replace(next))
     expect(bridge.get('flow', flow.id)!.read().nodes).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'log', message: 'Hello' })]))
     view.unmount()

@@ -366,7 +366,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const openTabs = useOpenTabs(workbench, flows)
   const tabGroups = useTabGroups(openTabs.descriptors, openTabs.pinOpenTab)
   const agentBridge = useMemo(() => new AgentResourceBridge(workspace.rootPath), [workspace.rootPath])
-  const agentResources = useAgentResources({ rootPath: workspace.rootPath, bridge: agentBridge, flows, monitors: valueMonitors, collections, environments, openTabs, workbench, onSaved: notifyLocalChange })
+  const agentResources = useAgentResources({ rootPath: workspace.rootPath, bridge: agentBridge, flows, monitors: valueMonitors, collections, environments, openTabs, workbench, onSaved: notifyLocalChange, translate: t })
   const openFlowSessionIds = openTabs.descriptors.filter((tab) => tab.kind === 'flow').map((tab) => tab.id)
   const openFlowSessionKey = JSON.stringify(openFlowSessionIds)
   useEffect(() => { releaseClosedFlowSessions(workspace.rootPath, JSON.parse(openFlowSessionKey) as string[]) }, [workspace.rootPath, openFlowSessionKey])

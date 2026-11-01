@@ -4,10 +4,14 @@ import { evaluateValueMonitors, type MonitorCandidateInput } from '../../binding
 import { getCollectionRunOutput } from '../../bindings/get-collection-run-output'
 import { cancelFlowOutputQuery, inspectFlowOutput } from '../../bindings/inspect-flow-output'
 import { previewLoadFlow } from '../../bindings/preview-load-flow'
+import { checkFlow, type FlowIssueDto } from '../../bindings/check-flow'
 import { clearMockCalls, deleteMockServer, getMockServer, listMockCalls, listMockServers, saveMockServer, startMockServer, stopMockServer, validateMockServer, type MockServerDto } from '../../bindings/mock-servers'
 import type { AgentContextInput } from '../../bindings/agent-turn'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
+import { translate as translateTo, type TranslationKey } from '../../shared/i18n/translations'
 import { createFlow, createLoadFlow, dtoFromFlow, flowFromDto, type useFlowsState } from '../flows/use-flows-state'
+import { createFlowFromTemplate, FLOW_TEMPLATES, type FlowTemplateId } from '../flows/flow-templates'
+import { runFlowLayout } from '../flows/flow-layout-runner'
 import type { useValueMonitorsState } from '../value-monitors/use-value-monitors-state'
 import type { useCollectionsState } from '../request-workbench/use-collections-state'
 import type { useEnvironmentsState } from '../environments/use-environments-state'
@@ -21,7 +25,9 @@ import { MOCK_SERVERS_CHANGED_EVENT } from '../mock-servers/mock-server-defaults
 import { getFlowRunState } from '../flows/flow-run-session'
 import { getLoadFlowRunState } from '../flows/load-flow-run-session'
 import { boundedResource, mergeResource, page, record, redactResource, resourceSecrets, string, strings } from './agent-resource-data'
-import { isResourceTool, patchFlow, patchMonitor } from './agent-resource-tools'
+import { isResourceTool, patchMonitor } from './agent-resource-tools'
+import { addFlowNode, connectFlowNodes, describeFlowNode, disconnectFlowNodes, findFlowNode, flowOutline, flowReferences, layoutGraph, organizeFlow, patchFlow } from './agent-flow-tools'
+import { flowGuide } from './agent-flow-guide'
 import type { AgentResourceBridge } from './agent-resource-bridge'
 import { applyRequestPatch, type AgentToolOutcome } from './agent-tools'
 
@@ -45,6 +51,19 @@ interface Sources {
   openTabs: ReturnType<typeof useOpenTabs>
   workbench: ReturnType<typeof useWorkbenchState>
   onSaved(): void
+  /** Interface language for flows made from templates; English by default. */
+  translate?: (key: TranslationKey) => string
+}
+
+/** Graph edits run without approval and can be undone from the chat (spec 0139). */
+const FLOW_EDIT_TOOLS = ['add_flow_node', 'connect_flow_nodes', 'disconnect_flow_nodes', 'organize_flow', 'update_flow', 'rename_flow_node']
+
+function variableNames(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((node) => [...node.variables.map((variable) => variable.name), ...variableNames(node.folders)])
+}
+
+function issueLines(issues: FlowIssueDto[]): string {
+  return issues.map((issue) => `- ${issue.nodeId ? `[${issue.nodeId}] ` : ''}${issue.message} Fix: ${issue.fix}`).join('\n')
 }
 
 /** Request fields shared with update_request; a duplicate applies them to the copy. */
@@ -165,6 +184,25 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
       return current
     }
 
+    const requestName = (id: string) => findRequest(source().collections.collections, id)?.name
+    const activeVariables = () => {
+      const s = source()
+      return s.environments.environments.find((item) => item.id === s.environments.activeEnvironmentId)?.variables.map((variable) => variable.name) ?? []
+    }
+    /** Native checks plus the saved requests only the workbench knows. */
+    const flowIssues = async (current: FlowDto): Promise<FlowIssueDto[]> => {
+      const missing: FlowIssueDto[] = current.nodes.flatMap((node) => node.kind === 'request' && !requestName(node.requestId)
+        ? [{ severity: 'error' as const, nodeId: node.id, message: `Node '${node.id}' uses saved request '${node.requestId}', which does not exist.`, fix: 'Use a requestId from search_collections, or an inlineRequest node.' }]
+        : [])
+      const known = [...activeVariables(), ...variableNames(source().collections.collections)]
+      return [...missing, ...await checkFlow(current, known)]
+    }
+    const editFlow = async (id: string, change: (current: FlowDto) => { flow: FlowDto; result: Record<string, unknown> }) => {
+      const { flow: next, result } = change(flow(id))
+      await saveFlow({ ...next, updatedAtMs: Date.now() })
+      return { flowId: id, ...result }
+    }
+
     const call = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
       const s = source()
       if (name.includes('value_monitor') && !FEATURE_FLAGS.valueMonitors) throw new Error('Value monitors are disabled.')
@@ -172,27 +210,59 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
         case 'list_flows': return { ...page(filter(s.flows.flows.filter((item) => item.executionKind !== 'load' || FEATURE_FLAGS.loadTesting), input).map((item) => ({ id: item.id, name: item.name, executionKind: item.executionKind, nodesCount: item.nodes.length, folderId: s.flows.folders.find((folder) => folder.flowIds.includes(item.id))?.id ?? null })), input), folders: page(s.flows.folders, input) }
         case 'get_flow': {
           const current = flow(string(input, 'flowId'))
-          if (typeof input.nodeId === 'string') {
-            const node = current.nodes.find((item) => item.id === input.nodeId)
-            if (!node) throw new Error('Unknown node.')
-            return node
-          }
+          if (input.nodeId !== undefined) return describeFlowNode(findFlowNode(current, input.nodeId))
           const { nodes, edges, ...metadata } = current
-          return { ...metadata, nodes: page(nodes, input), edges: page(edges, input) }
+          if (input.view === 'full') return { ...metadata, nodes: page(nodes.map(describeFlowNode), input), edges: page(edges, input) }
+          return { ...metadata, nodes: page(flowOutline(current, requestName), input), hint: 'next maps each output to the nodes it leads to. Read one node in full with nodeId.' }
+        }
+        case 'get_flow_guide': return flowGuide(input.topic)
+        case 'get_flow_references': return flowReferences(flow(string(input, 'flowId')), input.nodeId, activeVariables())
+        case 'check_flow': {
+          const issues = await flowIssues(flow(string(input, 'flowId')))
+          const errors = issues.filter((issue) => issue.severity === 'error').length
+          return { ok: errors === 0, errors, warnings: issues.length - errors, issues, ...(errors === 0 ? { next: 'Run it with run_flow.' } : {}) }
+        }
+        case 'add_flow_node': return editFlow(string(input, 'flowId'), (current) => addFlowNode(current, input))
+        case 'connect_flow_nodes': return editFlow(string(input, 'flowId'), (current) => connectFlowNodes(current, input))
+        case 'disconnect_flow_nodes': return editFlow(string(input, 'flowId'), (current) => disconnectFlowNodes(current, input))
+        case 'organize_flow': {
+          const id = string(input, 'flowId')
+          const positions = await runFlowLayout(layoutGraph(flow(id)))
+          return editFlow(id, (current) => ({ flow: organizeFlow(current, positions), result: { organized: true } }))
         }
         case 'create_flow': {
           if (input.executionKind !== undefined && input.executionKind !== 'standard' && input.executionKind !== 'load') throw new Error('Invalid executionKind.')
           if (input.executionKind === 'load' && !FEATURE_FLAGS.loadTesting) throw new Error('Load testing is disabled.')
-          const base = input.executionKind === 'load' ? createLoadFlow(string(input, 'name')) : createFlow(string(input, 'name'))
-          const next = patchFlow(dtoFromFlow(base), input)
+          if (input.template !== undefined && input.requestIds !== undefined) throw new Error('Use either template or requestIds, not both.')
+          const flowName = string(input, 'name').trim()
+          let base: FlowDto
+          if (input.template !== undefined) {
+            const template = FLOW_TEMPLATES.find((item) => item.id === input.template)
+            if (!template) throw new Error(`Unknown template '${String(input.template)}'. Templates: ${FLOW_TEMPLATES.map((item) => item.id).join(', ')}.`)
+            if (template.executionKind === 'load' && !FEATURE_FLAGS.loadTesting) throw new Error('Load testing is disabled.')
+            const t = s.translate ?? ((key: TranslationKey) => translateTo('en', key))
+            base = dtoFromFlow({ ...createFlowFromTemplate(template.id as FlowTemplateId, t), name: flowName })
+          } else if (input.requestIds !== undefined) {
+            base = dtoFromFlow(createFlow(flowName))
+            let after = 'start'
+            for (const requestId of strings(input.requestIds, 'requestIds')) {
+              const label = requestName(requestId)
+              if (!label) throw new Error(`No saved request '${requestId}'. Use search_collections.`)
+              const added = addFlowNode(base, { kind: 'request', requestId, name: label, after })
+              base = added.flow
+              after = String(added.result.nodeId)
+            }
+          } else base = dtoFromFlow(input.executionKind === 'load' ? createLoadFlow(flowName) : createFlow(flowName))
+          const { flow: next, notes } = patchFlow(base, input)
           await saveFlow(next, input.folderId)
           s.openTabs.openFlow(next.id)
-          return { flowId: next.id, name: next.name }
+          const last = next.nodes[next.nodes.length - 1]?.id ?? 'start'
+          return { flowId: next.id, name: next.name, nodes: flowOutline(next, requestName), ...(notes.length ? { notes } : {}), next: `Add steps with add_flow_node (after: '${last}'), then check_flow.` }
         }
         case 'update_flow': {
-          const next = patchFlow(flow(string(input, 'flowId')), input)
+          const { flow: next, notes } = patchFlow(flow(string(input, 'flowId')), input)
           await saveFlow(next, input.folderId)
-          return { flowId: next.id, updated: true }
+          return { flowId: next.id, updated: true, ...(notes.length ? { notes } : {}) }
         }
         case 'duplicate_flow': {
           const original = flow(string(input, 'flowId'))
@@ -245,6 +315,8 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
         case 'run_flow': {
           const id = string(input, 'flowId')
           if (flow(id).executionKind === 'load' && loadPreviews.get(id)?.fingerprint !== loadFingerprint(id)) throw new Error('Call preview_flow first to review the current load and destinations.')
+          const blocking = (await flowIssues(flow(id))).filter((issue) => issue.severity === 'error')
+          if (blocking.length > 0) throw new Error(`The flow would fail; fix these first (check_flow lists them):\n${issueLines(blocking)}`)
           return (await mountedFlow(id)).run()
         }
         case 'get_flow_run': {
@@ -255,7 +327,10 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
           const fullState = record(current)
           const statuses = fullState.statuses
           const state = Object.fromEntries(Object.entries(fullState).filter(([key]) => !['statuses', 'logEntries', 'runNodes', 'formDrafts'].includes(key)))
-          return { ...state, statuses: statuses ? page(Object.entries(record(statuses)).map(([nodeId, status]) => ({ nodeId, status })), input) : undefined }
+          const entries = statuses ? Object.entries(record(statuses)).map(([nodeId, status]) => ({ nodeId, status: record(status, 'status') })) : []
+          const failed = entries.filter((entry) => entry.status.status === 'failed').map((entry) => ({ nodeId: entry.nodeId, message: entry.status.message }))
+          const waitingForUser = entries.filter((entry) => entry.status.status === 'waitingForHuman').map((entry) => entry.nodeId)
+          return { ...state, ...(failed.length ? { failed } : {}), ...(waitingForUser.length ? { waitingForUser } : {}), statuses: statuses ? page(entries, input) : undefined }
         }
         case 'cancel_flow': {
           const id = string(input, 'flowId')
@@ -560,6 +635,9 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
         const scope = source().rootPath
         const previousRunner = ['configure_runner', 'pick_runner_data_file', 'clear_runner_data_file'].includes(name) ? runner(string(input, 'runnerId')).read() : null
         const previousMock = name === 'update_mock_server' ? await mock(string(input, 'serverId')) : null
+        const flowId = typeof input.flowId === 'string' ? input.flowId : ''
+        let previousFlow: FlowDto | null = null
+        if (FLOW_EDIT_TOOLS.includes(name)) try { previousFlow = flow(flowId) } catch { /* The tool reports the missing flow. */ }
         const mockKey = previousMock ? string(input, 'serverId') : ''
         let result: unknown
         try { result = await call(name, input) } catch (error) {
@@ -569,7 +647,17 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
         if (scope !== source().rootPath) return { content: 'The workspace changed before the operation finished.', isError: true }
         const expectedRunner = previousRunner ? JSON.stringify(runner(string(input, 'runnerId')).read()) : undefined
         const expectedMock = previousMock ? JSON.stringify(source().bridge.get('mock', mockKey)?.read()) : undefined
-        const revert = previousRunner ? () => {
+        const graph = (value: FlowDto) => JSON.stringify([value.name, value.nodes, value.edges, value.presentation])
+        const restoreFlow = previousFlow
+        const expectedFlow = restoreFlow ? graph(flow(flowId)) : undefined
+        const revert = restoreFlow ? () => {
+          let current: FlowDto
+          try { current = flow(flowId) } catch { return false }
+          const running = record(source().bridge.get('flow', flowId)?.status() ?? getFlowRunState(source().rootPath, flowId) ?? {}).isRunning === true
+          if (scope !== source().rootPath || running || graph(current) !== expectedFlow) return false
+          void saveFlow({ ...restoreFlow, updatedAtMs: Date.now() }).catch(() => undefined)
+          return true
+        } : previousRunner ? () => {
           const controller = source().bridge.get('runner', String(input.runnerId))
           if (scope !== source().rootPath || !controller || controller.read().state.phase === 'running' || JSON.stringify(controller.read()) !== expectedRunner) return false
           if (name === 'configure_runner') controller.configure(previousRunner)

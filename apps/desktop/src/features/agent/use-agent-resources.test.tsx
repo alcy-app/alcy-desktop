@@ -23,6 +23,8 @@ vi.mock('../../bindings/preview-load-flow', () => ({ previewLoadFlow: previewLoa
 vi.mock('../../bindings/cancel-load-flow', () => ({ cancelLoadFlow: vi.fn() }))
 vi.mock('../../bindings/cancel-flow', () => ({ cancelFlow: vi.fn() }))
 vi.mock('../../bindings/inspect-flow-output', () => ({ inspectFlowOutput: vi.fn(), cancelFlowOutputQuery: vi.fn().mockResolvedValue(undefined) }))
+const checkFlowMock = vi.hoisted(() => vi.fn(async (): Promise<unknown[]> => []))
+vi.mock('../../bindings/check-flow', () => ({ checkFlow: checkFlowMock }))
 
 type Sources = Parameters<typeof useAgentResources>[0]
 
@@ -218,5 +220,96 @@ describe('workspace resource tools', () => {
     const h = setup()
     expect(h.result.current.context()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'flow', id: 'flow' }), expect.objectContaining({ kind: 'monitor', id: 'monitor' })]))
     expect(JSON.stringify(h.result.current.context())).not.toContain('fake-credential')
+  })
+})
+
+describe('building flows step by step', () => {
+  async function loginFlow(h: ReturnType<typeof setup>) {
+    const flowId = (await h.call('create_flow', { name: 'Login' })).value.flowId as string
+    await h.call('add_flow_node', { flowId, kind: 'inlineRequest', name: 'Login', method: 'post', url: '{{base}}/login', after: 'start' })
+    await h.call('add_flow_node', { flowId, kind: 'inlineRequest', name: 'Profile', url: '{{base}}/me', authentication: { type: 'bearer', token: '{{nodes.login.response.body.token}}' }, after: 'login' })
+    return flowId
+  }
+
+  it('adds connected steps with readable ids, outputs and free positions', async () => {
+    const h = setup()
+    const flowId = await loginFlow(h)
+    const display = await h.call('add_flow_node', { flowId, kind: 'display', template: '{{nodes.profile.response.body}}', after: 'profile' })
+    expect(display.value).toMatchObject({ nodeId: 'display', connected: [{ from: 'profile', to: 'display', output: 'success' }] })
+    const outline = (await h.call('get_flow', { flowId })).value.nodes as { items: { id: string; next?: Record<string, string[]> }[] }
+    expect(outline.items.map((node) => [node.id, node.next])).toEqual([['start', { next: ['login'] }], ['login', { success: ['profile'] }], ['profile', { success: ['display'] }], ['display', undefined]])
+    const full = (await h.call('get_flow', { flowId, view: 'full' })).value.nodes as { items: { x: number; request?: Record<string, unknown> }[] }
+    expect(full.items.map((node) => node.x)).toEqual([...full.items.map((node) => node.x)].sort((a, b) => a - b))
+    expect(new Set(full.items.map((node) => node.x)).size).toBe(4)
+    expect(full.items[1].request).toMatchObject({ name: 'Login', method: 'post', url: '{{base}}/login' })
+  })
+
+  it('inserts between two steps and keeps connections idempotent', async () => {
+    const h = setup()
+    const flowId = await loginFlow(h)
+    await h.call('add_flow_node', { flowId, kind: 'log', name: 'Trace', message: 'logged in', after: 'login', before: 'profile' })
+    const again = await h.call('connect_flow_nodes', { flowId, from: 'trace', to: 'profile' })
+    expect(again.value).toMatchObject({ alreadyConnected: true })
+    const outline = (await h.call('get_flow', { flowId })).value.nodes as { items: { id: string; next?: Record<string, string[]> }[] }
+    expect(outline.items.find((node) => node.id === 'login')?.next).toEqual({ success: ['trace'] })
+    expect(outline.items.find((node) => node.id === 'trace')?.next).toEqual({ next: ['profile'] })
+  })
+
+  it('inserts into a branch using its output and places batch nodes apart', async () => {
+    const h = setup()
+    const flowId = await loginFlow(h)
+    await h.call('update_flow', { flowId, upsertNodes: [{ id: 'retry', kind: 'log', message: 'retry' }, { id: 'wait', kind: 'sleep' }], upsertEdges: [{ sourceNodeId: 'login', targetNodeId: 'retry', sourceHandle: 'failure' }, { sourceNodeId: 'retry', targetNodeId: 'wait' }] })
+    const inserted = await h.call('add_flow_node', { flowId, kind: 'log', name: 'Note failure', after: 'login', before: 'retry' })
+    expect(inserted.value.connected).toEqual([{ from: 'login', to: 'note_failure', output: 'failure' }, { from: 'note_failure', to: 'retry', output: null }])
+    const nodes = ((await h.call('get_flow', { flowId, view: 'full' })).value.nodes as { items: { id: string; x: number; y: number }[] }).items
+    const positions = nodes.map((node) => `${node.x},${node.y}`)
+    expect(new Set(positions).size).toBe(nodes.length)
+  })
+
+  it('explains invalid outputs, unknown nodes and old request fields', async () => {
+    const h = setup()
+    const flowId = await loginFlow(h)
+    const output = await h.call('connect_flow_nodes', { flowId, from: 'login', to: 'profile', output: 'true' })
+    expect(output.isError).toBe(true)
+    expect(output.content).toContain("outputs are 'success', 'failure'")
+    const unknown = await h.call('add_flow_node', { flowId, kind: 'log', after: 'logon' })
+    expect(unknown.content).toContain("No node 'logon'")
+    expect(unknown.content).toContain('login')
+    const legacy = await h.call('update_flow', { flowId, upsertNodes: [{ id: 'login', request: { endpoint: 'x' } }] })
+    expect(legacy.content).toContain('write requests as in update_request')
+  })
+
+  it('creates flows from templates and from saved requests', async () => {
+    const h = setup()
+    const template = await h.call('create_flow', { name: 'Auth', template: 'authentication' })
+    expect((template.value.nodes as { id: string }[]).map((node) => node.id)).toEqual(expect.arrayContaining(['start', 'login', 'profile', 'result']))
+    const chained = await h.call('create_flow', { name: 'Users', requestIds: ['request'] })
+    expect(chained.value.nodes).toEqual([{ id: 'start', kind: 'start', next: { next: ['get_users'] } }, { id: 'get_users', kind: 'request', summary: 'saved request Get users' }])
+    expect((await h.call('create_flow', { name: 'Bad', requestIds: ['ghost'] })).content).toContain('search_collections')
+  })
+
+  it('undoes a graph edit only while the flow is unchanged', async () => {
+    const h = setup()
+    const flowId = await loginFlow(h)
+    const first = await h.call('add_flow_node', { flowId, kind: 'log', after: 'profile' })
+    const second = await h.call('add_flow_node', { flowId, kind: 'sleep', after: 'log' })
+    expect(first.revert?.()).toBe(false)
+    await act(async () => { expect(second.revert?.()).toBe(true) })
+    const ids = (await h.call('get_flow', { flowId })).value.nodes as { items: { id: string }[] }
+    expect(ids.items.map((node) => node.id)).toEqual(['start', 'login', 'profile', 'log'])
+  })
+
+  it('lists references and refuses to run a flow with errors', async () => {
+    const h = setup()
+    const flowId = await loginFlow(h)
+    const references = await h.call('get_flow_references', { flowId, nodeId: 'profile' })
+    expect(references.value.fromEarlierNodes).toEqual([{ nodeId: 'login', kind: 'inlineRequest', references: expect.arrayContaining(['{{nodes.login.response.body.<path>}}']) }])
+    await h.call('add_flow_node', { flowId, kind: 'request', requestId: 'ghost', after: 'profile' })
+    checkFlowMock.mockResolvedValueOnce([{ severity: 'warning', nodeId: 'profile', message: 'Unknown variable.', fix: 'Create it.' }])
+    const check = await h.call('check_flow', { flowId })
+    expect(check.value).toMatchObject({ ok: false, errors: 1, warnings: 1 })
+    const run = await h.call('run_flow', { flowId })
+    expect(run.isError).toBe(true)
+    expect(run.content).toContain("saved request 'ghost'")
   })
 })
