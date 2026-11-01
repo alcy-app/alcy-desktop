@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -89,6 +89,7 @@ export function AgentMessageList({ items, running = false, compacting = false, o
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number; text: string; range: Range; floating?: boolean } | null>(null)
   const last = items.at(-1)
@@ -102,11 +103,28 @@ export function AgentMessageList({ items, running = false, compacting = false, o
     && !(last?.kind === 'assistant' && last.streaming)
     && !(last?.kind === 'tool' && (last.state === 'running' || last.state === 'awaitingApproval'))
 
+  const trackScroll = useCallback((element: HTMLDivElement) => {
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 32
+    pinnedToBottom.current = atBottom
+    setShowScrollToBottom(!atBottom)
+  }, [])
+
   // Follow new content while the user is at the bottom; leave them alone after scrolling up.
   useEffect(() => {
     const element = scrollRef.current
     if (element && pinnedToBottom.current) element.scrollTop = element.scrollHeight
-  }, [items, thinking])
+  }, [items, thinking, compacting])
+
+  useEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+    const observer = new ResizeObserver(() => {
+      if (pinnedToBottom.current) element.scrollTop = element.scrollHeight
+      trackScroll(element)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [trackScroll])
 
   const hidden = Math.max(0, items.length - visible)
   const shown = hidden > 0 ? items.slice(hidden) : items
@@ -130,143 +148,162 @@ export function AgentMessageList({ items, running = false, compacting = false, o
   const quote = (text: string, label: string, kind: 'message' | 'reply') => (onQuote ? () => onQuote(text, label, kind) : undefined)
 
   return (
-    <div
-      ref={scrollRef}
-      className="agent-messages"
-      role="log"
-      aria-live="polite"
-      aria-label={t('agent.messagesAria')}
-      onScroll={(event) => {
-        const element = event.currentTarget
-        pinnedToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 32
-      }}
-      onMouseUp={(event) => {
-        if (event.button !== 0 || !onQuote) return
-        const selection = window.getSelection()
-        const text = selection?.toString().trim()
-        if (!text || !selection?.anchorNode || !selection.focusNode) return
-        const message = selection.anchorNode.parentElement?.closest('.agent-message')
-        if (!message || !event.currentTarget.contains(message) || !message.contains(selection.focusNode)) return
-        const range = selection.getRangeAt(0).cloneRange()
-        const bounds = range.getBoundingClientRect()
-        setSelectionMenu({ x: bounds.left, y: bounds.bottom + 8, text, range, floating: true })
-      }}
-      onContextMenu={(event) => {
-        // With text selected in the chat, the right button offers it as context; otherwise the usual menu.
-        const selection = window.getSelection()
-        const text = selection?.toString().trim() ?? ''
-        if (!onQuote || !text || !selection?.anchorNode || !event.currentTarget.contains(selection.anchorNode)) return
-        event.preventDefault()
-        setSelectionMenu({ x: event.clientX, y: event.clientY, text, range: selection.getRangeAt(0).cloneRange() })
-      }}
-    >
-      {hidden > 0 && (
-        <Button variant="ghost" className="agent-messages-more" onClick={() => setVisible((count) => count + PAGE_SIZE)}>
-          {t('agent.messages.showEarlier', { count: hidden })}
-        </Button>
-      )}
-      {groupToolRuns(shown).map((row) => {
-        if (row.kind === 'tools') {
-          return <ToolCallGroup key={row.id} tools={row.tools} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
-        }
-        const { item } = row
-        switch (item.kind) {
-          case 'user':
-            return (
-              <Fragment key={item.id}>
-                {dayLine(item.id, item.atMs)}
-                {timeLabel(item.atMs)}
-                <div className="agent-message-group agent-message-group--user">
-                  {editing === item.id ? (
-                    <UserMessageEditor
-                      text={item.text}
-                      onCancel={() => setEditingId(null)}
-                      onSend={(text) => {
-                        setEditingId(null)
-                        onEditLast?.(text)
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <div className="agent-message agent-message--user">
-                        {item.context.length > 0 && (
-                          <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
-                        )}
-                        <UserMessageText text={item.text} />
-                      </div>
-                      <MessageActions
-                        text={item.text}
-                        onQuote={quote(item.text, quoteLabel('agent.quote.prompt', item.atMs), 'message')}
-                        onEdit={onEditLast && !running && item.id === lastUserId ? () => setEditingId(item.id) : undefined}
-                      />
-                    </>
-                  )}
-                </div>
-              </Fragment>
-            )
-          case 'assistant': {
-            const reply = splitAgentReply(item.text)
-            return (
-              <Fragment key={item.id}>
-                {dayLine(item.id, item.atMs)}
-                {timeLabel(item.atMs)}
-                <div className="agent-message-group">
-                  <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
-                    <MarkdownView
-                      source={reply.text}
-                      headingOffset={2}
-                      renderCodeBlock={(text, lang) => <AgentCodeBlock text={text} lang={lang} />}
-                      resolveReference={resolveReference}
-                      renderReference={(kind, id, children, key) =>
-                        onOpenReference && isAgentReferenceKind(kind) ? (
-                          <AgentReference key={key} kind={kind} id={id} onOpen={onOpenReference}>{children}</AgentReference>
-                        ) : (
-                          <strong key={key}>{children}</strong>
-                        )
-                      }
-                    />
-                    {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
-                  </div>
-                  {!item.streaming && reply.text.trim() !== '' && <MessageActions text={reply.text} onQuote={quote(reply.text, quoteLabel('agent.quote.reply', item.atMs), 'reply')} />}
-                  {!running && !item.streaming && item.id === lastContent?.id && onFollowUp && reply.suggestions.length > 0 && (
-                    <div className="agent-follow-ups" role="group" aria-label={t('agent.followUps.title')}>
-                      <p className="agent-follow-ups-title">{t('agent.followUps.title')}</p>
-                      <div className="agent-follow-ups-options">
-                        {reply.suggestions.map((suggestion) => (
-                          <Button key={suggestion} variant="ghost" className="agent-follow-up" onClick={() => onFollowUp(suggestion)}>
-                            {suggestion}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Fragment>
-            )
+    <div className="agent-message-area">
+      <div
+        ref={scrollRef}
+        className="agent-messages"
+        role="log"
+        aria-live="polite"
+        aria-label={t('agent.messagesAria')}
+        tabIndex={-1}
+        onScroll={(event) => trackScroll(event.currentTarget)}
+        onMouseUp={(event) => {
+          if (event.button !== 0 || !onQuote) return
+          const selection = window.getSelection()
+          const text = selection?.toString().trim()
+          if (!text || !selection?.anchorNode || !selection.focusNode) return
+          const message = selection.anchorNode.parentElement?.closest('.agent-message')
+          if (!message || !event.currentTarget.contains(message) || !message.contains(selection.focusNode)) return
+          const range = selection.getRangeAt(0).cloneRange()
+          const bounds = range.getBoundingClientRect()
+          setSelectionMenu({ x: bounds.left, y: bounds.bottom + 8, text, range, floating: true })
+        }}
+        onContextMenu={(event) => {
+          // With text selected in the chat, the right button offers it as context; otherwise the usual menu.
+          const selection = window.getSelection()
+          const text = selection?.toString().trim() ?? ''
+          if (!onQuote || !text || !selection?.anchorNode || !event.currentTarget.contains(selection.anchorNode)) return
+          event.preventDefault()
+          setSelectionMenu({ x: event.clientX, y: event.clientY, text, range: selection.getRangeAt(0).cloneRange() })
+        }}
+      >
+        {hidden > 0 && (
+          <Button variant="ghost" className="agent-messages-more" onClick={() => setVisible((count) => count + PAGE_SIZE)}>
+            {t('agent.messages.showEarlier', { count: hidden })}
+          </Button>
+        )}
+        {groupToolRuns(shown).map((row) => {
+          if (row.kind === 'tools') {
+            return <ToolCallGroup key={row.id} tools={row.tools} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
           }
-          case 'notice':
-            return (
-              <p key={item.id} className="agent-notice" data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}>
-                {item.tone === 'error' && <AlertIcon size={13} />}
-                <span>{item.text}</span>
-                {item.retry && item.id === last?.id && !running && onRetry && (
-                  <Button variant="ghost" className="agent-notice-action" onClick={onRetry}>{t('agent.notice.retry')}</Button>
-                )}
-              </p>
-            )
-          case 'tool':
-            return <ToolCallCard key={item.id} item={item} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
-          case 'usage':
-            return <TurnTokens key={item.id} tokens={item} />
-        }
-      })}
-      {thinking && <AgentThinking />}
-      {compacting && <p className="agent-notice" role="status"><Spinner size={13} /><span>{t('agent.command.compacting')}</span></p>}
-      {selectionMenu && onQuote && (
-        <SelectionMenu
-          {...selectionMenu}
-          onClose={() => setSelectionMenu(null)}
-          onQuote={() => onQuote(selectionMenu.text, t('agent.quote.excerpt', { text: excerpt(selectionMenu.text) }), 'selection')}
+          const { item } = row
+          switch (item.kind) {
+            case 'user':
+              return (
+                <Fragment key={item.id}>
+                  {dayLine(item.id, item.atMs)}
+                  {timeLabel(item.atMs)}
+                  <div className="agent-message-group agent-message-group--user">
+                    {editing === item.id ? (
+                      <UserMessageEditor
+                        text={item.text}
+                        onCancel={() => setEditingId(null)}
+                        onSend={(text) => {
+                          setEditingId(null)
+                          onEditLast?.(text)
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <div className="agent-message agent-message--user">
+                          {item.context.length > 0 && (
+                            <p className="agent-message-context">{item.context.map((reference) => `@${reference.label}`).join(' ')}</p>
+                          )}
+                          <UserMessageText text={item.text} />
+                        </div>
+                        <MessageActions
+                          text={item.text}
+                          onQuote={quote(item.text, quoteLabel('agent.quote.prompt', item.atMs), 'message')}
+                          onEdit={onEditLast && !running && item.id === lastUserId ? () => setEditingId(item.id) : undefined}
+                        />
+                      </>
+                    )}
+                  </div>
+                </Fragment>
+              )
+            case 'assistant': {
+              const reply = splitAgentReply(item.text)
+              return (
+                <Fragment key={item.id}>
+                  {dayLine(item.id, item.atMs)}
+                  {timeLabel(item.atMs)}
+                  <div className="agent-message-group">
+                    <div className="agent-message agent-message--assistant" aria-busy={item.streaming}>
+                      <MarkdownView
+                        source={reply.text}
+                        headingOffset={2}
+                        renderCodeBlock={(text, lang) => <AgentCodeBlock text={text} lang={lang} />}
+                        resolveReference={resolveReference}
+                        renderReference={(kind, id, children, key) =>
+                          onOpenReference && isAgentReferenceKind(kind) ? (
+                            <AgentReference key={key} kind={kind} id={id} onOpen={onOpenReference}>{children}</AgentReference>
+                          ) : (
+                            <strong key={key}>{children}</strong>
+                          )
+                        }
+                      />
+                      {item.streaming && <span className="agent-streaming" role="status" aria-label={t('agent.streaming')}><span /><span /><span /></span>}
+                    </div>
+                    {!item.streaming && reply.text.trim() !== '' && <MessageActions text={reply.text} onQuote={quote(reply.text, quoteLabel('agent.quote.reply', item.atMs), 'reply')} />}
+                    {!running && !item.streaming && item.id === lastContent?.id && onFollowUp && reply.suggestions.length > 0 && (
+                      <div className="agent-follow-ups" role="group" aria-label={t('agent.followUps.title')}>
+                        <p className="agent-follow-ups-title">{t('agent.followUps.title')}</p>
+                        <div className="agent-follow-ups-options">
+                          {reply.suggestions.map((suggestion) => (
+                            <Button key={suggestion} variant="ghost" className="agent-follow-up" onClick={() => onFollowUp(suggestion)}>
+                              {suggestion}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Fragment>
+              )
+            }
+            case 'notice':
+              return (
+                <p key={item.id} className="agent-notice" data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}>
+                  {item.tone === 'error' && <AlertIcon size={13} />}
+                  <span>{item.text}</span>
+                  {item.retry && item.id === last?.id && !running && onRetry && (
+                    <Button variant="ghost" className="agent-notice-action" onClick={onRetry}>{t('agent.notice.retry')}</Button>
+                  )}
+                </p>
+              )
+            case 'tool':
+              return <ToolCallCard key={item.id} item={item} onApprove={onApprove} onDecline={onDecline} onRevert={onRevert} />
+            case 'usage':
+              return <TurnTokens key={item.id} tokens={item} />
+          }
+        })}
+        {thinking && <AgentThinking />}
+        {compacting && <p className="agent-notice" role="status"><Spinner size={13} /><span>{t('agent.command.compacting')}</span></p>}
+        {selectionMenu && onQuote && (
+          <SelectionMenu
+            {...selectionMenu}
+            onClose={() => setSelectionMenu(null)}
+            onQuote={() => onQuote(selectionMenu.text, t('agent.quote.excerpt', { text: excerpt(selectionMenu.text) }), 'selection')}
+          />
+        )}
+      </div>
+      {showScrollToBottom && (
+        <IconButton
+          className="agent-scroll-bottom"
+          label={t('agent.messages.scrollToBottom')}
+          icon={
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
+            </svg>
+          }
+          onClick={() => {
+            const element = scrollRef.current
+            if (!element) return
+            pinnedToBottom.current = true
+            element.scrollTop = element.scrollHeight
+            setShowScrollToBottom(false)
+            element.focus({ preventScroll: true })
+          }}
         />
       )}
     </div>

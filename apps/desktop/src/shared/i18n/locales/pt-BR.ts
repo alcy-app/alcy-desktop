@@ -2792,6 +2792,7 @@ const ptBR = {
   'agent.empty.description': 'Transforme ideias em requisições. Adicione contexto com @ ou comece com uma sugestão.',
   'agent.messagesAria': 'Conversa com o agente',
   'agent.messages.showEarlier': 'Mostrar {count} mensagens anteriores',
+  'agent.messages.scrollToBottom': 'Ir para o fim da conversa',
   'agent.tokens.amount': '↑ {input} · ↓ {output} tokens',
   'agent.tokens.detail': 'Entrada: {input} tokens · Saída: {output} tokens',
   'agent.tokens.session': 'Nesta conversa',

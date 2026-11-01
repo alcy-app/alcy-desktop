@@ -8,6 +8,37 @@ const actions = { onApprove: vi.fn(), onDecline: vi.fn(), onRevert: vi.fn() }
 afterEach(() => vi.unstubAllGlobals())
 
 describe('AgentMessageList', () => {
+  it('offers a jump to the latest messages while reading above and resumes following new replies', () => {
+    const reply: Extract<AgentChatItem, { kind: 'assistant' }> = { kind: 'assistant', id: 'a', streaming: true, text: 'Primeira parte' }
+    const { rerender } = render(<AgentMessageList items={[reply]} running {...actions} />)
+    const log = screen.getByRole('log')
+    let height = 1200
+    Object.defineProperties(log, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 400 },
+    })
+    fireEvent.scroll(log, { target: { scrollTop: 800 } })
+    expect(screen.queryByRole('button', { name: 'Ir para o fim da conversa' })).not.toBeInTheDocument()
+    fireEvent.scroll(log, { target: { scrollTop: 400 } })
+    expect(screen.getByRole('button', { name: 'Ir para o fim da conversa' })).toBeInTheDocument()
+
+    height = 1400
+    rerender(<AgentMessageList items={[{ ...reply, text: 'Mais conteúdo recebido' }]} running {...actions} />)
+    expect(log.scrollTop).toBe(400)
+    fireEvent.click(screen.getByRole('button', { name: 'Ir para o fim da conversa' }))
+    expect(log.scrollTop).toBe(1400)
+    expect(log).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'Ir para o fim da conversa' })).not.toBeInTheDocument()
+
+    height = 1600
+    rerender(<AgentMessageList items={[{ ...reply, streaming: false, text: 'Fim da resposta' }]} {...actions} />)
+    expect(log.scrollTop).toBe(1600)
+    fireEvent.scroll(log, { target: { scrollTop: 100 } })
+    expect(screen.getByRole('button', { name: 'Ir para o fim da conversa' })).toBeInTheDocument()
+    fireEvent.scroll(log, { target: { scrollTop: 1190 } })
+    expect(screen.queryByRole('button', { name: 'Ir para o fim da conversa' })).not.toBeInTheDocument()
+  })
+
   it('offers continuations only for the latest completed reply and copies only its prose', async () => {
     const onFollowUp = vi.fn()
     const writeText = vi.fn().mockResolvedValue(undefined)

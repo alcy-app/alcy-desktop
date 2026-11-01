@@ -2798,6 +2798,7 @@ const en: Record<TranslationKey, string> = {
   'agent.empty.description': 'Turn ideas into requests. Add context with @ or start with a suggestion.',
   'agent.messagesAria': 'Conversation with the agent',
   'agent.messages.showEarlier': 'Show {count} earlier messages',
+  'agent.messages.scrollToBottom': 'Go to the end of the conversation',
   'agent.tokens.amount': '↑ {input} · ↓ {output} tokens',
   'agent.tokens.detail': 'Input: {input} tokens · Output: {output} tokens',
   'agent.tokens.session': 'This chat',

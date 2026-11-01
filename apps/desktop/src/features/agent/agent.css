@@ -145,6 +145,38 @@
   color: var(--text);
 }
 
+.agent-message-area {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agent-scroll-bottom.ui-icon-button {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  width: calc(var(--icon-button-size-md) + var(--space-1));
+  height: calc(var(--icon-button-size-md) + var(--space-1));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-overlay);
+  color: var(--text);
+  box-shadow: none;
+  transform: translateX(-50%);
+}
+
+.agent-scroll-bottom.ui-icon-button:hover {
+  background: var(--surface-raised);
+  color: var(--text-heading);
+}
+
+.agent-scroll-bottom > svg {
+  width: calc(16px * var(--icon-scale, 1));
+  height: calc(16px * var(--icon-scale, 1));
+}
+
 .agent-messages {
   display: flex;
   flex: 1;
