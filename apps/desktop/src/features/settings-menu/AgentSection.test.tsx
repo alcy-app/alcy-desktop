@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '../../test-utils'
 import type { AgentProviderDto, AgentSettingsDto } from '../../bindings/agent-settings'
 import { AgentSection } from './AgentSection'
+import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 
 const getAgentSettings = vi.fn()
 const saveAgentSettings = vi.fn()
@@ -43,6 +44,40 @@ beforeEach(() => {
 const card = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) }).closest('li') as HTMLElement
 
 describe('AgentSection', () => {
+  it('applies and remembers chat preferences while preserving provider configuration', async () => {
+    const content = <>
+      <AgentSection />
+      <MentionInChatMenuItem item={{ kind: 'tab', id: 't1', label: 'Users' }} onDone={() => {}} />
+    </>
+    const { unmount } = render(content)
+    await screen.findByRole('button', { name: 'Adicionar provedor' })
+    const chat = screen.getByRole('checkbox', { name: 'Habilitar chat' })
+    const contexts = screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' })
+    expect(chat).toBeChecked()
+    expect(contexts).not.toBeChecked()
+    expect(screen.getByRole('menuitem', { name: 'Mencionar no chat' })).toBeInTheDocument()
+
+    fireEvent.click(contexts)
+    expect(screen.queryByRole('menuitem', { name: 'Mencionar no chat' })).not.toBeInTheDocument()
+    expect(chat).toBeChecked()
+    fireEvent.click(contexts)
+    expect(screen.getByRole('menuitem', { name: 'Mencionar no chat' })).toBeInTheDocument()
+
+    fireEvent.click(chat)
+    expect(screen.queryByRole('menuitem', { name: 'Mencionar no chat' })).not.toBeInTheDocument()
+    fireEvent.click(contexts)
+    unmount()
+    render(content)
+    expect(screen.getByRole('checkbox', { name: 'Habilitar chat' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' })).toBeChecked()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Habilitar chat' }))
+    expect(screen.queryByRole('menuitem', { name: 'Mencionar no chat' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' }))
+    expect(screen.getByRole('menuitem', { name: 'Mencionar no chat' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^Claude/ })).toBeInTheDocument()
+    expect(saveAgentSettings).not.toHaveBeenCalled()
+  })
+
   it('starts with no provider and adds one from a preset', async () => {
     current = { providers: [], activeProviderId: null }
     render(<AgentSection />)

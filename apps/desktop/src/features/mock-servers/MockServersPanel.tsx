@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { listMockServers, saveMockServer, type MockServerSummaryDto } from '../../bindings/mock-servers'
-import { FEATURE_FLAGS } from '../../shared/feature-flags'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { MockServerIcon, PlusIcon, RefreshIcon } from '../../shared/ui/icons'
 import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
+import { useAgentPreferences } from '../agent/use-agent-preferences'
 import { TabMenuSurface } from '../request-workbench/components/TabMenuSurface'
 import { MOCK_SERVERS_CHANGED_EVENT, mockErrorMessage, newMockServer } from './mock-server-defaults'
 import './mock-servers.css'
@@ -16,6 +16,7 @@ interface MockServersPanelProps {
 
 export function MockServersPanel({ rootPath, activeServerId, onOpenServer }: MockServersPanelProps) {
   const { t } = useLanguage()
+  const { contextOptionsEnabled } = useAgentPreferences()
   const [summaries, setSummaries] = useState<MockServerSummaryDto[]>([])
   const [message, setMessage] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ server: MockServerSummaryDto; x: number; y: number } | null>(null)
@@ -50,12 +51,12 @@ export function MockServersPanel({ rootPath, activeServerId, onOpenServer }: Moc
     {message && <p className="mock-server-browser__message" role="status">{message}</p>}
     <div className="mock-server-browser__list sidebar-panel-scroll">
       {summaries.length === 0 && <div className="mock-server-browser__empty"><MockServerIcon size={28} /><strong>{t('mockServers.panel.empty')}</strong></div>}
-      {summaries.map((server) => <button type="button" className="mock-server-browser__item" key={server.id} aria-current={server.id === activeServerId ? 'page' : undefined} onClick={() => onOpenServer(server.id, server.name)} onContextMenu={FEATURE_FLAGS.agent ? (event) => { event.preventDefault(); setMenu({ server, x: event.clientX, y: event.clientY }) } : undefined}>
+      {summaries.map((server) => <button type="button" className="mock-server-browser__item" key={server.id} aria-current={server.id === activeServerId ? 'page' : undefined} onClick={() => onOpenServer(server.id, server.name)} onContextMenu={contextOptionsEnabled ? (event) => { event.preventDefault(); setMenu({ server, x: event.clientX, y: event.clientY }) } : undefined}>
         <span className={server.running ? 'mock-server-browser__status mock-server-browser__status--running' : 'mock-server-browser__status'} />
         <span className="mock-server-browser__item-copy"><strong>{server.name}</strong><small>localhost:{server.port} · {t(server.routesCount === 1 ? 'mockServers.panel.routeCountOne' : 'mockServers.panel.routeCount', { count: server.routesCount })}</small></span>
       </button>)}
     </div>
-    {menu && (
+    {contextOptionsEnabled && menu && (
       <TabMenuSurface x={menu.x} y={menu.y} label={t('mockServers.panel.contextMenuAria', { name: menu.server.name })} onClose={() => setMenu(null)}>
         <MentionInChatMenuItem item={{ kind: 'mock', id: menu.server.id, label: menu.server.name }} onDone={() => setMenu(null)} />
       </TabMenuSurface>

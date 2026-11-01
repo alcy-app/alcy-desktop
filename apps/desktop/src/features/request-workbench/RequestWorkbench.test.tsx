@@ -4,6 +4,7 @@ import { act, render as renderUi, fireEvent, screen, waitFor, within } from '../
 import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { RequestWorkbench } from './RequestWorkbench'
 import type { ExtensionSidebarModule, PseudoTab } from '../../extensions/types'
+import { AgentSection } from '../settings-menu/AgentSection'
 
 // Fixed release notes; real content depends on the current CHANGELOG section.
 vi.mock('../updates/release-notes', async (importOriginal) => ({
@@ -5607,6 +5608,29 @@ describe('RequestWorkbench', () => {
 })
 
 describe('RequestWorkbench — painel do agente', () => {
+  it('removes an open chat and disables its shortcut immediately until reenabled', async () => {
+    featureFlags.agent = true
+    onTestFinished(() => { featureFlags.agent = false })
+    render(<>
+      <RequestWorkbench workspace={testWorkspace} onWorkspaceChange={() => {}} onExitToStartScreen={() => {}} />
+      <AgentSection />
+    </>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
+    expect(await screen.findByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' }))
+    expect(screen.getByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Habilitar chat' }))
+    expect(screen.queryByRole('complementary', { name: 'Agente' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /painel do agente/ })).not.toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'A', code: 'KeyA', ctrlKey: true, shiftKey: true })
+    expect(screen.queryByRole('complementary', { name: 'Agente' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Habilitar chat' }))
+    expect(await screen.findByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ocultar painel do agente' })).toBeInTheDocument()
+  })
+
   it('keeps the panel mounted while closed and remembers whether it was open', async () => {
     featureFlags.agent = true
     onTestFinished(() => {

@@ -746,7 +746,8 @@
   gap: var(--space-4);
 }
 
-.settings-section.settings-agent-intro {
+.settings-section.settings-agent-intro,
+.settings-agent-preferences {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);

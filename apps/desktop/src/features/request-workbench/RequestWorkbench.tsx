@@ -45,6 +45,7 @@ import { useAgentHost } from './use-agent-host'
 import { AgentResourceBridge } from '../agent/agent-resource-bridge'
 import { useAgentResources } from '../agent/use-agent-resources'
 import { AgentPanel } from '../agent/AgentPanel'
+import { useAgentPreferences } from '../agent/use-agent-preferences'
 import { subscribeMentionRequests } from '../agent/agent-mention-bridge'
 import { AuthorizationPanel } from './components/AuthorizationPanel'
 import { ConsolePanel, type ConsolePanelTab } from './components/ConsolePanel'
@@ -428,6 +429,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const [harExporting, setHarExporting] = useState(false)
   const harExportingRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const { chatEnabled, contextOptionsEnabled } = useAgentPreferences()
+  const agentEnabled = FEATURE_FLAGS.agent && chatEnabled
   // The agent panel keeps its place across restarts and workspaces; once shown it
   // stays mounted while hidden, so closing it keeps the chat (and a reply in flight).
   const [agentOpen, setAgentOpenState] = useState(readAgentOpen)
@@ -446,9 +449,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   }, [])
   // "Mention in chat" in an item's menu brings up the chat holding the mention.
   useEffect(() => {
-    if (!FEATURE_FLAGS.agent) return
+    if (!agentEnabled || !contextOptionsEnabled) return
     return subscribeMentionRequests(() => setAgentOpen(true))
-  }, [setAgentOpen])
+  }, [agentEnabled, contextOptionsEnabled, setAgentOpen])
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const { reload: reloadCollections } = collections
   const { reload: reloadEnvironments } = environments
@@ -1697,7 +1700,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         // Panel actions must not run behind a modal.
         return !hasOpenModal()
       case 'toggleAgentPanel':
-        if (!FEATURE_FLAGS.agent) return false
+        if (!agentEnabled) return false
         return !hasOpenModal()
       case 'closeTab':
       case 'groupTabs':
@@ -2332,7 +2335,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             ))}
             </Suspense>
           </main>
-          {FEATURE_FLAGS.agent && agentMounted && (
+          {agentEnabled && agentMounted && (
             <>
               {agentOpen && (
                 <ResizeHandle
@@ -2457,7 +2460,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                 <NotificationsButton notifications={notifications} onOpenDetails={handleOpenNotification} />
               </>
             )}
-            {FEATURE_FLAGS.agent && (
+            {agentEnabled && (
               <>
                 <span className="rw-statusbar-divider" aria-hidden="true" />
                 <IconButton

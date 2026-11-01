@@ -13,11 +13,13 @@ import {
 import type { TranslationKey } from '../../shared/i18n/translations'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
+import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Input } from '../../shared/ui/Input'
 import { AlertIcon, CheckIcon, ChevronDownIcon, LockIcon, PlusIcon, SparkleIcon } from '../../shared/ui/icons'
 import { agentErrorMessage } from '../agent/use-agent-session'
 import { providerInput } from '../agent/use-agent-settings'
+import { useAgentPreferences } from '../agent/use-agent-preferences'
 import { ModelCombobox } from './ModelCombobox'
 
 /** Same limit as the backend (`MAX_AGENT_PROVIDERS`). */
@@ -69,6 +71,7 @@ type SaveResult = { ok: boolean }
 /** Agent providers (ADR 0064): which one the chat uses and how each connects. Keys stay in the system keyring. */
 export function AgentSection() {
   const { t } = useLanguage()
+  const { chatEnabled, contextOptionsDisabled, setChatEnabled, setContextOptionsDisabled } = useAgentPreferences()
   const [settings, setSettings] = useState<AgentSettingsDto | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -140,6 +143,22 @@ export function AgentSection() {
 
   return (
     <div className="settings-agent">
+      <section className="settings-section settings-agent-preferences">
+        <div>
+          <label className="settings-checkbox">
+            <Checkbox checked={chatEnabled} onChange={(event) => setChatEnabled(event.target.checked)} />
+            <span>{t('settings.agent.enableChat')}</span>
+          </label>
+          <p className="settings-proxy-hint">{t('settings.agent.enableChatHint')}</p>
+        </div>
+        <div>
+          <label className="settings-checkbox">
+            <Checkbox checked={contextOptionsDisabled} onChange={(event) => setContextOptionsDisabled(event.target.checked)} />
+            <span>{t('settings.agent.disableContextOptions')}</span>
+          </label>
+          <p className="settings-proxy-hint">{t('settings.agent.disableContextOptionsHint')}</p>
+        </div>
+      </section>
       <section className="settings-section settings-agent-intro">
         <div>
           <p className="settings-section-label">{t('settings.agent.title')}</p>

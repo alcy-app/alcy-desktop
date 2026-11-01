@@ -296,6 +296,13 @@ folder.
 
 ### Agent
 
+React stores the machine-local chat visibility and context-menu preferences in
+`localStorage`, alongside other presentation preferences. Disabling chat removes
+its panel, button, shortcut and context-menu actions; unmounting the panel uses
+the existing cancellation path. Context-menu actions can also be hidden while
+keeping chat enabled. Both preferences apply immediately, preserve provider
+configuration and default to the existing behavior for installations without them.
+
 The agent panel chats with a model that acts on the workbench through tools
 (ADR 0064). The loop lives in `alcy-app` (`run_agent_turn`): it asks the
 model, runs the tools it requests and feeds the results back, up to a fixed
