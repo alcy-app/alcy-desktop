@@ -11,7 +11,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
 
 ### Changed
-- As abas abertas diminuem de largura conforme novas abas são abertas. Quando não cabem mais na barra, um menu ao lado do botão de nova aba lista todas elas, com busca pelo nome.
+- As abas abertas têm todas a mesma largura, com o botão de fechar sempre no mesmo lugar, e diminuem juntas conforme novas abas são abertas. Quando não cabem mais na barra, um menu ao lado do botão de nova aba lista todas elas, com busca pelo nome.
 - O agente monta flows passo a passo: adiciona e conecta etapas, organiza o canvas, parte de exemplos prontos e confere o flow antes de executar. As alterações no grafo podem ser desfeitas pelo chat.
 - O agente entende melhor pedidos feitos com modelos menores e, quando erra, recebe instruções de como corrigir.
 - A importação de scripts k6 está disponível no editor de flows e aceita constantes, URLs montadas com templates, parâmetros reutilizáveis e corpos JSON. Variáveis do script podem ser preenchidas no flow antes de executar o teste.

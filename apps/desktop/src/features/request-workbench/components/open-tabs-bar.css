@@ -49,9 +49,10 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 0 1 auto;
+  /* Same basis for every tab: they share one width and shrink together, whatever the name length. */
+  flex: 0 1 180px;
+  width: 180px;
   min-width: 104px;
-  max-width: 180px;
   min-height: var(--control-height-sm);
   padding: 0 3px 0 8px;
   border: 0;
@@ -110,8 +111,10 @@
   box-shadow: inset -3px 0 0 var(--accent-strong);
 }
 
+/* Fills the tab so the close button always sits at its right edge. */
 .rw-open-tab-label {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
