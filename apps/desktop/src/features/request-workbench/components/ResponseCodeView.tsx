@@ -19,7 +19,9 @@ import type { CodeLanguage } from '../codemirror-shared'
 import { editorSearchHighlightExtension } from '../editor-search'
 import { WORKER_FORMAT_THRESHOLD_BYTES, createFormatChannel, formatOffMainThread } from '../format-off-main-thread'
 import { formatResponseText } from '../response-text-format'
-import type { JsonPathSegment } from '../json-value-index'
+import { accessorFor, type JsonPathSegment } from '../json-value-index'
+import type { AgentMentionRequest } from '../../agent/agent-mention-bridge'
+import { MentionInChatMenuItem } from '../../agent/MentionInChatMenuItem'
 import { jsonValueAtCoords, valueCaptureExtension } from '../value-capture'
 import { setMonitorHighlights, valueMonitorHighlightExtension } from '../value-monitor-highlight'
 import { monitorTooltipContent } from '../value-monitor-tooltip'
@@ -62,6 +64,8 @@ interface ResponseContextMenuState {
   valueText: string
   /** Caminho do valor JSON sob o clique, quando há um e a captura está disponível. */
   capturePath: JsonPathSegment[] | null
+  /** Path of the JSON value under the click, whether or not it can be captured. */
+  valuePath: JsonPathSegment[] | null
 }
 
 /** Mantém cursor e seleção legíveis mesmo quando o CodeMirror injeta seu
@@ -74,6 +78,12 @@ const responseCodeEditorTheme = EditorView.theme(
     },
   },
 )
+
+/** A response value as the agent chat mentions it: `@items[0].name`, with the value itself. */
+function responseValueMention(path: JsonPathSegment[], value: string): AgentMentionRequest {
+  const accessor = accessorFor(path)
+  return { kind: 'field', id: `$${accessor}`, label: accessor.replace(/^\./, '') || '$', summary: value }
+}
 
 /** Texto de um valor JSON para copiar: strings sem aspas e com escapes resolvidos; o resto como está. */
 function decodedValueText(raw: string): string {
@@ -227,7 +237,7 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
             const selection = editor.state.selection.main
             const selectedText = selection.empty ? '' : editor.state.sliceDoc(selection.from, selection.to)
             const menuWidth = 136
-            const menuHeight = 76
+            const menuHeight = 108
             const value = isJsonRef.current ? jsonValueAtCoords(editor, event.clientX, event.clientY) : null
             const capturePath = onCaptureValueRef.current ? (value?.path ?? null) : null
             const valueText = value ? decodedValueText(editor.state.sliceDoc(value.from, value.to)) : ''
@@ -237,6 +247,7 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
               selectedText,
               valueText,
               capturePath,
+              valuePath: value?.path ?? null,
             })
             return true
           },
@@ -398,6 +409,9 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
           />
           {contextMenu.capturePath && (
             <MenuItem label={t('response.captureInScript')} onSelect={captureValue} />
+          )}
+          {agentSlot === 'response' && contextMenu.valuePath && (
+            <MentionInChatMenuItem item={responseValueMention(contextMenu.valuePath, contextMenu.valueText)} onDone={() => setContextMenu(null)} />
           )}
         </div>
       )}

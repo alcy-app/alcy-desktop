@@ -9,8 +9,9 @@ import { AgentContextAttachments } from './AgentContextAttachments'
 import { AgentMentionChip } from './AgentMentionChip'
 import { CONTEXT_ICONS } from './agent-context-icons'
 import { AGENT_COMMANDS, agentCommandQuery, parseAgentCommand, type AgentCommand } from './agent-commands'
-import { agentContextOptions, mentionAt, selectionContext, type AgentContextOption } from './agent-context'
-import { applyEdit, liveMentions, mentionDeletion, mentionInside, mentionToken, splitMentions, textEdit, type InlineMention, type TextEdit } from './agent-mentions'
+import { agentContextOptions, mentionAt, mentionContext, selectionContext, type AgentContextOption } from './agent-context'
+import { subscribeMentionRequests, takeMentionRequests } from './agent-mention-bridge'
+import { applyEdit, insertMention, liveMentions, mentionDeletion, mentionInside, mentionToken, splitMentions, textEdit, type InlineMention, type TextEdit } from './agent-mentions'
 
 interface AgentComposerProps {
   host: WorkbenchAgentHost
@@ -53,6 +54,33 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const [mentionRanges, setMentionRanges] = useState<InlineMention[]>([])
   const mentions = useMemo(() => liveMentions(mentionRanges, text), [mentionRanges, text])
   const lastCaretRef = useRef<{ value: string; caret: number } | null>(null)
+  const latestRef = useRef({ text, mentions, host })
+  useLayoutEffect(() => {
+    latestRef.current = { text, mentions, host }
+  })
+
+  // Items mentioned from their menus elsewhere in the workbench land at the caret.
+  useEffect(() => {
+    const consume = () => {
+      const requests = takeMentionRequests()
+      if (requests.length === 0) return
+      const latest = latestRef.current
+      const remembered = lastCaretRef.current
+      let next = { text: latest.text, mentions: latest.mentions, caret: remembered?.value === latest.text ? remembered.caret : latest.text.length }
+      for (const request of requests) next = insertMention(next.text, next.mentions, next.caret, mentionContext(latest.host, request))
+      setMentionRanges(next.mentions)
+      setText(next.text)
+      setMention(null)
+      setCommandQuery(null)
+      lastCaretRef.current = { value: next.text, caret: next.caret }
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus()
+        textareaRef.current?.setSelectionRange(next.caret, next.caret)
+      })
+    }
+    consume()
+    return subscribeMentionRequests(consume)
+  }, [setText, textareaRef])
   const menuId = useId()
   const mentionOpen = mention !== null || commandQuery !== null
   // The editor selection rides along automatically until dismissed or sent.

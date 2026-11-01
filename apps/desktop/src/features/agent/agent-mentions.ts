@@ -55,6 +55,31 @@ export function applyEdit(mentions: InlineMention[], edit: TextEdit): InlineMent
   })
 }
 
+/**
+ * Writes a mention of `option` at `caret`, spaced from the words around it.
+ * An item already mentioned is not repeated: the caret just moves past it.
+ */
+export function insertMention(text: string, mentions: InlineMention[], caret: number, option: AgentContextOption): { text: string; mentions: InlineMention[]; caret: number } {
+  const existing = mentions.find((mention) => mention.option.kind === option.kind && mention.option.id === option.id)
+  if (existing) return { text, mentions, caret: existing.end }
+  // Never inside another mention.
+  const inside = mentionInside(mentions, caret)
+  const at = Math.min(Math.max(inside ? inside.end : caret, 0), text.length)
+  const before = text.slice(0, at)
+  const after = text.slice(at)
+  const lead = before !== '' && !/\s$/.test(before) ? ' ' : ''
+  const trail = /^\s/.test(after) ? '' : ' '
+  const token = mentionToken(option)
+  const inserted = lead + token + trail
+  const start = at + lead.length
+  const shifted = applyEdit(mentions, { start: at, oldEnd: at, insertedLength: inserted.length })
+  return {
+    text: before + inserted + after,
+    mentions: [...shifted, { option, start, end: start + token.length }].sort((a, b) => a.start - b.start),
+    caret: start + token.length + 1,
+  }
+}
+
 /** The mention the caret sits strictly inside of, if any. */
 export function mentionInside(mentions: InlineMention[], caret: number) {
   return mentions.find((mention) => caret > mention.start && caret < mention.end)

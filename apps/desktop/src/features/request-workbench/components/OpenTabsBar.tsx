@@ -18,6 +18,8 @@ import { arrangeGroupedTabs } from '../tab-groups'
 import type { useTabGroups } from '../use-tab-groups'
 import { TabGroupEditor } from './TabGroupEditor'
 import { TabMenuSurface } from './TabMenuSurface'
+import type { AgentMentionRequest } from '../../agent/agent-mention-bridge'
+import { MentionInChatMenuItem } from '../../agent/MentionInChatMenuItem'
 import { DiscardTabModal } from './DiscardTabModal'
 import { OpenTabsOverflowMenu } from './OpenTabsOverflowMenu'
 import { EnvironmentSelect } from './EnvironmentSelect'
@@ -59,6 +61,19 @@ interface TabContextMenuState {
   y: number
 }
 
+const MOCK_SERVER_TAB_PREFIX = 'mock-server:'
+
+/** The item an open tab shows, as the agent chat mentions it; tabs without one (logs, notifications) have none. */
+function tabMention(menu: TabContextMenuState): AgentMentionRequest | null {
+  switch (menu.kind) {
+    case 'request': return { kind: 'tab', id: menu.tabId, label: menu.label }
+    case 'flow': return { kind: 'flow', id: menu.tabId, label: menu.label }
+    case 'runner': return { kind: 'runner', id: menu.tabId, label: menu.label }
+    case 'mockServer': return { kind: 'mock', id: menu.tabId.startsWith(MOCK_SERVER_TAB_PREFIX) ? menu.tabId.slice(MOCK_SERVER_TAB_PREFIX.length) : menu.tabId, label: menu.label }
+    default: return null
+  }
+}
+
 /** Tab closing action awaiting confirmation because an affected tab has unsaved changes. */
 type PendingClose = { kind: 'tab'; tabId: string; label: string } | { kind: 'others'; tabId: string } | { kind: 'unfixed' } | { kind: 'selected'; ids: string[] } | { kind: 'all' }
 
@@ -92,6 +107,7 @@ function TabContextMenu({
   onToggleFix: () => void
 }) {
   const { t } = useLanguage()
+  const mention = tabMention(menu)
 
   return (
     <TabMenuSurface x={menu.x} y={menu.y} label={t('workbench.openTabs.contextMenuAria', { name: menu.label })} onClose={onClose}>
@@ -128,6 +144,7 @@ function TabContextMenu({
             onClose()
           }}
         />
+        {mention && <MentionInChatMenuItem item={mention} onDone={onClose} />}
         <MenuSeparator />
         <MenuItem
           label={t('workbench.openTabs.closeTabMenuItem')}

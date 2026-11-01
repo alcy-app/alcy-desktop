@@ -17,6 +17,7 @@ import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../../shared/ui/IconButton'
 import { InlineEditInput } from '../../../shared/ui/InlineEditInput'
 import { MenuCheckboxItem, MenuItem, MenuSeparator, OptionsMenu } from '../../../shared/ui/Menu'
+import { MentionInChatMenuItem } from '../../agent/MentionInChatMenuItem'
 import { useTooltip } from '../../../shared/ui/use-tooltip'
 import { EmptyState } from '../../../shared/ui/EmptyState'
 import {
@@ -419,6 +420,7 @@ function RequestRow({
                 onCloseMenu()
               }}
             />
+            <MentionInChatMenuItem item={{ kind: 'request', id: request.id, label }} onDone={onCloseMenu} />
             <MenuSeparator />
             <MenuItem label={t('collections.renameMenuItem')} shortcutAction="renameItem" onSelect={startRename} />
             <MenuItem
@@ -769,6 +771,7 @@ function FolderRow({
                 onCloseMenu()
               }}
             />
+            <MentionInChatMenuItem item={{ kind, id: node.id, label }} onDone={onCloseMenu} />
             {kind === 'collection' && (onToggleFavorite || onOpenLabels) && (
               <>
                 <MenuSeparator />

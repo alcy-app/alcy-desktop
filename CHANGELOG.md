@@ -9,6 +9,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Added
 - **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.]
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
+- **Mencionar no chat**: requisições, coleções, pastas, flows, ambientes, mock servers e abas abertas podem ser mencionados no chat do agente pelo menu de cada item, assim como um valor da resposta, pelo menu do botão direito sobre ele.
 
 ### Changed
 - Novas conversas com o agente começam no lugar de recuperar o chat da última vez que o Alcy foi aberto. O chat anterior continua disponível no histórico.

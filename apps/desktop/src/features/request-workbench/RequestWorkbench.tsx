@@ -45,6 +45,7 @@ import { useAgentHost } from './use-agent-host'
 import { AgentResourceBridge } from '../agent/agent-resource-bridge'
 import { useAgentResources } from '../agent/use-agent-resources'
 import { AgentPanel } from '../agent/AgentPanel'
+import { subscribeMentionRequests } from '../agent/agent-mention-bridge'
 import { AuthorizationPanel } from './components/AuthorizationPanel'
 import { ConsolePanel, type ConsolePanelTab } from './components/ConsolePanel'
 import { DocsPanel } from './components/DocsPanel'
@@ -443,6 +444,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     })
     setAgentMounted(true)
   }, [])
+  // "Mention in chat" in an item's menu brings up the chat holding the mention.
+  useEffect(() => {
+    if (!FEATURE_FLAGS.agent) return
+    return subscribeMentionRequests(() => setAgentOpen(true))
+  }, [setAgentOpen])
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const { reload: reloadCollections } = collections
   const { reload: reloadEnvironments } = environments

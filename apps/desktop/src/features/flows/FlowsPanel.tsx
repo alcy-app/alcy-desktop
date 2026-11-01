@@ -11,6 +11,7 @@ import { ChangeMarker } from '../../shared/ui/ChangeMarker'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { IconButton } from '../../shared/ui/IconButton'
 import { MenuItem, MenuSeparator, OptionsMenu } from '../../shared/ui/Menu'
+import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 import { InlineEditInput } from '../../shared/ui/InlineEditInput'
 import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
@@ -272,6 +273,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 {kind === 'folder' && <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates(item.id)} />}
                 <MenuItem label={t('flows.renameMenuItem')} shortcutAction="renameItem" onSelect={() => rename(row)} />
                 {row.kind === 'flow' && <MenuItem label={t('flows.moveToFolder')} onSelect={() => { setMovingFlow(row.item); setMenuOpenKey(null) }} />}
+                {row.kind === 'flow' && <MentionInChatMenuItem item={{ kind: 'flow', id: item.id, label }} onDone={() => setMenuOpenKey(null)} />}
                 <MenuItem label={t('common.remove')} shortcutAction="deleteItem" danger onSelect={() => { setPendingRemove(row); setMenuOpenKey(null) }} />
               </OptionsMenu>
             </div>

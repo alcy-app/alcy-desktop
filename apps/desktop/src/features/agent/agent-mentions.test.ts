@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentContextOption } from './agent-context'
-import { applyEdit, findMentions, liveMentions, mentionDeletion, splitMentions, textEdit, type InlineMention } from './agent-mentions'
+import { applyEdit, findMentions, insertMention, liveMentions, mentionDeletion, splitMentions, textEdit, type InlineMention } from './agent-mentions'
 
 const users: AgentContextOption = { kind: 'tab', id: 't1', label: 'Users', summary: '' }
 const dev: AgentContextOption = { kind: 'environment', id: 'dev', label: 'Dev env', summary: '' }
@@ -70,5 +70,24 @@ describe('splitMentions and findMentions', () => {
     const devTools = { ...dev, id: 'other', label: 'Dev' }
     expect(findMentions(text, [users, devTools, dev]).map(({ reference, start }) => [reference.id, start])).toEqual([['t1', 0], ['dev', 9]])
     expect(findMentions('mail@Users', [users])).toEqual([])
+  })
+})
+
+describe('insertMention', () => {
+  const flow: AgentContextOption = { kind: 'flow', id: 'f1', label: 'Login', summary: '' }
+
+  it('spaces the mention from the words around it and leaves the caret after it', () => {
+    expect(insertMention('', [], 0, flow)).toMatchObject({ text: '@Login ', caret: 7, mentions: [{ option: flow, start: 0, end: 6 }] })
+    const between = insertMention('veja isto', [], 4, flow)
+    expect(between.text).toBe('veja @Login isto')
+    expect(between).toMatchObject({ caret: 12, mentions: [{ start: 5, end: 11 }] })
+    expect(insertMention('veja ', [], 5, flow).text).toBe('veja @Login ')
+  })
+
+  it('shifts the mentions after it, never splits one and does not repeat an item', () => {
+    const inserted = insertMention(text, mentions, 3, flow)
+    expect(inserted.text).toBe('@Users @Login e @Dev env x')
+    expect(inserted.mentions.map((mention) => [mention.option.id, mention.start])).toEqual([['t1', 0], ['f1', 7], ['dev', 16]])
+    expect(insertMention(text, mentions, 0, users)).toEqual({ text, mentions, caret: 6 })
   })
 })

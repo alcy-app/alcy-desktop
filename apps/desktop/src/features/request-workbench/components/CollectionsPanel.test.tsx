@@ -838,7 +838,7 @@ describe('CollectionsPanel — grupos do menu de contexto', () => {
 
     fireEvent.contextMenu(screen.getByText('Listar'))
 
-    expect(menuGroups()).toEqual([['Gerar flow'], ['RenomearF2', 'DuplicarCtrl+D'], ['Mover para...', 'Selecionar'], ['RemoverDelete']])
+    expect(menuGroups()).toEqual([['Gerar flow', 'Mencionar no chat'], ['RenomearF2', 'DuplicarCtrl+D'], ['Mover para...', 'Selecionar'], ['RemoverDelete']])
   })
 
   it('agrupa as ações da collection por função, com favoritas e rótulos num grupo próprio', () => {
@@ -847,7 +847,7 @@ describe('CollectionsPanel — grupos do menu de contexto', () => {
     fireEvent.contextMenu(screen.getByText('API'))
     const collectionGroups = menuGroups()
     expect(collectionGroups[0]).toEqual(['Adicionar pasta', 'Adicionar requisição'])
-    expect(collectionGroups[1]).toEqual(['Executar...', 'Gerar flow'])
+    expect(collectionGroups[1]).toEqual(['Executar...', 'Gerar flow', 'Mencionar no chat'])
     expect(collectionGroups[2]).toEqual(['Favoritar', 'Rótulos...'])
     expect(collectionGroups[3][0]).toBe('Gerenciar...')
     expect(collectionGroups.slice(-2)).toEqual([['Ordenar conteúdo de A a Z', 'RenomearF2', 'Selecionar'], ['RemoverDelete']])

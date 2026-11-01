@@ -21,6 +21,7 @@ import {
   TrashIcon,
 } from '../../shared/ui/icons'
 import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
+import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { DragPreview } from '../../shared/DragPreview'
 import { usePointerDrag } from '../../shared/use-pointer-drag'
@@ -318,6 +319,7 @@ export function EnvironmentsPanel({
                       setMenuOpenId(null)
                     }}
                   />
+                  <MentionInChatMenuItem item={{ kind: 'environment', id: environment.id, label }} onDone={() => setMenuOpenId(null)} />
                   <MenuItem
                     label={t('common.remove')}
                     danger

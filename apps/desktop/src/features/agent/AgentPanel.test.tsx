@@ -6,6 +6,7 @@ import type { AgentEventDto } from '../../bindings/agent-turn'
 import { emptyRequestContent } from '../request-workbench/collection-tree'
 import type { WorkbenchAgentHost } from './agent-host'
 import { AgentPanel } from './AgentPanel'
+import { mentionInChat, takeMentionRequests } from './agent-mention-bridge'
 import { forgetRememberedSessions, rememberSession, rememberedSession } from './agent-session-memory'
 
 const getAgentSettings = vi.fn()
@@ -593,6 +594,29 @@ describe('AgentPanel', () => {
       { kind: 'quote', id: expect.any(String), label: 'Trecho: “status”', summary: 'status revisado' },
     ])
     expect(screen.queryByRole('button', { name: '2 contextos' })).not.toBeInTheDocument()
+  })
+
+  it('writes items mentioned from other menus at the caret, even before the chat mounts', async () => {
+    takeMentionRequests()
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
+    mentionInChat({ kind: 'field', id: '$.title', label: 'title', summary: 'sunt aut facere' })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    const input = screen.getByLabelText('Mensagem para o agente') as HTMLTextAreaElement
+    await waitFor(() => expect(input).toHaveValue('@title '))
+    typeAtEnd('e')
+    act(() => mentionInChat({ kind: 'tab', id: 't1', label: 'Users' }))
+    expect(input).toHaveValue('@title e @Users ')
+    // The same item twice is mentioned once.
+    act(() => mentionInChat({ kind: 'tab', id: 't1', label: 'Users' }))
+    expect(input).toHaveValue('@title e @Users ')
+    expect(document.querySelectorAll('.agent-composer .agent-mention')).toHaveLength(2)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const [sent] = startAgentTurn.mock.calls[0] as [{ text: string; context: { kind: string; id: string; summary: string }[] }]
+    expect(sent.text).toBe('@title e @Users')
+    expect(sent.context.map(({ kind, id }) => [kind, id])).toEqual([['field', 't1:$.title'], ['tab', 't1']])
+    expect(sent.context[0].summary).toBe('Value at $.title in the last response of tab "Users" (tabId t1):\nsunt aut facere')
   })
 
   it('treats a mention as one piece: deleted whole and crossed by the arrows', async () => {
