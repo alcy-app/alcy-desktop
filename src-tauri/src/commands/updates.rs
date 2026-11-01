@@ -45,6 +45,13 @@ const UPDATE_URL: Option<&str> = option_env!("ALCY_UPDATE_URL");
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Intervalo mínimo (em bytes) entre eventos de progresso enviados à UI.
 const PROGRESS_STEP_BYTES: u64 = 256 * 1024;
+/// Deadline for listing releases to find the newest pre-release (a small
+/// JSON document, unlike the installer download).
+const LISTING_TIMEOUT: Duration = Duration::from_secs(30);
+/// GitHub's public API, used only to list releases when previews are wanted.
+const GITHUB_API: &str = "https://api.github.com";
+/// Releases listed to find the newest published one with a manifest.
+const GITHUB_RELEASES_WINDOW: &str = "20";
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -177,6 +184,8 @@ pub struct UpdateSourceDto {
 pub struct UpdateSettingsDto {
     pub current_version: String,
     pub check_on_startup: bool,
+    /// Preview (pre-release) versions are offered too.
+    pub include_prereleases: bool,
     /// `None` = o build não tem origem de atualizações.
     pub source: Option<UpdateSourceDto>,
 }
@@ -211,7 +220,7 @@ pub struct DownloadProgressDto {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SetCheckOnStartupInput {
+pub struct UpdatePreferenceInput {
     pub enabled: bool,
 }
 
@@ -401,6 +410,7 @@ fn settings_dto(
     UpdateSettingsDto {
         current_version,
         check_on_startup: settings.check_on_startup,
+        include_prereleases: settings.include_prereleases,
         source: source.map(|source| source_dto(source, accounts)),
     }
 }
@@ -431,6 +441,7 @@ struct ResolvedSource {
 /// link `latest.json`), baixado com o token da conta da instância.
 async fn resolve_gitlab(
     project_url: &str,
+    include_prereleases: bool,
     accounts: &[GitlabAccount],
     client: &GitlabClient,
     credentials: &dyn CredentialStore,
@@ -442,7 +453,7 @@ async fn resolve_gitlab(
     let session = client.session(account, credentials);
     let project = session.project_by_path(&path).await?;
     let release = session
-        .latest_release(project.id)
+        .latest_release(project.id, include_prereleases)
         .await?
         .ok_or(UpdateCommandError::NoReleases)?;
 
@@ -483,17 +494,32 @@ fn invalid_url(error: url::ParseError) -> UpdateCommandError {
     }
 }
 
-/// Resolve a origem até o manifesto do updater. Só o GitLab consulta uma API
-/// e usa credenciais; as demais origens são endereços sem autenticação.
+/// Resolves the source down to the updater manifest. Only GitLab queries an
+/// API with credentials; the other sources are unauthenticated addresses.
+/// With `include_prereleases`, GitHub and the release server list their
+/// releases to find the newest one, preview or not; a direct manifest is a
+/// single version and ignores it.
 async fn resolve_source(
     source: &UpdateSource,
+    include_prereleases: bool,
     accounts: &[GitlabAccount],
     client: &GitlabClient,
     credentials: &dyn CredentialStore,
+    proxy: Option<&ProxyPlan>,
 ) -> Result<ResolvedSource, UpdateCommandError> {
     match source {
         UpdateSource::Gitlab { project_url } => {
-            resolve_gitlab(project_url, accounts, client, credentials).await
+            resolve_gitlab(
+                project_url,
+                include_prereleases,
+                accounts,
+                client,
+                credentials,
+            )
+            .await
+        }
+        UpdateSource::Github { owner, repo } if include_prereleases => {
+            resolve_github_newest(GITHUB_API, owner, repo, proxy).await
         }
         UpdateSource::Github { owner, repo } => {
             let repository = github_repository_url(owner, repo);
@@ -514,6 +540,9 @@ async fn resolve_source(
             auth: None,
             info: ReleaseInfo::default(),
         }),
+        UpdateSource::ReleaseServer { base_url } if include_prereleases => {
+            resolve_release_server_newest(base_url, proxy).await
+        }
         // O serviço entrega o manifesto da maior versão estável; notas e data
         // vêm dele. A página inicial do serviço lista os downloads.
         UpdateSource::ReleaseServer { base_url } => Ok(ResolvedSource {
@@ -528,6 +557,169 @@ async fn resolve_source(
             },
         }),
     }
+}
+
+/// `base` with `segments` appended as path segments (each one encoded).
+fn url_with_segments(base: &str, segments: &[&str]) -> Result<Url, UpdateCommandError> {
+    let mut url = Url::parse(base).map_err(invalid_url)?;
+    url.path_segments_mut()
+        .map_err(|()| UpdateCommandError::Invalid {
+            message: format!("{base} cannot have a path"),
+        })?
+        .pop_if_empty()
+        .extend(segments);
+    Ok(url)
+}
+
+/// Fetches a release listing as JSON, through the same proxy as the updater.
+async fn fetch_listing<T: serde::de::DeserializeOwned>(
+    url: Url,
+    proxy: Option<&ProxyPlan>,
+) -> Result<T, UpdateCommandError> {
+    let network = |error: reqwest::Error| UpdateCommandError::Network {
+        message: error.to_string(),
+    };
+    let builder = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(LISTING_TIMEOUT)
+        .user_agent(concat!("Alcy/", env!("CARGO_PKG_VERSION")));
+    let builder = match updater_proxy(proxy, &url) {
+        UpdaterProxy::Direct => builder.no_proxy(),
+        UpdaterProxy::System => builder,
+        UpdaterProxy::Via(proxy) => builder.proxy(reqwest::Proxy::all(proxy).map_err(network)?),
+    };
+    let response = builder
+        .build()
+        .map_err(network)?
+        .get(url)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(network)?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(UpdateCommandError::NotFound {
+            message: status.to_string(),
+        });
+    }
+    if !status.is_success() {
+        return Err(UpdateCommandError::Rejected {
+            message: format!("HTTP {status}"),
+        });
+    }
+    let body = response.bytes().await.map_err(network)?;
+    serde_json::from_slice(&body).map_err(|error| UpdateCommandError::Rejected {
+        message: format!("unexpected release listing: {error}"),
+    })
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    name: Option<String>,
+    body: Option<String>,
+    published_at: Option<String>,
+    html_url: Option<String>,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+}
+
+/// GitHub: `releases/latest` never points at a pre-release, so the newest
+/// published release (preview or not) carrying the manifest comes from the
+/// API listing, newest first.
+async fn resolve_github_newest(
+    api_base: &str,
+    owner: &str,
+    repo: &str,
+    proxy: Option<&ProxyPlan>,
+) -> Result<ResolvedSource, UpdateCommandError> {
+    let mut listing = url_with_segments(api_base, &["repos", owner, repo, "releases"])?;
+    listing
+        .query_pairs_mut()
+        .append_pair("per_page", GITHUB_RELEASES_WINDOW);
+    let releases: Vec<GithubRelease> = fetch_listing(listing, proxy).await?;
+
+    let mut published = releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .peekable();
+    let newest_tag = published
+        .peek()
+        .map(|release| release.tag_name.clone())
+        .ok_or(UpdateCommandError::NoReleases)?;
+    let release = published
+        .find(|release| {
+            release
+                .assets
+                .iter()
+                .any(|asset| asset.name.eq_ignore_ascii_case(UPDATE_MANIFEST_ASSET))
+        })
+        .ok_or(UpdateCommandError::NoManifest { tag: newest_tag })?;
+
+    // Built from the repository rather than taken from the response, so the
+    // manifest always comes from the configured repository.
+    let manifest_url = url_with_segments(
+        &github_repository_url(owner, repo),
+        &[
+            "releases",
+            "download",
+            &release.tag_name,
+            UPDATE_MANIFEST_ASSET,
+        ],
+    )?;
+    Ok(ResolvedSource {
+        manifest_url,
+        auth: None,
+        info: ReleaseInfo {
+            name: release.name,
+            notes: release.body,
+            published_at: release.published_at,
+            web_url: release.html_url,
+        },
+    })
+}
+
+#[derive(Deserialize)]
+struct ServerRelease {
+    version: String,
+}
+
+/// Release server: `latest` is the highest stable version, while the full
+/// listing comes highest version first, pre-releases included.
+async fn resolve_release_server_newest(
+    base_url: &str,
+    proxy: Option<&ProxyPlan>,
+) -> Result<ResolvedSource, UpdateCommandError> {
+    let releases: Vec<ServerRelease> =
+        fetch_listing(url_with_segments(base_url, &["v1", "releases"])?, proxy).await?;
+    let newest = releases
+        .into_iter()
+        .next()
+        .ok_or(UpdateCommandError::NoReleases)?;
+    Ok(ResolvedSource {
+        manifest_url: url_with_segments(
+            base_url,
+            &[
+                "v1",
+                "releases",
+                &newest.version,
+                "files",
+                UPDATE_MANIFEST_ASSET,
+            ],
+        )?,
+        auth: None,
+        info: ReleaseInfo {
+            web_url: Some(format!("{base_url}/")),
+            ..ReleaseInfo::default()
+        },
+    })
 }
 
 /// Proxy do updater (que usa um cliente HTTP próprio) conforme o plano
@@ -553,6 +745,7 @@ fn updater_proxy(plan: Option<&ProxyPlan>, target: &Url) -> UpdaterProxy {
 async fn find_update(
     app: &AppHandle,
     source: &UpdateSource,
+    include_prereleases: bool,
     accounts: &[GitlabAccount],
     client: &GitlabClient,
     credentials: &dyn CredentialStore,
@@ -561,7 +754,15 @@ async fn find_update(
     if public_key(app).is_none() {
         return Err(UpdateCommandError::MissingPublicKey);
     }
-    let resolved = resolve_source(source, accounts, client, credentials).await?;
+    let resolved = resolve_source(
+        source,
+        include_prereleases,
+        accounts,
+        client,
+        credentials,
+        proxy,
+    )
+    .await?;
 
     let mut builder = app
         .updater_builder()
@@ -665,24 +866,57 @@ pub fn get_update_settings(
     view(&app, &store.load()?, &accounts)
 }
 
-#[tauri::command]
-pub fn set_update_check_on_startup(
-    input: SetCheckOnStartupInput,
-    app: AppHandle,
-    store: State<'_, UpdateSettingsStore>,
-    accounts: State<'_, GitlabAccountsStore>,
+/// Saves one preference and keeps the others. An unreadable file is
+/// replaced, so saving a preference also recovers from it.
+fn save_preference(
+    app: &AppHandle,
+    store: &UpdateSettingsStore,
+    accounts: &GitlabAccountsStore,
+    change: impl FnOnce(&mut UpdateSettings),
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
     crate::logging::logged_with(
         "alcy::updates",
         "salvar preferência de atualização",
         || {
-            let settings = UpdateSettings {
-                check_on_startup: input.enabled,
-            };
+            let mut settings = store.load().unwrap_or_default();
+            change(&mut settings);
             store.save(&settings)?;
-            view(&app, &settings, &accounts)
+            view(app, &settings, accounts)
         },
     )
+}
+
+/// Whether checks may offer preview versions; an unreadable file means
+/// stable only (it is reported where the preferences are shown).
+fn include_prereleases(store: &UpdateSettingsStore) -> bool {
+    store
+        .load()
+        .map(|settings| settings.include_prereleases)
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn set_update_check_on_startup(
+    input: UpdatePreferenceInput,
+    app: AppHandle,
+    store: State<'_, UpdateSettingsStore>,
+    accounts: State<'_, GitlabAccountsStore>,
+) -> Result<UpdateSettingsDto, UpdateCommandError> {
+    save_preference(&app, &store, &accounts, |settings| {
+        settings.check_on_startup = input.enabled;
+    })
+}
+
+#[tauri::command]
+pub fn set_update_include_prereleases(
+    input: UpdatePreferenceInput,
+    app: AppHandle,
+    store: State<'_, UpdateSettingsStore>,
+    accounts: State<'_, GitlabAccountsStore>,
+) -> Result<UpdateSettingsDto, UpdateCommandError> {
+    save_preference(&app, &store, &accounts, |settings| {
+        settings.include_prereleases = input.enabled;
+    })
 }
 
 #[tauri::command]
@@ -691,6 +925,7 @@ pub async fn check_for_update(
     input: UpdateOperationInput,
     app: AppHandle,
     registry: State<'_, ExecutionRegistry>,
+    settings: State<'_, UpdateSettingsStore>,
     accounts: State<'_, GitlabAccountsStore>,
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
@@ -702,6 +937,7 @@ pub async fn check_for_update(
     let check = find_update(
         &app,
         &source,
+        include_prereleases(&settings),
         &accounts,
         &client,
         &*credentials,
@@ -732,6 +968,7 @@ pub async fn download_update(
     on_progress: Channel<DownloadProgressDto>,
     app: AppHandle,
     registry: State<'_, ExecutionRegistry>,
+    settings: State<'_, UpdateSettingsStore>,
     accounts: State<'_, GitlabAccountsStore>,
     client: State<'_, GitlabClient>,
     credentials: State<'_, KeyringCredentialStore>,
@@ -741,12 +978,14 @@ pub async fn download_update(
     let source = required_source()?;
     let accounts = accounts.load()?;
     let plan = proxy.plan();
+    let include_prereleases = include_prereleases(&settings);
     pending.replace(None);
 
     let download = async {
         let (update, info) = find_update(
             &app,
             &source,
+            include_prereleases,
             &accounts,
             &client,
             &*credentials,
@@ -941,17 +1180,32 @@ mod tests {
             &UpdateSource::Gitlab {
                 project_url: project_url(&accounts[0]),
             },
+            false,
             &accounts,
             &GitlabClient::new(),
             &credentials_for(&accounts),
+            None,
         )
         .await
     }
 
     async fn resolve_public(source: UpdateSource) -> ResolvedSource {
-        resolve_source(&source, &[], &GitlabClient::new(), &credentials_for(&[]))
-            .await
-            .unwrap()
+        try_resolve_public(source, false).await.unwrap()
+    }
+
+    async fn try_resolve_public(
+        source: UpdateSource,
+        include_prereleases: bool,
+    ) -> Result<ResolvedSource, UpdateCommandError> {
+        resolve_source(
+            &source,
+            include_prereleases,
+            &[],
+            &GitlabClient::new(),
+            &credentials_for(&[]),
+            None,
+        )
+        .await
     }
 
     #[test]
@@ -1160,6 +1414,146 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_direct_manifest_ignores_the_preview_preference() {
+        let resolved = try_resolve_public(
+            UpdateSource::Manifest {
+                url: "https://cdn.corp/alcy/latest.json".into(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resolved.manifest_url.as_str(),
+            "https://cdn.corp/alcy/latest.json"
+        );
+    }
+
+    async fn mount_github_releases(server: &MockServer, releases: serde_json::Value) {
+        Mock::given(method("GET"))
+            .and(path("/repos/empresa/alcy/releases"))
+            .and(wiremock::matchers::header_exists("user-agent"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(releases))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn github_previews_use_the_newest_published_release_with_a_manifest() {
+        let server = MockServer::start().await;
+        mount_github_releases(
+            &server,
+            serde_json::json!([
+                { "tag_name": "v0.10.0-preview01", "draft": true,
+                  "assets": [{ "name": "latest.json" }] },
+                { "tag_name": "v0.9.1-preview02", "draft": false, "prerelease": true,
+                  "name": "Alcy 0.9.1 preview 2", "body": "- Novidades",
+                  "published_at": "2026-10-20T12:00:00Z",
+                  "html_url": "https://github.com/empresa/alcy/releases/tag/v0.9.1-preview02",
+                  "assets": [{ "name": "Alcy.exe" }, { "name": "latest.json" }] },
+                { "tag_name": "v0.9.0", "draft": false, "prerelease": false,
+                  "assets": [{ "name": "latest.json" }] }
+            ]),
+        )
+        .await;
+
+        let resolved = resolve_github_newest(&server.uri(), "empresa", "alcy", None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resolved.manifest_url.as_str(),
+            "https://github.com/empresa/alcy/releases/download/v0.9.1-preview02/latest.json"
+        );
+        assert!(resolved.auth.is_none());
+        assert_eq!(resolved.info.name.as_deref(), Some("Alcy 0.9.1 preview 2"));
+        assert_eq!(resolved.info.notes.as_deref(), Some("- Novidades"));
+        assert_eq!(
+            resolved.info.web_url.as_deref(),
+            Some("https://github.com/empresa/alcy/releases/tag/v0.9.1-preview02")
+        );
+    }
+
+    #[tokio::test]
+    async fn github_previews_report_missing_releases_and_manifests() {
+        let server = MockServer::start().await;
+        mount_github_releases(
+            &server,
+            serde_json::json!([{ "tag_name": "v1.0.0", "assets": [{ "name": "Alcy.exe" }] }]),
+        )
+        .await;
+        assert!(matches!(
+            resolve_github_newest(&server.uri(), "empresa", "alcy", None).await,
+            Err(UpdateCommandError::NoManifest { tag }) if tag == "v1.0.0"
+        ));
+
+        let empty = MockServer::start().await;
+        mount_github_releases(&empty, serde_json::json!([])).await;
+        assert!(matches!(
+            resolve_github_newest(&empty.uri(), "empresa", "alcy", None).await,
+            Err(UpdateCommandError::NoReleases)
+        ));
+
+        let missing = MockServer::start().await;
+        assert!(matches!(
+            resolve_github_newest(&missing.uri(), "empresa", "alcy", None).await,
+            Err(UpdateCommandError::NotFound { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn release_server_previews_use_the_highest_listed_version() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "version": "1.1.0-preview01", "manifestUrl": "/ignored" },
+                { "version": "1.0.0" }
+            ])))
+            .mount(&server)
+            .await;
+
+        let resolved = try_resolve_public(
+            UpdateSource::ReleaseServer {
+                base_url: server.uri(),
+            },
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resolved.manifest_url.as_str(),
+            format!(
+                "{}/v1/releases/1.1.0-preview01/files/latest.json",
+                server.uri()
+            )
+        );
+        assert_eq!(resolved.info.web_url, Some(format!("{}/", server.uri())));
+    }
+
+    #[tokio::test]
+    async fn release_server_previews_without_releases_are_reported() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+
+        let result = try_resolve_public(
+            UpdateSource::ReleaseServer {
+                base_url: server.uri(),
+            },
+            true,
+        )
+        .await;
+
+        assert!(matches!(result, Err(UpdateCommandError::NoReleases)));
+    }
+
     #[test]
     fn the_most_specific_account_wins() {
         let accounts = [
@@ -1178,6 +1572,7 @@ mod tests {
         let accounts = [account("https://gitlab.com", "u")];
         let result = resolve_gitlab(
             "https://gitlab.corp/grupo/alcy",
+            false,
             &accounts,
             &GitlabClient::new(),
             &credentials_for(&accounts),

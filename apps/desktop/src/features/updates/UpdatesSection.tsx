@@ -8,7 +8,7 @@ import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon, CheckIcon, DownloadIcon, RefreshIcon, Spinner } from '../../shared/ui/icons'
 import { useToast } from '../../shared/ui/use-toast'
-import type { UpdatePhase } from './update-context'
+import type { SettingsResult, UpdatePhase } from './update-context'
 import { needsGitlabAccount, updateErrorMessage } from './update-error-message'
 import { isSourceReady } from './update-source'
 import { downloadPercent, formatCheckTime, formatMegabytes, formatReleaseDate } from './update-format'
@@ -20,13 +20,14 @@ interface UpdatesSectionProps {
   onOpenGitlab: () => void
 }
 
-/** Aba "Atualizações": situação da versão instalada, origem das releases e verificação automática. */
+/** "Updates" tab: installed version status, release source, automatic check and preview versions. */
 export function UpdatesSection({ onOpenGitlab }: UpdatesSectionProps) {
   return (
     <div className="updates" data-testid="update-settings">
       <UpdateStatusCard onOpenGitlab={onOpenGitlab} />
       <UpdateSourceInfo onOpenGitlab={onOpenGitlab} />
       <StartupCheckSection />
+      <PreviewVersionsSection />
     </div>
   )
 }
@@ -308,31 +309,74 @@ function UpdateSourceInfo({ onOpenGitlab }: UpdatesSectionProps) {
 function StartupCheckSection() {
   const { t } = useLanguage()
   const { settings, setCheckOnStartup } = useUpdates()
+
+  return (
+    <PreferenceSection
+      label={t('updates.startupLabel')}
+      text={t('updates.startupCheck')}
+      checked={settings?.checkOnStartup ?? true}
+      disabled={settings === null}
+      onSave={setCheckOnStartup}
+    />
+  )
+}
+
+function PreviewVersionsSection() {
+  const { t } = useLanguage()
+  const { settings, setIncludePrereleases } = useUpdates()
+  // A direct manifest is a single version: there is no preview to choose.
+  const singleVersionSource = settings?.source?.provider === 'manifest'
+
+  return (
+    <PreferenceSection
+      label={t('updates.previewLabel')}
+      text={t('updates.previewInstall')}
+      hint={t(singleVersionSource ? 'updates.previewUnsupported' : 'updates.previewHint')}
+      checked={settings?.includePrereleases ?? false}
+      disabled={settings === null || singleVersionSource}
+      onSave={setIncludePrereleases}
+    />
+  )
+}
+
+interface PreferenceSectionProps {
+  label: string
+  text: string
+  hint?: string
+  checked: boolean
+  disabled: boolean
+  onSave: (enabled: boolean) => Promise<SettingsResult>
+}
+
+/** A saved on/off update preference, with the error of the last save. */
+function PreferenceSection({ label, text, hint, checked, disabled, onSave }: PreferenceSectionProps) {
+  const { t } = useLanguage()
   const [error, setError] = useState<UpdateCommandError | null>(null)
   const [busy, setBusy] = useState(false)
 
   return (
     <section className="settings-section settings-preference">
       <div>
-        <p className="settings-section-label">{t('updates.startupLabel')}</p>
+        <p className="settings-section-label">{label}</p>
       </div>
       <div className="updates-startup">
         <label className="updates-checkbox">
           <Checkbox
-            checked={settings?.checkOnStartup ?? true}
-            disabled={settings === null || busy}
+            checked={checked}
+            disabled={disabled || busy}
             onChange={(event) => {
               const enabled = event.target.checked
               setBusy(true)
               setError(null)
-              void setCheckOnStartup(enabled).then((result) => {
+              void onSave(enabled).then((result) => {
                 setBusy(false)
                 if (!result.ok) setError(result.error)
               })
             }}
           />
-          <span>{t('updates.startupCheck')}</span>
+          <span>{text}</span>
         </label>
+        {hint && <p className="updates-source-meta">{hint}</p>}
         {error && <InlineAlert>{updateErrorMessage(error, t)}</InlineAlert>}
       </div>
     </section>

@@ -1,6 +1,7 @@
 //! Projetos e releases usados como origem de atualizações do Alcy.
 
 use alcy_app::RemoteError;
+use alcy_domain::is_prerelease_tag;
 use percent_encoding::utf8_percent_encode;
 use serde::Deserialize;
 use url::Url;
@@ -10,9 +11,10 @@ use crate::client::{GitlabSession, PATH_SEGMENT, check, parse_json};
 /// Nome do asset link da release que aponta para o manifesto do updater.
 pub const UPDATE_MANIFEST_ASSET: &str = "latest.json";
 
-/// Quantas releases buscar para achar a mais recente já publicada (as
-/// "futuras", com `released_at` adiante, são ignoradas).
-const RELEASES_WINDOW: &str = "5";
+/// How many releases to fetch to find the newest one already published
+/// ("upcoming" ones, with a future `released_at`, are skipped, and so are
+/// pre-releases when only stable versions are wanted).
+const RELEASES_WINDOW: &str = "20";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct GitlabProjectInfo {
@@ -108,10 +110,13 @@ impl GitlabSession<'_> {
         parse_json(check(response).await?).await
     }
 
-    /// Release publicada mais recente do projeto (`None` se não houver).
+    /// The project's newest published release (`None` if there is none).
+    /// GitLab has no pre-release flag: a tag with a SemVer pre-release
+    /// (`v1.2.0-preview01`) marks one, skipped unless `include_prereleases`.
     pub async fn latest_release(
         &self,
         project_id: u64,
+        include_prereleases: bool,
     ) -> Result<Option<GitlabRelease>, RemoteError> {
         let url = self.api_url(&format!("/projects/{project_id}/releases"));
         let response = self
@@ -126,7 +131,8 @@ impl GitlabSession<'_> {
         let releases: Vec<RawRelease> = parse_json(check(response).await?).await?;
         Ok(releases
             .into_iter()
-            .find(|release| !release.upcoming_release)
+            .filter(|release| !release.upcoming_release)
+            .find(|release| include_prereleases || !is_prerelease_tag(&release.tag_name))
             .map(GitlabRelease::from))
     }
 }

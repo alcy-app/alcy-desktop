@@ -15,6 +15,8 @@ export interface UpdateSourceDto {
 export interface UpdateSettingsDto {
   currentVersion: string
   checkOnStartup: boolean
+  /** Preview (pre-release) versions are offered too. */
+  includePrereleases: boolean
   /** `null` = o build não tem origem de atualizações. */
   source: UpdateSourceDto | null
 }

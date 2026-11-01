@@ -5,6 +5,7 @@ import { downloadUpdate } from '../../bindings/download-update'
 import { getUpdateSettings } from '../../bindings/get-update-settings'
 import { installUpdateAndRestart } from '../../bindings/install-update-and-restart'
 import { setUpdateCheckOnStartup } from '../../bindings/set-update-check-on-startup'
+import { setUpdateIncludePrereleases } from '../../bindings/set-update-include-prereleases'
 import type { UpdateCommandError, UpdateSettingsDto } from '../../bindings/update-types'
 import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
@@ -106,6 +107,12 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     return result
   }, [])
 
+  const setIncludePrereleases = useCallback<UpdatesContextValue['setIncludePrereleases']>(async (enabled) => {
+    const result = await setUpdateIncludePrereleases(enabled)
+    if (result.ok) setSettings(result.value)
+    return result
+  }, [])
+
   // A conta usada para acessar a origem depende das contas conectadas:
   // relê as preferências quando elas mudam.
   const { accounts } = useGitlab()
@@ -135,8 +142,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   useEffect(() => () => window.clearTimeout(startupTimerRef.current), [])
 
   const value = useMemo<UpdatesContextValue>(
-    () => ({ settings, phase, error, checkedAt, check, download, cancel, restart, setCheckOnStartup }),
-    [settings, phase, error, checkedAt, check, download, cancel, restart, setCheckOnStartup],
+    () => ({ settings, phase, error, checkedAt, check, download, cancel, restart, setCheckOnStartup, setIncludePrereleases }),
+    [settings, phase, error, checkedAt, check, download, cancel, restart, setCheckOnStartup, setIncludePrereleases],
   )
 
   return <UpdatesContext.Provider value={value}>{children}</UpdatesContext.Provider>

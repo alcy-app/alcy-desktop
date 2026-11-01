@@ -29,6 +29,7 @@ export interface UpdatesContextValue {
   /** Conclui gravações pendentes, instala o pacote baixado e reinicia o app. */
   restart: () => Promise<void>
   setCheckOnStartup: (enabled: boolean) => Promise<SettingsResult>
+  setIncludePrereleases: (enabled: boolean) => Promise<SettingsResult>
 }
 
 export const UpdatesContext = createContext<UpdatesContextValue | null>(null)

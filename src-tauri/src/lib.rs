@@ -110,7 +110,7 @@ use commands::team_workspaces::open_onedrive_team_workspace;
 use commands::tls_settings::{apply_saved_tls_settings, get_tls_settings, save_tls_settings};
 use commands::updates::{
     PendingUpdate, cancel_update_operation, check_for_update, download_update, get_update_settings,
-    install_update_and_restart, set_update_check_on_startup,
+    install_update_and_restart, set_update_check_on_startup, set_update_include_prereleases,
 };
 use commands::value_monitors::{evaluate_value_monitors, list_value_monitors, save_value_monitors};
 use commands::version_control::{
@@ -535,6 +535,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 save_response_body,
                 get_update_settings,
                 set_update_check_on_startup,
+                set_update_include_prereleases,
                 check_for_update,
                 download_update,
                 cancel_update_operation,

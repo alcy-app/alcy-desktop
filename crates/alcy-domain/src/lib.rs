@@ -92,7 +92,7 @@ pub use response::{
 };
 pub use security_settings::SecuritySettings;
 pub use update::{
-    UpdateSettings, UpdateSource, UpdateSourceError, normalize_project_url,
+    UpdateSettings, UpdateSource, UpdateSourceError, is_prerelease_tag, normalize_project_url,
     project_path_in_instance,
 };
 pub use value_monitor::{

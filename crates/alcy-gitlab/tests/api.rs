@@ -514,7 +514,7 @@ async fn latest_release_skips_upcoming_releases_and_reads_links() {
     let release = fixture
         .client
         .session(&fixture.account, &fixture.credentials)
-        .latest_release(42)
+        .latest_release(42, false)
         .await
         .unwrap()
         .unwrap();
@@ -529,6 +529,34 @@ async fn latest_release_skips_upcoming_releases_and_reads_links() {
 }
 
 #[tokio::test]
+async fn latest_release_skips_pre_releases_unless_included() {
+    let fixture = fixture(Some(valid_tokens("t"))).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/projects/42/releases"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "tag_name": "v0.3.0-preview01", "name": "Alcy 0.3.0 preview",
+                "released_at": "2026-10-01T12:00:00Z", "assets": { "links": [] }
+            },
+            {
+                "tag_name": "v0.2.0", "name": "Alcy 0.2.0",
+                "released_at": "2026-09-01T12:00:00Z", "assets": { "links": [] }
+            }
+        ])))
+        .mount(&fixture.server)
+        .await;
+    let session = fixture
+        .client
+        .session(&fixture.account, &fixture.credentials);
+
+    let stable = session.latest_release(42, false).await.unwrap().unwrap();
+    let preview = session.latest_release(42, true).await.unwrap().unwrap();
+
+    assert_eq!(stable.tag_name, "v0.2.0");
+    assert_eq!(preview.tag_name, "v0.3.0-preview01");
+}
+
+#[tokio::test]
 async fn a_project_without_releases_has_no_latest_release() {
     let fixture = fixture(Some(valid_tokens("t"))).await;
     Mock::given(method("GET"))
@@ -540,7 +568,7 @@ async fn a_project_without_releases_has_no_latest_release() {
     let latest = fixture
         .client
         .session(&fixture.account, &fixture.credentials)
-        .latest_release(42)
+        .latest_release(42, false)
         .await;
 
     assert_eq!(latest, Ok(None));

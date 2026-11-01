@@ -2,21 +2,34 @@ use thiserror::Error;
 
 use crate::gitlab::normalize_instance_url;
 
-/// Preferências de atualização do app. A origem das releases não é uma
-/// preferência: vem fixa no build (`ALCY_UPDATE_PROVIDER`/`ALCY_UPDATE_URL`).
+/// The app's update preferences. Where releases come from is not a
+/// preference: it is fixed in the build (`ALCY_UPDATE_PROVIDER`/`ALCY_UPDATE_URL`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateSettings {
-    /// Verifica se há versão nova ao abrir o app (a instalação sempre depende
-    /// de confirmação do usuário).
+    /// Checks for a new version when the app opens (installing always waits
+    /// for the user to confirm).
     pub check_on_startup: bool,
+    /// Offers preview (pre-release) versions too, when the newest release is
+    /// one, instead of only stable ones.
+    pub include_prereleases: bool,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
         Self {
             check_on_startup: true,
+            include_prereleases: false,
         }
     }
+}
+
+/// Is a release tag (`v1.2.0-preview01`, `1.2.0`) a pre-release? Follows
+/// SemVer: a version is a pre-release when a `-` comes before any build
+/// metadata (`+`). Tags that are not versions count as stable.
+pub fn is_prerelease_tag(tag: &str) -> bool {
+    let version = tag.trim().trim_start_matches(['v', 'V']);
+    let without_build = version.split('+').next().unwrap_or(version);
+    version.starts_with(|c: char| c.is_ascii_digit()) && without_build.contains('-')
 }
 
 /// De onde vêm as releases do app. Fixa no build, escolhida por quem
@@ -276,6 +289,28 @@ mod tests {
                 Ok("https://gitlab.corp/grupo/alcy".to_string()),
                 "{input}"
             );
+        }
+    }
+
+    #[test]
+    fn detects_pre_release_tags() {
+        for tag in [
+            "v0.9.0-preview01",
+            "0.9.0-rc.1",
+            "V1.0.0-beta+build.5",
+            " v2.0.0-alpha ",
+        ] {
+            assert!(is_prerelease_tag(tag), "{tag}");
+        }
+        for tag in [
+            "v0.9.0",
+            "0.9.0",
+            "1.0.0+build-5",
+            "release-2026",
+            "latest",
+            "",
+        ] {
+            assert!(!is_prerelease_tag(tag), "{tag}");
         }
     }
 

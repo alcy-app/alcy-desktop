@@ -8,17 +8,19 @@ use crate::storage_error::StorageError;
 
 const CURRENT_VERSION: u32 = 1;
 
-/// Campos desconhecidos são ignorados: builds anteriores gravavam também a
-/// origem das releases (`source`), que hoje vem fixa no build.
+/// Unknown fields are ignored: earlier builds also saved where releases come
+/// from (`source`), which is now fixed in the build.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedFile {
     version: u32,
     check_on_startup: bool,
+    /// Added later in version 1: files saved before it load as stable only.
+    #[serde(default)]
+    include_prereleases: bool,
 }
 
-/// Lê e grava as preferências de atualização do app (arquivo único e
-/// versionado).
+/// Reads and saves the app's update preferences (a single versioned file).
 pub struct UpdateSettingsStore {
     path: PathBuf,
 }
@@ -28,7 +30,7 @@ impl UpdateSettingsStore {
         Self { path }
     }
 
-    /// Sem arquivo, devolve o padrão (verificar ao abrir).
+    /// Without a file, returns the default (check when the app opens).
     pub fn load(&self) -> Result<UpdateSettings, StorageError> {
         if !self.path.exists() {
             return Ok(UpdateSettings::default());
@@ -45,6 +47,7 @@ impl UpdateSettingsStore {
 
         Ok(UpdateSettings {
             check_on_startup: file.check_on_startup,
+            include_prereleases: file.include_prereleases,
         })
     }
 
@@ -52,6 +55,7 @@ impl UpdateSettingsStore {
         let file = PersistedFile {
             version: CURRENT_VERSION,
             check_on_startup: settings.check_on_startup,
+            include_prereleases: settings.include_prereleases,
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|error| StorageError::Write(error.to_string()))?;
@@ -93,14 +97,35 @@ mod tests {
     }
 
     #[test]
-    fn roundtrips_the_startup_preference() {
+    fn roundtrips_the_preferences() {
         let path = temp_path();
         let store = UpdateSettingsStore::new(path.clone());
-        for check_on_startup in [false, true] {
-            let settings = UpdateSettings { check_on_startup };
+        for (check_on_startup, include_prereleases) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let settings = UpdateSettings {
+                check_on_startup,
+                include_prereleases,
+            };
             store.save(&settings).unwrap();
             assert_eq!(store.load().unwrap(), settings);
         }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_file_saved_before_the_preview_option_loads_as_stable_only() {
+        let path = temp_path();
+        let store = UpdateSettingsStore::new(path.clone());
+        fs::write(&path, r#"{"version":1,"checkOnStartup":true}"#).unwrap();
+
+        assert_eq!(
+            store.load().unwrap(),
+            UpdateSettings {
+                check_on_startup: true,
+                include_prereleases: false,
+            }
+        );
         let _ = fs::remove_file(path);
     }
 
@@ -117,7 +142,8 @@ mod tests {
         assert_eq!(
             store.load().unwrap(),
             UpdateSettings {
-                check_on_startup: false
+                check_on_startup: false,
+                include_prereleases: false,
             }
         );
         let _ = fs::remove_file(path);

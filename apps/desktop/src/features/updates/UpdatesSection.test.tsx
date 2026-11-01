@@ -7,6 +7,7 @@ import { STARTUP_CHECK_DELAY_MS } from './UpdateProvider'
 
 const getUpdateSettings = vi.fn()
 const setUpdateCheckOnStartup = vi.fn()
+const setUpdateIncludePrereleases = vi.fn()
 const checkForUpdate = vi.fn()
 const downloadUpdate = vi.fn()
 const cancelUpdateOperation = vi.fn()
@@ -21,6 +22,9 @@ vi.mock('../../bindings/get-update-settings', () => ({
 }))
 vi.mock('../../bindings/set-update-check-on-startup', () => ({
   setUpdateCheckOnStartup: (...args: unknown[]) => setUpdateCheckOnStartup(...args),
+}))
+vi.mock('../../bindings/set-update-include-prereleases', () => ({
+  setUpdateIncludePrereleases: (...args: unknown[]) => setUpdateIncludePrereleases(...args),
 }))
 vi.mock('../../bindings/check-for-update', () => ({
   checkForUpdate: (...args: unknown[]) => checkForUpdate(...args),
@@ -47,7 +51,7 @@ const SOURCE: UpdateSourceDto = {
 }
 
 function settings(overrides: Partial<UpdateSettingsDto> = {}): UpdateSettingsDto {
-  return { currentVersion: '0.1.0', checkOnStartup: false, source: SOURCE, ...overrides }
+  return { currentVersion: '0.1.0', checkOnStartup: false, includePrereleases: false, source: SOURCE, ...overrides }
 }
 
 const RELEASE: ReleaseDto = {
@@ -65,6 +69,7 @@ beforeEach(() => {
   for (const mock of [
     getUpdateSettings,
     setUpdateCheckOnStartup,
+    setUpdateIncludePrereleases,
     checkForUpdate,
     downloadUpdate,
     cancelUpdateOperation,
@@ -321,5 +326,32 @@ describe('UpdatesSection — verificação automática', () => {
 
     await waitFor(() => expect(setUpdateCheckOnStartup).toHaveBeenCalledWith(true))
     expect(await screen.findByRole('checkbox', { name: 'Verificar atualizações ao abrir o Alcy' })).toBeChecked()
+  })
+
+  it('salva a preferência de instalar versões Preview', async () => {
+    setUpdateIncludePrereleases.mockResolvedValue({ ok: true, value: settings({ includePrereleases: true }) })
+    renderSection()
+
+    const checkbox = await screen.findByRole('checkbox', { name: 'Instalar versões Preview' })
+    await waitFor(() => expect(checkbox).toBeEnabled())
+    expect(checkbox).not.toBeChecked()
+
+    fireEvent.click(checkbox)
+
+    await waitFor(() => expect(setUpdateIncludePrereleases).toHaveBeenCalledWith(true))
+    expect(await screen.findByRole('checkbox', { name: 'Instalar versões Preview' })).toBeChecked()
+  })
+
+  it('desativa as versões Preview quando a origem é um manifesto único', async () => {
+    getUpdateSettings.mockResolvedValue({
+      ok: true,
+      value: settings({ source: { ...SOURCE, provider: 'manifest', requiresAccount: false, accountId: null } }),
+    })
+    renderSection()
+
+    await waitFor(() =>
+      expect(screen.getByText('A origem deste build entrega uma única versão, sem versões Preview à parte.')).toBeInTheDocument(),
+    )
+    expect(screen.getByRole('checkbox', { name: 'Instalar versões Preview' })).toBeDisabled()
   })
 })
