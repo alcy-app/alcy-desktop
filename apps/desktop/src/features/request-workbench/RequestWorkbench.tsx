@@ -1581,14 +1581,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   // Saved requests are renamed in their collection (the tab follows); drafts only rename their tab.
   // Flow node tabs keep their name, which flows use to reference the node.
+  const renameCollectionNode = collections.rename
+  const renameTab = workbench.renameTab
   const renameActiveRequest = useMemo(() => {
     const { id, requestId, flowNodeRef } = workbench.activeTab
     if (flowNodeRef) return undefined
     return (name: string) => {
-      if (requestId) collections.rename(requestId, name)
-      else workbench.renameTab(id, name)
+      if (requestId) renameCollectionNode(requestId, name)
+      else renameTab(id, name)
     }
-  }, [collections.rename, workbench.activeTab, workbench.renameTab])
+  }, [renameCollectionNode, renameTab, workbench.activeTab])
 
   // Bar order: version review, conflict, then the extensions' tabs. When
   // several are active, the last one wins (an extension's tab shows over a
