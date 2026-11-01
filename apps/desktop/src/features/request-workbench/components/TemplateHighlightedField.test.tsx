@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { fireEvent, render, screen } from '../../../test-utils'
 import { installButtonMousedownWorkaround } from '../../../shared/button-mousedown-workaround'
@@ -134,6 +134,60 @@ describe('TemplateHighlightedField', () => {
     fireEvent.mouseEnter(token)
     expect(screen.getByText('abc123')).toHaveClass('var-preview-value')
     expect(document.querySelector('.var-preview-badge')).toHaveTextContent('Definida')
+  })
+
+  it('abre o tooltip abaixo do token quando não cabe acima', () => {
+    // Token perto do topo da janela e cartão mais alto que o espaço acima:
+    // medido só depois de montado, então o lado é decidido em layout effect.
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 10,
+      bottom: 24,
+      left: 20,
+      right: 90,
+      width: 70,
+      height: 14,
+      x: 20,
+      y: 10,
+      toJSON: () => ({}),
+    })
+    const heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(240)
+
+    try {
+      render(<Field initial="{{token}}" />)
+      fireEvent.mouseEnter(document.querySelector('.var-token--known') as Element)
+      const tooltip = document.querySelector('.var-tooltip') as HTMLElement
+      expect(tooltip.style.top).toBe('30px')
+      expect(tooltip.style.bottom).toBe('')
+    } finally {
+      rectSpy.mockRestore()
+      heightSpy.mockRestore()
+    }
+  })
+
+  it('mantém o tooltip acima do token quando há espaço', () => {
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 400,
+      bottom: 414,
+      left: 20,
+      right: 90,
+      width: 70,
+      height: 14,
+      x: 20,
+      y: 400,
+      toJSON: () => ({}),
+    })
+    const heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(240)
+
+    try {
+      render(<Field initial="{{token}}" />)
+      fireEvent.mouseEnter(document.querySelector('.var-token--known') as Element)
+      const tooltip = document.querySelector('.var-tooltip') as HTMLElement
+      expect(tooltip.style.bottom).toBe(`${window.innerHeight - 400 + 6}px`)
+      expect(tooltip.style.top).toBe('')
+    } finally {
+      rectSpy.mockRestore()
+      heightSpy.mockRestore()
+    }
   })
 
   describe('mascarado', () => {

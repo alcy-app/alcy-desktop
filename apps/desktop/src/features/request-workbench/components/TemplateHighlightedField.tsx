@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ChangeEvent, ClipboardEvent, FocusEvent, KeyboardEvent, MouseEvent, ReactNode, UIEvent } from 'react'
+import type { CSSProperties, ChangeEvent, ClipboardEvent, FocusEvent, KeyboardEvent, MouseEvent, ReactNode, RefObject, UIEvent } from 'react'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import type { RouteParamEntry } from '../request-workbench.types'
 import { useLanguage } from '../../../shared/i18n/use-language'
@@ -53,9 +53,72 @@ const SUGGESTIONS_MAX_ITEMS = 8
 /** Tempo para o mouse cruzar o espaço entre o token e o cartão sem fechá-lo. */
 const PREVIEW_CLOSE_DELAY_MS = 150
 
-interface TooltipPosition {
+interface TooltipAnchor {
   left: number
+  top: number
   bottom: number
+}
+
+/** Lado em que o cartão abre: acima do token por padrão, abaixo quando não há
+ * altura suficiente acima (token perto do topo da janela). */
+type TooltipPlacement = 'above' | 'below'
+
+function anchorForToken(element: HTMLElement): TooltipAnchor {
+  const rect = element.getBoundingClientRect()
+  const left = Math.min(rect.left, window.innerWidth - TOOLTIP_MAX_WIDTH_PX - VIEWPORT_MARGIN_PX)
+  return {
+    left: Math.max(left, VIEWPORT_MARGIN_PX),
+    top: rect.top,
+    bottom: rect.bottom,
+  }
+}
+
+/**
+ * Posição do cartão na viewport, a partir do token sob o mouse. A altura do
+ * cartão só é conhecida depois de montado (docs do parâmetro, aviso de
+ * indefinida, campo de valor), então o lado é decidido num `useLayoutEffect`:
+ * sem espaço acima, o cartão abre abaixo do token em vez de ser cortado pelo
+ * topo da janela. O `ResizeObserver` reavalia quando o cartão cresce com ele
+ * aberto (ex.: "Criar no ambiente ativo" adiciona o campo de valor).
+ */
+function useTooltipCard(cardRef: RefObject<HTMLDivElement | null>) {
+  const [anchor, setAnchor] = useState<TooltipAnchor | null>(null)
+  const [placement, setPlacement] = useState<TooltipPlacement>('above')
+
+  const open = (element: HTMLElement) => {
+    setAnchor(anchorForToken(element))
+    setPlacement('above')
+  }
+
+  const close = () => setAnchor(null)
+
+  /** O foco dentro do cartão (campo de valor) o mantém aberto. */
+  const holdsFocus = () => cardRef.current?.contains(document.activeElement) ?? false
+
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    if (!anchor || !card) return
+
+    const updatePlacement = () => {
+      const spaceAbove = anchor.top - TOOLTIP_GAP_PX - VIEWPORT_MARGIN_PX
+      const spaceBelow = window.innerHeight - anchor.bottom - TOOLTIP_GAP_PX - VIEWPORT_MARGIN_PX
+      // Sem espaço dos dois lados, fica do lado com mais sobra.
+      setPlacement(spaceAbove < card.offsetHeight && spaceBelow > spaceAbove ? 'below' : 'above')
+    }
+
+    updatePlacement()
+    const observer = new ResizeObserver(updatePlacement)
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [anchor, cardRef])
+
+  const style: CSSProperties | undefined = anchor
+    ? placement === 'above'
+      ? { left: anchor.left, bottom: window.innerHeight - anchor.top + TOOLTIP_GAP_PX }
+      : { left: anchor.left, top: anchor.bottom + TOOLTIP_GAP_PX }
+    : undefined
+
+  return { isOpen: anchor !== null, open, close, holdsFocus, style }
 }
 
 /**
@@ -83,10 +146,10 @@ function VariableToken({
 }) {
   const { t } = useLanguage()
   const editing = useVariableEditing()
-  const [position, setPosition] = useState<TooltipPosition | null>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const card = useTooltipCard(cardRef)
   const closeTimerRef = useRef<number | null>(null)
   const cardHoveredRef = useRef(false)
-  const cardRef = useRef<HTMLDivElement>(null)
   const isKnown = variables.some((variable) => variable.name === segment.name)
   const stateClassName = !isKnown ? 'var-token--unknown' : masked ? 'var-token--masked' : 'var-token--known'
 
@@ -99,8 +162,8 @@ function VariableToken({
     cancelClose()
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null
-      if (cardHoveredRef.current || cardRef.current?.contains(document.activeElement)) return
-      setPosition(null)
+      if (cardHoveredRef.current || card.holdsFocus()) return
+      card.close()
     }, PREVIEW_CLOSE_DELAY_MS)
   }
 
@@ -108,12 +171,7 @@ function VariableToken({
 
   const handleMouseEnter = (event: MouseEvent<HTMLSpanElement>) => {
     cancelClose()
-    const rect = event.currentTarget.getBoundingClientRect()
-    const left = Math.min(rect.left, window.innerWidth - TOOLTIP_MAX_WIDTH_PX - VIEWPORT_MARGIN_PX)
-    setPosition({
-      left: Math.max(left, VIEWPORT_MARGIN_PX),
-      bottom: window.innerHeight - rect.top + TOOLTIP_GAP_PX,
-    })
+    card.open(event.currentTarget)
   }
 
   const handleCardBlur = (event: FocusEvent<HTMLDivElement>) => {
@@ -125,12 +183,12 @@ function VariableToken({
       <span className={`var-token ${stateClassName}`} onMouseEnter={handleMouseEnter} onMouseLeave={scheduleClose}>
         {segment.raw}
       </span>
-      {position &&
+      {card.isOpen &&
         createPortal(
           <div
             ref={cardRef}
             className="var-tooltip"
-            style={{ left: position.left, bottom: position.bottom }}
+            style={card.style}
             onMouseEnter={() => {
               cardHoveredRef.current = true
               cancelClose()
@@ -152,7 +210,7 @@ function VariableToken({
               onRequestClose={() => {
                 cardHoveredRef.current = false
                 cancelClose()
-                setPosition(null)
+                card.close()
               }}
             />
           </div>,
@@ -174,10 +232,10 @@ function RouteParamToken({
   onSetValue?: (id: string, value: string) => void
 }) {
   const { t } = useLanguage()
-  const [position, setPosition] = useState<TooltipPosition | null>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const card = useTooltipCard(cardRef)
   const closeTimerRef = useRef<number | null>(null)
   const cardHoveredRef = useRef(false)
-  const cardRef = useRef<HTMLDivElement>(null)
   const inputId = useId()
   const value = routeParam?.value ?? ''
   const canEdit = !!routeParam && !!onSetValue
@@ -191,8 +249,8 @@ function RouteParamToken({
     cancelClose()
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null
-      if (cardHoveredRef.current || cardRef.current?.contains(document.activeElement)) return
-      setPosition(null)
+      if (cardHoveredRef.current || card.holdsFocus()) return
+      card.close()
     }, PREVIEW_CLOSE_DELAY_MS)
   }
 
@@ -200,18 +258,13 @@ function RouteParamToken({
 
   const handleMouseEnter = (event: MouseEvent<HTMLSpanElement>) => {
     cancelClose()
-    const rect = event.currentTarget.getBoundingClientRect()
-    const left = Math.min(rect.left, window.innerWidth - TOOLTIP_MAX_WIDTH_PX - VIEWPORT_MARGIN_PX)
-    setPosition({
-      left: Math.max(left, VIEWPORT_MARGIN_PX),
-      bottom: window.innerHeight - rect.top + TOOLTIP_GAP_PX,
-    })
+    card.open(event.currentTarget)
   }
 
   const close = () => {
     cardHoveredRef.current = false
     cancelClose()
-    setPosition(null)
+    card.close()
   }
 
   const handleCardBlur = (event: FocusEvent<HTMLDivElement>) => {
@@ -230,12 +283,12 @@ function RouteParamToken({
       <span className="route-param-token" onMouseEnter={handleMouseEnter} onMouseLeave={scheduleClose}>
         {raw}
       </span>
-      {position &&
+      {card.isOpen &&
         createPortal(
           <div
             ref={cardRef}
             className="var-tooltip"
-            style={{ left: position.left, bottom: position.bottom }}
+            style={card.style}
             onMouseEnter={() => {
               cardHoveredRef.current = true
               cancelClose()

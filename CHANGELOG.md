@@ -18,6 +18,9 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - O agente entende melhor pedidos feitos com modelos menores e, quando erra, recebe instruções de como corrigir.
 - A importação de scripts k6 está disponível no editor de flows e aceita constantes, URLs montadas com templates, parâmetros reutilizáveis e corpos JSON. Variáveis do script podem ser preenchidas no flow antes de executar o teste.
 
+### Fixed
+- A pré-visualização de uma variável abre abaixo do mouse quando não há espaço acima, em vez de ser cortada pelo topo da janela.
+
 ## [0.9.0-preview01] - 30/10/2026
 
 ### Added
