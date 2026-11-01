@@ -30,6 +30,16 @@ pub struct AgentConversation {
 }
 
 impl AgentConversation {
+    /// A fully summarized last user message is immutable. Start a fresh
+    /// message so new text never disappears behind the summary boundary.
+    pub fn push_user_text(&mut self, text: String) {
+        if self.summarized_until == self.messages.len() {
+            self.messages.push(AgentMessage::user_text(text));
+        } else {
+            super::conversation::push_user_text(&mut self.messages, text);
+        }
+    }
+
     pub fn new(messages: Vec<AgentMessage>) -> Self {
         Self {
             messages,

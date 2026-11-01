@@ -11,6 +11,8 @@ import { forgetRememberedSessions, rememberSession, rememberedSession } from './
 const getAgentSettings = vi.fn()
 const saveAgentSettings = vi.fn()
 const startAgentTurn = vi.fn()
+const compactAgentSession = vi.fn()
+const cancelAgentTurn = vi.fn()
 const submitAgentToolResult = vi.fn()
 const loadAgentSession = vi.fn()
 const notifyWhenUnfocused = vi.fn()
@@ -22,7 +24,8 @@ vi.mock('../../bindings/agent-settings', () => ({
 vi.mock('../../bindings/agent-turn', () => ({
   startAgentTurn: (...args: unknown[]) => startAgentTurn(...args),
   submitAgentToolResult: (...args: unknown[]) => submitAgentToolResult(...args),
-  cancelAgentTurn: vi.fn(async () => ({ ok: true, value: undefined })),
+  cancelAgentTurn: (...args: unknown[]) => cancelAgentTurn(...args),
+  compactAgentSession: (...args: unknown[]) => compactAgentSession(...args),
 }))
 vi.mock('../../bindings/system-notification', () => ({
   notifyWhenUnfocused: (...args: unknown[]) => notifyWhenUnfocused(...args),
@@ -95,11 +98,121 @@ beforeEach(() => {
   getAgentSettings.mockReset()
   saveAgentSettings.mockReset()
   startAgentTurn.mockReset()
+  compactAgentSession.mockReset().mockResolvedValue({ ok: true, value: { compacted: true, cancelled: false, inputTokens: 20, outputTokens: 5 } })
+  cancelAgentTurn.mockReset().mockResolvedValue({ ok: true, value: undefined })
   submitAgentToolResult.mockReset()
   notifyWhenUnfocused.mockReset().mockResolvedValue(true)
 })
 
 describe('AgentPanel', () => {
+  it('offers slash commands, filters them, completes with Tab and keeps unknown commands local', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    const input = screen.getByLabelText('Mensagem para o agente')
+    fireEvent.change(input, { target: { value: '/' } })
+    expect(screen.getByRole('listbox', { name: 'Comandos do chat' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /\/compact/ })).toBeDisabled()
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(input).toHaveValue('/')
+    fireEvent.change(input, { target: { value: '/cl' } })
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(input).toHaveValue('/clear')
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input).toHaveValue('')
+    sendMessage('/unknown')
+    expect(screen.getByRole('alert')).toHaveTextContent('Comando desconhecido')
+    expect(startAgentTurn).not.toHaveBeenCalled()
+    expect(compactAgentSession).not.toHaveBeenCalled()
+    sendMessage('/clear extra')
+    expect(input).toHaveValue('/clear extra')
+    expect(screen.getByRole('alert')).toHaveTextContent('Comando desconhecido')
+    fireEvent.change(input, { target: { value: 'Explique GET /users' } })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('clears the conversation and attachments without sending a command to the model', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('Mensagem anterior')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Novo chat' })).toBeEnabled())
+    typeMention()
+    fireEvent.keyDown(screen.getByLabelText('Mensagem para o agente'), { key: 'Enter' })
+    expect(screen.getByRole('button', { name: '1 contexto' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Mensagem para o agente'), { target: { value: '/cl' } })
+    fireEvent.click(screen.getByRole('option', { name: /\/clear/ }))
+    expect(screen.queryByText('Mensagem anterior')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '1 contexto' })).not.toBeInTheDocument()
+    expect(screen.getByText('Como posso ajudar?')).toBeInTheDocument()
+    expect(screen.getByLabelText('Mensagem para o agente')).toHaveValue('')
+    expect(startAgentTurn).toHaveBeenCalledTimes(1)
+    sendMessage('Nova conversa')
+    await waitFor(() => expect(startAgentTurn).toHaveBeenCalledTimes(2))
+    expect(startAgentTurn.mock.calls[1][0]).toMatchObject({ sessionId: null, text: 'Nova conversa', context: [] })
+  })
+
+  it('keeps clear from being undone by a pending session restore', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    rememberSession('/w', 'old')
+    let finish: (value: unknown) => void = () => {}
+    loadAgentSession.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('/clear')
+    await act(async () => finish({ ok: true, value: {
+      id: 'old', title: 'Old chat', providerId: claude.id, model: claude.model, omittedItems: 0,
+      totalTokens: { input: 1, output: 1 }, items: [{ kind: 'assistant', text: 'Old reply' }],
+    } }))
+    expect(screen.queryByText('Old reply')).not.toBeInTheDocument()
+    expect(screen.getByText('Como posso ajudar?')).toBeInTheDocument()
+    expect(rememberedSession('/w')).toBeNull()
+  })
+
+  it('compacts the current session with keyboard navigation and keeps its visible transcript', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 1, outputTokens: 1 } })
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('Preserve esta mensagem')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Novo chat' })).toBeEnabled())
+    const input = screen.getByLabelText('Mensagem para o agente')
+    fireEvent.change(input, { target: { value: '/' } })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: /\/compact/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await screen.findByText('Contexto compactado. As mensagens continuam disponíveis nesta conversa.')).toBeInTheDocument()
+    expect(compactAgentSession).toHaveBeenCalledWith({ runId: expect.any(String), rootPath: '/w', sessionId: 's1', providerId: claude.id, model: claude.model })
+    expect(screen.getByText('Preserve esta mensagem')).toBeInTheDocument()
+    expect(startAgentTurn).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('↑ 20 · ↓ 5 tokens')).toBeInTheDocument()
+    expect(input).toHaveValue('')
+  })
+
+  it('shows cancellable compaction progress and reports failure without losing the conversation', async () => {
+    getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: claude.id } })
+    startAgentTurn.mockResolvedValue({ ok: true, value: { sessionId: 's1', stopReason: 'endTurn', inputTokens: 0, outputTokens: 0 } })
+    let finish: (value: unknown) => void = () => {}
+    compactAgentSession.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    render(<AgentPanel rootPath="/w" host={host()} settingsOpen={false} onOpenSettings={() => {}} onClose={() => {}} />)
+    await screen.findByText('Como posso ajudar?')
+    sendMessage('Continue aqui')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Novo chat' })).toBeEnabled())
+    sendMessage('/compact')
+    expect(screen.getByRole('status')).toHaveTextContent('Compactando o contexto da conversa')
+    expect(screen.getByRole('button', { name: 'Novo chat' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Parar' }))
+    expect(cancelAgentTurn).toHaveBeenCalledWith(compactAgentSession.mock.calls[0][0].runId)
+    act(() => finish({ ok: false, error: { kind: 'network', message: 'offline' } }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('offline')
+    expect(screen.getByText('Continue aqui')).toBeInTheDocument()
+    expect(startAgentTurn).toHaveBeenCalledTimes(1)
+  })
   it('sends a suggested continuation once without consuming the composer draft and still asks for tool approval', async () => {
     getAgentSettings.mockResolvedValue({ ok: true, value: { providers: [claude], activeProviderId: 'claude' } })
     rememberSession('/w', 's-old')

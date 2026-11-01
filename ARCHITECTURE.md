@@ -304,7 +304,8 @@ number of rounds, with cancellation and bounded tool output. The model is the
 and for OpenAI-compatible Chat Completions (OpenCode Zen, local servers),
 both streamed over SSE through `SharedHttpClient`, so the app's proxy and
 certificates apply. Nothing leaves the machine until the user sets up a
-provider and sends a message; API keys live in the system keyring.
+provider and sends a message or explicitly compacts a saved chat; API keys
+live in the system keyring.
 
 Tools are a catalog of plain data in `alcy-app` (name, JSON Schema and an
 approval class: read, edit or side effect). They run where the state lives,
@@ -365,6 +366,18 @@ only the latest tool results in full, and a
 chat near the provider's context budget has its oldest part summarized by the
 model; the summary is saved with the chat, the transcript keeps everything
 (spec 0135).
+
+The composer handles slash commands locally. `/clear` starts an empty active
+chat while preserving the previous saved conversation. `/compact` invokes an
+explicit cancellable use case in `alcy-app` through a typed native binding.
+It summarizes all messages not yet covered by the saved summary, without
+adding a user turn or running tools. The full transcript remains available;
+the next message carries the summary to the provider. Compaction reuses the
+existing summary and token-usage fields, so stored sessions need no migration.
+Native turns and compaction reserve the session before loading it, preventing
+concurrent operations from overwriting one another with stale snapshots.
+Editing the last turn after full manual compaction invalidates its summary;
+the next request is rebuilt from the corrected transcript.
 
 Final agent replies may end with a bounded `alcy-suggestions` JSON code block.
 React renders its strings as optional follow-up buttons only after the turn

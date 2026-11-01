@@ -165,6 +165,7 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
         <AgentMessageList
           items={session.items}
           running={session.running}
+          compacting={session.compacting}
           onApprove={session.approve}
           onDecline={session.decline}
           onRevert={session.revert}
@@ -197,6 +198,13 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
         footer={toolbar}
         onSend={(text, context) => void session.send(text, context)}
         onStop={session.stop}
+        canCompact={session.sessionId !== null}
+        onCommand={(command) => {
+          if (command === 'clear') {
+            session.newChat()
+            setHistoryOpen(false)
+          } else void session.compact()
+        }}
       />
     </aside>
   )

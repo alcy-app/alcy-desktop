@@ -21,6 +21,7 @@ const PAGE_SIZE = 150
 interface AgentMessageListProps {
   items: AgentChatItem[]
   running?: boolean
+  compacting?: boolean
   onApprove: (callId: string) => void
   onDecline: (callId: string) => void
   onRevert: (callId: string) => void
@@ -83,7 +84,7 @@ function firstMessagesOfEachDay(items: AgentChatItem[]): Set<string> {
   return ids
 }
 
-export function AgentMessageList({ items, running = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference, onRetry, onEditLast, onQuote, onFollowUp }: AgentMessageListProps) {
+export function AgentMessageList({ items, running = false, compacting = false, onApprove, onDecline, onRevert, onOpenReference, resolveReference, onRetry, onEditLast, onQuote, onFollowUp }: AgentMessageListProps) {
   const { t, language } = useLanguage()
   const [visible, setVisible] = useState(PAGE_SIZE)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -97,6 +98,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
   // Only the last message can be edited, and not while a turn runs.
   const editing = editingId !== null && editingId === lastUserId && !running ? editingId : null
   const thinking = running
+    && !compacting
     && !(last?.kind === 'assistant' && last.streaming)
     && !(last?.kind === 'tool' && (last.state === 'running' || last.state === 'awaitingApproval'))
 
@@ -259,6 +261,7 @@ export function AgentMessageList({ items, running = false, onApprove, onDecline,
         }
       })}
       {thinking && <AgentThinking />}
+      {compacting && <p className="agent-notice" role="status"><Spinner size={13} /><span>{t('agent.command.compacting')}</span></p>}
       {selectionMenu && onQuote && (
         <SelectionMenu
           {...selectionMenu}

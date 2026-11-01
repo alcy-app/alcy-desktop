@@ -24,8 +24,9 @@ pub use prompt::{
     SELECTION_CONTEXT_KIND, agent_system_prompt, compose_user_message,
 };
 pub use run_turn::{
-    AgentToolHost, AgentTurnOutcome, AgentTurnRequest, AgentTurnSink, DEFAULT_MAX_OUTPUT_TOKENS,
-    MAX_TOOL_RESULT_BYTES, MAX_TOOL_ROUNDS, ToolCall, ToolOutcome, TurnStop, run_agent_turn,
+    AgentCompactionOutcome, AgentToolHost, AgentTurnOutcome, AgentTurnRequest, AgentTurnSink,
+    DEFAULT_MAX_OUTPUT_TOKENS, MAX_TOOL_RESULT_BYTES, MAX_TOOL_ROUNDS, ToolCall, ToolOutcome,
+    TurnStop, compact_agent_conversation, run_agent_turn,
 };
 pub use session_title::{MAX_SESSION_TITLE_CHARS, generate_session_title};
 pub use tools::{ToolClass, agent_tool_catalog, agent_tool_class};

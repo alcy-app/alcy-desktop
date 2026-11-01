@@ -758,6 +758,23 @@
   min-width: 0;
 }
 
+.agent-command-symbol {
+  padding: 0 var(--space-1);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.agent-context-option.agent-command-option {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.agent-command-name { font-family: var(--font-mono); font-weight: var(--font-weight-medium); }
+.agent-command-description { color: var(--text-muted); font-size: var(--font-size-xs); }
+.agent-command-error { margin: 0; color: var(--error); font-size: var(--font-size-xs); }
+
 .agent-provider-picker {
   flex: 0 1 auto;
   min-width: 0;

@@ -241,19 +241,61 @@ async fn compact_if_needed<M: ChatModel>(
     }
     let keep = (budget * KEEP_AFTER_COMPACTION_PERCENT / 100).saturating_sub(fixed);
     let cut = compaction_cut(conversation, keep)?;
+    summarize_conversation(model, conversation, request.model, cut)
+        .await
+        .ok()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCompactionOutcome {
+    Unchanged,
+    Compacted(TokenUsage),
+    Cancelled,
+}
+
+/// Explicitly summarizes all new transcript messages without adding a user turn
+/// or running tools. The next user message receives the saved summary.
+pub async fn compact_agent_conversation<M: ChatModel, C: FlowCancellation>(
+    model: &M,
+    cancellation: &C,
+    conversation: &mut AgentConversation,
+    model_name: &str,
+) -> Result<AgentCompactionOutcome, ChatModelError> {
+    if cancellation.is_cancelled() {
+        return Ok(AgentCompactionOutcome::Cancelled);
+    }
+    let cut = conversation.messages.len();
+    if cut <= conversation.summarized_until {
+        return Ok(AgentCompactionOutcome::Unchanged);
+    }
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Ok(AgentCompactionOutcome::Cancelled),
+        result = summarize_conversation(model, conversation, model_name, cut) => {
+            result.map(AgentCompactionOutcome::Compacted)
+        }
+    }
+}
+
+async fn summarize_conversation<M: ChatModel>(
+    model: &M,
+    conversation: &mut AgentConversation,
+    model_name: &str,
+    cut: usize,
+) -> Result<TokenUsage, ChatModelError> {
     let input = summary_input(
         conversation.summary.as_deref(),
         &conversation.messages[conversation.summarized_until..cut],
     );
     let messages = [AgentMessage::user_text(input)];
     let summary_request = ChatRequest {
-        model: request.model,
+        model: model_name,
         system_prompt: SUMMARY_SYSTEM_PROMPT,
         messages: &messages,
         tools: &[],
         max_tokens: SUMMARY_MAX_OUTPUT_TOKENS,
     };
-    let response = model.complete(&summary_request, &|_| {}).await.ok()?;
+    let response = model.complete(&summary_request, &|_| {}).await?;
     let summary: String = response
         .content
         .iter()
@@ -264,11 +306,13 @@ async fn compact_if_needed<M: ChatModel>(
         .collect::<Vec<_>>()
         .join("\n");
     if summary.trim().is_empty() {
-        return None;
+        return Err(ChatModelError::InvalidResponse(
+            "the summary is empty".into(),
+        ));
     }
     conversation.summary = Some(summary.trim().to_string());
     conversation.summarized_until = cut;
-    Some(response.usage)
+    Ok(response.usage)
 }
 
 async fn run_tool<H: AgentToolHost>(host: &H, id: &str, name: &str, input: &Value) -> ToolOutcome {
@@ -662,6 +706,104 @@ mod tests {
         }
         messages.push(AgentMessage::user_text("latest question"));
         AgentConversation::new(messages)
+    }
+
+    #[tokio::test]
+    async fn manual_compaction_preserves_transcript_and_summarizes_new_messages_once() {
+        let model = ScriptedModel::new(vec![text("A saved summary")]);
+        let mut conversation = AgentConversation::new(vec![
+            AgentMessage::user_text("question"),
+            AgentMessage {
+                role: AgentRole::Assistant,
+                content: vec![ContentBlock::Text {
+                    text: "answer".into(),
+                }],
+            },
+        ]);
+        let original = conversation.messages.clone();
+        let outcome = compact_agent_conversation(&model, &Flag::default(), &mut conversation, "m")
+            .await
+            .unwrap();
+        assert!(matches!(outcome, AgentCompactionOutcome::Compacted(_)));
+        assert_eq!(conversation.messages, original);
+        assert_eq!(conversation.summarized_until, original.len());
+        assert_eq!(conversation.summary.as_deref(), Some("A saved summary"));
+        assert_eq!(
+            compact_agent_conversation(&model, &Flag::default(), &mut conversation, "m")
+                .await
+                .unwrap(),
+            AgentCompactionOutcome::Unchanged
+        );
+        assert_eq!(*model.seen_lengths.lock().unwrap(), vec![1]);
+        conversation.push_user_text("next question".into());
+        let sent = request_messages(&conversation);
+        assert_eq!(sent.len(), 1);
+        assert!(
+            matches!(&sent[0].content[0], ContentBlock::Text { text } if text.contains("A saved summary"))
+        );
+        assert!(
+            matches!(&sent[0].content[1], ContentBlock::Text { text } if text == "next question")
+        );
+    }
+
+    #[tokio::test]
+    async fn new_text_after_compacting_an_interrupted_user_turn_stays_in_the_request() {
+        let model = ScriptedModel::new(vec![text("Previous question")]);
+        let mut conversation =
+            AgentConversation::new(vec![AgentMessage::user_text("interrupted question")]);
+        compact_agent_conversation(&model, &Flag::default(), &mut conversation, "m")
+            .await
+            .unwrap();
+        conversation.push_user_text("new question".into());
+        assert_eq!(conversation.messages.len(), 2);
+        let sent = request_messages(&conversation);
+        assert_eq!(sent.len(), 1);
+        assert!(
+            matches!(&sent[0].content[0], ContentBlock::Text { text } if text.contains("Previous question"))
+        );
+        assert!(
+            matches!(&sent[0].content[1], ContentBlock::Text { text } if text == "new question")
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_compaction_failure_or_empty_summary_keeps_previous_context() {
+        for replies in [vec![], vec![text("  ")]] {
+            let model = ScriptedModel::new(replies);
+            let mut conversation = long_conversation();
+            conversation.summary = Some("previous summary".into());
+            conversation.summarized_until = 2;
+            let original = conversation.clone();
+            assert!(
+                compact_agent_conversation(&model, &Flag::default(), &mut conversation, "m")
+                    .await
+                    .is_err()
+            );
+            assert_eq!(conversation, original);
+        }
+    }
+
+    #[tokio::test]
+    async fn manual_compaction_cancels_pending_summary_without_changes() {
+        struct CancelAfterYield;
+        impl FlowCancellation for CancelAfterYield {
+            fn is_cancelled(&self) -> bool {
+                false
+            }
+            async fn cancelled(&self) {
+                tokio::task::yield_now().await;
+            }
+        }
+        let mut model = ScriptedModel::new(vec![]);
+        model.hang = true;
+        let mut conversation = long_conversation();
+        let original = conversation.clone();
+        let result = compact_agent_conversation(&model, &CancelAfterYield, &mut conversation, "m")
+            .await
+            .unwrap();
+        assert_eq!(result, AgentCompactionOutcome::Cancelled);
+        assert_eq!(conversation, original);
+        assert_eq!(*model.seen_lengths.lock().unwrap(), vec![1]);
     }
 
     #[tokio::test]

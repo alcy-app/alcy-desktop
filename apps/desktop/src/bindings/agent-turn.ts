@@ -61,6 +61,18 @@ export function cancelAgentTurn(runId: string) {
   return invokeResult<void, never>('cancel_agent_turn', { input: { runId } })
 }
 
+export interface AgentCompactionResultDto {
+  compacted: boolean
+  cancelled: boolean
+  inputTokens: number
+  outputTokens: number
+}
+
+/** Summarizes the saved native transcript without creating a user message or running tools. */
+export function compactAgentSession(input: { runId: string; rootPath: string; sessionId: string; providerId: string; model: string }) {
+  return invokeResult<AgentCompactionResultDto, AgentCommandError>('compact_agent_session', { input })
+}
+
 export function submitAgentToolResult(waitId: string, content: string, isError: boolean) {
   return invokeResult<void, AgentCommandError>('submit_agent_tool_result', { input: { waitId, content, isError } })
 }

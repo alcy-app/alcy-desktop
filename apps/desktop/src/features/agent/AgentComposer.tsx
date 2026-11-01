@@ -6,6 +6,7 @@ import { useEditorSelection, type EditorSelection } from '../request-workbench/e
 import type { WorkbenchAgentHost } from './agent-host'
 import { pasteJsonAsBlock } from './agent-code'
 import { AgentContextAttachments } from './AgentContextAttachments'
+import { AGENT_COMMANDS, agentCommandQuery, parseAgentCommand, type AgentCommand } from './agent-commands'
 import { agentContextOptions, mentionAt, selectionContext, type AgentContextOption } from './agent-context'
 
 interface AgentComposerProps {
@@ -22,6 +23,8 @@ interface AgentComposerProps {
   footer: ReactNode
   onSend: (text: string, context: AgentContextOption[]) => void
   onStop: () => void
+  onCommand: (command: AgentCommand) => void
+  canCompact: boolean
 }
 
 const CATEGORY_KINDS = ['tab', 'request', 'environment', 'flow', 'monitor', 'runner', 'mock'] as const
@@ -35,15 +38,17 @@ function sameSelection(a: EditorSelection | null, b: EditorSelection | null) {
 const CATEGORY_ICONS = CONTEXT_ICONS
 
 /** Message box: Enter sends, Shift+Enter breaks the line, `@` attaches workbench items, pasted JSON becomes a block. */
-export function AgentComposer({ host, running, disabled, text, onTextChange: setText, context, onContextChange: setContext, textareaRef, footer, onSend, onStop }: AgentComposerProps) {
+export function AgentComposer({ host, running, disabled, text, onTextChange: setText, context, onContextChange: setContext, textareaRef, footer, onSend, onStop, onCommand, canCompact }: AgentComposerProps) {
   const { t } = useLanguage()
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
   const [highlight, setHighlight] = useState(0)
+  const [commandQuery, setCommandQuery] = useState<string | null>(null)
+  const [commandError, setCommandError] = useState<string | null>(null)
   const [category, setCategory] = useState<CategoryKind | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const lastCaretRef = useRef<{ value: string; caret: number } | null>(null)
   const menuId = useId()
-  const mentionOpen = mention !== null
+  const mentionOpen = mention !== null || commandQuery !== null
   // The editor selection rides along automatically until dismissed or sent.
   const selection = useEditorSelection()
   const [dismissedSelection, setDismissedSelection] = useState<EditorSelection | null>(null)
@@ -56,6 +61,7 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
     if (!mentionOpen) return
     const close = () => {
       setMention(null)
+      setCommandQuery(null)
       setCategory(null)
     }
     // A pointer press can blur the textarea before the menu receives its click.
@@ -94,7 +100,7 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
 
   useEffect(() => {
     menuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' })
-  }, [category, highlight, mention?.query])
+  }, [category, highlight, mention?.query, commandQuery])
 
   const options = useMemo(
     () =>
@@ -118,9 +124,34 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   const selectable = entries.filter((entry) => entry.type === 'context' || !entry.disabled)
   const selected = selectable[Math.min(highlight, selectable.length - 1)]
 
+  const commands = AGENT_COMMANDS.filter((command) => command.startsWith(commandQuery ?? ''))
+  const availableCommands = commands.filter((command) => !running && !disabled && (command !== 'compact' || canCompact))
+  const selectedCommand = availableCommands[Math.min(highlight, availableCommands.length - 1)]
+
+  const executeCommand = (command: AgentCommand) => {
+    if (running || disabled) return
+    if (command === 'compact' && !canCompact) {
+      setCommandError(t('agent.command.nothing'))
+      return
+    }
+    setText('')
+    setCommandQuery(null)
+    setCommandError(null)
+    setMention(null)
+    if (command === 'clear') {
+      setContext([])
+      setDismissedSelection(activeSelection)
+    }
+    onCommand(command)
+    textareaRef.current?.focus()
+  }
+
   const updateMention = (value: string, caret: number) => {
     lastCaretRef.current = { value, caret }
-    const next = mentionAt(value, caret)
+    const query = agentCommandQuery(value, caret)
+    setCommandQuery(query)
+    setCommandError(null)
+    const next = query === null ? mentionAt(value, caret) : null
     if (next?.start !== mention?.start || next?.query !== mention?.query) setCategory(null)
     setMention(next)
     setHighlight(0)
@@ -142,6 +173,12 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
 
   const submit = () => {
     if (running || disabled || text.trim() === '') return
+    if (text.trimStart().startsWith('/')) {
+      const command = parseAgentCommand(text)
+      if (command) executeCommand(command)
+      else setCommandError(t('agent.command.unknown'))
+      return
+    }
     const attached = activeSelection ? [selectionContext(activeSelection, host, selectionLabel), ...context] : context
     onSend(text, attached.map(({ kind, id, label, summary }) => ({ kind, id, label, summary })))
     if (activeSelection) setDismissedSelection(activeSelection)
@@ -169,6 +206,28 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.nativeEvent.isComposing) return
+    if (commandQuery !== null) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setCommandQuery(null)
+        return
+      }
+      if (availableCommands.length > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        event.preventDefault()
+        setHighlight((index) => (index + (event.key === 'ArrowDown' ? 1 : -1) + availableCommands.length) % availableCommands.length)
+        return
+      }
+      if (selectedCommand && (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey))) {
+        event.preventDefault()
+        if (event.key === 'Tab') {
+          setText(`/${selectedCommand}`)
+          setCommandQuery(null)
+          requestAnimationFrame(() => textareaRef.current?.focus())
+        } else executeCommand(selectedCommand)
+        return
+      }
+    }
     if (mention && category && event.key === 'ArrowLeft') {
       event.preventDefault()
       back()
@@ -209,6 +268,32 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
 
   return (
     <div className="agent-composer" data-disabled={disabled}>
+      {commandQuery !== null && (
+        <div ref={menuRef} className="agent-context-menu agent-command-menu" onPointerDown={(event) => event.preventDefault()}>
+          <div className="agent-context-menu-title"><span className="agent-command-symbol" aria-hidden="true">/</span>{t('agent.command.title')}</div>
+          <div className="agent-context-menu-body" role="listbox" id={menuId} aria-label={t('agent.command.title')}>
+            {commands.length === 0 && <p className="agent-context-menu-empty">{t('agent.command.unknown')}</p>}
+            {commands.map((command, index) => (
+              <button
+                key={command}
+                id={`${menuId}-command-${index}`}
+                type="button"
+                role="option"
+                tabIndex={-1}
+                className="agent-context-option agent-command-option"
+                aria-selected={command === selectedCommand}
+                disabled={!availableCommands.includes(command)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => { const index = availableCommands.indexOf(command); if (index >= 0) setHighlight(index) }}
+                onClick={() => executeCommand(command)}
+              >
+                <span className="agent-command-name">/{command}</span>
+                <span className="agent-command-description">{t(command === 'compact' && !canCompact ? 'agent.command.nothing' : `agent.command.${command}`)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {mention && (
         <div
           ref={menuRef}
@@ -294,9 +379,10 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
         autoCapitalize="off"
         placeholder={disabled ? t('agent.composer.disabledPlaceholder') : t('agent.composer.placeholder')}
         aria-label={t('agent.composer.aria')}
-        aria-controls={mention ? menuId : undefined}
-        aria-expanded={mention !== null}
-        aria-activedescendant={mention && selected ? `${menuId}-${entries.indexOf(selected)}` : undefined}
+        aria-controls={mentionOpen ? menuId : undefined}
+        aria-expanded={mentionOpen}
+        aria-describedby={commandError ? `${menuId}-error` : undefined}
+        aria-activedescendant={commandQuery !== null && selectedCommand ? `${menuId}-command-${commands.indexOf(selectedCommand)}` : mention && selected ? `${menuId}-${entries.indexOf(selected)}` : undefined}
         onChange={(event) => {
           setText(event.target.value)
           updateMention(event.target.value, event.target.selectionStart)
@@ -318,6 +404,7 @@ export function AgentComposer({ host, running, disabled, text, onTextChange: set
           requestAnimationFrame(() => input.setSelectionRange(pasted.caret, pasted.caret))
         }}
       />
+      {commandError && <p className="agent-command-error" id={`${menuId}-error`} role="alert">{commandError}</p>}
       <div className="agent-composer-footer">
         {footer}
         {running ? (

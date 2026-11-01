@@ -4,6 +4,7 @@ import type { AgentCommandError } from '../../bindings/agent-settings'
 import { loadAgentSession, type AgentSessionViewDto } from '../../bindings/agent-sessions'
 import {
   cancelAgentTurn,
+  compactAgentSession,
   startAgentTurn,
   submitAgentToolResult,
   type AgentContextInput,
@@ -85,11 +86,13 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   const { t, language } = useLanguage()
   const [items, setItems] = useState<AgentChatItem[]>([])
   const [running, setRunning] = useState(false)
+  const [compacting, setCompacting] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [title, setTitle] = useState<string | null>(null)
   /** Every token the chat used, also of turns replaced by a retry or an edit. */
   const [tokens, setTokens] = useState(NO_TOKENS)
   const runIdRef = useRef<string | null>(null)
+  const viewRevisionRef = useRef(0)
   const approvalsRef = useRef(new Map<string, (approved: boolean) => void>())
   const revertsRef = useRef(new Map<string, () => void | boolean>())
   // Tools read the latest host and default name, not those of the render that started the turn.
@@ -243,6 +246,29 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
 
   const send = useCallback((text: string, context: AgentContextInput[]) => startTurn(text, context, false), [startTurn])
 
+  const compact = useCallback(async () => {
+    if (runIdRef.current !== null || providerId === null || sessionId === null) return
+    const runId = crypto.randomUUID()
+    runIdRef.current = runId
+    setRunning(true)
+    setCompacting(true)
+    const result = await compactAgentSession({ runId, rootPath, sessionId, providerId, model })
+    runIdRef.current = null
+    setRunning(false)
+    setCompacting(false)
+    setItems((current) => {
+      if (!result.ok) return [...current, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t) }]
+      const { compacted, cancelled, inputTokens, outputTokens } = result.value
+      const text = cancelled ? t('agent.stop.cancelled') : t(compacted ? 'agent.command.compacted' : 'agent.command.unchanged')
+      return [
+        ...current,
+        { kind: 'notice', id: nextItemId('notice'), tone: 'info', text },
+        ...(inputTokens + outputTokens > 0 ? [{ kind: 'usage' as const, id: nextItemId('usage'), input: inputTokens, output: outputTokens }] : []),
+      ]
+    })
+    if (result.ok) setTokens((current) => ({ input: current.input + result.value.inputTokens, output: current.output + result.value.outputTokens }))
+  }, [model, providerId, rootPath, sessionId, t])
+
   /** Sends the last message again after its turn failed. */
   const retry = useCallback(() => {
     const last = items[lastUserIndex(items)]
@@ -296,6 +322,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
 
   const newChat = useCallback(() => {
     if (runIdRef.current !== null) return
+    viewRevisionRef.current += 1
     setItems([])
     setTokens(NO_TOKENS)
     setSessionId(null)
@@ -343,7 +370,9 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   const openSession = useCallback(
     async (id: string) => {
       if (runIdRef.current !== null) return
+      const revision = ++viewRevisionRef.current
       const result = await loadAgentSession(rootPath, id)
+      if (revision !== viewRevisionRef.current || runIdRef.current !== null) return
       if (result.ok) applyView(result.value)
       else setItems((current) => [...current, { kind: 'notice', id: nextItemId('notice'), tone: 'error', text: agentErrorMessage(result.error, t) }])
     },
@@ -356,9 +385,10 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
   useEffect(() => {
     const id = rememberedSession(rootPath)
     if (id === null) return
+    const revision = viewRevisionRef.current
     let cancelled = false
     void loadAgentSession(rootPath, id).then((result) => {
-      if (cancelled || runIdRef.current !== null) return
+      if (cancelled || revision !== viewRevisionRef.current || runIdRef.current !== null) return
       if (result.ok) applyView(result.value)
       else rememberSession(rootPath, null)
     })
@@ -380,5 +410,5 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     [rootPath],
   )
 
-  return { items, running, sessionId, title, tokens, send, retry, editLast, stop, approve: (callId: string) => resolveApproval(callId, true), decline: (callId: string) => resolveApproval(callId, false), revert, newChat, openSession }
+  return { items, running, compacting, sessionId, title, tokens, send, compact, retry, editLast, stop, approve: (callId: string) => resolveApproval(callId, true), decline: (callId: string) => resolveApproval(callId, false), revert, newChat, openSession }
 }

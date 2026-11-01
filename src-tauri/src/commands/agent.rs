@@ -10,11 +10,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alcy_agent::AgentHttpClient;
 use alcy_app::{
-    AgentConversation, AgentLanguage, AgentRole, AgentToolHost, AgentTurnRequest, AgentTurnSink,
-    ChatModelError, ContentBlock, ContextReference, CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS,
-    MAX_CONTEXT_REFERENCES, ToolCall, ToolClass, ToolOutcome, TurnStop, agent_system_prompt,
-    agent_tool_catalog, compose_user_message, generate_session_title, last_user_text_index,
-    push_user_text, remove_last_user_text, run_agent_turn,
+    AgentCompactionOutcome, AgentConversation, AgentLanguage, AgentRole, AgentToolHost,
+    AgentTurnRequest, AgentTurnSink, ChatModelError, ContentBlock, ContextReference,
+    CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS, MAX_CONTEXT_REFERENCES, ToolCall, ToolClass,
+    ToolOutcome, TurnStop, agent_system_prompt, agent_tool_catalog, compact_agent_conversation,
+    compose_user_message, generate_session_title, last_user_text_index, remove_last_user_text,
+    run_agent_turn,
 };
 use alcy_domain::{
     AgentProvider, AgentProviderKind, AgentSettings, AgentSettingsError, agent_credential_key,
@@ -91,6 +92,29 @@ impl Drop for RunGuard<'_> {
         let prefix = format!("{}:", self.run_id);
         lock(&self.runs.pending_tools).retain(|wait_id, _| !wait_id.starts_with(&prefix));
     }
+}
+
+/// Reserve before loading so maintenance and turns never save stale snapshots.
+fn register_run(
+    runs: &AgentRuns,
+    run_id: String,
+    session_id: String,
+) -> Result<(RunGuard<'_>, WatchCancellation), AgentCommandError> {
+    let mut cancellations = lock(&runs.cancellations);
+    let mut busy = lock(&runs.busy_sessions);
+    if cancellations.contains_key(&run_id) || !busy.insert(session_id.clone()) {
+        return Err(AgentCommandError::Busy);
+    }
+    let (sender, receiver) = watch::channel(false);
+    cancellations.insert(run_id.clone(), sender);
+    Ok((
+        RunGuard {
+            runs,
+            run_id,
+            session_id,
+        },
+        WatchCancellation(receiver),
+    ))
 }
 
 // ---------------------------------------------------------------- DTOs
@@ -266,6 +290,26 @@ pub struct AgentTurnResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct CancelAgentTurnInput {
     pub run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactAgentSessionInput {
+    pub run_id: String,
+    pub root_path: String,
+    pub session_id: String,
+    pub provider_id: String,
+    #[serde(default)]
+    pub model: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCompactionResultDto {
+    pub compacted: bool,
+    pub cancelled: bool,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -726,16 +770,26 @@ fn context_budget_tokens(provider: &AgentProvider) -> usize {
 /// or in the last one when it joined an interrupted turn's tool results; the
 /// replies get the time the turn ended. Earlier messages without a time get 0.
 /// Drops the user's last message and what came after it, before the turn is
-/// sent again. The summarized part of a long chat cannot change.
+/// sent again. A full manual summary is invalidated before editing its last
+/// turn; an automatic summary covering only older turns stays immutable.
 fn replace_last_turn(session: &mut AgentSessionRecord) -> Result<(), AgentCommandError> {
     match last_user_text_index(&session.messages) {
         None => Err(AgentCommandError::Invalid {
             message: "there is no message to replace".into(),
         }),
-        Some(index) if index < session.summarized_until => Err(AgentCommandError::Invalid {
-            message: "that message is part of the summarized history".into(),
-        }),
+        Some(index)
+            if index < session.summarized_until
+                && session.summarized_until < session.messages.len() =>
+        {
+            Err(AgentCommandError::Invalid {
+                message: "that message is part of the summarized history".into(),
+            })
+        }
         Some(_) => {
+            if session.summarized_until == session.messages.len() {
+                session.summary = None;
+                session.summarized_until = 0;
+            }
             remove_last_user_text(&mut session.messages);
             let len = session.messages.len();
             session.message_times_ms.truncate(len);
@@ -817,6 +871,12 @@ async fn run_turn(
     }
     let chat = http.chat(&provider, key.as_deref())?;
 
+    let target_session_id = input
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("{:x}-{:x}", now_ms(), runs.next_id()));
+    let (_guard, cancellation) =
+        register_run(runs, input.run_id.clone(), target_session_id.clone())?;
     let root_path = input.root_path.clone();
     let sessions = paths.session_store();
     let mut session = match input.session_id.clone() {
@@ -829,7 +889,7 @@ async fn run_turn(
         None => {
             let now = now_ms();
             AgentSessionRecord {
-                id: format!("{now:x}-{:x}", runs.next_id()),
+                id: target_session_id,
                 title: title_from(&text),
                 created_at_ms: now,
                 updated_at_ms: now,
@@ -849,17 +909,6 @@ async fn run_turn(
         replace_last_turn(&mut session)?;
     }
 
-    if !lock(&runs.busy_sessions).insert(session.id.clone()) {
-        return Err(AgentCommandError::Busy);
-    }
-    let (sender, receiver) = watch::channel(false);
-    lock(&runs.cancellations).insert(input.run_id.clone(), sender);
-    let _guard = RunGuard {
-        runs,
-        run_id: input.run_id.clone(),
-        session_id: session.id.clone(),
-    };
-
     let context: Vec<ContextReference> = input
         .context
         .into_iter()
@@ -878,10 +927,7 @@ async fn run_turn(
     };
     let sent_at_ms = now_ms();
     let previous_len = conversation.messages.len();
-    push_user_text(
-        &mut conversation.messages,
-        compose_user_message(&text, &context),
-    );
+    conversation.push_user_text(compose_user_message(&text, &context));
     let _ = channel.send(AgentEventDto::SessionStarted {
         session_id: session.id.clone(),
         title: session.title.clone(),
@@ -920,7 +966,6 @@ async fn run_turn(
         run_id: &input.run_id,
     };
     let sink = ChannelSink { channel };
-    let cancellation = WatchCancellation(receiver);
     let turn = run_agent_turn(
         &chat,
         &tool_host,
@@ -995,6 +1040,92 @@ async fn run_turn(
 }
 
 /// Idempotent: an unknown or finished run is ignored.
+#[tauri::command]
+pub async fn compact_agent_session(
+    input: CompactAgentSessionInput,
+    paths: State<'_, AgentPaths>,
+    runs: State<'_, AgentRuns>,
+    credentials: State<'_, KeyringCredentialStore>,
+    http: State<'_, AgentHttpClient>,
+) -> Result<AgentCompactionResultDto, AgentCommandError> {
+    let result = compact_session(input, &paths, &runs, &*credentials, &http).await;
+    crate::logging::logged("alcy::agent", "compact agent chat", result)
+}
+
+async fn compact_session(
+    input: CompactAgentSessionInput,
+    paths: &AgentPaths,
+    runs: &AgentRuns,
+    credentials: &dyn CredentialStore,
+    http: &AgentHttpClient,
+) -> Result<AgentCompactionResultDto, AgentCommandError> {
+    if !is_valid_session_id(&input.session_id) {
+        return Err(AgentCommandError::NotFound);
+    }
+    let (_guard, cancellation) = register_run(runs, input.run_id, input.session_id.clone())?;
+    let store = paths.session_store();
+    let root = input.root_path.clone();
+    let id = input.session_id;
+    let mut session = run_blocking(move || store.load(&root, &id).map_err(Into::into))
+        .await?
+        .ok_or(AgentCommandError::NotFound)?;
+    let (provider, key) = provider_and_key(paths, credentials, &input.provider_id).await?;
+    let model = if input.model.trim().is_empty() {
+        provider.model.clone()
+    } else {
+        input.model.trim().to_string()
+    };
+    if model.is_empty() {
+        return Err(AgentCommandError::MissingModel);
+    }
+    let chat = http.chat(&provider, key.as_deref())?;
+    let mut conversation = AgentConversation {
+        messages: std::mem::take(&mut session.messages),
+        summary: session.summary.take(),
+        summarized_until: session.summarized_until,
+    };
+    let outcome =
+        compact_agent_conversation(&chat, &cancellation, &mut conversation, &model).await?;
+    let mut result = AgentCompactionResultDto {
+        compacted: false,
+        cancelled: false,
+        input_tokens: 0,
+        output_tokens: 0,
+    };
+    match outcome {
+        AgentCompactionOutcome::Cancelled => result.cancelled = true,
+        AgentCompactionOutcome::Unchanged => {}
+        AgentCompactionOutcome::Compacted(usage) => {
+            session.messages = conversation.messages;
+            session.summary = conversation.summary;
+            session.summarized_until = conversation.summarized_until;
+            let tokens = AgentTokenTotals {
+                input: usage.input_tokens,
+                output: usage.output_tokens,
+            };
+            session.total_tokens.add(tokens);
+            if !tokens.is_empty() {
+                session.turn_tokens.push(AgentTurnTokens {
+                    after_message: session.messages.len(),
+                    input: tokens.input,
+                    output: tokens.output,
+                });
+            }
+            session.updated_at_ms = now_ms();
+            let store = paths.session_store();
+            run_blocking(move || {
+                store.save(&input.root_path, &session)?;
+                Ok(())
+            })
+            .await?;
+            result.compacted = true;
+            result.input_tokens = tokens.input;
+            result.output_tokens = tokens.output;
+        }
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn cancel_agent_turn(input: CancelAgentTurnInput, runs: State<'_, AgentRuns>) {
     if let Some(sender) = lock(&runs.cancellations).get(&input.run_id) {
@@ -1179,6 +1310,25 @@ mod tests {
     use alcy_app::AgentMessage;
     use serde_json::json;
 
+    #[test]
+    fn turns_and_compaction_share_an_exclusive_session_reservation() {
+        let runs = AgentRuns::default();
+        let (guard, _) = register_run(&runs, "turn".into(), "session".into()).unwrap();
+        assert!(matches!(
+            register_run(&runs, "compact".into(), "session".into()),
+            Err(AgentCommandError::Busy)
+        ));
+        assert!(matches!(
+            register_run(&runs, "turn".into(), "other-session".into()),
+            Err(AgentCommandError::Busy)
+        ));
+        assert!(!lock(&runs.busy_sessions).contains("other-session"));
+        drop(guard);
+        assert!(lock(&runs.busy_sessions).is_empty());
+        assert!(lock(&runs.cancellations).is_empty());
+        assert!(register_run(&runs, "compact".into(), "session".into()).is_ok());
+    }
+
     struct NoKeys;
 
     impl CredentialStore for NoKeys {
@@ -1333,6 +1483,15 @@ mod tests {
             replace_last_turn(&mut session),
             Err(AgentCommandError::Invalid { .. })
         ));
+        // Editing after manual compaction invalidates the summary containing
+        // the replaced message, so stale facts never reach the next request.
+        session.summary = Some("summary including the first question".into());
+        session.summarized_until = session.messages.len();
+        replace_last_turn(&mut session).unwrap();
+        assert!(session.messages.is_empty());
+        assert_eq!(session.summary, None);
+        assert_eq!(session.summarized_until, 0);
+        assert_eq!(session.total_tokens.input, 30);
         session.messages.clear();
         session.summarized_until = 0;
         assert!(matches!(

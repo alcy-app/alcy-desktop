@@ -15,9 +15,10 @@ use alcy_storage::{
     SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore,
 };
 use commands::agent::{
-    AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, delete_agent_session,
-    get_agent_settings, list_agent_models, list_agent_sessions, load_agent_session,
-    save_agent_settings, set_agent_api_key, start_agent_turn, submit_agent_tool_result,
+    AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, compact_agent_session,
+    delete_agent_session, get_agent_settings, list_agent_models, list_agent_sessions,
+    load_agent_session, save_agent_settings, set_agent_api_key, start_agent_turn,
+    submit_agent_tool_result,
 };
 use commands::api_docs::get_request_docs;
 use commands::app_logs::{AppLogLocation, write_frontend_logs};
@@ -402,6 +403,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 list_agent_models,
                 start_agent_turn,
                 cancel_agent_turn,
+                compact_agent_session,
                 submit_agent_tool_result,
                 list_agent_sessions,
                 load_agent_session,
