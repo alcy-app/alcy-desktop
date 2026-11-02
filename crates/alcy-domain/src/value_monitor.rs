@@ -20,6 +20,10 @@ pub enum MonitoredValue {
     Number(String),
     Boolean(bool),
     Null,
+    /// Array sem itens (`[]`). Os itens de um array não vazio são avaliados
+    /// um a um; o vazio não tem nenhum, então ele próprio é avaliado e
+    /// reprova todas as regras.
+    EmptyArray,
 }
 
 impl MonitoredValue {
@@ -29,7 +33,7 @@ impl MonitoredValue {
             Self::Text(text) | Self::Number(text) => Some(text),
             Self::Boolean(true) => Some("true"),
             Self::Boolean(false) => Some("false"),
-            Self::Null => None,
+            Self::Null | Self::EmptyArray => None,
         }
     }
 }
@@ -37,7 +41,8 @@ impl MonitoredValue {
 /// Campo monitorado, escrito como caminho de chaves separadas por ponto
 /// (`usuario.nome`). Casa pelo sufixo: `nome` casa com qualquer chave `nome`,
 /// `usuario.nome` só com `nome` dentro de `usuario`. Índices de array não
-/// contam (`itens[].nome` equivale a `itens.nome`).
+/// contam (`itens[].nome` equivale a `itens.nome`), e os itens de um array
+/// são valores do campo que o contém (`tags` casa com `tags[0]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldPath {
     source: String,
@@ -78,8 +83,13 @@ impl FieldPath {
     }
 
     pub fn matches(&self, path: &[ValuePathSegment]) -> bool {
-        // O valor precisa ser a própria chave, não um item de array dentro dela.
-        if !matches!(path.last(), Some(ValuePathSegment::Key(_))) {
+        // O valor pertence à última chave do caminho: ele mesmo ou um item
+        // (de qualquer profundidade) do array guardado nela. Um valor na raiz
+        // ou num array na raiz não tem chave e não casa com campo nenhum.
+        if !path
+            .iter()
+            .any(|segment| matches!(segment, ValuePathSegment::Key(_)))
+        {
             return false;
         }
         let keys: Vec<&str> = path
@@ -478,8 +488,49 @@ mod tests {
 
         let bare = FieldPath::new("nome").unwrap();
         assert!(bare.matches(&[key("a"), ValuePathSegment::Index(0), key("nome")]));
-        assert!(!bare.matches(&[key("nome"), ValuePathSegment::Index(0)]));
         assert!(!bare.matches(&[key("nomes")]));
+        assert!(!bare.matches(&[ValuePathSegment::Index(0)]));
+    }
+
+    #[test]
+    fn array_items_belong_to_the_field_that_holds_the_array() {
+        let tags = FieldPath::new("tags").unwrap();
+        assert!(tags.matches(&[key("tags"), ValuePathSegment::Index(0)]));
+        assert!(tags.matches(&[
+            key("filme"),
+            key("tags"),
+            ValuePathSegment::Index(1),
+            ValuePathSegment::Index(0),
+        ]));
+        // O item de um array de objetos pertence à chave do objeto, não ao array.
+        assert!(!tags.matches(&[key("tags"), ValuePathSegment::Index(0), key("nome")]));
+
+        let marked = FieldPath::new("filme.tags[]").unwrap();
+        assert!(marked.matches(&[key("filme"), key("tags"), ValuePathSegment::Index(2)]));
+        assert!(!marked.matches(&[key("serie"), key("tags"), ValuePathSegment::Index(2)]));
+    }
+
+    #[test]
+    fn empty_array_fails_every_rule() {
+        let empty = MonitoredValue::EmptyArray;
+        assert!(!rule(RuleKind::NotEmpty).passes(&empty));
+        assert!(
+            !rule(RuleKind::LengthRange {
+                min: None,
+                max: Some(10)
+            })
+            .passes(&empty)
+        );
+        assert!(!rule(RuleKind::NotContains(matcher("x", true))).passes(&empty));
+        assert!(!rule(RuleKind::Type(ValueType::String)).passes(&empty));
+        assert!(!rule(RuleKind::Type(ValueType::Null)).passes(&empty));
+        assert!(
+            !rule(RuleKind::NumberRange {
+                min: Some(0.0),
+                max: None
+            })
+            .passes(&empty)
+        );
     }
 
     #[test]

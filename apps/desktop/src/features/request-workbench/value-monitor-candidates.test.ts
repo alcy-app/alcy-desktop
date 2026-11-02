@@ -23,6 +23,17 @@ describe('monitorCandidates', () => {
     expect(text.slice(first.from, first.to)).toBe('"Ana"')
   })
 
+  it('devolve os itens de um array e o array vazio como valores da chave que os guarda', () => {
+    const movies = '{"filmes": [{"tags": ["history", 3]}, {"tags": []}, {"tags": [{"tags": "x"}]}]}'
+    const { candidates } = monitorCandidates(movies, ['tags'])
+    expect(candidates.map((candidate) => [candidate.path, candidate.literal])).toEqual([
+      [['filmes', 0, 'tags', 0], '"history"'],
+      [['filmes', 0, 'tags', 1], '3'],
+      [['filmes', 1, 'tags'], '[]'],
+      [['filmes', 2, 'tags', 0, 'tags'], '"x"'],
+    ])
+  })
+
   it('não devolve nada sem chaves ou com JSON inválido', () => {
     expect(monitorCandidates(text, []).candidates).toEqual([])
     expect(monitorCandidates('{"nome": ', ['nome']).candidates).toEqual([])

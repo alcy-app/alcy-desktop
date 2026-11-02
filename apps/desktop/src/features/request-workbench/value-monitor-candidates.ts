@@ -4,12 +4,12 @@ import type { JsonPathSegment } from './json-value-index'
 /** Mesmo limite do backend (`MAX_MONITOR_CANDIDATES`): acima disso a avaliação é cortada e o usuário avisado. */
 export const MAX_MONITOR_CANDIDATES = 10_000
 
-/** Valor primitivo do documento que pode interessar a algum monitor, com a faixa que ocupa no texto. */
+/** Valor primitivo (ou array vazio) do documento que pode interessar a algum monitor, com a faixa que ocupa no texto. */
 export interface MonitorCandidate {
   from: number
   to: number
   path: JsonPathSegment[]
-  /** Literal JSON como aparece no texto (`"Ana"`, `12.5`, `null`). */
+  /** Literal JSON como aparece no texto (`"Ana"`, `12.5`, `null`, `[]`). */
   literal: string
 }
 
@@ -24,9 +24,19 @@ export function lastFieldKey(field: string): string {
   return segments[segments.length - 1].trim().replace(/\[\]$/, '').trim()
 }
 
+/** Última chave do caminho de um valor; os índices depois dela são de itens do array guardado nela. */
+function lastPathKey(path: readonly JsonPathSegment[]): string | undefined {
+  for (let index = path.length - 1; index >= 0; index--) {
+    const segment = path[index]
+    if (typeof segment === 'string') return segment
+  }
+  return undefined
+}
+
 /**
- * Pré-filtro barato antes do IPC: só os valores cujo caminho termina numa
- * chave que algum campo monitorado usa. O casamento completo (sufixo do
+ * Pré-filtro barato antes do IPC: só os valores cuja última chave é usada
+ * por algum campo monitorado — o próprio valor da chave ou itens do array
+ * guardado nela, incluindo arrays vazios. O casamento completo (sufixo do
  * caminho) e as regras ficam no backend. Documento que não é JSON válido
  * não tem candidatos.
  */
@@ -35,9 +45,9 @@ export function monitorCandidates(text: string, lastKeys: readonly string[]): Mo
   if (keys.size === 0) return { candidates: [], truncated: false }
   const candidates: MonitorCandidate[] = []
   let truncated = false
-  for (const value of indexJsonValues(text)) {
-    const last = value.path[value.path.length - 1]
-    if (typeof last !== 'string' || !keys.has(last)) continue
+  for (const value of indexJsonValues(text, { emptyArrays: true })) {
+    const last = lastPathKey(value.path)
+    if (last === undefined || !keys.has(last)) continue
     if (candidates.length === MAX_MONITOR_CANDIDATES) {
       truncated = true
       break

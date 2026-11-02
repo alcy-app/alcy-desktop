@@ -36,6 +36,16 @@ describe('indexJsonValues', () => {
     expect(indexJsonValues('42')).toEqual([{ from: 0, to: 2, path: [] }])
     expect(indexJsonValues('{"a": {}, "b": []}')).toEqual([])
   })
+
+  it('inclui arrays vazios só quando pedido', () => {
+    const text = '{"a": {}, "b": [ ], "c": [[]]}'
+    const values = indexJsonValues(text, { emptyArrays: true })
+
+    expect(values.map((value) => [value.path, text.slice(value.from, value.to)])).toEqual([
+      [['b'], '[ ]'],
+      [['c', 0], '[]'],
+    ])
+  })
 })
 
 describe('findValueAt', () => {

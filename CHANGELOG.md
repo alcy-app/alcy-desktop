@@ -25,6 +25,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Fixed
 - Conexões WebSocket gravadas em arquivos HAR não são mais importadas como requisições GET comuns.
 - A pré-visualização de uma variável abre abaixo do mouse quando não há espaço acima, em vez de ser cortada pelo topo da janela.
+- Os monitores de valores passam a reconhecer campos que guardam listas: cada item é avaliado pelas regras, e uma lista vazia é reprovada.
 
 ## [0.9.0-preview01] - 30/10/2026
 

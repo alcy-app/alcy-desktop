@@ -5,8 +5,9 @@ use serde_json::Value;
 /// enviar e avisa o usuário; o backend repete o corte por segurança.
 pub const MAX_MONITOR_CANDIDATES: usize = 10_000;
 
-/// Um valor primitivo da resposta candidato a monitoramento: o caminho até
-/// ele e o literal JSON como aparece no corpo (`"Ana"`, `12.50`, `null`).
+/// Um valor da resposta candidato a monitoramento: o caminho até ele e o
+/// literal JSON como aparece no corpo (`"Ana"`, `12.50`, `null`, `[]`).
+/// Além dos primitivos, só o array vazio é candidato.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorCandidate {
     pub path: Vec<ValuePathSegment>,
@@ -25,7 +26,8 @@ pub struct ValueFinding {
 
 /// Aplica os monitores habilitados a cada candidato cujo caminho casa com
 /// algum campo do monitor. Um candidato pode gerar um resultado por
-/// monitor; literais que não são JSON primitivo válido são ignorados.
+/// monitor; literais que não são JSON primitivo válido nem array vazio são
+/// ignorados.
 pub fn evaluate_value_monitors(
     monitors: &[ValueMonitor],
     candidates: &[MonitorCandidate],
@@ -67,6 +69,7 @@ fn monitored_value(literal: &str) -> Option<MonitoredValue> {
         Value::Number(_) => Some(MonitoredValue::Number(literal.trim().to_string())),
         Value::Bool(value) => Some(MonitoredValue::Boolean(value)),
         Value::Null => Some(MonitoredValue::Null),
+        Value::Array(items) if items.is_empty() => Some(MonitoredValue::EmptyArray),
         Value::Array(_) | Value::Object(_) => None,
     }
 }
@@ -137,6 +140,43 @@ mod tests {
                     field: "nome".into(),
                     failed_rule_ids: vec!["tamanho".into(), "letras".into()],
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn evaluates_array_items_and_fails_empty_arrays() {
+        let tags = || {
+            ValueMonitor::new(
+                "tags",
+                "Tags",
+                true,
+                vec![FieldPath::new("tags").unwrap()],
+                vec![ValueRule::new("cheio", RuleKind::NotEmpty).unwrap()],
+            )
+            .unwrap()
+        };
+        let findings = evaluate_value_monitors(
+            &[tags()],
+            &[
+                candidate(&["filmes", "0", "tags", "0"], r#""history""#),
+                candidate(&["filmes", "0", "tags", "1"], r#""  ""#),
+                candidate(&["filmes", "1", "tags"], "[ ]"),
+                candidate(&["filmes", "2", "tags"], "[1]"),
+                candidate(&["filmes", "3", "tags"], "{}"),
+            ],
+        );
+
+        let summary: Vec<(usize, Vec<String>)> = findings
+            .into_iter()
+            .map(|finding| (finding.value_index, finding.failed_rule_ids))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (0, vec![]),
+                (1, vec!["cheio".to_string()]),
+                (2, vec!["cheio".to_string()]),
             ]
         );
     }

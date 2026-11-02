@@ -11,12 +11,17 @@ export interface JsonValueRange {
 
 const LITERAL = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y
 
+export interface IndexJsonOptions {
+  /** Inclui também os arrays vazios (`[]`), com a faixa do colchete de abertura ao de fechamento. */
+  emptyArrays?: boolean
+}
+
 /**
  * Indexa, em ordem de documento, todos os valores primitivos de um JSON
  * (aproximadamente linear no tamanho do texto). Devolve `[]` quando o texto
  * não é JSON válido — o chamador simplesmente não oferece captura.
  */
-export function indexJsonValues(text: string): JsonValueRange[] {
+export function indexJsonValues(text: string, options: IndexJsonOptions = {}): JsonValueRange[] {
   const values: JsonValueRange[] = []
   let i = 0
 
@@ -54,9 +59,14 @@ export function indexJsonValues(text: string): JsonValueRange[] {
       }
     }
     if (char === '[') {
+      const from = i
       i++
       skipSpace()
-      if (text[i] === ']') return void i++
+      if (text[i] === ']') {
+        i++
+        if (options.emptyArrays) values.push({ from, to: i, path })
+        return
+      }
       for (let index = 0; ; index++) {
         readValue([...path, index])
         skipSpace()
