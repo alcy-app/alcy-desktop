@@ -3,8 +3,10 @@ packages:
 
 # Advisory fixes in transitive development dependencies
 # (GHSA-2v37-7h3g-55p8, GHSA-3wwx-pv8p-q78v, and the undici 8.12.2 batch such
-# as GHSA-4qv8-2p9j-2685). Remove once vite/postcss and jsdom require the
-# fixed versions.
+# as GHSA-4qv8-2p9j-2685), and minimatch for GHSA-g3hv-75wg-m249 (eslint and
+# typescript-eslint). Remove once vite/postcss, jsdom and the eslint packages
+# require the fixed versions.
 overrides:
   nanoid@<3.3.18: ^3.3.18
   undici@>=8.1.0 <8.12.2: ^8.12.2
+  minimatch@<11.0.1: ^11.0.4
