@@ -114,6 +114,8 @@ export function EnvironmentsPanel({
   const { bindings: shortcutBindings } = useShortcuts()
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  // Row that takes focus back once a keyboard rename ends, so F2/Delete keep working.
+  const refocusRowIdRef = useRef<string | null>(null)
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   // Rascunho da edição em massa, atrelado ao ambiente em que foi aberto: trocar de ambiente volta à tabela.
@@ -283,12 +285,21 @@ export function EnvironmentsPanel({
                       onChange={(event) => onRenameEnvironment(environment.id, event.target.value)}
                       onBlur={() => setRenamingId(null)}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter') setRenamingId(null)
+                        if (event.key === 'Enter' || event.key === 'Escape') {
+                          refocusRowIdRef.current = environment.id
+                          setRenamingId(null)
+                        }
                       }}
                     />
                   </div>
                 ) : (
                   <button
+                    ref={(element) => {
+                      if (element && refocusRowIdRef.current === environment.id) {
+                        refocusRowIdRef.current = null
+                        element.focus()
+                      }
+                    }}
                     type="button"
                     className="env-list-item"
                     aria-current={isActive}

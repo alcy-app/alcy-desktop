@@ -82,6 +82,8 @@ describe('ValueMonitorsPanel', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Nome do monitor' }), { target: { value: 'Outro' } })
     expect(props.onRenameMonitor).toHaveBeenCalledWith('m1', 'Outro')
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Nome do monitor' }), { key: 'Enter' })
+    // O foco volta à linha, para seguir usando os atalhos.
+    expect(screen.getByRole('button', { name: /^Nome curto/ })).toHaveFocus()
 
     fireEvent.keyDown(screen.getByRole('button', { name: /^Nome curto/ }), { key: 'Delete' })
     fireEvent.click(screen.getByRole('button', { name: 'Remover' }))

@@ -1,5 +1,5 @@
 import { truncateMiddle } from '../../shared/truncate-middle'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { FocusEvent } from 'react'
 import type { ValueMonitorDto, ValueMonitorsError, ValueRuleKind } from '../../bindings/list-value-monitors'
 import { useLanguage } from '../../shared/i18n/use-language'
@@ -51,6 +51,8 @@ export function ValueMonitorsPanel({
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  // Row that takes focus back once a keyboard rename ends, so F2/Delete keep working.
+  const refocusRowIdRef = useRef<string | null>(null)
 
   const selected = monitors.find((monitor) => monitor.id === selectedId) ?? monitors[0] ?? null
   const pendingRemove = monitors.find((monitor) => monitor.id === pendingRemoveId) ?? null
@@ -101,7 +103,10 @@ export function ValueMonitorsPanel({
                         onChange={(event) => onRenameMonitor(monitor.id, event.target.value)}
                         onBlur={() => setRenamingId(null)}
                         onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === 'Escape') setRenamingId(null)
+                          if (event.key === 'Enter' || event.key === 'Escape') {
+                            refocusRowIdRef.current = monitor.id
+                            setRenamingId(null)
+                          }
                         }}
                       />
                       <span className="vm-list-meta">{summary(monitor)}</span>
@@ -109,6 +114,12 @@ export function ValueMonitorsPanel({
                   </div>
                 ) : (
                   <button
+                    ref={(element) => {
+                      if (element && refocusRowIdRef.current === monitor.id) {
+                        refocusRowIdRef.current = null
+                        element.focus()
+                      }
+                    }}
                     type="button"
                     className="env-list-item vm-list-item"
                     aria-current={isCurrent}

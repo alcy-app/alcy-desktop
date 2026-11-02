@@ -113,7 +113,9 @@ describe('EnvironmentsPanel', () => {
       const input = screen.getByRole('textbox', { name: 'Nome do ambiente' })
       fireEvent.change(input, { target: { value: 'QA' } })
       expect(onRenameEnvironment).toHaveBeenCalledWith('env-2', 'QA')
-      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.keyDown(input, { key: 'Escape' })
+      // O foco volta à linha, para seguir usando os atalhos.
+      expect(screen.getByRole('button', { name: 'Staging' })).toHaveFocus()
 
       fireEvent.keyDown(screen.getByRole('button', { name: 'Staging' }), { key: 'Delete' })
       fireEvent.click(screen.getByRole('button', { name: 'Remover' }))
