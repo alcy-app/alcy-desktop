@@ -12,6 +12,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Mencionar no chat**: requisições, coleções, pastas, flows, ambientes, mock servers e abas abertas podem ser mencionados no chat do agente pelo menu de cada item, assim como um valor da resposta, pelo menu do botão direito sobre ele.
 - Nova opção "Instalar versões Preview" nas configurações de atualização, para receber as versões Preview quando forem mais novas que a versão estável.
 - **Requisições WebSocket**: conecte a servidores WebSocket, envie mensagens de texto, JSON ou binárias e acompanhe as mensagens trocadas em tempo real. Também funcionam em scripts, no runner de coleções e nos flows, e são importadas de arquivos do Insomnia e HAR.
+- **Formato de data e hora personalizado nos monitores**: a regra Formato aceita um padrão como `DD/MM/YYYY HH:mm` e confere se o valor segue esse formato e é uma data válida.
 
 ### Changed
 - Novas conversas com o agente começam no lugar de recuperar o chat da última vez que o Alcy foi aberto. O chat anterior continua disponível no histórico.

@@ -1,21 +1,21 @@
 use alcy_domain::{MonitoredValue, ValueMonitor, ValuePathSegment};
 use serde_json::Value;
 
-/// Limite de valores avaliados de uma vez — o frontend corta antes de
-/// enviar e avisa o usuário; o backend repete o corte por segurança.
+/// Maximum number of values evaluated at once. The frontend truncates before
+/// sending and warns the user; the backend repeats the cut as a safeguard.
 pub const MAX_MONITOR_CANDIDATES: usize = 10_000;
 
-/// Um valor da resposta candidato a monitoramento: o caminho até ele e o
-/// literal JSON como aparece no corpo (`"Ana"`, `12.50`, `null`, `[]`).
-/// Além dos primitivos, só o array vazio é candidato.
+/// A response value that may be monitored: its path and the JSON literal as
+/// it appears in the body (`"Ana"`, `12.50`, `null`, `[]`). Besides
+/// primitives, only the empty array is a candidate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorCandidate {
     pub path: Vec<ValuePathSegment>,
     pub literal: String,
 }
 
-/// Resultado de um monitor sobre um candidato. `failed_rule_ids` vazio
-/// significa que o valor foi aprovado por todas as regras.
+/// Result of one monitor on one candidate. An empty `failed_rule_ids` means
+/// the value passed every rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValueFinding {
     pub value_index: usize,
@@ -24,10 +24,10 @@ pub struct ValueFinding {
     pub failed_rule_ids: Vec<String>,
 }
 
-/// Aplica os monitores habilitados a cada candidato cujo caminho casa com
-/// algum campo do monitor. Um candidato pode gerar um resultado por
-/// monitor; literais que não são JSON primitivo válido nem array vazio são
-/// ignorados.
+/// Applies the enabled monitors to every candidate whose path matches one of
+/// the monitor's fields. A candidate can produce one result per monitor;
+/// literals that are neither a valid JSON primitive nor an empty array are
+/// ignored.
 pub fn evaluate_value_monitors(
     monitors: &[ValueMonitor],
     candidates: &[MonitorCandidate],

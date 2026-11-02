@@ -4,30 +4,30 @@ use std::sync::LazyLock;
 use regex::Regex;
 use thiserror::Error;
 
-/// Segmento do caminho até um valor dentro de uma resposta JSON.
+/// Segment of the path to a value inside a JSON response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValuePathSegment {
     Key(String),
     Index(usize),
 }
 
-/// Valor primitivo de uma resposta, como o monitor o enxerga. Números
-/// guardam o literal original (`1.50` continua `1.50`), porque as regras de
-/// texto olham o que aparece na resposta.
+/// A primitive value of a response, as the monitor sees it. Numbers keep the
+/// original literal (`1.50` stays `1.50`) because the text rules look at
+/// what appears in the response.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MonitoredValue {
     Text(String),
     Number(String),
     Boolean(bool),
     Null,
-    /// Array sem itens (`[]`). Os itens de um array não vazio são avaliados
-    /// um a um; o vazio não tem nenhum, então ele próprio é avaliado e
-    /// reprova todas as regras.
+    /// Array without items (`[]`). The items of a non-empty array are
+    /// evaluated one by one; an empty one has none, so the array itself is
+    /// evaluated and fails every rule.
     EmptyArray,
 }
 
 impl MonitoredValue {
-    /// Representação textual usada pelas regras de texto; `None` para `null`.
+    /// Text used by the text rules; `None` for `null` and the empty array.
     fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text(text) | Self::Number(text) => Some(text),
@@ -38,11 +38,11 @@ impl MonitoredValue {
     }
 }
 
-/// Campo monitorado, escrito como caminho de chaves separadas por ponto
-/// (`usuario.nome`). Casa pelo sufixo: `nome` casa com qualquer chave `nome`,
-/// `usuario.nome` só com `nome` dentro de `usuario`. Índices de array não
-/// contam (`itens[].nome` equivale a `itens.nome`), e os itens de um array
-/// são valores do campo que o contém (`tags` casa com `tags[0]`).
+/// A monitored field, written as a dot-separated key path (`user.name`). It
+/// matches by suffix: `name` matches any `name` key, `user.name` only `name`
+/// inside `user`. Array indices don't count (`items[].name` is the same as
+/// `items.name`), and the items of an array are values of the field that
+/// holds it (`tags` matches `tags[0]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldPath {
     source: String,
@@ -77,15 +77,15 @@ impl FieldPath {
         &self.source
     }
 
-    /// Última chave do caminho — o que precisa aparecer no fim do caminho do valor.
+    /// Last key of the path: what must appear at the end of the value's path.
     pub fn last_key(&self) -> &str {
         self.keys.last().map(String::as_str).unwrap_or_default()
     }
 
     pub fn matches(&self, path: &[ValuePathSegment]) -> bool {
-        // O valor pertence à última chave do caminho: ele mesmo ou um item
-        // (de qualquer profundidade) do array guardado nela. Um valor na raiz
-        // ou num array na raiz não tem chave e não casa com campo nenhum.
+        // The value belongs to the last key of its path: it is that key's
+        // value or an item (at any depth) of the array stored in it. A value
+        // at the root, or in a root array, has no key and matches no field.
         if !path
             .iter()
             .any(|segment| matches!(segment, ValuePathSegment::Key(_)))
@@ -109,13 +109,13 @@ impl FieldPath {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaseStyle {
-    /// Nenhuma letra minúscula.
+    /// No lowercase letters.
     Upper,
-    /// Nenhuma letra maiúscula.
+    /// No uppercase letters.
     Lower,
-    /// Primeira letra maiúscula.
+    /// First letter uppercase.
     Capitalized,
-    /// Toda palavra começa com maiúscula.
+    /// Every word starts with an uppercase letter.
     Title,
 }
 
@@ -136,14 +136,14 @@ pub enum ValueFormat {
     Url,
 }
 
-/// Texto de comparação das regras "igual a", "contém", "começa com" etc.
+/// Comparison text of the "equals", "contains", "starts with"… rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextMatch {
     pub value: String,
     pub case_sensitive: bool,
 }
 
-/// Expressão regular de uma regra, já compilada. Casa com o valor inteiro.
+/// Compiled regular expression of a rule. Matches the whole value.
 #[derive(Debug, Clone)]
 pub struct RulePattern {
     source: String,
@@ -172,6 +172,184 @@ impl PartialEq for RulePattern {
     }
 }
 
+/// What a date/time token captures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DateToken {
+    Year4,
+    Year2,
+    Month,
+    Day,
+    Hour24,
+    Hour12,
+    Minute,
+    Second,
+    Millisecond,
+    Meridiem,
+    Offset,
+}
+
+/// Tokens in the style of JavaScript date libraries, longest first so `YYYY`
+/// wins over `YY` and `MM` over `M`. `yyyy`, `yy`, `dd` and `d` are accepted
+/// as aliases for year and day. Every other character is literal.
+const DATE_TOKENS: &[(&str, DateToken, &str)] = &[
+    ("YYYY", DateToken::Year4, r"(\d{4})"),
+    ("yyyy", DateToken::Year4, r"(\d{4})"),
+    ("SSS", DateToken::Millisecond, r"(\d{3})"),
+    ("YY", DateToken::Year2, r"(\d{2})"),
+    ("yy", DateToken::Year2, r"(\d{2})"),
+    ("MM", DateToken::Month, r"(\d{2})"),
+    ("DD", DateToken::Day, r"(\d{2})"),
+    ("dd", DateToken::Day, r"(\d{2})"),
+    ("HH", DateToken::Hour24, r"(\d{2})"),
+    ("hh", DateToken::Hour12, r"(\d{2})"),
+    ("mm", DateToken::Minute, r"(\d{2})"),
+    ("ss", DateToken::Second, r"(\d{2})"),
+    ("ZZ", DateToken::Offset, r"(Z|[+-]\d{4})"),
+    ("M", DateToken::Month, r"(\d{1,2})"),
+    ("D", DateToken::Day, r"(\d{1,2})"),
+    ("d", DateToken::Day, r"(\d{1,2})"),
+    ("H", DateToken::Hour24, r"(\d{1,2})"),
+    ("h", DateToken::Hour12, r"(\d{1,2})"),
+    ("m", DateToken::Minute, r"(\d{1,2})"),
+    ("s", DateToken::Second, r"(\d{1,2})"),
+    ("A", DateToken::Meridiem, r"(AM|PM)"),
+    ("a", DateToken::Meridiem, r"(am|pm)"),
+    ("Z", DateToken::Offset, r"(Z|[+-]\d{2}:\d{2})"),
+];
+
+/// Custom date/time format (`DD/MM/YYYY HH:mm`), compiled to a regular
+/// expression over the whole value. Text inside `[...]` is literal. A value
+/// passes when it matches the format and is a date and time that exists.
+#[derive(Debug, Clone)]
+pub struct DateTimePattern {
+    source: String,
+    compiled: Regex,
+    tokens: Vec<DateToken>,
+}
+
+impl DateTimePattern {
+    pub fn new(source: impl Into<String>) -> Result<Self, ValueRuleError> {
+        let source = source.into();
+        if source.trim().is_empty() {
+            return Err(ValueRuleError::EmptyDateFormat);
+        }
+        let mut expression = String::from("^");
+        let mut tokens = Vec::new();
+        let mut rest = source.as_str();
+        while let Some(first) = rest.chars().next() {
+            if first == '[' {
+                let Some(end) = rest.find(']') else {
+                    return Err(ValueRuleError::UnclosedDateLiteral(source.clone()));
+                };
+                expression.push_str(&regex::escape(&rest[1..end]));
+                rest = &rest[end + 1..];
+                continue;
+            }
+            if let Some((token, kind, group)) = DATE_TOKENS
+                .iter()
+                .find(|(token, _, _)| rest.starts_with(token))
+            {
+                expression.push_str(group);
+                tokens.push(*kind);
+                rest = &rest[token.len()..];
+                continue;
+            }
+            expression.push_str(&regex::escape(first.encode_utf8(&mut [0; 4])));
+            rest = &rest[first.len_utf8()..];
+        }
+        if tokens.is_empty() {
+            return Err(ValueRuleError::DateFormatWithoutTokens(source));
+        }
+        expression.push('$');
+        let compiled = Regex::new(&expression)
+            .map_err(|_| ValueRuleError::DateFormatWithoutTokens(source.clone()))?;
+        Ok(Self {
+            source,
+            compiled,
+            tokens,
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.source
+    }
+
+    fn matches(&self, text: &str) -> bool {
+        let Some(captures) = self.compiled.captures(text) else {
+            return false;
+        };
+        let mut year = None;
+        let mut month = None;
+        let mut day = None;
+        for (index, token) in self.tokens.iter().enumerate() {
+            let Some(raw) = captures.get(index + 1).map(|found| found.as_str()) else {
+                return false;
+            };
+            let number = || raw.parse::<u32>().ok();
+            let valid = match token {
+                DateToken::Year4 => {
+                    year = number();
+                    year.is_some()
+                }
+                DateToken::Year2 => {
+                    // Same pivot as the JavaScript libraries: 69–99 → 19xx.
+                    year = number().map(|yy| if yy > 68 { 1900 + yy } else { 2000 + yy });
+                    year.is_some()
+                }
+                DateToken::Month => {
+                    month = number();
+                    month.is_some_and(|month| (1..=12).contains(&month))
+                }
+                DateToken::Day => {
+                    day = number();
+                    day.is_some_and(|day| day >= 1)
+                }
+                DateToken::Hour24 => number().is_some_and(|hour| hour <= 23),
+                DateToken::Hour12 => number().is_some_and(|hour| (1..=12).contains(&hour)),
+                DateToken::Minute | DateToken::Second => number().is_some_and(|value| value <= 59),
+                DateToken::Millisecond | DateToken::Meridiem => true,
+                DateToken::Offset => valid_offset(raw),
+            };
+            if !valid {
+                return false;
+            }
+        }
+        day.is_none_or(|day| day <= days_in_month(year, month))
+    }
+}
+
+impl PartialEq for DateTimePattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
+/// Most days the month can have; without a year February allows 29 and
+/// without a month any day up to 31 is accepted.
+fn days_in_month(year: Option<u32>, month: Option<u32>) -> u32 {
+    match month {
+        Some(4 | 6 | 9 | 11) => 30,
+        Some(2) => match year {
+            Some(year) if !(year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) => 28,
+            _ => 29,
+        },
+        _ => 31,
+    }
+}
+
+/// `Z`, `+03:00` or `-0300`, with hours up to 23 and minutes up to 59.
+fn valid_offset(raw: &str) -> bool {
+    if raw == "Z" {
+        return true;
+    }
+    let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+    let (Some(hours), Some(minutes)) = (digits.get(..2), digits.get(2..)) else {
+        return false;
+    };
+    hours.parse::<u32>().is_ok_and(|hours| hours <= 23)
+        && minutes.parse::<u32>().is_ok_and(|minutes| minutes <= 59)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuleKind {
     ExactLength(usize),
@@ -198,6 +376,7 @@ pub enum RuleKind {
         max: Option<f64>,
     },
     Format(ValueFormat),
+    DateTimeFormat(DateTimePattern),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -214,9 +393,15 @@ pub enum ValueRuleError {
     EmptyPattern,
     #[error("expressão regular inválida: '{0}'")]
     InvalidPattern(String),
+    #[error("o formato da data não pode ser vazio")]
+    EmptyDateFormat,
+    #[error("o formato da data '{0}' tem um '[' sem ']'")]
+    UnclosedDateLiteral(String),
+    #[error("o formato da data '{0}' não tem nenhum token de data ou hora (YYYY, MM, DD, HH, mm…)")]
+    DateFormatWithoutTokens(String),
 }
 
-/// Uma regra aplicada a cada valor de um campo monitorado.
+/// A rule applied to every value of a monitored field.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueRule {
     pub id: String,
@@ -309,6 +494,7 @@ impl ValueRule {
             RuleKind::Format(format) => text.is_some_and(|text| {
                 format_regex(*format).is_some_and(|regex| regex.is_match(text))
             }),
+            RuleKind::DateTimeFormat(pattern) => text.is_some_and(|text| pattern.matches(text)),
         }
     }
 }
@@ -373,15 +559,14 @@ fn format_regex(format: ValueFormat) -> Option<&'static Regex> {
     }
 }
 
-/// Compila uma expressão fixa do próprio código. Se uma delas estiver
-/// quebrada a regra só reprova (em vez de derrubar o app), e os testes de
-/// formato acusam o problema.
+/// Compiles a fixed expression from this file. If one is broken the rule
+/// just fails (instead of crashing the app), and the format tests catch it.
 fn fixed_regex(source: &str) -> Option<Regex> {
     Regex::new(source).ok()
 }
 
-/// Um conjunto nomeado de regras aplicado aos campos monitorados de
-/// qualquer resposta — não pertence a uma requisição específica.
+/// A named set of rules applied to the monitored fields of any response; it
+/// doesn't belong to a specific request.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueMonitor {
     pub id: String,
@@ -440,12 +625,12 @@ impl ValueMonitor {
         &self.rules
     }
 
-    /// Primeiro campo do monitor que casa com o caminho, se algum casar.
+    /// First field of the monitor that matches the path, if any.
     pub fn matching_field(&self, path: &[ValuePathSegment]) -> Option<&FieldPath> {
         self.fields.iter().find(|field| field.matches(path))
     }
 
-    /// Ids das regras que o valor reprovou (vazio quando aprovado).
+    /// Ids of the rules the value failed (empty when it passed).
     pub fn failed_rules(&self, value: &MonitoredValue) -> Vec<&str> {
         self.rules
             .iter()
@@ -468,7 +653,7 @@ mod tests {
     }
 
     fn rule(kind: RuleKind) -> ValueRule {
-        ValueRule::new("r", kind).expect("regra válida")
+        ValueRule::new("r", kind).expect("valid rule")
     }
 
     fn matcher(value: &str, case_sensitive: bool) -> TextMatch {
@@ -502,7 +687,7 @@ mod tests {
             ValuePathSegment::Index(1),
             ValuePathSegment::Index(0),
         ]));
-        // O item de um array de objetos pertence à chave do objeto, não ao array.
+        // An item of an array of objects belongs to the object's key, not the array.
         assert!(!tags.matches(&[key("tags"), ValuePathSegment::Index(0), key("nome")]));
 
         let marked = FieldPath::new("filme.tags[]").unwrap();
@@ -668,6 +853,61 @@ mod tests {
         assert!(format(ValueFormat::IsoDateTime).passes(&text("2026-09-28T10:30-03:00")));
         assert!(format(ValueFormat::Url).passes(&text("https://alcy.dev/a?b=1")));
         assert!(!format(ValueFormat::Url).passes(&text("alcy.dev")));
+    }
+
+    #[test]
+    fn custom_date_time_format_checks_layout_and_calendar() {
+        let format = |source: &str| {
+            rule(RuleKind::DateTimeFormat(
+                DateTimePattern::new(source).unwrap(),
+            ))
+        };
+
+        let brazilian = format("DD/MM/YYYY HH:mm");
+        assert!(brazilian.passes(&text("28/09/2026 14:05")));
+        assert!(!brazilian.passes(&text("28/09/2026")));
+        assert!(!brazilian.passes(&text("2026-09-28 14:05")));
+        assert!(!brazilian.passes(&text("31/04/2026 10:00")));
+        assert!(!brazilian.passes(&text("10/13/2026 10:00")));
+        assert!(!brazilian.passes(&text("10/10/2026 24:00")));
+        assert!(!brazilian.passes(&MonitoredValue::Null));
+
+        let leap = format("yyyy-MM-dd");
+        assert!(leap.passes(&text("2024-02-29")));
+        assert!(!leap.passes(&text("2026-02-29")));
+        assert!(format("DD/MM").passes(&text("29/02")));
+
+        let loose = format("D/M/YY h:mm A");
+        assert!(loose.passes(&text("5/9/26 9:30 PM")));
+        assert!(!loose.passes(&text("5/9/26 0:30 PM")));
+        assert!(!loose.passes(&text("5/9/26 9:30 pm")));
+
+        let iso = format("YYYY-MM-DD[T]HH:mm:ss.SSSZ");
+        assert!(iso.passes(&text("2026-09-28T10:30:00.123-03:00")));
+        assert!(iso.passes(&text("2026-09-28T10:30:00.123Z")));
+        assert!(!iso.passes(&text("2026-09-28T10:30:00.123-03:75")));
+        assert!(format("HH:mm ZZ").passes(&text("10:30 +0530")));
+
+        // Characters that are special in a regular expression stay literal.
+        assert!(format("YYYY.MM.DD (x)").passes(&text("2026.09.28 (x)")));
+        assert!(!format("YYYY.MM.DD (x)").passes(&text("2026-09-28 (x)")));
+    }
+
+    #[test]
+    fn custom_date_time_format_rejects_unusable_patterns() {
+        assert!(matches!(
+            DateTimePattern::new("  "),
+            Err(ValueRuleError::EmptyDateFormat)
+        ));
+        assert!(matches!(
+            DateTimePattern::new("YYYY[T"),
+            Err(ValueRuleError::UnclosedDateLiteral(_))
+        ));
+        assert!(matches!(
+            DateTimePattern::new("[YYYY]"),
+            Err(ValueRuleError::DateFormatWithoutTokens(_))
+        ));
+        assert_eq!(DateTimePattern::new("DD/MM").unwrap().as_str(), "DD/MM");
     }
 
     #[test]

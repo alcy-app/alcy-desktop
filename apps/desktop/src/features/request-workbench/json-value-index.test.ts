@@ -4,7 +4,7 @@ import { accessorFor, captureStatement, captureVariableName, findValueAt, indexJ
 const doc = JSON.stringify({ data: { token: 'abc', items: [{ id: 7 }, true], 'a-b': null } }, null, 2)
 
 describe('indexJsonValues', () => {
-  it('indexa só os valores primitivos, com a faixa e o caminho de cada um', () => {
+  it('indexes only primitive values, with the range and path of each', () => {
     const values = indexJsonValues(doc)
 
     expect(values.map((value) => value.path)).toEqual([
@@ -18,7 +18,7 @@ describe('indexJsonValues', () => {
     expect(doc.slice(values[1].from, values[1].to)).toBe('7')
   })
 
-  it('trata escapes em strings e chaves', () => {
+  it('handles escapes in strings and keys', () => {
     const text = '{"a\\"b": "x\\"y"}'
     const [value] = indexJsonValues(text)
 
@@ -26,18 +26,18 @@ describe('indexJsonValues', () => {
     expect(text.slice(value.from, value.to)).toBe('"x\\"y"')
   })
 
-  it('devolve vazio para JSON inválido ou com lixo depois do valor', () => {
+  it('returns nothing for invalid JSON or trailing garbage', () => {
     expect(indexJsonValues('{"a": ')).toEqual([])
     expect(indexJsonValues('{"a": 1} extra')).toEqual([])
     expect(indexJsonValues('not json')).toEqual([])
   })
 
-  it('aceita um valor primitivo na raiz e containers vazios', () => {
+  it('accepts a primitive at the root and empty containers', () => {
     expect(indexJsonValues('42')).toEqual([{ from: 0, to: 2, path: [] }])
     expect(indexJsonValues('{"a": {}, "b": []}')).toEqual([])
   })
 
-  it('inclui arrays vazios só quando pedido', () => {
+  it('includes empty arrays only when asked', () => {
     const text = '{"a": {}, "b": [ ], "c": [[]]}'
     const values = indexJsonValues(text, { emptyArrays: true })
 
@@ -49,7 +49,7 @@ describe('indexJsonValues', () => {
 })
 
 describe('findValueAt', () => {
-  it('encontra o valor que contém a posição e ignora chaves e pontuação', () => {
+  it('finds the value containing the position and ignores keys and punctuation', () => {
     const values = indexJsonValues(doc)
     const start = doc.indexOf('"abc"')
 
@@ -59,20 +59,20 @@ describe('findValueAt', () => {
   })
 })
 
-describe('captura', () => {
-  it('monta o acessor com pontos, colchetes e índices', () => {
+describe('capture', () => {
+  it('builds the accessor with dots, brackets and indices', () => {
     expect(accessorFor(['data', 'items', 0, 'id'])).toBe('.data.items[0].id')
     expect(accessorFor(['a-b', 'x'])).toBe('["a-b"].x')
   })
 
-  it('sugere o nome da variável pela última chave', () => {
+  it('suggests the variable name from the last key', () => {
     expect(captureVariableName(['data', 'token'])).toBe('token')
     expect(captureVariableName(['items', 0])).toBe('items')
     expect(captureVariableName(['a-b'])).toBe('a_b')
     expect(captureVariableName([])).toBe('value')
   })
 
-  it('gera a linha de script', () => {
+  it('generates the script line', () => {
     expect(captureStatement(['data', 'token'])).toBe("al.environment.set('token', al.response.json().data.token);")
   })
 })

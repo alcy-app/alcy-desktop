@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use alcy_domain::{
-    CaseStyle, FieldPath, RuleKind, RulePattern, TextMatch, VALUE_MONITORS_FILE, ValueFormat,
-    ValueMonitor, ValueRule, ValueType,
+    CaseStyle, DateTimePattern, FieldPath, RuleKind, RulePattern, TextMatch, VALUE_MONITORS_FILE,
+    ValueFormat, ValueMonitor, ValueRule, ValueType,
 };
 use serde::{Deserialize, Serialize};
 
@@ -17,9 +17,9 @@ struct PersistedFile {
     monitors: Vec<ValueMonitorRecord>,
 }
 
-/// Forma serializada de um monitor de valores. É o formato gravado em
-/// `alcy-value-monitors.json` e também o contrato de IPC dos commands de
-/// monitores (ADR 0037): um único mapeamento para o domínio, validado por
+/// Serialized form of a value monitor. It is the format written to
+/// `alcy-value-monitors.json` and also the IPC contract of the monitor
+/// commands (ADR 0037): a single mapping to the domain, validated by
 /// `to_domain`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +95,10 @@ pub enum RuleKindRecord {
     },
     Format {
         format: ValueFormatRecord,
+        /// Only for `customDateTime` (`DD/MM/YYYY HH:mm`). Optional, so files
+        /// written before this format existed still load.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pattern: Option<String>,
     },
 }
 
@@ -124,10 +128,11 @@ pub enum ValueFormatRecord {
     IsoDate,
     IsoDateTime,
     Url,
+    CustomDateTime,
 }
 
-/// Monitor ou regra que não respeita as regras do domínio — aponta onde,
-/// para a interface marcar o ponto exato.
+/// A monitor or rule that breaks the domain rules; it says where, so the
+/// interface can point at the exact spot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidValueMonitor {
     pub monitor_id: String,
@@ -243,13 +248,16 @@ fn rule_kind_from_record(record: &RuleKindRecord) -> Result<RuleKind, alcy_domai
             min: *min,
             max: *max,
         },
-        RuleKindRecord::Format { format } => RuleKind::Format(match format {
-            ValueFormatRecord::Email => ValueFormat::Email,
-            ValueFormatRecord::Uuid => ValueFormat::Uuid,
-            ValueFormatRecord::IsoDate => ValueFormat::IsoDate,
-            ValueFormatRecord::IsoDateTime => ValueFormat::IsoDateTime,
-            ValueFormatRecord::Url => ValueFormat::Url,
-        }),
+        RuleKindRecord::Format { format, pattern } => match format {
+            ValueFormatRecord::Email => RuleKind::Format(ValueFormat::Email),
+            ValueFormatRecord::Uuid => RuleKind::Format(ValueFormat::Uuid),
+            ValueFormatRecord::IsoDate => RuleKind::Format(ValueFormat::IsoDate),
+            ValueFormatRecord::IsoDateTime => RuleKind::Format(ValueFormat::IsoDateTime),
+            ValueFormatRecord::Url => RuleKind::Format(ValueFormat::Url),
+            ValueFormatRecord::CustomDateTime => {
+                RuleKind::DateTimeFormat(DateTimePattern::new(pattern.clone().unwrap_or_default())?)
+            }
+        },
     })
 }
 
@@ -335,13 +343,18 @@ fn rule_kind_to_record(kind: &RuleKind) -> RuleKindRecord {
                 ValueFormat::IsoDateTime => ValueFormatRecord::IsoDateTime,
                 ValueFormat::Url => ValueFormatRecord::Url,
             },
+            pattern: None,
+        },
+        RuleKind::DateTimeFormat(pattern) => RuleKindRecord::Format {
+            format: ValueFormatRecord::CustomDateTime,
+            pattern: Some(pattern.as_str().to_string()),
         },
     }
 }
 
-/// Lê e grava os monitores de valores de um workspace
-/// (`alcy-value-monitors.json`) na raiz da pasta do workspace, com escrita
-/// atômica e formato versionado (ADR 0003).
+/// Reads and writes a workspace's value monitors (`alcy-value-monitors.json`)
+/// at the root of the workspace folder, with atomic writes and a versioned
+/// format (ADR 0003).
 pub struct ValueMonitorStore {
     path: PathBuf,
 }
@@ -477,6 +490,49 @@ mod tests {
         let error = record.to_domain().unwrap_err();
         assert_eq!(error.monitor_id, "m1");
         assert_eq!(error.rule_id.as_deref(), Some("r3"));
+    }
+
+    #[test]
+    fn custom_date_time_format_round_trips_and_older_format_rules_still_load() {
+        let raw = r#"{ "version": 1, "monitors": [{
+            "id": "m1", "name": "Datas", "enabled": true, "fields": ["criadoEm"],
+            "rules": [
+                { "id": "r1", "kind": "format", "format": "isoDate" },
+                { "id": "r2", "kind": "format", "format": "customDateTime", "pattern": "DD/MM/YYYY" }
+            ]
+        }] }"#;
+        let root = temp_root("custom-date");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(VALUE_MONITORS_FILE), raw).unwrap();
+        let store = ValueMonitorStore::new(root.clone());
+
+        let monitors = store.load().unwrap();
+        assert!(matches!(
+            monitors[0].rules()[0].kind(),
+            RuleKind::Format(ValueFormat::IsoDate)
+        ));
+        assert!(matches!(
+            monitors[0].rules()[1].kind(),
+            RuleKind::DateTimeFormat(pattern) if pattern.as_str() == "DD/MM/YYYY"
+        ));
+
+        store.save(&monitors).unwrap();
+        let saved = fs::read_to_string(root.join(VALUE_MONITORS_FILE)).unwrap();
+        assert!(saved.contains("\"pattern\": \"DD/MM/YYYY\""));
+        assert_eq!(saved.matches("\"pattern\"").count(), 1);
+        assert_eq!(store.load().unwrap(), monitors);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn custom_date_time_format_without_pattern_is_invalid() {
+        let mut record = sample_record();
+        record.rules[3].kind = RuleKindRecord::Format {
+            format: ValueFormatRecord::CustomDateTime,
+            pattern: None,
+        };
+        let error = record.to_domain().unwrap_err();
+        assert_eq!(error.rule_id.as_deref(), Some("r4"));
     }
 
     #[test]

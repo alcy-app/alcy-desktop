@@ -1,8 +1,8 @@
-/** Segmento de um caminho dentro de um documento JSON: chave de objeto ou índice de array. */
+/** Segment of a path inside a JSON document: object key or array index. */
 export type JsonPathSegment = string | number
 
-/** Um valor primitivo (string, número, booleano ou null) do documento, com a
- * faixa de caracteres que ele ocupa e o caminho até ele. */
+/** A primitive value (string, number, boolean or null) of the document, with
+ * the character range it takes and the path to it. */
 export interface JsonValueRange {
   from: number
   to: number
@@ -12,14 +12,14 @@ export interface JsonValueRange {
 const LITERAL = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y
 
 export interface IndexJsonOptions {
-  /** Inclui também os arrays vazios (`[]`), com a faixa do colchete de abertura ao de fechamento. */
+  /** Also include empty arrays (`[]`), ranging from the opening to the closing bracket. */
   emptyArrays?: boolean
 }
 
 /**
- * Indexa, em ordem de documento, todos os valores primitivos de um JSON
- * (aproximadamente linear no tamanho do texto). Devolve `[]` quando o texto
- * não é JSON válido — o chamador simplesmente não oferece captura.
+ * Indexes every primitive value of a JSON document, in document order
+ * (roughly linear in the text size). Returns `[]` when the text isn't valid
+ * JSON, so the caller simply doesn't offer capture.
  */
 export function indexJsonValues(text: string, options: IndexJsonOptions = {}): JsonValueRange[] {
   const values: JsonValueRange[] = []
@@ -97,7 +97,7 @@ export function indexJsonValues(text: string, options: IndexJsonOptions = {}): J
   return values
 }
 
-/** Valor cuja faixa contém `pos` (extremos incluídos), por busca binária no índice. */
+/** Value whose range contains `pos` (ends included), by binary search over the index. */
 export function findValueAt(values: JsonValueRange[], pos: number): JsonValueRange | null {
   let low = 0
   let high = values.length - 1
@@ -113,7 +113,7 @@ export function findValueAt(values: JsonValueRange[], pos: number): JsonValueRan
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
 
-/** Expressão JavaScript que acessa o caminho a partir do JSON da resposta (`al.response.json()`). */
+/** JavaScript expression that reads the path from the response JSON (`al.response.json()`). */
 export function accessorFor(path: JsonPathSegment[]): string {
   return path
     .map((segment) =>
@@ -122,14 +122,14 @@ export function accessorFor(path: JsonPathSegment[]): string {
     .join('')
 }
 
-/** Nome sugerido para a variável de ambiente: a última chave do caminho, só com letras, dígitos e `_`. */
+/** Suggested environment variable name: the last key of the path, with only letters, digits and `_`. */
 export function captureVariableName(path: JsonPathSegment[]): string {
   const lastKey = [...path].reverse().find((segment): segment is string => typeof segment === 'string')
   const name = (lastKey ?? 'value').replace(/[^\w]/g, '_')
   return name === '' ? 'value' : name
 }
 
-/** Linha de script que grava o valor do caminho numa variável de ambiente. */
+/** Script line that stores the value at the path in an environment variable. */
 export function captureStatement(path: JsonPathSegment[]): string {
   return `al.environment.set('${captureVariableName(path)}', al.response.json()${accessorFor(path)});`
 }

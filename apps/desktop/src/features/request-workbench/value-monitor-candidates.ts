@@ -1,15 +1,15 @@
 import { indexJsonValues } from './json-value-index'
 import type { JsonPathSegment } from './json-value-index'
 
-/** Mesmo limite do backend (`MAX_MONITOR_CANDIDATES`): acima disso a avaliação é cortada e o usuário avisado. */
+/** Same limit as the backend (`MAX_MONITOR_CANDIDATES`): above it the evaluation is truncated and the user warned. */
 export const MAX_MONITOR_CANDIDATES = 10_000
 
-/** Valor primitivo (ou array vazio) do documento que pode interessar a algum monitor, com a faixa que ocupa no texto. */
+/** Primitive value (or empty array) of the document that may interest a monitor, with the range it takes in the text. */
 export interface MonitorCandidate {
   from: number
   to: number
   path: JsonPathSegment[]
-  /** Literal JSON como aparece no texto (`"Ana"`, `12.5`, `null`, `[]`). */
+  /** JSON literal as it appears in the text (`"Ana"`, `12.5`, `null`, `[]`). */
   literal: string
 }
 
@@ -18,13 +18,13 @@ export interface MonitorCandidates {
   truncated: boolean
 }
 
-/** Última chave de um campo configurado (`itens[].nome` → `nome`), no mesmo formato que o backend casa. */
+/** Last key of a configured field (`items[].name` → `name`), as the backend matches it. */
 export function lastFieldKey(field: string): string {
   const segments = field.split('.')
   return segments[segments.length - 1].trim().replace(/\[\]$/, '').trim()
 }
 
-/** Última chave do caminho de um valor; os índices depois dela são de itens do array guardado nela. */
+/** Last key in a value's path; the indices after it point to items of the array stored there. */
 function lastPathKey(path: readonly JsonPathSegment[]): string | undefined {
   for (let index = path.length - 1; index >= 0; index--) {
     const segment = path[index]
@@ -34,11 +34,10 @@ function lastPathKey(path: readonly JsonPathSegment[]): string | undefined {
 }
 
 /**
- * Pré-filtro barato antes do IPC: só os valores cuja última chave é usada
- * por algum campo monitorado — o próprio valor da chave ou itens do array
- * guardado nela, incluindo arrays vazios. O casamento completo (sufixo do
- * caminho) e as regras ficam no backend. Documento que não é JSON válido
- * não tem candidatos.
+ * Cheap pre-filter before the IPC: only values whose last key is used by
+ * some monitored field (the key's own value or items of the array stored in
+ * it, empty arrays included). Full matching (path suffix) and the rules stay
+ * in the backend. A document that isn't valid JSON has no candidates.
  */
 export function monitorCandidates(text: string, lastKeys: readonly string[]): MonitorCandidates {
   const keys = new Set(lastKeys)

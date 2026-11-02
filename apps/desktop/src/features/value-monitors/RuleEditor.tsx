@@ -3,20 +3,21 @@ import { useLanguage } from '../../shared/i18n/use-language'
 import { Checkbox } from '../../shared/ui/Checkbox'
 import { Input } from '../../shared/ui/Input'
 import { Select } from '../../shared/ui/Select'
+import { withFormat } from './rule-catalog'
 import { TokenInput } from './TokenInput'
 
 const CASE_STYLES: CaseStyle[] = ['upper', 'lower', 'capitalized', 'title']
 const VALUE_TYPES: ValueType[] = ['string', 'number', 'boolean', 'null']
-const FORMATS: ValueFormat[] = ['email', 'uuid', 'isoDate', 'isoDateTime', 'url']
+const FORMATS: ValueFormat[] = ['email', 'uuid', 'isoDate', 'isoDateTime', 'url', 'customDateTime']
 
 interface RuleEditorProps {
   rule: ValueRuleKind
-  /** Prefixo único para os ids dos campos (associa rótulo e input). */
+  /** Unique prefix for the input ids (ties each label to its input). */
   idPrefix: string
   onChange: (rule: ValueRuleKind) => void
 }
 
-/** Texto do input numérico → número; vazio ou inválido vira `null` ("sem limite"). */
+/** Numeric input text → number; empty or invalid becomes `null` ("no limit"). */
 function parseOptionalNumber(text: string, integer: boolean): number | null {
   if (text.trim() === '') return null
   const value = Number(text)
@@ -24,7 +25,7 @@ function parseOptionalNumber(text: string, integer: boolean): number | null {
   return integer ? Math.max(0, Math.trunc(value)) : value
 }
 
-/** Parâmetros de uma regra, compactos e numa linha sempre que possível. */
+/** Parameters of a rule, compact and on one line whenever possible. */
 export function RuleEditor({ rule, idPrefix, onChange }: RuleEditorProps) {
   const { t } = useLanguage()
   const id = (name: string) => `${idPrefix}-${name}`
@@ -163,12 +164,13 @@ export function RuleEditor({ rule, idPrefix, onChange }: RuleEditorProps) {
           </label>
         </div>
       )
-    case 'format':
+    case 'format': {
+      const custom = rule.format === 'customDateTime'
       return (
-        <div className="vm-rule-params">
+        <div className={custom ? 'vm-rule-params vm-rule-params--stacked' : 'vm-rule-params'}>
           <label className="vm-param vm-param--grow" htmlFor={id('format')}>
             <span>{t('monitors.param.format')}</span>
-            <Select id={id('format')} value={rule.format} onChange={(event) => onChange({ ...rule, format: event.target.value as ValueFormat })}>
+            <Select id={id('format')} value={rule.format} onChange={(event) => onChange(withFormat(rule, event.target.value as ValueFormat))}>
               {FORMATS.map((format) => (
                 <option key={format} value={format}>
                   {t(`monitors.format.${format}`)}
@@ -176,8 +178,24 @@ export function RuleEditor({ rule, idPrefix, onChange }: RuleEditorProps) {
               ))}
             </Select>
           </label>
+          {custom && (
+            <>
+              <label className="vm-param vm-param--grow" htmlFor={id('date-pattern')}>
+                <span>{t('monitors.param.dateTimePattern')}</span>
+                <Input
+                  id={id('date-pattern')}
+                  mono
+                  spellCheck={false}
+                  value={rule.pattern ?? ''}
+                  onChange={(event) => onChange({ ...rule, pattern: event.target.value })}
+                />
+              </label>
+              <p className="vm-param-hint">{t('monitors.param.dateTimePatternHint')}</p>
+            </>
+          )}
         </div>
       )
+    }
     default:
       return null
   }

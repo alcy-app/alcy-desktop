@@ -1,11 +1,11 @@
-import type { ValueRuleKind } from '../../bindings/list-value-monitors'
+import type { ValueFormat, ValueRuleKind } from '../../bindings/list-value-monitors'
 import type { TranslationKey, TranslationParams } from '../../shared/i18n/translations'
 
 type Translate = (key: TranslationKey, params?: TranslationParams) => string
 
 export type RuleKindName = ValueRuleKind['kind']
 
-/** Tipos de regra no menu "Adicionar regra", agrupados por assunto. */
+/** Rule kinds in the "Add rule" menu, grouped by subject. */
 export const RULE_GROUPS: { label: TranslationKey; kinds: RuleKindName[] }[] = [
   { label: 'monitors.group.length', kinds: ['exactLength', 'lengthRange', 'notEmpty'] },
   { label: 'monitors.group.content', kinds: ['lettersOnly', 'digitsOnly', 'alphanumeric', 'noWhitespace', 'case'] },
@@ -20,7 +20,7 @@ export function ruleName(kind: RuleKindName, t: Translate): string {
   return t(`monitors.rule.${kind}` as TranslationKey)
 }
 
-/** Regra nova com parâmetros iniciais válidos — o monitor continua salvável logo depois de adicionar. */
+/** New rule with valid initial parameters, so the monitor can still be saved right after adding it. */
 export function defaultRule(kind: RuleKindName): ValueRuleKind {
   switch (kind) {
     case 'exactLength':
@@ -50,12 +50,23 @@ export function defaultRule(kind: RuleKindName): ValueRuleKind {
   }
 }
 
-/** Se a regra tem parâmetros a editar (as demais são só um rótulo). */
+/** Initial pattern when the custom date and time format is picked. */
+export const DEFAULT_DATE_TIME_PATTERN = 'DD/MM/YYYY HH:mm:ss'
+
+type FormatRule = Extract<ValueRuleKind, { kind: 'format' }>
+
+/** Switches the format of a rule: the custom date and time format brings its pattern, the others drop it. */
+export function withFormat(rule: FormatRule, format: ValueFormat): FormatRule {
+  if (format === 'customDateTime') return { kind: 'format', format, pattern: rule.pattern ?? DEFAULT_DATE_TIME_PATTERN }
+  return { kind: 'format', format }
+}
+
+/** Whether the rule has parameters to edit (the others are just a label). */
 export function hasParameters(kind: RuleKindName): boolean {
   return !['lettersOnly', 'digitsOnly', 'alphanumeric', 'noWhitespace', 'notEmpty'].includes(kind)
 }
 
-/** Frase curta que descreve a regra, usada no painel e no tooltip da resposta. */
+/** Short sentence describing the rule, used in the panel and in the response tooltip. */
 export function describeRule(rule: ValueRuleKind, t: Translate): string {
   const incomplete = () => t('monitors.describe.incomplete', { rule: ruleName(rule.kind, t) })
   switch (rule.kind) {
@@ -88,6 +99,10 @@ export function describeRule(rule: ValueRuleKind, t: Translate): string {
     case 'type':
       return t('monitors.describe.type', { type: t(`monitors.type.${rule.valueType}` as TranslationKey) })
     case 'format':
+      if (rule.format === 'customDateTime') {
+        const pattern = rule.pattern ?? ''
+        return pattern.trim() === '' ? incomplete() : t('monitors.describe.customDateTime', { pattern })
+      }
       return t('monitors.describe.format', { format: t(`monitors.format.${rule.format}` as TranslationKey) })
     default:
       return ruleName(rule.kind, t)

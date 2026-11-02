@@ -97,9 +97,9 @@ pub use update::{
     project_path_in_instance,
 };
 pub use value_monitor::{
-    CaseStyle, FieldPath, FieldPathError, MonitoredValue, RuleKind, RulePattern, TextMatch,
-    ValueFormat, ValueMonitor, ValueMonitorError, ValuePathSegment, ValueRule, ValueRuleError,
-    ValueType,
+    CaseStyle, DateTimePattern, FieldPath, FieldPathError, MonitoredValue, RuleKind, RulePattern,
+    TextMatch, ValueFormat, ValueMonitor, ValueMonitorError, ValuePathSegment, ValueRule,
+    ValueRuleError, ValueType,
 };
 pub use variable_scope::{
     ScopedVariableChange, VariableScope, VariableScopeKind, apply_scoped_changes, merge_variables,
