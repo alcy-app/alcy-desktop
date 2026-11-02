@@ -104,6 +104,40 @@ describe('EnvironmentsPanel', () => {
       expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     })
 
+    it('renomeia com F2 e pede confirmação para remover com Delete na linha', () => {
+      const onRenameEnvironment = vi.fn()
+      const onRemoveEnvironment = vi.fn()
+      renderPanel({ onRenameEnvironment, onRemoveEnvironment })
+
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Staging' }), { key: 'F2' })
+      const input = screen.getByRole('textbox', { name: 'Nome do ambiente' })
+      fireEvent.change(input, { target: { value: 'QA' } })
+      expect(onRenameEnvironment).toHaveBeenCalledWith('env-2', 'QA')
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Staging' }), { key: 'Delete' })
+      fireEvent.click(screen.getByRole('button', { name: 'Remover' }))
+      expect(onRemoveEnvironment).toHaveBeenCalledWith('env-2')
+    })
+
+    it('abre o menu de opções com o botão direito na linha', () => {
+      renderPanel()
+
+      fireEvent.contextMenu(screen.getByRole('button', { name: 'Staging' }))
+      expect(screen.getByRole('menu', { name: 'Mais opções de Staging' })).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: 'Renomear' })).toBeInTheDocument()
+
+      fireEvent.pointerDown(document.body)
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    })
+
+    it('ignora Delete quando só há um ambiente', () => {
+      renderPanel({ environments: [environments[0]], activeEnvironmentId: 'env-1' })
+
+      fireEvent.keyDown(screen.getByRole('button', { name: /^Local/ }), { key: 'Delete' })
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
     it('desabilita Remover no menu quando só há um ambiente', () => {
       renderPanel({ environments: [environments[0]], activeEnvironmentId: 'env-1' })
 

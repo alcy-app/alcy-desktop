@@ -3,6 +3,8 @@ import { useState } from 'react'
 import type { FocusEvent } from 'react'
 import type { ValueMonitorDto, ValueMonitorsError, ValueRuleKind } from '../../bindings/list-value-monitors'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { comboFromEvent, isShortcutFor } from '../../shared/shortcuts/shortcuts'
+import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -43,6 +45,7 @@ export function ValueMonitorsPanel({
   onRemoveRule,
 }: ValueMonitorsPanelProps) {
   const { t } = useLanguage()
+  const { bindings: shortcutBindings } = useShortcuts()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null)
@@ -113,6 +116,17 @@ export function ValueMonitorsPanel({
                       setSelectedId(monitor.id)
                       setEditingRuleId(null)
                     }}
+                    onKeyDown={(event) => {
+                      const combo = comboFromEvent(event)
+                      if (isShortcutFor(shortcutBindings, 'renameItem', combo)) {
+                        event.preventDefault()
+                        setSelectedId(monitor.id)
+                        setRenamingId(monitor.id)
+                      } else if (isShortcutFor(shortcutBindings, 'deleteItem', combo)) {
+                        event.preventDefault()
+                        setPendingRemoveId(monitor.id)
+                      }
+                    }}
                   >
                     <span className="vm-list-text">
                       <span className={`vm-list-name${monitor.enabled ? '' : ' vm-list-name--disabled'}`}>
@@ -144,6 +158,7 @@ export function ValueMonitorsPanel({
                 >
                   <MenuItem
                     label={t('monitors.renameMenuItem')}
+                    shortcutAction="renameItem"
                     onSelect={() => {
                       setSelectedId(monitor.id)
                       setRenamingId(monitor.id)
@@ -152,6 +167,7 @@ export function ValueMonitorsPanel({
                   />
                   <MenuItem
                     label={t('common.remove')}
+                    shortcutAction="deleteItem"
                     danger
                     onSelect={() => {
                       setPendingRemoveId(monitor.id)

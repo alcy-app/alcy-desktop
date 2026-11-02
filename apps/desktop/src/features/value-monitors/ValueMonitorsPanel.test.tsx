@@ -70,6 +70,22 @@ describe('ValueMonitorsPanel', () => {
     expect(screen.getByRole('menu', { name: 'Mais opções de Nome curto' })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Renomear' })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: 'Remover' })).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('renomeia com F2 e pede confirmação para remover com Delete na linha', () => {
+    const props = renderPanel()
+    const row = screen.getByRole('button', { name: /^Nome curto/ })
+    fireEvent.keyDown(row, { key: 'F2' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Nome do monitor' }), { target: { value: 'Outro' } })
+    expect(props.onRenameMonitor).toHaveBeenCalledWith('m1', 'Outro')
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Nome do monitor' }), { key: 'Enter' })
+
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Nome curto/ }), { key: 'Delete' })
+    fireEvent.click(screen.getByRole('button', { name: 'Remover' }))
+    expect(props.onRemoveMonitor).toHaveBeenCalledWith('m1')
   })
 
   it('remove o monitor pelo menu de opções após confirmar', () => {

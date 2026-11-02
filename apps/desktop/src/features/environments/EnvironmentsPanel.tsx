@@ -2,6 +2,8 @@ import { useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, PointerEvent } from 'react'
 import { parseBulk, serializeBulk, type BulkRow } from '../../shared/bulk-edit'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { comboFromEvent, isShortcutFor } from '../../shared/shortcuts/shortcuts'
+import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { BulkEditor } from '../../shared/ui/BulkEditor'
 import { BulkEditToggle } from '../../shared/ui/BulkEditToggle'
 import { Checkbox } from '../../shared/ui/Checkbox'
@@ -109,6 +111,7 @@ export function EnvironmentsPanel({
   onReplaceVariables,
 }: EnvironmentsPanelProps) {
   const { t } = useLanguage()
+  const { bindings: shortcutBindings } = useShortcuts()
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null)
@@ -247,6 +250,12 @@ export function EnvironmentsPanel({
               className={dragClasses('environment', environment.id, 'env-list-row')}
               data-env-drop-id={environment.id}
               data-env-drop-kind="environment"
+              onContextMenu={(event) => {
+                // While renaming, keep the native menu for the text field.
+                if (isRenaming) return
+                event.preventDefault()
+                setMenuOpenId(environment.id)
+              }}
             >
               <ReorderHandle
                 kind="environment"
@@ -284,6 +293,17 @@ export function EnvironmentsPanel({
                     className="env-list-item"
                     aria-current={isActive}
                     onClick={() => onSelectEnvironment(environment.id)}
+                    onKeyDown={(event) => {
+                      const combo = comboFromEvent(event)
+                      if (isShortcutFor(shortcutBindings, 'renameItem', combo)) {
+                        event.preventDefault()
+                        setRenamingId(environment.id)
+                      } else if (isShortcutFor(shortcutBindings, 'deleteItem', combo)) {
+                        event.preventDefault()
+                        // The last environment cannot be removed, matching the disabled menu item.
+                        if (environments.length > 1) setPendingRemoveId(environment.id)
+                      }
+                    }}
                   >
                     <span className={`env-dot${isActive ? ' env-dot--active' : ''}`} aria-hidden="true" />
                     <span className="env-list-item-name">{label}</span>
@@ -298,15 +318,17 @@ export function EnvironmentsPanel({
                 <OptionsMenu
                   label={t('environments.moreOptionsAria', { name: label })}
                   wrapperClassName="env-menu-wrapper"
-                  menuClassName="env-menu"
                   menuPlacement="auto"
-                  menuBoundarySelector=".env-sidebar"
+                  // Portal menus close on an outside click, which the right-click opening needs:
+                  // focus never enters an inline menu opened that way, so blur would not close it.
+                  menuPortal
                   isOpen={menuOpenId === environment.id}
                   onToggle={() => setMenuOpenId((current) => (current === environment.id ? null : environment.id))}
                   onClose={() => setMenuOpenId(null)}
                 >
                   <MenuItem
                     label={t('environments.renameMenuItem')}
+                    shortcutAction="renameItem"
                     onSelect={() => {
                       setRenamingId(environment.id)
                       setMenuOpenId(null)
@@ -322,6 +344,7 @@ export function EnvironmentsPanel({
                   <MentionInChatMenuItem item={{ kind: 'environment', id: environment.id, label }} onDone={() => setMenuOpenId(null)} />
                   <MenuItem
                     label={t('common.remove')}
+                    shortcutAction="deleteItem"
                     danger
                     disabled={environments.length <= 1}
                     onSelect={() => {

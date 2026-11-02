@@ -217,23 +217,6 @@
   opacity: 1;
 }
 
-/* Menu surfaces and items come from shared/ui/menu.css; only positioning belongs here. */
-.env-menu {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  z-index: var(--z-overlay);
-  margin-top: 2px;
-}
-
-.env-menu.ui-menu--top {
-  top: auto;
-  bottom: 100%;
-  margin-top: 0;
-  margin-bottom: 2px;
-  transform-origin: bottom;
-}
-
 .env-list-row--dragging,
 .env-variable-row--dragging {
   opacity: 0.4;

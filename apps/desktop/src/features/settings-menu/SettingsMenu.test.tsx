@@ -592,7 +592,7 @@ describe('SettingsMenu — atalhos', () => {
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+W de Fechar aba' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+D de Duplicar requisição selecionada' })).toBeVisible()
     expect(
-      screen.getByRole('button', { name: 'Alterar atalho Delete de Remover item selecionado (collections e flows)' }),
+      screen.getByRole('button', { name: 'Alterar atalho Delete de Remover item selecionado (collections, flows e monitores)' }),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Tab de Próxima aba' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Shift+Tab de Aba anterior' })).toBeVisible()
