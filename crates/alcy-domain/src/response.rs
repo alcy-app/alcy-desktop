@@ -55,10 +55,55 @@ pub struct GrpcResponseStatus {
     pub trailers: Vec<ResponseHeader>,
 }
 
+/// Who ended a WebSocket connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebSocketClosedBy {
+    /// Alcy closed it: the person disconnected or a run finished collecting.
+    Client,
+    /// The server sent a close frame.
+    Server,
+    /// The connection dropped without a close handshake.
+    Transport,
+    /// The server answered the upgrade with another HTTP status; the
+    /// response holds that status, headers and body.
+    Rejected,
+}
+
+/// How a WebSocket connection ended (spec 0140). The exchanged messages stay
+/// in the response body; close code and reason are also written as
+/// pseudo-headers so existing history keeps them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSocketOutcome {
+    /// `None` when the close frame carried no code (1005) or none arrived.
+    pub close_code: Option<u16>,
+    pub close_reason: String,
+    pub closed_by: WebSocketClosedBy,
+    /// Subprotocol the server accepted, if any.
+    pub subprotocol: Option<String>,
+    pub sent: u32,
+    pub received: u32,
+}
+
+impl WebSocketOutcome {
+    /// Normal closure (1000), going away (1001) or no status (1005), or a
+    /// normal close by Alcy. Anything else — an error code, a dropped
+    /// connection, a rejected upgrade — is a failure for runs and flows.
+    pub fn is_clean(&self) -> bool {
+        match self.closed_by {
+            WebSocketClosedBy::Client => matches!(self.close_code, None | Some(1000)),
+            WebSocketClosedBy::Transport | WebSocketClosedBy::Rejected => false,
+            WebSocketClosedBy::Server => {
+                matches!(self.close_code, None | Some(1000) | Some(1001) | Some(1005))
+            }
+        }
+    }
+}
+
 /// Received response including non-success HTTP/protocol statuses. Transport failures use ExecutionError instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub grpc: Option<Box<GrpcResponseStatus>>,
+    pub websocket: Option<Box<WebSocketOutcome>>,
     pub status_code: u16,
     pub duration_ms: u64,
     pub size_bytes: usize,
@@ -75,6 +120,27 @@ pub struct Response {
 impl Response {
     /// A protocol-level failure independent of the transport's HTTP status.
     pub fn protocol_failure(&self) -> Option<String> {
+        if let Some(outcome) = self
+            .websocket
+            .as_ref()
+            .filter(|outcome| !outcome.is_clean())
+        {
+            return Some(match (outcome.closed_by, outcome.close_code) {
+                (WebSocketClosedBy::Rejected, _) => format!(
+                    "WebSocket handshake rejected with HTTP {}",
+                    self.status_code
+                ),
+                (WebSocketClosedBy::Transport, _) | (_, None) => {
+                    "WebSocket: connection closed without a close frame".to_string()
+                }
+                (_, Some(code)) if outcome.close_reason.is_empty() => {
+                    format!("WebSocket closed with {code}")
+                }
+                (_, Some(code)) => {
+                    format!("WebSocket closed with {code}: {}", outcome.close_reason)
+                }
+            });
+        }
         self.grpc
             .as_ref()
             .filter(|status| status.code != 0)
@@ -102,6 +168,7 @@ impl Response {
         let size_bytes = body.len();
         Self {
             grpc: None,
+            websocket: None,
             status_code,
             duration_ms,
             size_bytes,
@@ -127,6 +194,7 @@ impl Response {
     ) -> Self {
         Self {
             grpc: None,
+            websocket: None,
             status_code,
             duration_ms,
             size_bytes,
@@ -145,6 +213,56 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn websocket_response(closed_by: WebSocketClosedBy, close_code: Option<u16>) -> Response {
+        let mut response = Response::new(101, 5, "[]", vec![], ResponseMetadata::default());
+        response.websocket = Some(Box::new(WebSocketOutcome {
+            close_code,
+            close_reason: String::new(),
+            closed_by,
+            subprotocol: None,
+            sent: 0,
+            received: 0,
+        }));
+        response
+    }
+
+    #[test]
+    fn websocket_failure_follows_how_the_connection_ended() {
+        assert_eq!(
+            websocket_response(WebSocketClosedBy::Client, Some(1000)).protocol_failure(),
+            None
+        );
+        assert_eq!(
+            websocket_response(WebSocketClosedBy::Client, Some(1009))
+                .protocol_failure()
+                .as_deref(),
+            Some("WebSocket closed with 1009")
+        );
+        assert_eq!(
+            websocket_response(WebSocketClosedBy::Rejected, None)
+                .protocol_failure()
+                .as_deref(),
+            Some("WebSocket handshake rejected with HTTP 101")
+        );
+        for code in [None, Some(1000), Some(1001), Some(1005)] {
+            assert_eq!(
+                websocket_response(WebSocketClosedBy::Server, code).protocol_failure(),
+                None
+            );
+        }
+        assert_eq!(
+            websocket_response(WebSocketClosedBy::Server, Some(1011))
+                .protocol_failure()
+                .as_deref(),
+            Some("WebSocket closed with 1011")
+        );
+        assert!(
+            websocket_response(WebSocketClosedBy::Transport, None)
+                .protocol_failure()
+                .is_some()
+        );
+    }
 
     #[test]
     fn derives_size_in_bytes_from_the_body() {

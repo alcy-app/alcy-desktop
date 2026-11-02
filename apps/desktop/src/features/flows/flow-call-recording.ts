@@ -1,6 +1,6 @@
 import type { FlowExchangeDto, FlowRunEventDto } from '../../bindings/execute-flow'
 import { bodyPreviewText, toBodyState } from '../request-workbench/body-state'
-import type { RequestSummary } from '../request-workbench/collection-tree'
+import { websocketOf, type RequestSummary } from '../request-workbench/collection-tree'
 import type { ConsoleEntryInput } from '../request-workbench/use-console-state'
 
 /** One request node execution of a live run, for the HAR recorder. */
@@ -48,7 +48,13 @@ export function recordedCallFromEvent(
 export function consoleEntryFromFlowCall(call: FlowRecordedCall, request: RequestSummary | null): ConsoleEntryInput {
   const content = request?.content
   const method = content?.protocol === 'rest' ? content.method : 'post'
-  const requestBody = !content ? '' : content.protocol === 'rest' ? bodyPreviewText(toBodyState(content.body)) : content.query
+  const requestBody = !content
+    ? ''
+    : content.protocol === 'rest'
+      ? bodyPreviewText(toBodyState(content.body))
+      : content.protocol === 'websocket'
+        ? websocketOf(content).message
+        : content.query
   const { exchange } = call
   return {
     kind: 'request',

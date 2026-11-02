@@ -2,7 +2,8 @@ import type { ExecuteGrpcRequestOutput } from '../../bindings/execute-grpc-reque
 import type { HistoryEntryDetailDto } from '../../bindings/get-history-entry'
 import type { HistoryEntrySummaryDto } from '../../bindings/list-history'
 import { emptyRestBody, restBodyFromDto } from './body-state'
-import { emptyGrpcCall, emptyRequestContent } from './collection-tree'
+import { emptyGrpcCall, emptyRequestContent, websocketFromDto } from './collection-tree'
+import type { ExecuteWebSocketRequestOutput } from '../../bindings/execute-websocket-request'
 import type { RequestContent } from './collection-tree'
 import { grpcCodeName } from './grpc-status'
 import type { ExecutionState } from './request-workbench.types'
@@ -60,6 +61,15 @@ export function groupHistoryByDate(entries: HistoryEntrySummaryDto[]): HistoryDa
 }
 
 export function historyDetailToContent(detail: HistoryEntryDetailDto): RequestContent {
+  if (detail.protocol === 'websocket') {
+    return {
+      ...emptyRequestContent('websocket'),
+      endpointUrl: detail.endpoint,
+      headers: detail.headers,
+      authentication: detail.authentication,
+      websocket: websocketFromDto(detail.websocket, detail.body),
+    }
+  }
   if (detail.protocol === 'grpc') {
     return {
       ...emptyRequestContent('grpc'),
@@ -138,7 +148,56 @@ function countArray(json: string): number {
   }
 }
 
+/** A WebSocket connection as history keeps it: the handshake headers plus
+ * the close in `websocket-close-*` pseudo-headers, the received messages as
+ * the body. */
+function websocketResultFromHistory(
+  outcome: Extract<HistoryEntryDetailDto['outcome'], { type: 'success' }>,
+): ExecuteWebSocketRequestOutput {
+  const value = (name: string) => outcome.headers.find((header) => header.name === name)?.value
+  const code = value(WEBSOCKET_CLOSE_CODE_HEADER)
+  const closedBy = value(WEBSOCKET_CLOSED_BY_HEADER)
+  const body = outcome.body
+  const receivedCount =
+    body.kind === 'windowed' ? 0 : body.body === '' ? 0 : body.body.startsWith('[\n') ? countArray(body.body) : 1
+  return {
+    statusCode: outcome.statusCode,
+    durationMs: outcome.durationMs,
+    sizeBytes: outcome.sizeBytes,
+    body,
+    headers: outcome.headers.filter((header) => !header.name.startsWith('websocket-close') && header.name !== WEBSOCKET_CLOSED_BY_HEADER),
+    requestHeaders: [],
+    cookies: [],
+    connection: { remoteAddress: null, httpVersion: '', tlsCertificatePresent: false, certificateVerificationDisabled: false },
+    waitingMs: 0,
+    close: {
+      code: code === undefined ? null : Number(code),
+      reason: value(WEBSOCKET_CLOSE_REASON_HEADER) ?? '',
+      closedBy: closedBy === 'client' || closedBy === 'server' || closedBy === 'transport' ? closedBy : outcome.statusCode === 101 ? 'transport' : 'rejected',
+    },
+    subprotocol: null,
+    sentCount: 0,
+    receivedCount,
+    environmentChanges: [],
+    scopedChanges: [],
+    scriptLogs: [],
+    scriptError: null,
+    testResults: [],
+  }
+}
+
+const WEBSOCKET_CLOSE_CODE_HEADER = 'websocket-close-code'
+const WEBSOCKET_CLOSE_REASON_HEADER = 'websocket-close-reason'
+const WEBSOCKET_CLOSED_BY_HEADER = 'websocket-closed-by'
+
 export function historyDetailToExecutionState(detail: HistoryEntryDetailDto): ExecutionState {
+  if (detail.outcome.type === 'success' && detail.protocol === 'websocket') {
+    return {
+      status: 'success',
+      result: websocketResultFromHistory(detail.outcome),
+      ...(detail.outcome.responseStored === false && { responseNotStored: true }),
+    }
+  }
   if (detail.outcome.type === 'success' && detail.protocol === 'grpc') {
     return {
       status: 'success',

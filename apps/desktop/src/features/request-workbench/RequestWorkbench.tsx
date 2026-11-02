@@ -78,6 +78,8 @@ import { captureStatement } from './json-value-index'
 import type { JsonPathSegment } from './json-value-index'
 import { RestScreen } from './components/RestScreen'
 import { GrpcMessagePanel } from './components/GrpcMessagePanel'
+import { WebSocketMessagePanel } from './components/WebSocketMessagePanel'
+import { WebSocketSettingsPanel } from './components/WebSocketSettingsPanel'
 import { GrpcMethodPicker } from './components/GrpcMethodPicker'
 import { GrpcSchemaPanel } from './components/GrpcSchemaPanel'
 import { GrpcSchemaControls } from './components/GrpcSchemaControls'
@@ -179,12 +181,25 @@ const GRPC_TABS: { id: RequestTabId; label: string }[] = [
   { id: 'schema', label: 'Schema' },
 ]
 
+/** WebSocket requests: the composer message, the handshake request and how
+ * runs collect replies (spec 0140). */
+const WEBSOCKET_TABS: { id: RequestTabId; label: string }[] = [
+  { id: 'message', label: 'Message' },
+  { id: 'params', label: 'Params' },
+  { id: 'headers', label: 'Headers' },
+  { id: 'authorization', label: 'Authorization' },
+  { id: 'scripts', label: 'Scripts' },
+  { id: 'settings', label: 'Settings' },
+]
+
 function requestTabsFor(protocol: WorkbenchProtocol): { id: RequestTabId; label: string }[] {
   switch (protocol) {
     case 'rest':
       return REST_TABS
     case 'grpc':
       return GRPC_TABS
+    case 'websocket':
+      return WEBSOCKET_TABS
     case 'graphql':
       return GRAPHQL_TABS
   }
@@ -763,8 +778,41 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     void history.refresh()
   }
 
+  /** WebSocket connects; script effects, the console and history apply once the connection ends. */
+  const handleConnectWebSocket = async () => {
+    const endpointUrl = workbench.endpointUrl
+    const result = await workbench.connectWebSocket()
+    const effects = result.ok ? result.value : result
+    environments.applyScriptChanges((effects.environmentChanges ?? []).filter((change): change is { name: string; value: string } => change.value !== null))
+    collections.applyScopedChanges(effects.scopedChanges ?? [])
+    const scriptError = result.ok ? result.value.scriptError?.message : result.error.kind === 'script' ? result.error.message : null
+    const clean = result.ok && result.value.close.closedBy !== 'rejected' && result.value.close.closedBy !== 'transport'
+    consoleLog.append({
+      kind: 'request',
+      endpointUrl,
+      executedAtMs: Date.now(),
+      durationMs: result.ok ? result.value.durationMs : null,
+      outcome: clean ? 'success' : 'error',
+      statusCode: result.ok ? result.value.statusCode : null,
+      hasGraphqlErrors: false,
+      errorKind: result.ok ? null : result.error.kind,
+      scriptMessage: null,
+      detail: null,
+    })
+    for (const entry of [
+      ...(effects.scriptLogs ?? []).map((message) => ({ message, failed: false })),
+      ...(scriptError ? [{ message: scriptError, failed: true }] : []),
+    ]) {
+      consoleLog.append({ kind: 'script', endpointUrl, executedAtMs: Date.now(), durationMs: null,
+        outcome: entry.failed ? 'error' : 'success', statusCode: null, hasGraphqlErrors: false,
+        errorKind: null, scriptMessage: entry.message, detail: null })
+    }
+    void history.refresh()
+  }
+
   const handleSend = async (options?: { ignoreResponseSizeLimit?: boolean; download?: boolean }) => {
     if (workbench.protocol === 'grpc') return handleSendGrpc()
+    if (workbench.protocol === 'websocket') return handleConnectWebSocket()
     const requestName = workbench.activeTab.name
     const endpointUrl = workbench.endpointUrl
     const routeParams = workbench.routeParams
@@ -1937,6 +1985,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                 onAddGraphqlRequest={() => workbench.newDraftTab('graphql', t('collections.newRequestName'))}
                 onAddRestRequest={() => workbench.newDraftTab('rest', t('collections.newRequestName'))}
                 onAddGrpcRequest={() => workbench.newDraftTab('grpc', t('collections.newRequestName'))}
+                onAddWebSocketRequest={() => workbench.newDraftTab('websocket', t('collections.newRequestName'))}
               />
             ) : openTabs.activeOpenTab?.kind === 'runner' || activeMockServerTab ? null : activeNotificationTab ? (
               <NotificationDetails key={activeNotificationTab.id} notification={activeNotificationTab.notification} />
@@ -2075,6 +2124,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       />
                     }
                     isImportingCommand={commandImportTabId !== null && commandImportTabId === workbench.activeTabId}
+                    websocketOpen={workbench.websocketStream?.status === 'open'}
+                    onDisconnect={() => void workbench.disconnectWebSocket()}
                   />
                 </div>
                 <div
@@ -2103,7 +2154,23 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       className={`rw-tabpanel${workbench.activeSection === 'query' || workbench.activeSection === 'message' ? ` rw-tabpanel--${workbench.activeSection}` : ''} ui-tabpanel-motion`}
                     >
                       {workbench.activeSection === 'docs' && <DocsPanel state={requestDocs} />}
-                      {workbench.activeSection === 'message' && (
+                      {workbench.activeSection === 'message' && workbench.protocol === 'websocket' && (
+                        <WebSocketMessagePanel
+                          key={workbench.activeTabId ?? ''}
+                          message={workbench.websocket.message}
+                          format={workbench.websocket.messageFormat}
+                          onMessageChange={(message) => workbench.updateWebSocket({ message })}
+                          onFormatChange={(messageFormat) => workbench.updateWebSocket({ messageFormat })}
+                          stream={workbench.websocketStream}
+                          isConnected={workbench.execution.status === 'loading'}
+                          onSend={() => void workbench.sendWebSocketComposerMessage()}
+                          environmentVariables={effectiveVariables}
+                        />
+                      )}
+                      {workbench.activeSection === 'settings' && workbench.protocol === 'websocket' && (
+                        <WebSocketSettingsPanel websocket={workbench.websocket} onChange={workbench.updateWebSocket} />
+                      )}
+                      {workbench.activeSection === 'message' && workbench.protocol === 'grpc' && (
                         <GrpcMessagePanel
                           key={workbench.activeTabId ?? ''}
                           service={workbench.grpc.service}
@@ -2276,6 +2343,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                     <ResponsePanel
                       execution={workbench.execution}
                       grpcStream={workbench.grpcStream}
+                      websocketStream={workbench.protocol === 'websocket' ? workbench.websocketStream : undefined}
                       onClear={workbench.clearResponse}
                       layout={effectiveResponseLayout}
                       onToggleLayout={onToggleResponseLayout}

@@ -1,0 +1,26 @@
+[package]
+name = "alcy-websocket"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# WebSocket capability (spec 0140, ADR 0067). The upgrade request goes
+# through the shared reqwest client (proxy, custom CAs, TLS options, every
+# authentication type); tokio-tungstenite only frames messages on the
+# upgraded connection. Default features stay off: no TLS stack and no TCP
+# connector of its own. `handshake` brings the `Sec-WebSocket-Key`/`Accept`
+# helpers (sha1, base64) and nothing that opens a connection.
+[dependencies]
+alcy-domain = { path = "../alcy-domain" }
+alcy-http-auth = { path = "../alcy-http-auth" }
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "system-proxy"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+
+[lints]
+workspace = true

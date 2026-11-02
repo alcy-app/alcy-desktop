@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::collections_store::{
-    PersistedGrpcCall, grpc_from_persisted, persisted_from_grpc, protocol_from_str, protocol_to_str,
+    PersistedGrpcCall, PersistedWebSocketCall, grpc_from_persisted, persisted_from_grpc,
+    persisted_from_websocket, protocol_from_str, protocol_to_str, websocket_from_persisted,
 };
 use crate::storage_error::StorageError;
 
@@ -160,6 +161,9 @@ struct PersistedDetail<'a> {
     /// Additive (spec 0129): only gRPC sends write it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grpc: Option<PersistedGrpcCall>,
+    /// Additive (spec 0140): only WebSocket connections write it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    websocket: Option<PersistedWebSocketCall>,
 }
 
 fn default_persisted_method() -> String {
@@ -982,6 +986,8 @@ fn detail_from_entry(entry: &HistoryEntry) -> PersistedDetail<'_> {
         binary_file_path: body_fields.binary_file_path,
         grpc: (entry.request.document.protocol == ProtocolId::Grpc)
             .then(|| persisted_from_grpc(&entry.request.grpc)),
+        websocket: (entry.request.document.protocol == ProtocolId::WebSocket)
+            .then(|| persisted_from_websocket(&entry.request.websocket)),
     }
 }
 
@@ -1007,7 +1013,13 @@ fn entry_from_parts(
     )
     .with_method(method)
     .with_body_payload(body_payload)
-    .with_grpc(detail.grpc.map(grpc_from_persisted).unwrap_or_default());
+    .with_grpc(detail.grpc.map(grpc_from_persisted).unwrap_or_default())
+    .with_websocket(
+        detail
+            .websocket
+            .map(websocket_from_persisted)
+            .unwrap_or_default(),
+    );
 
     let mut response_body_truncated = false;
     let mut response_omitted = false;
@@ -1142,7 +1154,9 @@ fn entry_from_v1(persisted: PersistedHistoryEntryV1) -> Result<HistoryEntry, Sto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alcy_domain::{GrpcCall, GrpcSchemaSource};
+    use alcy_domain::{
+        GrpcCall, GrpcSchemaSource, WebSocketCall, WebSocketCollect, WebSocketMessageFormat,
+    };
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1772,6 +1786,46 @@ mod tests {
         assert_eq!(store.load_entry("entry-1").unwrap(), Some(entry));
         let summaries = store.load_summaries().unwrap();
         assert_eq!(summaries[0].protocol, ProtocolId::Grpc);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn record_then_load_entry_round_trips_a_websocket_request() {
+        let root = temp_root();
+        let store = HistoryStore::new(root.clone(), week());
+        let request = Request::new(
+            Endpoint::new("wss://echo.example.com/socket").unwrap(),
+            RequestDocument::new(ProtocolId::WebSocket, r#"{"op": "ping"}"#),
+            "",
+            vec![],
+            Authentication::None,
+        )
+        .with_websocket(WebSocketCall {
+            subprotocols: vec!["graphql-transport-ws".to_string()],
+            message_format: WebSocketMessageFormat::Json,
+            collect: WebSocketCollect {
+                wait_ms: Some(2_000),
+                expected_messages: Some(3),
+            },
+        });
+        let entry = HistoryEntry::new(
+            "entry-1",
+            request,
+            HistoryOutcome::Success(Response::new(
+                101,
+                5,
+                r#"[{"direction":"received","format":"text","data":"pong","elapsedMs":3}]"#,
+                vec![],
+                ResponseMetadata::default(),
+            )),
+            millis_now(),
+        );
+
+        store.record(entry.clone()).unwrap();
+
+        assert_eq!(store.load_entry("entry-1").unwrap(), Some(entry));
+        let summaries = store.load_summaries().unwrap();
+        assert_eq!(summaries[0].protocol, ProtocolId::WebSocket);
         fs::remove_dir_all(&root).ok();
     }
 

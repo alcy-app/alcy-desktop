@@ -525,6 +525,9 @@
 }
 
 .rw-grpc-event-detail .rw-code-view-frame {
+  /* Tall enough for the editor's search bar (top offset + 32px bar + gap):
+     a one-line message would otherwise clip it inside the scrolling frame. */
+  min-height: calc(32px + var(--space-2) * 2);
   max-height: 300px;
   overflow: auto;
 }

@@ -3,7 +3,7 @@ import type { CollectionDto, SavedRequestDto } from '../../../bindings/list-coll
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { toAuthenticationInput } from '../authorization-state'
 import { restBodyText, toRestBodyInput } from '../body-state'
-import { emptyGrpcCall } from '../collection-tree'
+import { emptyGrpcCall, emptyWebSocketCall, websocketCallDto } from '../collection-tree'
 import type { SnippetTab } from '../code-snippets/snippet-request'
 import { isCredentialHeader } from '../har-redaction'
 import { parseQueryParams } from '../query-params'
@@ -174,6 +174,10 @@ export function hasSuspectedPasswordInImportMetadata({
   if (tab.protocol === 'grpc' && tab.grpc) {
     authoredText.push(tab.grpc.service, tab.grpc.method, tab.grpc.message)
     if (textHasSuspiciousField(tab.grpc.message, environmentVariables)) return true
+  }
+  if (tab.protocol === 'websocket' && tab.websocket) {
+    authoredText.push(tab.websocket.message, ...tab.websocket.subprotocols)
+    if (textHasSuspiciousField(tab.websocket.message, environmentVariables)) return true
   }
   if (tab.protocol === 'rest') {
     if (tab.body.type === 'raw') authoredText.push(tab.body.raw)
@@ -374,6 +378,8 @@ export function clearSuspectedPasswordsForImport({
       authorization,
       ...(tab.protocol === 'grpc' && tab.grpc
         ? { grpc: { ...tab.grpc, message: clearSensitiveText(tab.grpc.message, environmentVariables) } } : {}),
+      ...(tab.protocol === 'websocket' && tab.websocket
+        ? { websocket: { ...tab.websocket, message: clearSensitiveText(tab.websocket.message, environmentVariables) } } : {}),
     },
     inheritedAuthentication:
       ownAuthentication.type === 'inherit' ? clearAuthentication(inheritedAuthentication, environmentVariables) : inheritedAuthentication,
@@ -432,14 +438,16 @@ export function buildImportCollection({
 
   const restBody = tab.protocol === 'rest' ? toRestBodyInput(tab.body) : null
   const grpc = tab.protocol === 'grpc' ? tab.grpc ?? emptyGrpcCall : null
+  const websocket = tab.protocol === 'websocket' ? tab.websocket ?? emptyWebSocketCall : null
   const request: SavedRequestDto = {
     id: 'shared-request',
     name: requestName.trim() || 'Imported Request',
     protocol: tab.protocol,
     endpoint: tab.endpointUrl,
     method: tab.method,
-    body: grpc ? grpc.message : restBody ? restBodyText(restBody) : tab.query,
+    body: grpc ? grpc.message : websocket ? websocket.message : restBody ? restBodyText(restBody) : tab.query,
     ...(grpc ? { grpc: { service: grpc.service, method: grpc.method, schemaSource: grpc.schemaSource, deadlineMs: grpc.deadlineMs } } : {}),
+    ...(websocket ? { websocket: websocketCallDto(websocket) } : {}),
     restBody,
     variables: tab.protocol === 'graphql' ? tab.variables : '',
     headers,

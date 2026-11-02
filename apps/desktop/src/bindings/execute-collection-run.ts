@@ -39,7 +39,7 @@ export interface RunStepDto {
   requestId: string
   name: string
   /** `null` quando a requisição não existe mais. */
-  protocol: 'rest' | 'graphql' | 'grpc' | null
+  protocol: 'rest' | 'graphql' | 'grpc' | 'websocket' | null
   method: string
   /** URL chamada, com segredos mascarados. */
   resolvedUrl: string

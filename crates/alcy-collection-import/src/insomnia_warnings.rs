@@ -138,4 +138,60 @@ collection:
             ["API / Services / Hello", "API / Services / Draft"]
         );
     }
+
+    #[test]
+    fn imports_flat_websocket_requests_with_their_first_payload() {
+        let imported = parse_collection(r#"{
+          "__export_format":4,"resources":[
+            {"_type":"workspace","_id":"w","name":"API"},
+            {"_type":"websocket_request","_id":"ws_1","parentId":"w","name":"Chat","url":"wss://chat.test/{{ _.room }}",
+             "headers":[{"name":"X-Tenant","value":"acme"}],
+             "authentication":{"type":"bearer","token":"abc"}},
+            {"_type":"websocket_payload","_id":"p1","parentId":"ws_1","name":"Join","value":"{\"join\":1}","mode":"application/json"}
+          ]}"#).unwrap();
+
+        assert!(imported.warnings.is_empty());
+        let request = &imported.collections[0].requests()[0];
+        assert_eq!(request.name(), "Chat");
+        assert_eq!(
+            request.request.document.protocol,
+            alcy_domain::ProtocolId::WebSocket
+        );
+        assert_eq!(request.request.endpoint.url(), "wss://chat.test/{{room}}");
+        assert_eq!(request.request.document.body, "{\"join\":1}");
+        assert_eq!(
+            request.request.websocket.message_format,
+            alcy_domain::WebSocketMessageFormat::Json
+        );
+        assert!(matches!(
+            request.request.authentication,
+            alcy_domain::Authentication::Bearer { .. }
+        ));
+    }
+
+    #[test]
+    fn imports_tree_websocket_requests() {
+        let imported = parse_collection(
+            r#"
+type: collection.insomnia.rest/5.0
+name: API
+collection:
+  - name: Live
+    meta: { id: ws-req_live }
+    url: ws://localhost:8080/live
+    headers:
+      - name: X-Client
+        value: alcy
+"#,
+        )
+        .unwrap();
+
+        let request = &imported.collections[0].requests()[0];
+        assert_eq!(
+            request.request.document.protocol,
+            alcy_domain::ProtocolId::WebSocket
+        );
+        assert_eq!(request.request.endpoint.url(), "ws://localhost:8080/live");
+        assert_eq!(request.request.headers[0].name(), "X-Client");
+    }
 }

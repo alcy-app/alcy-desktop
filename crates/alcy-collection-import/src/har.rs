@@ -3,6 +3,10 @@
 //! when the archive spans more than one. Responses, timings and caches are
 //! ignored; only `log.entries[].request` and `log.pages[0].title` are read.
 //!
+//! WebSocket entries (a `ws(s)://` URL, `_resourceType: "websocket"` or an
+//! upgrade request) become WebSocket requests whose message is the first one
+//! the page sent (spec 0140).
+//!
 //! Nothing is filtered silently: entries that cannot become a request, and
 //! multipart file parts that cannot be recovered, are reported as
 //! `ImportWarning`s.
@@ -12,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use alcy_domain::{
     Authentication, BodyPayload, Collection, Folder, FormDataField, FormDataFieldValue,
     HeaderEntry, ProtocolId, RawBodyLanguage, SavedRequest, UrlEncodedField,
+    WebSocketMessageFormat,
 };
 use serde_json::{Map, Value};
 
@@ -19,7 +24,8 @@ use super::shell_command::{form_fields, host_of, is_content_type, request_name, 
 use super::{
     CollectionImportError, FALLBACK_COLLECTION_NAME, FALLBACK_FOLDER_NAME, IdGenerator,
     ImportFormat, ImportWarning, ImportedCollectionData, build_request, ensure_content_type,
-    http_method, map_headers, raw_language_from_mime, single_line, unique_name,
+    http_method, is_websocket_url, map_headers, raw_language_from_mime, single_line, unique_name,
+    websocket_request,
 };
 
 /// Request names longer than this (in characters) are shortened with `…`.
@@ -149,6 +155,14 @@ struct HostGroup {
     requests: Vec<SavedRequest>,
 }
 
+/// Handshake headers a WebSocket request computes on its own.
+const WEBSOCKET_HANDSHAKE_HEADERS: &[&str] = &[
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-extensions",
+    "sec-websocket-protocol",
+];
+
 /// The fields of one entry's `request` needed to build a saved request.
 struct HarCall<'a> {
     method: String,
@@ -156,6 +170,41 @@ struct HarCall<'a> {
     host: String,
     name: String,
     request: &'a Map<String, Value>,
+    /// The entry's `_webSocketMessages` when it is a WebSocket connection.
+    websocket: Option<Option<&'a Value>>,
+}
+
+/// Whether an entry recorded a WebSocket connection.
+fn is_websocket_entry(entry: &Value, request: &Map<String, Value>, url: &str) -> bool {
+    is_websocket_url(url)
+        || entry
+            .get("_resourceType")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("websocket"))
+        || request
+            .get("headers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|header| {
+                header
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.eq_ignore_ascii_case("upgrade"))
+                    && header
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.trim().eq_ignore_ascii_case("websocket"))
+            })
+}
+
+/// The recorded `http(s)://` URL of a connection as `ws(s)://`.
+fn websocket_url(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => format!("wss://{rest}"),
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") => format!("ws://{rest}"),
+        _ => url.to_string(),
+    }
 }
 
 /// Reads the method and URL of an entry, or records why it is skipped.
@@ -188,16 +237,24 @@ fn read_entry<'a>(
         return None;
     }
 
-    let mut url = url.to_string();
+    let websocket =
+        is_websocket_entry(entry, request, url).then(|| entry.get("_webSocketMessages"));
+    let mut url = if websocket.is_some() {
+        websocket_url(url)
+    } else {
+        url.to_string()
+    };
     if !url.contains('?') {
         append_query_string(&mut url, request.get("queryString"));
     }
+    let label = if websocket.is_some() { "WS" } else { method };
     Some(HarCall {
         method: method.to_ascii_uppercase(),
         host: host_of(&url).to_ascii_lowercase(),
-        name: short_name(&request_name(method, &url)),
+        name: short_name(&request_name(label, &url)),
         url,
         request,
+        websocket,
     })
 }
 
@@ -209,6 +266,34 @@ impl HarCall<'_> {
         warnings: &mut Vec<ImportWarning>,
     ) -> Result<SavedRequest, CollectionImportError> {
         let mut headers = map_headers(self.request.get("headers"), "name")?;
+        if let Some(messages) = self.websocket {
+            let subprotocols = headers
+                .iter()
+                .filter(|header| header.name().eq_ignore_ascii_case("sec-websocket-protocol"))
+                .flat_map(|header| header.value().split(','))
+                .map(str::trim)
+                .filter(|subprotocol| !subprotocol.is_empty())
+                .map(str::to_string)
+                .collect();
+            headers.retain(|header| {
+                !is_dropped_header(header.name())
+                    && !WEBSOCKET_HANDSHAKE_HEADERS
+                        .iter()
+                        .any(|owned| owned.eq_ignore_ascii_case(header.name()))
+            });
+            add_cookie_header(&mut headers, self.request.get("cookies"))?;
+            let (message, format) = first_sent_message(messages);
+            return websocket_request(
+                ids,
+                name,
+                self.url,
+                headers,
+                Authentication::None,
+                message,
+                format,
+                subprotocols,
+            );
+        }
         headers.retain(|header| !is_dropped_header(header.name()));
         add_cookie_header(&mut headers, self.request.get("cookies"))?;
         let (body, payload) =
@@ -226,6 +311,34 @@ impl HarCall<'_> {
             payload,
         )
     }
+}
+
+/// The first message the page sent on a recorded connection: opcode 2 is
+/// binary (base64 in the archive), JSON text keeps the JSON format.
+fn first_sent_message(messages: Option<&Value>) -> (String, WebSocketMessageFormat) {
+    let sent = messages
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|message| message.get("type").and_then(Value::as_str) == Some("send"));
+    let Some(sent) = sent else {
+        return (String::new(), WebSocketMessageFormat::Text);
+    };
+    let data = sent
+        .get("data")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let format = if sent.get("opcode").and_then(Value::as_u64) == Some(2) {
+        WebSocketMessageFormat::Binary
+    } else if serde_json::from_str::<Value>(&data)
+        .is_ok_and(|value| value.is_object() || value.is_array())
+    {
+        WebSocketMessageFormat::Json
+    } else {
+        WebSocketMessageFormat::Text
+    };
+    (data, format)
 }
 
 fn is_dropped_header(name: &str) -> bool {
@@ -648,6 +761,69 @@ mod tests {
             "https://api.example.com/users?page=2"
         );
         assert_eq!(request.request.body_payload, BodyPayload::None);
+    }
+
+    #[test]
+    fn imports_a_websocket_entry_as_a_websocket_request() {
+        let mut socket = entry(json!({
+            "method": "GET",
+            "url": "https://chat.example.com/socket?room=1",
+            "httpVersion": "HTTP/1.1",
+            "headers": [
+                {"name": "Upgrade", "value": "websocket"},
+                {"name": "Connection", "value": "Upgrade"},
+                {"name": "Sec-WebSocket-Key", "value": "dGhlIHNhbXBsZSBub25jZQ=="},
+                {"name": "Sec-WebSocket-Version", "value": "13"},
+                {"name": "Sec-WebSocket-Protocol", "value": "chat.v2, chat"},
+                {"name": "Authorization", "value": "Bearer abc"}
+            ],
+            "queryString": [],
+            "cookies": []
+        }));
+        socket["_resourceType"] = json!("websocket");
+        socket["_webSocketMessages"] = json!([
+            {"type": "receive", "time": 1.0, "opcode": 1, "data": "welcome"},
+            {"type": "send", "time": 2.0, "opcode": 1, "data": "{\"join\":\"general\"}"},
+            {"type": "send", "time": 3.0, "opcode": 1, "data": "second"}
+        ]);
+
+        let request = only_request(&har(json!([socket])));
+
+        assert_eq!(request.name(), "WS /socket");
+        assert_eq!(request.request.document.protocol, ProtocolId::WebSocket);
+        assert_eq!(
+            request.request.endpoint.url(),
+            "wss://chat.example.com/socket?room=1"
+        );
+        assert_eq!(request.request.document.body, "{\"join\":\"general\"}");
+        assert_eq!(
+            request.request.websocket.message_format,
+            WebSocketMessageFormat::Json
+        );
+        assert_eq!(
+            request.request.websocket.subprotocols,
+            vec!["chat.v2".to_string(), "chat".to_string()]
+        );
+        assert_eq!(
+            header_pairs(&request),
+            vec![("Authorization".to_string(), "Bearer abc".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_binary_first_message_keeps_its_base64_and_format() {
+        let mut socket = get("ws://localhost:8080/");
+        socket["_webSocketMessages"] =
+            json!([{"type": "send", "time": 1.0, "opcode": 2, "data": "AAEC"}]);
+
+        let request = only_request(&har(json!([socket])));
+
+        assert_eq!(request.request.endpoint.url(), "ws://localhost:8080/");
+        assert_eq!(request.request.document.body, "AAEC");
+        assert_eq!(
+            request.request.websocket.message_format,
+            WebSocketMessageFormat::Binary
+        );
     }
 
     #[test]

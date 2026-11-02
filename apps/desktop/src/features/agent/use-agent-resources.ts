@@ -536,7 +536,7 @@ export function useAgentResources(sources: Sources): AgentResourceHost {
           const parentId = string(input, 'parentId')
           if (!findNode(s.collections.collections, parentId)) throw new Error('parentId is not a collection or folder. Use search_collections.')
           const protocol = string(input, 'protocol')
-          if (protocol !== 'rest' && protocol !== 'graphql') throw new Error("protocol must be 'rest' or 'graphql'.")
+          if (protocol !== 'rest' && protocol !== 'graphql' && protocol !== 'websocket') throw new Error("protocol must be 'rest', 'graphql' or 'websocket'.")
           const content = applyRequestPatch(emptyRequestContent(protocol), input)
           const requestName = string(input, 'name').trim()
           if (requestName === '') throw new Error('name is required.')

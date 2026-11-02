@@ -8,6 +8,7 @@ pub enum ProtocolId {
     GraphQl,
     Rest,
     Grpc,
+    WebSocket,
 }
 
 /// Corpo opaco de uma requisição, rotulado pelo protocolo ao qual pertence.

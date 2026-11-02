@@ -1420,6 +1420,7 @@ mod tests {
                             post_response_script: String::new(),
                             docs_ref: None,
                             grpc: None,
+                            websocket: None,
                         }),
                     },
                 ),

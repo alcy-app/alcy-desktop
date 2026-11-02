@@ -19,7 +19,7 @@ import { applyRequestPatch, describeRequest } from './agent-tools'
 type Input = Record<string, unknown>
 
 /** Request fields written the same way as in update_request and create_request. */
-export const AGENT_REQUEST_FIELDS = ['method', 'url', 'headers', 'body', 'query', 'variables', 'authentication', 'preRequestScript', 'postResponseScript', 'routeParams', 'grpc'] as const
+export const AGENT_REQUEST_FIELDS = ['method', 'url', 'headers', 'body', 'query', 'variables', 'authentication', 'preRequestScript', 'postResponseScript', 'routeParams', 'grpc', 'websocket'] as const
 /** Saved-request DTO keys a model may copy from elsewhere; they mean something else here. */
 const DTO_REQUEST_FIELDS = ['endpoint', 'restBody', 'endpointUrl']
 const CONDITION_FIELDS = ['left', 'operator', 'right'] as const
@@ -99,7 +99,7 @@ function inlineRequestDto(fields: Input, previous: SavedRequestDto | undefined):
   }
   const base = previous ? requestFromDto(previous) : null
   const protocol = (fields.protocol ?? base?.protocol ?? 'rest') as RequestProtocol
-  if (protocol !== 'rest' && protocol !== 'graphql' && protocol !== 'grpc') throw new Error("protocol must be 'rest', 'graphql' or 'grpc'.")
+  if (protocol !== 'rest' && protocol !== 'graphql' && protocol !== 'grpc' && protocol !== 'websocket') throw new Error("protocol must be 'rest', 'graphql', 'grpc' or 'websocket'.")
   if (base && base.protocol !== protocol) throw new Error('The protocol of an existing request node cannot change; add a new node.')
   const content = applyRequestPatch(base?.content ?? emptyRequestContent(protocol), fields)
   const name = typeof fields.name === 'string' && fields.name.trim() ? fields.name.trim() : base?.name ?? 'Request'

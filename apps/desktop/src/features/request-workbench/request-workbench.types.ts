@@ -10,15 +10,17 @@ import type {
   RawBodyLanguage,
 } from '../../bindings/execute-rest-request'
 import type { GrpcStreamState } from './grpc-stream'
+import type { WebSocketStreamState } from './websocket-stream'
+import type { ExecuteWebSocketRequestOutput } from '../../bindings/execute-websocket-request'
 import type { ExecuteGrpcRequestOutput } from '../../bindings/execute-grpc-request'
 import type { GrpcCommandError, GrpcSchemaSummary } from '../../bindings/load-grpc-schema'
 import type { LoadSchemaError, LoadSchemaOutput } from '../../bindings/load-schema'
-import type { GrpcCallState, RequestContent } from './collection-tree'
+import type { GrpcCallState, RequestContent, WebSocketCallState } from './collection-tree'
 
 export type { HttpMethodInput, RawBodyLanguage }
 
 /** Protocol of an open tab, separate from the persisted collection request type even when their values coincide. */
-export type WorkbenchProtocol = 'graphql' | 'rest' | 'grpc'
+export type WorkbenchProtocol = 'graphql' | 'rest' | 'grpc' | 'websocket'
 
 export type RequestTabId =
   | 'docs'
@@ -31,6 +33,7 @@ export type RequestTabId =
   | 'headers'
   | 'authorization'
   | 'schema'
+  | 'settings'
 export type ResponseTabId = 'body' | 'headers' | 'errors' | 'tests'
 
 export interface WorkbenchEnvironment {
@@ -105,12 +108,22 @@ export interface AuthorizationState {
   scope: string
 }
 
-export type ExecutionSuccess = ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput | ExecuteGrpcRequestOutput
+export type ExecutionSuccess =
+  | ExecuteGraphqlRequestOutput
+  | ExecuteRestRequestOutput
+  | ExecuteGrpcRequestOutput
+  | ExecuteWebSocketRequestOutput
 export type ExecutionFailure = ExecuteGraphqlRequestError | ExecuteRestRequestError | GrpcCommandError
 
-/** HTTP results (REST, GraphQL); `null` for a gRPC one, which has no HTTP status. */
+/** HTTP results (REST, GraphQL); `null` for gRPC and WebSocket ones, which
+ * are shown by their own views. */
 export function httpResultOf(result: ExecutionSuccess): ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput | null {
-  return 'statusCode' in result ? result : null
+  return 'statusCode' in result && !('close' in result) ? result : null
+}
+
+/** WebSocket result, or `null` for the other protocols. */
+export function websocketResultOf(result: ExecutionSuccess | null | undefined): ExecuteWebSocketRequestOutput | null {
+  return result && 'close' in result && 'receivedCount' in result ? result : null
 }
 
 /** gRPC result, or `null` for the HTTP ones. */
@@ -190,4 +203,7 @@ export interface WorkbenchTab {
   grpc: GrpcCallState
   grpcSchema: GrpcSchemaLoadState
   grpcStream?: GrpcStreamState
+  /** WebSocket call of the tab (spec 0140); default for the other protocols. */
+  websocket: WebSocketCallState
+  websocketStream?: WebSocketStreamState
 }

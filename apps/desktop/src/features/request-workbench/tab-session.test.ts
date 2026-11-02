@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyRequestContent } from './collection-tree'
+import { emptyRequestContent, websocketOf } from './collection-tree'
 import type { RequestContent, TreeNode } from './collection-tree'
 import type { WorkbenchTab } from './request-workbench.types'
 import { parseTabSession, resolveTabSession, sessionFromLegacy, snapshotTabSession } from './tab-session'
@@ -60,6 +60,7 @@ function tab(overrides: Partial<WorkbenchTab> = {}): WorkbenchTab {
     lastSendId: null,
     schema: { status: 'idle' },
     grpc: savedContent.grpc,
+    websocket: websocketOf(savedContent),
     grpcSchema: { status: 'idle' },
     schemaExecutionId: null,
     ...overrides,
@@ -291,5 +292,26 @@ describe('parseTabSession with gRPC drafts', () => {
 
     expect(parsed?.tabs).toHaveLength(1)
     expect(parsed?.tabs[0]?.draft).toEqual({ ...emptyRequestContent('grpc'), endpointUrl: 'localhost:50051', grpc })
+  })
+
+  it('restores a WebSocket draft and drops one with a malformed call', () => {
+    const websocket = {
+      message: '{"join": "{{room}}"}',
+      messageFormat: 'json',
+      subprotocols: ['chat.v2'],
+      waitMs: 2000,
+      expectedMessages: 0,
+    }
+    const parsed = parseTabSession({
+      version: 1,
+      activeTabId: 'ok',
+      tabs: [
+        { id: 'ok', requestId: null, name: 'Chat', draft: { protocol: 'websocket', endpointUrl: 'wss://chat.test', websocket } },
+        { id: 'bad', requestId: null, name: 'Bad', draft: { protocol: 'websocket', websocket: { ...websocket, messageFormat: 'xml' } } },
+      ],
+    })
+
+    expect(parsed?.tabs).toHaveLength(1)
+    expect(parsed?.tabs[0]?.draft).toEqual({ ...emptyRequestContent('websocket'), endpointUrl: 'wss://chat.test', websocket })
   })
 })

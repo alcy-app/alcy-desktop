@@ -368,7 +368,9 @@ fn resolve(
     Ok(resolve_variables(template, variables)?)
 }
 
-fn build_request(input: ExecuteRestRequestInput) -> Result<Request, ExecuteRestRequestError> {
+pub(crate) fn build_request(
+    input: ExecuteRestRequestInput,
+) -> Result<Request, ExecuteRestRequestError> {
     let unlimited_response_size = input.ignore_response_size_limit;
     let environment_variables = input
         .environment_variables
@@ -643,6 +645,7 @@ async fn execute_rest_request_inner(
 
     let mut scripted = ScriptedRequest {
         grpc: None,
+        websocket: None,
         url: input.endpoint_url.clone(),
         method: input.method.as_str().to_string(),
         body: script_body_text(&input.body),

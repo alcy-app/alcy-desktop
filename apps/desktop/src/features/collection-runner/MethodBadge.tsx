@@ -19,10 +19,10 @@ export function MethodBadge({ protocol, method }: { protocol: string | null; met
       </Badge>
     )
   }
-  if (protocol === 'grpc') {
+  if (protocol === 'grpc' || protocol === 'websocket') {
     return (
       <Badge tone="info" className="runner-method">
-        gRPC
+        {protocol === 'grpc' ? 'gRPC' : 'WS'}
       </Badge>
     )
   }

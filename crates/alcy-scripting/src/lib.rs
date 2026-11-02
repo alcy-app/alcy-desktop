@@ -58,9 +58,28 @@ pub struct ScriptGrpcResponse {
     pub trailers: Vec<ScriptHeader>,
 }
 
+/// What a WebSocket request offers (spec 0140); the message is the body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptWebSocketRequest {
+    pub subprotocols: Vec<String>,
+}
+
+/// How a WebSocket connection ended; the received messages are the body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptWebSocketResponse {
+    pub close_code: Option<u16>,
+    pub close_reason: String,
+    /// `client`, `server`, `transport` or `rejected`.
+    pub closed_by: String,
+    pub subprotocol: Option<String>,
+    pub sent: u32,
+    pub received: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptRequest {
     pub grpc: Option<ScriptGrpcRequest>,
+    pub websocket: Option<ScriptWebSocketRequest>,
     pub url: String,
     pub method: String,
     pub body: String,
@@ -70,6 +89,7 @@ pub struct ScriptRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptResponse {
     pub grpc: Option<ScriptGrpcResponse>,
+    pub websocket: Option<ScriptWebSocketResponse>,
     pub status: u16,
     pub status_text: String,
     pub time_ms: u64,
@@ -279,6 +299,17 @@ var al = (function (host) {
       metadata: requestApi.headers
     };
   }
+  if (request.websocket) {
+    requestApi.websocket = {
+      get subprotocols() { return request.websocket.subprotocols.slice(); },
+      set subprotocols(v) {
+        guard();
+        request.websocket.subprotocols = (Array.isArray(v) ? v : [v]).map(function (item) { return String(item); });
+      },
+      get message() { return request.body; },
+      set message(v) { guard(); request.body = typeof v === 'string' ? v : JSON.stringify(v); }
+    };
+  }
   var responseApi;
   if (host.response) {
     var res = host.response;
@@ -309,6 +340,7 @@ var al = (function (host) {
     };
   }
   if (responseApi && host.response.grpc) responseApi.grpc = host.response.grpc;
+  if (responseApi && host.response.websocket) responseApi.websocket = host.response.websocket;
   // Null vars means missing scope: get returns undefined, set throws.
   var makeScope = function (vars, changedNames, missing) {
     return {
@@ -692,6 +724,25 @@ fn describe(error: &JsError, context: &mut Context) -> String {
     }
 }
 
+/// The received WebSocket messages, from the body the executor writes: the
+/// message itself when there is one, a JSON array when there are several
+/// (each element parsed when it is JSON, a string otherwise).
+fn received_messages(body: Option<&str>, received: u32) -> Vec<serde_json::Value> {
+    let Some(body) = body else { return Vec::new() };
+    let parsed = |text: &str| {
+        serde_json::from_str::<serde_json::Value>(text)
+            .unwrap_or_else(|_| serde_json::Value::String(text.to_string()))
+    };
+    match received {
+        0 => Vec::new(),
+        1 => vec![parsed(body)],
+        _ => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(serde_json::Value::Array(messages)) => messages,
+            _ => vec![parsed(body)],
+        },
+    }
+}
+
 fn host_json(phase: ScriptPhase, input: &ScriptInput) -> String {
     use serde_json::{Map, Value, json};
     let headers = |headers: &[ScriptHeader]| -> Vec<Value> {
@@ -729,6 +780,12 @@ fn host_json(phase: ScriptPhase, input: &ScriptInput) -> String {
                 json!({ "code": grpc.code, "codeName": grpc.code_name,
                     "message": grpc.message, "trailers": headers(&grpc.trailers), "messages": messages })
             }),
+            "websocket": r.websocket.as_ref().map(|websocket| {
+                json!({ "closeCode": websocket.close_code, "closeReason": websocket.close_reason,
+                    "closedBy": websocket.closed_by, "subprotocol": websocket.subprotocol,
+                    "sent": websocket.sent, "received": websocket.received,
+                    "messages": received_messages(r.body.as_deref(), websocket.received) })
+            }),
         })
     });
     let mut iteration_data = Map::new();
@@ -739,6 +796,7 @@ fn host_json(phase: ScriptPhase, input: &ScriptInput) -> String {
         "phase": phase.as_str(),
         "request": {
             "grpc": input.request.grpc.as_ref().map(|grpc| json!({ "service": grpc.service, "method": grpc.method })),
+            "websocket": input.request.websocket.as_ref().map(|websocket| json!({ "subprotocols": websocket.subprotocols })),
             "url": input.request.url,
             "method": input.request.method,
             "body": input.request.body,
@@ -828,6 +886,17 @@ fn parse_state(json: &str) -> Option<ScriptOutput> {
                     method: grpc.get("method")?.as_str()?.to_string(),
                 }),
             },
+            websocket: match request.get("websocket") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(websocket) => Some(ScriptWebSocketRequest {
+                    subprotocols: websocket
+                        .get("subprotocols")?
+                        .as_array()?
+                        .iter()
+                        .map(|item| item.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()?,
+                }),
+            },
             url: request.get("url")?.as_str()?.to_string(),
             method: request.get("method")?.as_str()?.to_string(),
             body: request.get("body")?.as_str()?.to_string(),
@@ -874,6 +943,7 @@ mod tests {
         ScriptInput {
             request: ScriptRequest {
                 grpc: None,
+                websocket: None,
                 url: "https://api.example.com/users".to_string(),
                 method: "get".to_string(),
                 body: String::new(),
@@ -963,6 +1033,7 @@ mod tests {
         let mut input = input();
         input.response = Some(ScriptResponse {
             grpc: None,
+            websocket: None,
             status: 201,
             status_text: "Created".to_string(),
             time_ms: 42,
@@ -1023,6 +1094,61 @@ mod tests {
                     .contains("somente leitura")
             );
         }
+    }
+
+    #[test]
+    fn websocket_request_and_response_are_exposed_to_scripts() {
+        let mut input = with_response(Some("[\n{\"op\":\"ack\"},\n\"plain text\"\n]"));
+        input.request.websocket = Some(ScriptWebSocketRequest {
+            subprotocols: vec!["chat".to_string()],
+        });
+        input.response.as_mut().unwrap().websocket = Some(ScriptWebSocketResponse {
+            close_code: Some(1000),
+            close_reason: String::new(),
+            closed_by: "client".to_string(),
+            subprotocol: Some("chat".to_string()),
+            sent: 1,
+            received: 2,
+        });
+
+        let output = run_script(
+            ScriptPhase::PreRequest,
+            "al.request.websocket.subprotocols = ['chat.v2', 'chat']; \
+             al.request.websocket.message = {op: 'join'};",
+            &input,
+        )
+        .unwrap();
+        assert_eq!(
+            output.request.websocket.unwrap().subprotocols,
+            vec!["chat.v2".to_string(), "chat".to_string()]
+        );
+        assert_eq!(output.request.body, r#"{"op":"join"}"#);
+
+        let output = run_script(
+            ScriptPhase::PostResponse,
+            "al.expect(al.response.websocket.closeCode).toBe(1000); \
+             al.expect(al.response.websocket.received).toBe(2); \
+             al.environment.set('first', al.response.websocket.messages[0].op); \
+             al.environment.set('second', al.response.websocket.messages[1]);",
+            &input,
+        )
+        .unwrap();
+        assert!(output.environment.contains(&vars(&[("first", "ack")])[0]));
+        assert!(
+            output
+                .environment
+                .contains(&vars(&[("second", "plain text")])[0])
+        );
+        assert!(
+            run_script(
+                ScriptPhase::PostResponse,
+                "al.request.websocket.subprotocols = []",
+                &input
+            )
+            .unwrap_err()
+            .message
+            .contains("somente leitura")
+        );
     }
 
     #[test]

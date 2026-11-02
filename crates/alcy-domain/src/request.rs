@@ -1,5 +1,6 @@
 use crate::{
     Authentication, BodyPayload, Endpoint, GrpcCall, HeaderEntry, HttpMethod, RequestDocument,
+    WebSocketCall,
 };
 
 /// Política de redirecionamento aplicada por uma execução HTTP. É efêmera:
@@ -45,6 +46,9 @@ pub struct Request {
     /// Method and schema source of a gRPC request (spec 0129); ignored by
     /// the other executors, like `body_payload` and `variables`.
     pub grpc: GrpcCall,
+    /// Subprotocols, message format and run collect options of a WebSocket
+    /// request (spec 0140); ignored by the other executors.
+    pub websocket: WebSocketCall,
     /// Ignora o limite de tamanho de resposta configurado no executor. Só o
     /// "reenviar sem limite" da interface liga isto, para um envio pontual;
     /// não é persistido.
@@ -74,6 +78,7 @@ impl Request {
             body_payload: BodyPayload::default(),
             route_parameters: Vec::new(),
             grpc: GrpcCall::default(),
+            websocket: WebSocketCall::default(),
             unlimited_response_size: false,
             redirect_policy: RedirectPolicy::Follow,
         }
@@ -116,6 +121,11 @@ impl Request {
 
     pub fn with_grpc(mut self, grpc: GrpcCall) -> Self {
         self.grpc = grpc;
+        self
+    }
+
+    pub fn with_websocket(mut self, websocket: WebSocketCall) -> Self {
+        self.websocket = websocket;
         self
     }
 }

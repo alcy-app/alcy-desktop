@@ -437,7 +437,7 @@ fn create_request_arguments() -> Value {
     fields.insert("name".into(), text());
     fields.insert(
         "protocol".into(),
-        json!({"type":"string","enum":["rest","graphql"]}),
+        json!({"type":"string","enum":["rest","graphql","websocket"]}),
     );
     object(Value::Object(fields), &["parentId", "name", "protocol"])
 }
@@ -519,7 +519,7 @@ fn node_fields() -> serde_json::Map<String, Value> {
     );
     request.insert(
         "protocol".into(),
-        json!({"type":"string","enum":["rest","graphql","grpc"],"description":"inlineRequest protocol; rest by default."}),
+        json!({"type":"string","enum":["rest","graphql","grpc","websocket"],"description":"inlineRequest protocol; rest by default."}),
     );
     let fields = json!({
         "kind": {"type":"string","enum":NODE_KINDS,"description":"What the node does; get_flow_guide explains each kind."},
@@ -563,7 +563,7 @@ fn add_node_arguments() -> Value {
         "flowId": text(),
         "id": {"type":"string","description":"Node id used in references; generated from name when omitted."},
         "name": {"type":"string","description":"Step name: the request name for inlineRequest, the source of a generated id otherwise."},
-        "protocol": {"type":"string","enum":["rest","graphql","grpc"],"description":"inlineRequest protocol; rest by default."},
+        "protocol": {"type":"string","enum":["rest","graphql","grpc","websocket"],"description":"inlineRequest protocol; rest by default."},
         "after": {"type":"string","description":"Node id this step follows, e.g. 'start'."},
         "output": output(),
         "before": {"type":"string","description":"Node id after 'after' to insert this step before."},

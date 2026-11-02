@@ -1,6 +1,6 @@
 import type { AuthenticationInput, HeaderInput } from '../../bindings/execute-graphql-request'
 import type { HttpMethodInput, RawBodyLanguage, RestBodyInput } from '../../bindings/execute-rest-request'
-import { emptyRequestContent, findNode, findRequest, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
+import { emptyRequestContent, findNode, findRequest, websocketOf, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
 import type { ExecutionState } from '../request-workbench/request-workbench.types'
 import type { EditorField } from '../request-workbench/editor-bridge'
 import type { AgentHostTab, WorkbenchAgentHost } from './agent-host'
@@ -115,6 +115,9 @@ export function describeRequest(content: RequestContent): Record<string, unknown
   } else if (content.protocol === 'graphql') {
     base.query = truncate(content.query)
     base.variables = truncate(content.variables)
+  } else if (content.protocol === 'websocket') {
+    const websocket = websocketOf(content)
+    base.websocket = { ...websocket, message: truncate(websocket.message) }
   } else {
     base.grpc = { ...content.grpc, message: truncate(content.grpc.message) }
   }
@@ -151,6 +154,15 @@ export function describeExecution(execution: ExecutionState): Record<string, unk
     }
     case 'success': {
       const { result } = execution
+      if ('close' in result) {
+        return {
+          status: 'completed', statusCode: result.statusCode, close: result.close,
+          sentCount: result.sentCount, receivedCount: result.receivedCount,
+          durationMs: result.durationMs, sizeBytes: result.sizeBytes, headers: maskHeaders(result.headers),
+          body: execution.responseNotStored ? '[the body of this response was not kept]' : truncate(result.body.kind === 'inline' ? result.body.body : result.body.preview),
+          tests: result.testResults?.slice(0, 30).map((test) => ({ name: test.name, passed: test.passed })),
+        }
+      }
       if (!('statusCode' in result)) {
         return {
           status: 'completed', grpcStatus: result.status, grpcMessages: result.messageCount,
@@ -313,6 +325,19 @@ export function applyRequestPatch(content: RequestContent, input: Input): Reques
     if (!Array.isArray(input.routeParams)) throw new ToolInputError('routeParams must be a list.')
     next.routeParams = input.routeParams.map((entry) => ({ name: requiredString(entry as Input, 'name'), value: optionalString(entry as Input, 'value') ?? '' }))
   }
+  if (input.websocket !== undefined) {
+    if (content.protocol !== 'websocket') throw new ToolInputError('websocket only applies to WebSocket requests.')
+    const patch = input.websocket as Input
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ToolInputError('websocket must be an object.')
+    if (patch.message !== undefined && typeof patch.message !== 'string') throw new ToolInputError('websocket.message must be a string.')
+    if (patch.messageFormat !== undefined && !['text', 'json', 'binary'].includes(patch.messageFormat as string)) throw new ToolInputError("websocket.messageFormat must be 'text', 'json' or 'binary'.")
+    if (patch.subprotocols !== undefined && (!Array.isArray(patch.subprotocols) || patch.subprotocols.some((item) => typeof item !== 'string'))) throw new ToolInputError('websocket.subprotocols must be a list of strings.')
+    for (const key of ['waitMs', 'expectedMessages']) {
+      const value = patch[key]
+      if (value !== undefined && value !== null && (typeof value !== 'number' || !Number.isInteger(value) || value < (key === 'waitMs' ? 1 : 0))) throw new ToolInputError(`Invalid websocket.${key}.`)
+    }
+    next.websocket = mergeResource(websocketOf(content), patch) as RequestContent['websocket']
+  }
   if (input.grpc !== undefined) {
     if (content.protocol !== 'grpc') throw new ToolInputError('grpc only applies to gRPC requests.')
     const patch = input.grpc as Input
@@ -405,7 +430,12 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
     }
     case 'get_response': {
       const tab = targetTab(host, input)
-      return ok({ tabId: tab.id, ...describeExecution(tab.execution), ...(tab.grpcStream ? { stream: { accepting: tab.grpcStream.accepting, busy: tab.grpcStream.busy, droppedEvents: tab.grpcStream.dropped, events: page(tab.grpcStream.events, input) } } : {}) })
+      return ok({
+        tabId: tab.id,
+        ...describeExecution(tab.execution),
+        ...(tab.grpcStream ? { stream: { accepting: tab.grpcStream.accepting, busy: tab.grpcStream.busy, droppedEvents: tab.grpcStream.dropped, events: page(tab.grpcStream.events, input) } } : {}),
+        ...(tab.protocol === 'websocket' && tab.websocketStream ? { connection: { status: tab.websocketStream.status, busy: tab.websocketStream.busy, droppedEvents: tab.websocketStream.dropped, events: page(tab.websocketStream.events, input) } } : {}),
+      })
     }
     case 'search_collections': {
       const limit = typeof input.limit === 'number' ? Math.max(1, Math.min(MAX_SEARCH_RESULTS, Math.floor(input.limit))) : DEFAULT_SEARCH_RESULTS
@@ -460,7 +490,7 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
     }
     case 'new_request_tab': {
       const protocol = optionalString(input, 'protocol')
-      if (protocol !== 'rest' && protocol !== 'graphql' && protocol !== 'grpc') throw new ToolInputError("protocol must be 'rest', 'graphql' or 'grpc'.")
+      if (protocol !== 'rest' && protocol !== 'graphql' && protocol !== 'grpc' && protocol !== 'websocket') throw new ToolInputError("protocol must be 'rest', 'graphql', 'grpc' or 'websocket'.")
       const content = applyRequestPatch(emptyRequestContent(protocol), input)
       const tabId = await host.newRequestTab(optionalString(input, 'name')?.trim() || defaultRequestName, content)
       return tabId ? ok({ tabId }) : failure('The tab could not be opened.')
@@ -493,6 +523,12 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
       const tab = targetTab(host, input)
       if (tab.protocol !== 'grpc' || !await host.controlGrpcStream?.(tab.id, name === 'close_grpc_send')) return failure('There is no accepting gRPC request stream. Start a client-streaming or bidirectional call first.')
       return ok({ tabId: tab.id, status: name === 'close_grpc_send' ? 'sendClosed' : 'messageSent' })
+    }
+    case 'send_websocket_message':
+    case 'close_websocket': {
+      const tab = targetTab(host, input)
+      if (tab.protocol !== 'websocket' || !await host.controlWebSocket?.(tab.id, name === 'close_websocket')) return failure('There is no open WebSocket connection. Connect with send_request first.')
+      return ok({ tabId: tab.id, status: name === 'close_websocket' ? 'closing' : 'messageSent' })
     }
     case 'save_request': {
       const tab = targetTab(host, input)

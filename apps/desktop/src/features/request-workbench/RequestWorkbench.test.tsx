@@ -111,6 +111,9 @@ function queryEditorText(): string {
 const executeGraphqlRequest = vi.fn()
 const executeRestRequest = vi.fn()
 const executeGrpcRequest = vi.fn()
+const executeWebSocketRequest = vi.fn()
+const sendWebSocketMessage = vi.fn()
+const closeWebSocket = vi.fn()
 const loadGrpcSchema = vi.fn()
 const cancelGraphqlRequest = vi.fn()
 const listEnvironments = vi.fn()
@@ -231,6 +234,12 @@ vi.mock('../../bindings/execute-rest-request', () => ({
 
 vi.mock('../../bindings/execute-grpc-request', () => ({
   executeGrpcRequest: (...args: unknown[]) => executeGrpcRequest(...args),
+}))
+
+vi.mock('../../bindings/execute-websocket-request', () => ({
+  executeWebSocketRequest: (...args: unknown[]) => executeWebSocketRequest(...args),
+  sendWebSocketMessage: (...args: unknown[]) => sendWebSocketMessage(...args),
+  closeWebSocket: (...args: unknown[]) => closeWebSocket(...args),
 }))
 
 vi.mock('../../bindings/load-grpc-schema', () => ({
@@ -371,6 +380,9 @@ beforeEach(() => {
   executeGraphqlRequest.mockReset()
   executeRestRequest.mockReset()
   executeGrpcRequest.mockReset()
+  executeWebSocketRequest.mockReset()
+  sendWebSocketMessage.mockReset()
+  closeWebSocket.mockReset()
   loadGrpcSchema.mockReset()
   cancelGraphqlRequest.mockReset()
   listEnvironments.mockReset()
@@ -576,6 +588,58 @@ describe('RequestWorkbench', () => {
       expect(screen.getByText('RPC status')).toBeInTheDocument()
       // The request's metadata tab and the response's (headers and trailers).
       expect(screen.getAllByRole('tab', { name: 'Metadata' })).toHaveLength(2)
+    })
+  })
+
+  describe('requisições WebSocket', () => {
+    it('conecta, mostra as mensagens, envia pelo composer e desconecta', async () => {
+      let finish: (value: unknown) => void = () => {}
+      executeWebSocketRequest.mockImplementation((_input: unknown, onEvent: (event: unknown) => void) => {
+        onEvent({ type: 'opened', status: 101, headers: [{ name: 'upgrade', value: 'websocket' }], subprotocol: null, elapsedMs: 3 })
+        onEvent({ type: 'message', direction: 'received', index: 0, format: 'text', data: 'welcome aboard', truncated: false, sizeBytes: 14, elapsedMs: 5 })
+        return new Promise((resolve) => { finish = resolve })
+      })
+      sendWebSocketMessage.mockResolvedValue({ ok: true, value: null })
+      closeWebSocket.mockImplementation(async () => {
+        finish({
+          ok: true,
+          value: {
+            statusCode: 101, durationMs: 40, sizeBytes: 14, body: { kind: 'inline', body: 'welcome aboard' },
+            headers: [{ name: 'upgrade', value: 'websocket' }], requestHeaders: [], cookies: [],
+            connection: { remoteAddress: null, httpVersion: 'HTTP/1.1', tlsCertificatePresent: false, certificateVerificationDisabled: false },
+            waitingMs: 3, close: { code: 1000, reason: '', closedBy: 'client' }, subprotocol: null,
+            sentCount: 1, receivedCount: 1, environmentChanges: [], scopedChanges: [], scriptLogs: [], scriptError: null, testResults: [],
+          },
+        })
+        return { ok: true, value: null }
+      })
+      render()
+      await screen.findByLabelText('Ambiente')
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Nova requisição WebSocket' }))
+      expect(screen.getByRole('tab', { name: 'Message' })).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('tab', { name: 'Settings' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Enviar mensagem' })).toBeDisabled()
+
+      fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: 'wss://chat.test/socket' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Conectar' }))
+
+      await waitFor(() => expect(executeWebSocketRequest).toHaveBeenCalledTimes(1))
+      expect(executeWebSocketRequest.mock.calls[0][0]).toMatchObject({
+        endpointUrl: 'wss://chat.test/socket',
+        websocket: { subprotocols: [], messageFormat: 'text' },
+      })
+      expect(executeRestRequest).not.toHaveBeenCalled()
+      expect(await screen.findByText('welcome aboard')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar mensagem' }))
+      await waitFor(() => expect(sendWebSocketMessage).toHaveBeenCalledTimes(1))
+      expect(sendWebSocketMessage.mock.calls[0][2]).toBe('text')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Desconectar' }))
+      await waitFor(() => expect(closeWebSocket).toHaveBeenCalledTimes(1))
+      expect(await screen.findByText(/Encerrada pelo Alcy · 1000/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Conectar' })).toBeInTheDocument()
     })
   })
 
@@ -2621,6 +2685,7 @@ describe('RequestWorkbench', () => {
           'HTTPHTTP',
           'GQLGraphQL',
           'gRPCgRPC',
+          'WSWebSocket',
           'Criar Collection',
         ])
         expect(within(types).getByRole('separator')).toBeInTheDocument()
@@ -2642,7 +2707,8 @@ describe('RequestWorkbench', () => {
 
         fireEvent.click(addRequestButton())
         const types = screen.getByRole('listbox', { name: 'Tipos de requisição' })
-        // HTTP → GraphQL → gRPC → Criar Collection.
+        // HTTP → GraphQL → gRPC → WebSocket → Criar Collection.
+        fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
@@ -3325,7 +3391,7 @@ describe('RequestWorkbench', () => {
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
       }
 
-      it('abre o popover de tipos com HTTP, GraphQL e gRPC, filtrando pela busca', async () => {
+      it('abre o popover de tipos com HTTP, GraphQL, gRPC e WebSocket, filtrando pela busca', async () => {
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -3336,7 +3402,7 @@ describe('RequestWorkbench', () => {
         fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar requisição' }))
 
         const types = screen.getByRole('listbox', { name: 'Tipos de requisição' })
-        expect(within(types).getAllByRole('option').map((option) => option.textContent)).toEqual(['HTTPHTTP', 'GQLGraphQL', 'gRPCgRPC'])
+        expect(within(types).getAllByRole('option').map((option) => option.textContent)).toEqual(['HTTPHTTP', 'GQLGraphQL', 'gRPCgRPC', 'WSWebSocket'])
         expect(screen.getByLabelText('Buscar tipo de requisição')).toHaveFocus()
 
         fireEvent.change(screen.getByLabelText('Buscar tipo de requisição'), { target: { value: 'graph' } })

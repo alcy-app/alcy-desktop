@@ -61,7 +61,7 @@ import {
 } from './collection-tree'
 import type { RequestContent, RequestProtocol, RequestSummary, TreeNode } from './collection-tree'
 import type { AlphabeticalSortDirection } from './collection-tree'
-import { emptyGrpcCall } from './collection-tree'
+import { emptyGrpcCall, websocketCallDto, websocketFromDto, websocketOf } from './collection-tree'
 
 const SAVE_DEBOUNCE_MS = 500
 
@@ -71,8 +71,8 @@ export type ImportScriptStats = { count: number; incompatible: number }
 
 export type ImportOutcome = { ok: true; scripts?: ImportScriptStats } | { ok: false; message: string }
 
-/** The backend only knows `graphql`/`rest`/`grpc` (it rejects any other
- * protocol when loading), so the cast is safe. */
+/** The backend only knows `graphql`/`rest`/`grpc`/`websocket` (it rejects
+ * any other protocol when loading), so the cast is safe. */
 export function requestFromDto(dto: SavedRequestDto): RequestSummary {
   const protocol = dto.protocol as RequestProtocol
 
@@ -82,7 +82,23 @@ export function requestFromDto(dto: SavedRequestDto): RequestSummary {
     protocol,
     ...(dto.docsRef ? { docsRef: dto.docsRef } : {}),
     content:
-      protocol === 'grpc'
+      protocol === 'websocket'
+        ? {
+            protocol: 'websocket',
+            endpointUrl: dto.endpoint,
+            query: '',
+            variables: '',
+            method: dto.method,
+            body: emptyRestBody,
+            headers: dto.headers,
+            authentication: dto.authentication,
+            preRequestScript: dto.preRequestScript ?? '',
+            postResponseScript: dto.postResponseScript ?? '',
+            routeParams: dto.routeParams ?? [],
+            grpc: emptyGrpcCall,
+            websocket: websocketFromDto(dto.websocket, dto.body),
+          }
+        : protocol === 'grpc'
         ? {
             protocol: 'grpc',
             endpointUrl: dto.endpoint,
@@ -142,6 +158,8 @@ function bodyTextOf(content: RequestSummary['content']): string {
       return restBodyText(content.body)
     case 'grpc':
       return content.grpc.message
+    case 'websocket':
+      return websocketOf(content).message
     case 'graphql':
       return content.query
   }
@@ -173,6 +191,9 @@ export function requestToDto(request: RequestSummary): SavedRequestDto {
             deadlineMs: request.content.grpc.deadlineMs,
           },
         }
+      : {}),
+    ...(request.content.protocol === 'websocket'
+      ? { websocket: websocketCallDto(websocketOf(request.content)) }
       : {}),
   }
 }

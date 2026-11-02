@@ -6,7 +6,8 @@ import { toAuthenticationInput } from '../authorization-state'
 import { buildSnippetRequest, type SnippetBody, type SnippetTab } from '../code-snippets/snippet-request'
 import { harRedactionContext, redactHeaders, type HarRedactionContext } from '../har-redaction'
 import { formatJsonBody, formatPartialJsonBody } from '../json-format'
-import { graphqlErrorsOf, grpcResultOf, httpResultOf, type ExecutionFailure, type ExecutionState } from '../request-workbench.types'
+import { graphqlErrorsOf, grpcResultOf, httpResultOf, websocketResultOf, type ExecutionFailure, type ExecutionState } from '../request-workbench.types'
+import type { ExecuteWebSocketRequestOutput } from '../../../bindings/execute-websocket-request'
 
 type HttpResult = NonNullable<ReturnType<typeof httpResultOf>>
 import { resolveTemplateForDisplay } from '../resolve-url'
@@ -130,6 +131,11 @@ function requestBodyBlocks(
   if (tab.protocol === 'grpc') {
     return snippetBody.type === 'text' ? [codeBlock('Message', 'json', formatJsonBody(snippetBody.text), limit)] : null
   }
+  if (tab.protocol === 'websocket') {
+    if (snippetBody.type !== 'text') return null
+    const json = tab.websocket?.messageFormat === 'json'
+    return [codeBlock('Message', json ? 'json' : 'text', json ? formatJsonBody(snippetBody.text) : snippetBody.text, limit)]
+  }
   switch (snippetBody.type) {
     case 'none':
       return null
@@ -157,7 +163,7 @@ function requestBodyBlocks(
   }
 }
 
-function responseBodyBlock(result: HttpResult | ExecuteGrpcRequestOutput, options: ScreenshotOptions, text: ScreenshotContentText): ScreenshotBlock {
+function responseBodyBlock(result: HttpResult | ExecuteGrpcRequestOutput | ExecuteWebSocketRequestOutput, options: ScreenshotOptions, text: ScreenshotContentText): ScreenshotBlock {
   const limit = lineLimitValue(options.lineLimit)
   if ('bodyEncoding' in result && result.bodyEncoding === 'base64') return codeBlock(null, 'text', text.binaryBody(formatSize(result.sizeBytes)), limit)
 
@@ -221,6 +227,23 @@ function buildResponse(
     trailers: fields.responseHeaders ? metadataRows(grpc.trailers, redaction) : null,
     body: fields.responseBody ? responseBodyBlock(grpc, options, text) : null,
   }
+  const websocket = websocketResultOf(execution.result)
+  if (websocket) {
+    const { close } = websocket
+    const clean = close.closedBy === 'client' || (close.closedBy === 'server' && (close.code === null || close.code === 1000 || close.code === 1001))
+    return {
+      kind: 'success',
+      status: fields.status ? {
+        statusCode: websocket.statusCode,
+        tone: close.closedBy === 'rejected' ? statusTone(websocket.statusCode) : clean ? 'success' : 'error',
+        graphql: null,
+        duration: `${websocket.durationMs} ms`,
+        size: formatSize(websocket.sizeBytes),
+      } : null,
+      headers: fields.responseHeaders ? rows(websocket.headers, 'response', redaction) : null,
+      body: fields.responseBody ? responseBodyBlock(websocket, options, text) : null,
+    }
+  }
   const result = httpResultOf(execution.result)
   if (!result) return null
   return {
@@ -263,7 +286,7 @@ export function buildScreenshotContent(
       ? { title: source.requestName, environment: source.environmentName, capturedAt: text.capturedAt }
       : null,
     endpoint: fields.url ? {
-      method: tab.protocol === 'grpc' ? 'gRPC' : snippet.method,
+      method: tab.protocol === 'grpc' ? 'gRPC' : tab.protocol === 'websocket' ? 'WS' : snippet.method,
       url: snippet.url,
       ...(snippet.grpc ? { rpc: [snippet.grpc.service, snippet.grpc.method].filter(Boolean).join('/') } : {}),
     } : null,

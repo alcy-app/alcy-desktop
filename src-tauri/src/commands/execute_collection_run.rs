@@ -181,6 +181,7 @@ pub(crate) fn protocol_label(protocol: ProtocolId) -> &'static str {
         ProtocolId::Rest => "rest",
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Grpc => "grpc",
+        ProtocolId::WebSocket => "websocket",
     }
 }
 
@@ -504,6 +505,7 @@ fn plan_items(collections: &[Collection], request_ids: &[String]) -> Vec<Recorde
                     ProtocolId::GraphQl => "post".to_string(),
                     // Shown as the step's label: a gRPC call has no HTTP method.
                     ProtocolId::Grpc => "grpc".to_string(),
+                    ProtocolId::WebSocket => "ws".to_string(),
                 },
             },
             None => RecordedPlanItem {

@@ -1,0 +1,25 @@
+/* WebSocket requests (spec 0140). The composer and timeline reuse the gRPC
+ * message and timeline styles (grpc.css); only what differs lives here. */
+
+.rw-websocket-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 420px;
+  padding: var(--space-3);
+}
+
+.rw-websocket-settings-section {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.rw-websocket-event--closed .rw-grpc-event-preview {
+  color: var(--text-muted);
+}
+
+.rw-websocket-event--error .rw-grpc-event-preview {
+  color: var(--error);
+}

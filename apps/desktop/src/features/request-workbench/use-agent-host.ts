@@ -28,6 +28,8 @@ interface AgentHostSources {
 const RENDER_FALLBACK_MS = 200
 /** Longest wait for an editor to mount after switching to its section. */
 const EDITOR_MOUNT_TIMEOUT_MS = 1000
+/** How long send_request waits for a WebSocket connection to open. */
+const WEBSOCKET_OPEN_WAIT_MS = 30_000
 
 const FIELD_SECTIONS: Record<EditorField, RequestTabId> = {
   body: 'body',
@@ -83,6 +85,7 @@ function toHostTab(tab: WorkbenchTab): AgentHostTab {
     content: contentOf(tab),
     execution: tab.execution,
     grpcStream: tab.grpcStream,
+    websocketStream: tab.websocketStream,
   }
 }
 
@@ -188,8 +191,18 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         if (!findTab(tabId)) return null
         await show(tabId)
         const completion = latest.current.sendActive()
-        if (findTab(tabId)?.protocol === 'grpc') void completion.catch(() => undefined)
-        else await completion
+        const protocol = findTab(tabId)?.protocol
+        if (protocol === 'grpc') void completion.catch(() => undefined)
+        else if (protocol === 'websocket') {
+          // A connection only resolves when it closes: answer once it opened or failed.
+          void completion.catch(() => undefined)
+          const deadline = Date.now() + WEBSOCKET_OPEN_WAIT_MS
+          while (Date.now() < deadline) {
+            const tab = findTab(tabId)
+            if (!tab || tab.execution.status !== 'loading' || tab.websocketStream?.status === 'open') break
+            await afterRender()
+          }
+        } else await completion
         await afterRender()
         return findTab(tabId)?.execution ?? null
       },
@@ -199,6 +212,14 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
         latest.current.workbench.cancel()
         await afterRender()
         return true
+      },
+      async controlWebSocket(tabId, close) {
+        if (findTab(tabId)?.websocketStream?.status !== 'open') return false
+        await show(tabId)
+        if (close) await latest.current.workbench.disconnectWebSocket()
+        else await latest.current.workbench.sendWebSocketComposerMessage()
+        await afterRender()
+        return !findTab(tabId)?.websocketStream?.error
       },
       async controlGrpcStream(tabId, close) {
         if (!findTab(tabId)?.grpcStream?.accepting) return false

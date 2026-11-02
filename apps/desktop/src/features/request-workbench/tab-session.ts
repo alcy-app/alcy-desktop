@@ -132,9 +132,23 @@ function isValidGrpcCall(grpc: unknown): grpc is RequestContent['grpc'] {
   return source.type === 'protoFiles' && isStringList(source.files) && isStringList(source.importPaths)
 }
 
+/** A saved WebSocket call (spec 0140), well formed. */
+function isValidWebSocketCall(websocket: unknown): websocket is NonNullable<RequestContent['websocket']> {
+  if (!isRecord(websocket) || !hasStrings(websocket, ['message'])) return false
+  if (!['text', 'json', 'binary'].includes(websocket.messageFormat as string)) return false
+  if (!isStringList(websocket.subprotocols)) return false
+  const optionalNumber = (value: unknown) => value === null || typeof value === 'number'
+  return optionalNumber(websocket.waitMs) && optionalNumber(websocket.expectedMessages)
+}
+
 /** Fill missing additive fields with protocol defaults; reject malformed existing fields. */
 function parseContent(raw: unknown): RequestContent | null {
-  if (!isRecord(raw) || (raw.protocol !== 'rest' && raw.protocol !== 'graphql' && raw.protocol !== 'grpc')) return null
+  if (
+    !isRecord(raw) ||
+    (raw.protocol !== 'rest' && raw.protocol !== 'graphql' && raw.protocol !== 'grpc' && raw.protocol !== 'websocket')
+  ) {
+    return null
+  }
   const content = { ...emptyRequestContent(raw.protocol) }
   const merged = { ...content, ...raw } as Record<string, unknown>
 
@@ -145,6 +159,7 @@ function parseContent(raw: unknown): RequestContent | null {
   if (!(merged.headers as Record<string, unknown>[]).every((header) => typeof header.enabled === 'boolean')) return null
   if (!isValidBody(merged.body) || !isValidAuthentication(merged.authentication)) return null
   if (!isValidGrpcCall(merged.grpc)) return null
+  if (merged.websocket !== undefined && !isValidWebSocketCall(merged.websocket)) return null
 
   return {
     protocol: raw.protocol,
@@ -159,6 +174,7 @@ function parseContent(raw: unknown): RequestContent | null {
     preRequestScript: merged.preRequestScript as string,
     postResponseScript: merged.postResponseScript as string,
     grpc: merged.grpc,
+    ...(merged.websocket !== undefined ? { websocket: merged.websocket as RequestContent['websocket'] } : {}),
   }
 }
 

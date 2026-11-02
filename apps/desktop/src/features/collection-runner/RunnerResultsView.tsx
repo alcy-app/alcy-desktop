@@ -337,7 +337,14 @@ function StepDetail({
     }
   }, [step, loadOutput])
 
-  const method = step.protocol === 'graphql' ? 'GQL' : step.protocol === 'grpc' ? 'gRPC' : step.method.toUpperCase()
+  const method =
+    step.protocol === 'graphql'
+      ? 'GQL'
+      : step.protocol === 'grpc'
+        ? 'gRPC'
+        : step.protocol === 'websocket'
+          ? 'WS'
+          : step.method.toUpperCase()
   const header = (
     <header className="runner-detail-header">
       <h3 className="runner-detail-title">{step.name || t('runner.detail.missingRequest')}</h3>

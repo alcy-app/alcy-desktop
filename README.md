@@ -1,6 +1,6 @@
 # Alcy
 
-Alcy is a local-first desktop client for building, running and inspecting GraphQL, REST and gRPC API requests, with a simple, fast and fully local experience.
+Alcy is a local-first desktop client for building, running and inspecting GraphQL, REST, gRPC and WebSocket API requests, with a simple, fast and fully local experience.
 
 ## gRPC
 
@@ -33,6 +33,27 @@ interactive stream messages are not included in the generated command.
 gRPC is not supported by load tests or mock servers. Exported webclients
 retain gRPC entries with an unsupported warning and cannot send them.
 Insomnia imports skip gRPC entries and report them in the import warnings.
+
+## WebSocket
+
+Create a WebSocket request, enter a `ws://` or `wss://` address and press
+Connect. The message list shows what is sent and received as it happens;
+write a text, JSON or binary (base64) message in the composer and send it as
+many times as needed while connected. Disconnect closes the connection
+normally; closing the tab or reloading the window also closes it. Headers,
+query and route parameters, every authentication type, session cookies,
+custom CAs, the TLS options and HTTP proxies apply to the connection
+handshake as they do to REST. Subprotocols are set in the Settings tab.
+
+Collection runs and standard flows connect, send the saved message, wait for
+the expected number of replies (1 by default) or the configured wait, and
+close. A refused handshake or an abnormal close fails the step. Scripts see
+`al.request.websocket` and `al.response.websocket`; flows expose
+`response.messages` and `response.closeCode`.
+
+Share a WebSocket request as a [websocat](https://github.com/vi/websocat)
+command. Insomnia and HAR WebSocket entries are imported; load tests, mock
+servers and exported webclients do not support WebSocket.
 
 ## Stack
 

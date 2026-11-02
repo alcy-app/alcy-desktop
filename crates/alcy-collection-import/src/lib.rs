@@ -5,7 +5,7 @@ use alcy_domain::{
     Endpoint, EndpointError, Environment, EnvironmentError, EnvironmentVariable,
     EnvironmentVariableError, Folder, FolderError, FormDataField, FormDataFieldValue, HeaderEntry,
     HeaderError, HttpMethod, ProtocolId, RawBodyLanguage, Request, RequestDocument, SavedRequest,
-    SavedRequestError, UrlEncodedField,
+    SavedRequestError, UrlEncodedField, WebSocketCall, WebSocketMessageFormat,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -316,6 +316,27 @@ fn map_open_collection(value: &Value) -> Result<ImportedCollectionData, Collecti
     })
 }
 
+/// A Bruno/OpenCollection WebSocket item (`type: ws`, a `ws`/`websocket`
+/// section or a `ws(s)://` URL).
+fn open_websocket(item: &Value, request: &Value) -> bool {
+    let typed = [item, request].iter().any(|value| {
+        value
+            .get("type")
+            .or_else(|| value.pointer("/info/type"))
+            .and_then(Value::as_str)
+            .is_some_and(|kind| {
+                kind.eq_ignore_ascii_case("ws") || kind.eq_ignore_ascii_case("websocket")
+            })
+    });
+    typed
+        || request.get("ws").is_some()
+        || request.get("websocket").is_some()
+        || request
+            .get("url")
+            .and_then(Value::as_str)
+            .is_some_and(is_websocket_url)
+}
+
 fn map_open_items(
     items: &[Value],
     inherited: &ScriptContext,
@@ -354,6 +375,20 @@ fn map_open_items(
             continue;
         }
         let request = item.get("request").unwrap_or(item);
+        if open_websocket(item, request) {
+            // The WebSocket item layout of this format is not mapped yet: say
+            // so instead of dropping it silently.
+            let mut path = inherited.path.clone();
+            path.push(name.to_string());
+            state.warnings.push(ImportWarning {
+                request_path: path.join(" / "),
+                phase: "request".into(),
+                line: None,
+                api: "websocket".into(),
+                reason: "skippedProtocol".into(),
+            });
+            continue;
+        }
         let details = request
             .get("http")
             .or_else(|| request.get("graphql"))
@@ -1250,6 +1285,15 @@ fn map_tree_items(
         if insomnia_warnings::is_grpc(item) {
             continue;
         }
+        if insomnia_websocket(item) {
+            let name = unique_name(
+                text_or(item.get("name"), FALLBACK_REQUEST_NAME),
+                &mut request_names,
+            );
+            let saved = map_insomnia_websocket(item, None, &name, item_auth, ids)?;
+            requests.push(attach_insomnia_docs(docs, saved, item));
+            continue;
+        }
         if let Some(children) = item.get("children").and_then(Value::as_array) {
             let name = unique_name(
                 text_or(item.get("name"), FALLBACK_FOLDER_NAME),
@@ -1274,6 +1318,98 @@ fn map_tree_items(
         }
     }
     Ok((folders, requests))
+}
+
+/// An Insomnia WebSocket request: `websocket_request` in v4 exports, a
+/// `ws-req_` id in v5 ones, or a method-less `ws(s)://` item.
+fn insomnia_websocket(item: &Value) -> bool {
+    item.get("_type").and_then(Value::as_str) == Some("websocket_request")
+        || item
+            .pointer("/meta/id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("ws-req_"))
+        || (item.get("method").is_none()
+            && item.get("children").is_none()
+            && item
+                .get("url")
+                .and_then(Value::as_str)
+                .is_some_and(is_websocket_url))
+}
+
+/// `ws://` or `wss://`, case-insensitively.
+pub(crate) fn is_websocket_url(url: &str) -> bool {
+    url.trim().split_once("://").is_some_and(|(scheme, _)| {
+        scheme.eq_ignore_ascii_case("ws") || scheme.eq_ignore_ascii_case("wss")
+    })
+}
+
+/// A WebSocket request; `payload` (an Insomnia `websocket_payload`) becomes
+/// the composer message.
+fn map_insomnia_websocket(
+    request: &Value,
+    payload: Option<&Value>,
+    name: &str,
+    auth: Option<&Value>,
+    ids: &mut IdGenerator,
+) -> Result<SavedRequest, CollectionImportError> {
+    let mut url = text_or(request.get("url"), "").to_string();
+    append_query_values(&mut url, request.get("parameters"), "name");
+    let mut headers = map_headers(request.get("headers"), "name")?;
+    let auth = map_direct_auth(auth);
+    apply_auth_mapping(&mut url, &mut headers, &auth)?;
+    let message = payload
+        .and_then(|payload| payload.get("value"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let is_json = payload
+        .and_then(|payload| payload.get("mode"))
+        .and_then(Value::as_str)
+        .is_some_and(|mode| mode.contains("json"));
+    let format = if is_json {
+        WebSocketMessageFormat::Json
+    } else {
+        WebSocketMessageFormat::Text
+    };
+    websocket_request(
+        ids,
+        name,
+        url,
+        headers,
+        auth.authentication,
+        message,
+        format,
+        Vec::new(),
+    )
+}
+
+/// Builds a saved WebSocket request (spec 0140).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn websocket_request(
+    ids: &mut IdGenerator,
+    name: &str,
+    url: String,
+    headers: Vec<HeaderEntry>,
+    authentication: Authentication,
+    message: String,
+    message_format: WebSocketMessageFormat,
+    subprotocols: Vec<String>,
+) -> Result<SavedRequest, CollectionImportError> {
+    let request = Request::new(
+        Endpoint::saved(normalize_templates(&url)),
+        RequestDocument::new(ProtocolId::WebSocket, normalize_templates(&message)),
+        String::new(),
+        headers,
+        authentication,
+    )
+    .with_method(HttpMethod::Get)
+    .with_body_payload(BodyPayload::None)
+    .with_websocket(WebSocketCall {
+        subprotocols,
+        message_format,
+        ..WebSocketCall::default()
+    });
+    SavedRequest::new(ids.next("request"), name, request).map_err(Into::into)
 }
 
 fn map_tree_request(
@@ -1428,6 +1564,26 @@ fn map_flat_children<'a>(
                 );
                 let auth = resource.get("authentication").or(inherited_auth);
                 let saved = map_tree_request(resource, &name, auth, ids)?;
+                requests.push(attach_insomnia_docs(docs, saved, resource));
+            }
+            Some("websocket_request") => {
+                let name = unique_name(
+                    text_or(resource.get("name"), FALLBACK_REQUEST_NAME),
+                    &mut request_names,
+                );
+                let auth = resource.get("authentication").or(inherited_auth);
+                // The first saved payload becomes the composer message.
+                let payload = resource
+                    .get("_id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| resources_by_parent.get(id))
+                    .into_iter()
+                    .flatten()
+                    .find(|child| {
+                        child.get("_type").and_then(Value::as_str) == Some("websocket_payload")
+                    })
+                    .copied();
+                let saved = map_insomnia_websocket(resource, payload, &name, auth, ids)?;
                 requests.push(attach_insomnia_docs(docs, saved, resource));
             }
             _ => {}
@@ -2871,11 +3027,13 @@ fn open_directory_items(
             }
             let mut item = parse_open_yaml(file)?;
             ensure_open_item_name(&mut item, file_stem(filename));
+            // WebSocket items are kept so the import reports them.
             if item.get("http").is_some()
                 || item.get("graphql").is_some()
                 || item.get("request").is_some()
                 || item.get("method").is_some()
                 || item.get("items").is_some()
+                || open_websocket(&item, &item)
             {
                 items.push(item);
             }
@@ -3433,6 +3591,34 @@ variables:
         assert_eq!(imported.environments[0].name(), "Development");
         assert_eq!(imported.environments[0].variables().len(), 2);
         assert!(imported.environments[0].variables()[1].sensitive);
+    }
+
+    #[test]
+    fn warns_about_open_collection_websocket_items_instead_of_dropping_them() {
+        let files = vec![
+            BrunoFile {
+                relative_path: "opencollection.yml".into(),
+                content: "opencollection: \"1.0.0\"\ninfo:\n  name: Demo\n".into(),
+            },
+            BrunoFile {
+                relative_path: "live.yml".into(),
+                content: "info:\n  name: Live\n  type: websocket\nwebsocket:\n  url: wss://live.test\n"
+                    .into(),
+            },
+            BrunoFile {
+                relative_path: "ping.yml".into(),
+                content: "info:\n  name: Ping\n  type: http\nhttp:\n  method: GET\n  url: https://api.test/ping\n"
+                    .into(),
+            },
+        ];
+
+        let imported = parse_bruno_directory("fallback", &files).unwrap();
+
+        assert_eq!(imported.collections[0].requests().len(), 1);
+        assert_eq!(imported.warnings.len(), 1, "{:?}", imported.warnings);
+        assert_eq!(imported.warnings[0].api, "websocket");
+        assert_eq!(imported.warnings[0].reason, "skippedProtocol");
+        assert!(imported.warnings[0].request_path.ends_with("Live"));
     }
 
     #[test]

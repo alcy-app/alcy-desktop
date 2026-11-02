@@ -40,6 +40,10 @@ interface EndpointBarProps {
   grpcMethodPicker?: ReactNode
   /** Schema source and service refresh at the end of the gRPC URL field. */
   grpcSchemaControls?: ReactNode
+  /** WebSocket only: whether the connection is open, so the action becomes Disconnect. */
+  websocketOpen?: boolean
+  /** WebSocket only: closes the open connection normally. */
+  onDisconnect?: () => void
 }
 
 export function EndpointBar({
@@ -60,9 +64,18 @@ export function EndpointBar({
   isImportingCommand = false,
   grpcMethodPicker,
   grpcSchemaControls,
+  websocketOpen = false,
+  onDisconnect,
 }: EndpointBarProps) {
   const { t } = useLanguage()
-  const methodClass = protocol === 'rest' ? `rw-endpoint-method--${method}` : 'rw-endpoint-method--graphql'
+  const methodClass =
+    protocol === 'rest'
+      ? `rw-endpoint-method--${method}`
+      : protocol === 'websocket'
+        ? 'rw-endpoint-method--websocket'
+        : 'rw-endpoint-method--graphql'
+  // HTTP options (save the response to a file) do not apply to gRPC or WebSocket.
+  const sendOnly = protocol === 'grpc' || protocol === 'websocket'
 
   // Import only when pasting would replace the entire URL (empty or fully selected).
   const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
@@ -95,7 +108,7 @@ export function EndpointBar({
           </Select>
         ) : (
           <button type="button" className={`rw-endpoint-method ${methodClass}`} disabled>
-            GraphQL
+            {protocol === 'websocket' ? 'WS' : 'GraphQL'}
           </button>
         )}
         <label className="rw-visually-hidden" htmlFor="endpoint-url">
@@ -124,7 +137,11 @@ export function EndpointBar({
         </div>
         {protocol === 'grpc' && grpcSchemaControls}
       </div>
-      {isSending ? (
+      {isSending && protocol === 'websocket' && websocketOpen ? (
+        <Button className="rw-endpoint-action" variant="danger" size="sm" onClick={onDisconnect ?? onCancel}>
+          {t('websocket.disconnect')}
+        </Button>
+      ) : isSending ? (
         <Button className="rw-endpoint-action" variant="danger" size="sm" onClick={onCancel} aria-busy>
           <span className="rw-endpoint-action-content">
             <Spinner size={13} />
@@ -132,12 +149,12 @@ export function EndpointBar({
           </span>
         </Button>
       ) : (
-        <div className={`rw-endpoint-send-group${protocol === 'grpc' ? ' rw-endpoint-send-group--grpc' : ''}`}>
-          <Button className={`rw-endpoint-action${protocol === 'grpc' ? '' : ' rw-endpoint-action--split'}`} variant="primary" size="sm" onClick={onSend} disabled={isImportingCommand}>
-            {t('endpointBar.send')}
+        <div className={`rw-endpoint-send-group${sendOnly ? ' rw-endpoint-send-group--grpc' : ''}`}>
+          <Button className={`rw-endpoint-action${sendOnly ? '' : ' rw-endpoint-action--split'}`} variant="primary" size="sm" onClick={onSend} disabled={isImportingCommand}>
+            {protocol === 'websocket' ? t('websocket.connect') : t('endpointBar.send')}
           </Button>
           {/* Saving the response to a file is an HTTP option. */}
-          {protocol !== 'grpc' && <SendOptionsMenu onSendAndDownload={onSendAndDownload} disabled={isImportingCommand} />}
+          {!sendOnly && <SendOptionsMenu onSendAndDownload={onSendAndDownload} disabled={isImportingCommand} />}
         </div>
       )}
       {isImportingCommand && (

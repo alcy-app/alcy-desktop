@@ -892,19 +892,28 @@ fn parse_request(id: &str, raw: &str) -> Result<LoadRequestPlan, LoadFlowError> 
     };
     let value: serde_json::Value =
         serde_json::from_str(raw).map_err(|error| invalid(format!("JSON inválido: {error}")))?;
-    if value.get("protocol").and_then(serde_json::Value::as_str) == Some("grpc")
+    let scheme = value
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|url| url.split_once("://"))
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
+    let protocol = value.get("protocol").and_then(serde_json::Value::as_str);
+    if protocol == Some("grpc")
         || value.get("grpc").is_some_and(|grpc| !grpc.is_null())
-        || value
-            .get("url")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|url| {
-                url.split_once("://").is_some_and(|(scheme, _)| {
-                    scheme.eq_ignore_ascii_case("grpc") || scheme.eq_ignore_ascii_case("grpcs")
-                })
-            })
+        || matches!(scheme.as_deref(), Some("grpc" | "grpcs"))
     {
         return Err(invalid(
             "gRPC não é suportado em testes de carga; use uma requisição HTTP.".into(),
+        ));
+    }
+    if protocol == Some("websocket")
+        || value
+            .get("websocket")
+            .is_some_and(|websocket| !websocket.is_null())
+        || matches!(scheme.as_deref(), Some("ws" | "wss"))
+    {
+        return Err(invalid(
+            "WebSocket não é suportado em testes de carga; use uma requisição HTTP.".into(),
         ));
     }
     let config: LoadRequestConfig = serde_json::from_value(value)
@@ -1280,6 +1289,20 @@ mod tests {
         ] {
             assert!(
                 matches!(parse_request("rpc", &config.to_string()), Err(LoadFlowError::InvalidRequestConfig { node_id, message }) if node_id == "rpc" && message.contains("gRPC"))
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_websocket_load_requests_before_http_compilation() {
+        for config in [
+            json!({"protocol":"websocket"}),
+            json!({"method":"GET", "url":"https://api.test", "websocket":{"subprotocols":[]}}),
+            json!({"method":"GET", "url":"wss://api.test/socket"}),
+            json!({"method":"GET", "url":"WS://localhost:8080"}),
+        ] {
+            assert!(
+                matches!(parse_request("ws", &config.to_string()), Err(LoadFlowError::InvalidRequestConfig { node_id, message }) if node_id == "ws" && message.contains("WebSocket"))
             );
         }
     }

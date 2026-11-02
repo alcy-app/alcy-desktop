@@ -1502,6 +1502,7 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
                 lock_vu_state(&self.state).remember_cookies(&requested_url, &exchange.response);
                 let script_response = ScriptResponse {
                     grpc: None,
+                    websocket: None,
                     status,
                     status_text: String::new(),
                     time_ms: exchange.response.duration_ms,
@@ -1639,6 +1640,7 @@ impl<E: LoadTransport, S: LoadRunSink, C: LoadCancellation> Iteration<'_, E, S, 
             .collect();
         let request = ScriptRequest {
             grpc: None,
+            websocket: None,
             url: String::new(),
             method: "GET".into(),
             body: String::new(),

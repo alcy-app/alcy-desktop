@@ -28,7 +28,7 @@ export interface WebclientCredential {
   included: boolean
 }
 
-export type WebclientUnsupportedFeature = 'binaryBody' | 'formDataFile' | 'digestAuthentication'
+export type WebclientUnsupportedFeature = 'binaryBody' | 'formDataFile' | 'digestAuthentication' | 'grpc' | 'webSocket'
 
 export interface WebclientSummary {
   requestCount: number

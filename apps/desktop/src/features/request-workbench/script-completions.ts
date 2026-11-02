@@ -66,6 +66,7 @@ function membersOf(path: string, phase: ScriptPhase): Member[] {
     case 'al.request':
       return [
         prop('grpc', 'gRPC', 'Serviço, método, mensagem JSON e metadata de uma requisição gRPC.'),
+        prop('websocket', 'WebSocket', 'Subprotocolos e mensagem de uma requisição WebSocket.'),
         prop('url', 'string', 'URL da requisição (com {{variáveis}} ainda não resolvidas).'),
         prop('method', 'string', 'Método HTTP em minúsculas (get, post, ...).'),
         prop('body', 'string', 'Corpo da requisição (a query, em GraphQL).'),
@@ -78,6 +79,9 @@ function membersOf(path: string, phase: ScriptPhase): Member[] {
     case 'al.request.grpc':
       return [prop('service', 'string', 'Serviço gRPC completo.'), prop('method', 'string', 'Método gRPC.'),
         prop('message', 'JSON', 'Mensagem JSON; atribua um objeto para alterar o envio.'), prop('metadata', 'metadata', 'Lê e altera a metadata enviada.')]
+    case 'al.request.websocket':
+      return [prop('subprotocols', 'array', 'Subprotocolos oferecidos; atribua uma lista para alterar.'),
+        prop('message', 'string', 'Mensagem do composer; atribua texto ou um objeto (vira JSON).')]
     case 'al.request.grpc.metadata':
     case 'al.request.headers':
       return [
@@ -91,10 +95,16 @@ function membersOf(path: string, phase: ScriptPhase): Member[] {
     case 'al.response.grpc':
       return phase === 'post' ? [prop('code', 'number', 'Código gRPC (0 = OK).'), prop('codeName', 'string', 'Nome do status gRPC.'),
         prop('message', 'string', 'Mensagem do status gRPC.'), prop('trailers', 'array', 'Metadata final.'), prop('messages', 'array', 'Mensagens recebidas em JSON.')] : []
+    case 'al.response.websocket':
+      return phase === 'post' ? [prop('closeCode', 'number', 'Código de fechamento, ou null.'), prop('closeReason', 'string', 'Motivo do fechamento.'),
+        prop('closedBy', 'string', 'client, server, transport ou rejected.'), prop('subprotocol', 'string', 'Subprotocolo aceito pelo servidor.'),
+        prop('sent', 'number', 'Mensagens enviadas.'), prop('received', 'number', 'Mensagens recebidas.'),
+        prop('messages', 'array', 'Mensagens recebidas (JSON quando possível).')] : []
     case 'al.response':
       return phase === 'post'
         ? [
             prop('grpc', 'gRPC', 'Status, metadata final e mensagens recebidas em gRPC.'),
+            prop('websocket', 'WebSocket', 'Fechamento e mensagens recebidas em WebSocket.'),
             prop('status', 'number', 'Código de status HTTP.'),
             prop('time', 'number', 'Duração da requisição em ms.'),
             prop('statusText', 'string', 'Texto do status HTTP.'), prop('size', 'number', 'Tamanho da resposta.'),

@@ -120,7 +120,7 @@ const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "cancel_request",
         class: ToolClass::SideEffect,
-        description: "Cancel an HTTP, GraphQL or gRPC request in progress in a tab.",
+        description: "Cancel an HTTP, GraphQL, gRPC or WebSocket request in progress in a tab.",
         schema: tab_target,
     },
     ToolSpec {
@@ -133,6 +133,18 @@ const TOOLS: &[ToolSpec] = &[
         name: "close_grpc_send",
         class: ToolClass::SideEffect,
         description: "Finish the request side of an accepting gRPC stream, allowing the server to complete its response. Read get_response later.",
+        schema: tab_target,
+    },
+    ToolSpec {
+        name: "send_websocket_message",
+        class: ToolClass::SideEffect,
+        description: "Send the tab's current websocket.message on its open WebSocket connection (send_request connects). Edit websocket.message with update_request first.",
+        schema: tab_target,
+    },
+    ToolSpec {
+        name: "close_websocket",
+        class: ToolClass::SideEffect,
+        description: "Close the tab's open WebSocket connection normally (code 1000). Read get_response afterwards for the received messages.",
         schema: tab_target,
     },
     ToolSpec {
@@ -422,6 +434,13 @@ fn request_fields() -> serde_json::Map<String, Value> {
             "deadlineMs":{"type":["integer","null"],"minimum":1},
             "schemaSource":{"type":"object","description":"Reuse the schema source already selected in the editor; defaults to server reflection."}
         }), &[]),
+        "websocket": object(json!({
+            "message":{"type":"string","description":"Message the composer sends; base64 when messageFormat is binary."},
+            "messageFormat":{"type":"string","enum":["text","json","binary"]},
+            "subprotocols":{"type":"array","items":{"type":"string"},"description":"Offered in Sec-WebSocket-Protocol, in order of preference."},
+            "waitMs":{"type":["integer","null"],"minimum":1,"description":"Runs and flows: longest wait for replies; the request timeout when null."},
+            "expectedMessages":{"type":["integer","null"],"minimum":0,"description":"Runs and flows: close after this many replies (1 when null, 0 waits for waitMs)."}
+        }), &[]),
         "authentication": {
             "type": "object",
             "description": "inherit uses the collection's; bearer takes token; basic takes username and password; customHeader takes name and value. Prefer {{variables}} over literal secrets.",
@@ -450,7 +469,7 @@ fn new_request_arguments() -> Value {
     let mut properties = request_fields();
     properties.insert(
         "protocol".into(),
-        json!({ "type": "string", "enum": ["rest", "graphql", "grpc"] }),
+        json!({ "type": "string", "enum": ["rest", "graphql", "grpc", "websocket"] }),
     );
     properties.insert("name".into(), json!({ "type": "string" }));
     object(Value::Object(properties), &["protocol"])
@@ -564,6 +583,8 @@ mod tests {
             "cancel_request",
             "send_grpc_message",
             "close_grpc_send",
+            "send_websocket_message",
+            "close_websocket",
             "import_from_text",
         ] {
             assert_eq!(

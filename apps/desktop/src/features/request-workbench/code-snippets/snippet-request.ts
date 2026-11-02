@@ -1,6 +1,7 @@
 import type { AuthenticationInput } from '../../../bindings/execute-graphql-request'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import type { GrpcCallDto } from '../../../bindings/grpc-call'
+import type { WebSocketMessageFormat } from '../../../bindings/websocket-call'
 import { toAuthenticationInput } from '../authorization-state'
 import { applyRouteParamValues } from '../query-params'
 import { resolveTemplateForDisplay } from '../resolve-url'
@@ -33,13 +34,14 @@ export interface SnippetRequest {
   /** Notes rendered as comments before the code. */
   notes: string[]
   grpc?: GrpcCallDto
+  websocket?: { subprotocols: string[]; messageFormat: WebSocketMessageFormat }
 }
 
 /** Tab fields used to generate code. */
 export type SnippetTab = Pick<
   WorkbenchTab,
   'protocol' | 'method' | 'endpointUrl' | 'query' | 'variables' | 'headers' | 'body' | 'routeParams' | 'authorization'
-> & Partial<Pick<WorkbenchTab, 'grpc'>>
+> & Partial<Pick<WorkbenchTab, 'grpc' | 'websocket'>>
 
 /** Encode UTF-8 as base64; plain `btoa` only accepts Latin-1. */
 function base64Utf8(text: string): string {
@@ -93,6 +95,9 @@ export function buildSnippetRequest(
     if (!hasHeader('content-type')) headers.push({ name: 'Content-Type', value: 'application/json' })
   } else if (tab.protocol === 'grpc') {
     body = { type: 'text', text: resolve(tab.grpc?.message ?? '{}') }
+  } else if (tab.protocol === 'websocket') {
+    const message = tab.websocket?.message ?? ''
+    if (message) body = { type: 'text', text: resolve(message) }
   } else {
     const source = tab.body
     switch (source.type) {
@@ -167,7 +172,7 @@ export function buildSnippetRequest(
   }
 
   return {
-    method: tab.protocol === 'graphql' ? 'POST' : tab.method.toUpperCase(),
+    method: tab.protocol === 'graphql' ? 'POST' : tab.protocol === 'websocket' ? 'GET' : tab.method.toUpperCase(),
     url,
     headers,
     body,
@@ -178,6 +183,10 @@ export function buildSnippetRequest(
       method: resolve(tab.grpc?.method ?? ''),
       schemaSource: tab.grpc?.schemaSource ?? { type: 'reflection' as const },
       deadlineMs: tab.grpc?.deadlineMs,
+    } } : {}),
+    ...(tab.protocol === 'websocket' ? { websocket: {
+      subprotocols: (tab.websocket?.subprotocols ?? []).map(resolve).filter((subprotocol) => subprotocol.trim() !== ''),
+      messageFormat: tab.websocket?.messageFormat ?? 'text',
     } } : {}),
   }
 }

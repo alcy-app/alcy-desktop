@@ -5,7 +5,8 @@ use alcy_domain::{
     Authentication, BodyPayload, Collection, CollectionLabel, DocsRef, Endpoint,
     EnvironmentVariable, Folder, FormDataField, FormDataFieldValue, GrpcCall, GrpcSchemaSource,
     HeaderEntry, HttpMethod, LabelColor, ProtocolId, RawBodyLanguage, Request, RequestDocument,
-    RouteParameter, SavedRequest, UrlEncodedField,
+    RouteParameter, SavedRequest, UrlEncodedField, WebSocketCall, WebSocketCollect,
+    WebSocketMessageFormat,
 };
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +102,54 @@ pub(crate) struct PersistedRequest {
     /// Additive (spec 0129): only gRPC requests write it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grpc: Option<PersistedGrpcCall>,
+    /// Additive (spec 0140): only WebSocket requests write it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    websocket: Option<PersistedWebSocketCall>,
+}
+
+/// Also stored in history details (`history_store.rs`).
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PersistedWebSocketCall {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    subprotocols: Vec<String>,
+    /// `text`, `json` or `binary`; an unknown value reads as text so a newer
+    /// format never makes a request unreadable.
+    #[serde(default)]
+    message_format: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wait_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_messages: Option<u32>,
+}
+
+pub(crate) fn websocket_from_persisted(persisted: PersistedWebSocketCall) -> WebSocketCall {
+    WebSocketCall {
+        subprotocols: persisted.subprotocols,
+        message_format: match persisted.message_format.as_str() {
+            "json" => WebSocketMessageFormat::Json,
+            "binary" => WebSocketMessageFormat::Binary,
+            _ => WebSocketMessageFormat::Text,
+        },
+        collect: WebSocketCollect {
+            wait_ms: persisted.wait_ms,
+            expected_messages: persisted.expected_messages,
+        },
+    }
+}
+
+pub(crate) fn persisted_from_websocket(call: &WebSocketCall) -> PersistedWebSocketCall {
+    PersistedWebSocketCall {
+        subprotocols: call.subprotocols.clone(),
+        message_format: match call.message_format {
+            WebSocketMessageFormat::Text => "text",
+            WebSocketMessageFormat::Json => "json",
+            WebSocketMessageFormat::Binary => "binary",
+        }
+        .to_string(),
+        wait_ms: call.collect.wait_ms,
+        expected_messages: call.collect.expected_messages,
+    }
 }
 
 /// Also stored in history details (`history_store.rs`).
@@ -354,6 +403,7 @@ pub(crate) fn protocol_to_str(protocol: ProtocolId) -> &'static str {
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Rest => "rest",
         ProtocolId::Grpc => "grpc",
+        ProtocolId::WebSocket => "websocket",
     }
 }
 
@@ -362,6 +412,7 @@ pub(crate) fn protocol_from_str(value: &str) -> Result<ProtocolId, StorageError>
         "graphql" => Ok(ProtocolId::GraphQl),
         "rest" => Ok(ProtocolId::Rest),
         "grpc" => Ok(ProtocolId::Grpc),
+        "websocket" => Ok(ProtocolId::WebSocket),
         other => Err(StorageError::UnsupportedProtocol(other.to_string())),
     }
 }
@@ -572,7 +623,13 @@ pub(crate) fn request_from_persisted(
             .collect(),
     )
     .with_scripts(persisted.pre_request_script, persisted.post_response_script)
-    .with_grpc(persisted.grpc.map(grpc_from_persisted).unwrap_or_default());
+    .with_grpc(persisted.grpc.map(grpc_from_persisted).unwrap_or_default())
+    .with_websocket(
+        persisted
+            .websocket
+            .map(websocket_from_persisted)
+            .unwrap_or_default(),
+    );
 
     let saved = SavedRequest::new(persisted.id, persisted.name, request)
         .map_err(|error| StorageError::Corrupted(error.to_string()))?;
@@ -630,6 +687,8 @@ pub(crate) fn persisted_from_request(request: &SavedRequest) -> PersistedRequest
         }),
         grpc: (request.request.document.protocol == ProtocolId::Grpc)
             .then(|| persisted_from_grpc(&request.request.grpc)),
+        websocket: (request.request.document.protocol == ProtocolId::WebSocket)
+            .then(|| persisted_from_websocket(&request.request.websocket)),
     }
 }
 
@@ -1036,6 +1095,57 @@ mod tests {
         assert_eq!(raw.matches("\"grpc\":").count(), 2, "{raw}");
         assert!(raw.contains("\"protocol\": \"grpc\""), "{raw}");
         assert!(raw.contains("\"type\": \"protoFiles\""), "{raw}");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_then_load_round_trips_websocket_requests_and_omits_websocket_for_other_protocols() {
+        let root = temp_root();
+        let store = CollectionsStore::new(root.clone());
+        let chat = Request::new(
+            Endpoint::saved("wss://{{host}}/chat"),
+            RequestDocument::new(ProtocolId::WebSocket, r#"{"join": "{{room}}"}"#),
+            "",
+            vec![HeaderEntry::new("x-tenant", "acme", true).unwrap()],
+            Authentication::Inherit,
+        )
+        .with_websocket(WebSocketCall {
+            subprotocols: vec!["chat.v2".to_string(), "chat".to_string()],
+            message_format: WebSocketMessageFormat::Json,
+            collect: WebSocketCollect {
+                wait_ms: Some(3_000),
+                expected_messages: Some(0),
+            },
+        });
+        let plain = Request::new(
+            Endpoint::saved("ws://localhost:8080"),
+            RequestDocument::new(ProtocolId::WebSocket, ""),
+            "",
+            vec![],
+            Authentication::None,
+        );
+        let collections = vec![
+            Collection::new(
+                "collection-1",
+                "Sockets",
+                vec![],
+                vec![
+                    SavedRequest::new("request-1", "Chat", chat).unwrap(),
+                    SavedRequest::new("request-2", "Plain", plain).unwrap(),
+                    SavedRequest::new("request-3", "Ping", sample_request("query { ping }"))
+                        .unwrap(),
+                ],
+            )
+            .unwrap(),
+        ];
+
+        store.save(&collections).unwrap();
+
+        assert_eq!(store.load().unwrap(), collections);
+        let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert_eq!(raw.matches("\"websocket\": {").count(), 2, "{raw}");
+        assert!(raw.contains("\"protocol\": \"websocket\""), "{raw}");
+        assert!(raw.contains("\"messageFormat\": \"json\""), "{raw}");
         fs::remove_dir_all(&root).ok();
     }
 

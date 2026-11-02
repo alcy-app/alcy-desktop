@@ -15,7 +15,7 @@ use alcy_script_packages::{
 use alcy_scripting::{
     ScriptError, ScriptGrpcRequest, ScriptGrpcResponse, ScriptHeader, ScriptInput, ScriptIteration,
     ScriptOutput, ScriptPackages, ScriptPhase, ScriptRequest, ScriptResponse, ScriptVariable,
-    npm_requests, run_script,
+    ScriptWebSocketRequest, ScriptWebSocketResponse, npm_requests, run_script,
 };
 use serde::Serialize;
 
@@ -104,6 +104,7 @@ impl<E> ExecutionFailure<E> {
 /// Editable script fields before template interpolation.
 pub(crate) struct ScriptedRequest {
     pub grpc: Option<ScriptGrpcRequest>,
+    pub websocket: Option<ScriptWebSocketRequest>,
     pub url: String,
     pub method: String,
     pub body: String,
@@ -120,6 +121,11 @@ impl ScriptedRequest {
                     method: request.grpc.method.clone(),
                 }
             }),
+            websocket: (request.document.protocol == alcy_domain::ProtocolId::WebSocket).then(
+                || ScriptWebSocketRequest {
+                    subprotocols: request.websocket.subprotocols.clone(),
+                },
+            ),
             url: request.endpoint.url().to_string(),
             method: HttpMethodInput::from(request.method).as_str().to_string(),
             body: request.document.body.clone(),
@@ -145,6 +151,9 @@ impl ScriptedRequest {
             effective.grpc.service = grpc.service.clone();
             effective.grpc.method = grpc.method.clone();
         }
+        if let Some(websocket) = &self.websocket {
+            effective.websocket.subprotocols = websocket.subprotocols.clone();
+        }
         effective.headers = self
             .headers
             .iter()
@@ -155,6 +164,16 @@ impl ScriptedRequest {
             effective.method = HttpMethod::from(method);
         }
         Ok(effective)
+    }
+}
+
+/// How a WebSocket close is named to scripts and the interface.
+pub(crate) fn closed_by_name(closed_by: alcy_domain::WebSocketClosedBy) -> &'static str {
+    match closed_by {
+        alcy_domain::WebSocketClosedBy::Client => "client",
+        alcy_domain::WebSocketClosedBy::Server => "server",
+        alcy_domain::WebSocketClosedBy::Transport => "transport",
+        alcy_domain::WebSocketClosedBy::Rejected => "rejected",
     }
 }
 
@@ -416,6 +435,7 @@ pub(crate) async fn run_pre_request_in(
     let input = ScriptInput {
         request: ScriptRequest {
             grpc: request.grpc.clone(),
+            websocket: request.websocket.clone(),
             url: request.url.clone(),
             method: request.method.clone(),
             body: request.body.clone(),
@@ -433,6 +453,7 @@ pub(crate) async fn run_pre_request_in(
     let output = run_blocking(ScriptPhase::PreRequest, source.to_string(), input).await?;
 
     request.grpc = output.request.grpc.clone();
+    request.websocket = output.request.websocket.clone();
     request.url = output.request.url.clone();
     request.method = output.request.method.clone();
     request.body = output.request.body.clone();
@@ -473,6 +494,7 @@ pub(crate) async fn run_pre_request_in(
 
 fn status_text(status: u16) -> &'static str {
     match status {
+        101 => "Switching Protocols",
         200 => "OK",
         201 => "Created",
         202 => "Accepted",
@@ -531,6 +553,7 @@ pub(crate) async fn run_post_response_in(
     let input = ScriptInput {
         request: ScriptRequest {
             grpc: request.grpc.clone(),
+            websocket: request.websocket.clone(),
             url: request.url.clone(),
             method: request.method.clone(),
             body: request.body.clone(),
@@ -550,6 +573,17 @@ pub(crate) async fn run_post_response_in(
                     })
                     .collect(),
             }),
+            websocket: response
+                .websocket
+                .as_ref()
+                .map(|websocket| ScriptWebSocketResponse {
+                    close_code: websocket.close_code,
+                    close_reason: websocket.close_reason.clone(),
+                    closed_by: closed_by_name(websocket.closed_by).to_string(),
+                    subprotocol: websocket.subprotocol.clone(),
+                    sent: websocket.sent,
+                    received: websocket.received,
+                }),
             status: response.status_code,
             status_text: status_text(response.status_code).to_string(),
             time_ms: response.duration_ms,

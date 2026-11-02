@@ -3,6 +3,7 @@ import type { EditorField, EditorSlot } from '../request-workbench/editor-bridge
 import type { ExecutionState, WorkbenchProtocol } from '../request-workbench/request-workbench.types'
 import type { AgentResourceHost } from './use-agent-resources'
 import type { GrpcStreamState } from '../request-workbench/grpc-stream'
+import type { WebSocketStreamState } from '../request-workbench/websocket-stream'
 import type { ImportWarningDto } from '../../bindings/import-collections'
 
 /** A request tab as the agent tools see it. */
@@ -17,6 +18,7 @@ export interface AgentHostTab {
   content: RequestContent
   execution: ExecutionState
   grpcStream?: GrpcStreamState
+  websocketStream?: WebSocketStreamState
 }
 
 export interface AgentHostEnvironment {
@@ -71,6 +73,8 @@ export interface WorkbenchAgentHost {
   send(tabId: string): Promise<ExecutionState | null>
   cancelRequest?(tabId: string): Promise<boolean>
   controlGrpcStream?(tabId: string, close: boolean): Promise<boolean>
+  /** Sends the composer message on (or closes) the tab's open WebSocket connection. */
+  controlWebSocket?(tabId: string, close: boolean): Promise<boolean>
   saveTab(tabId: string, target: { parentId: string; name: string } | null): Promise<AgentSaveResult>
   importFromText(content: string): Promise<AgentTextImportResult>
   createCollection(name: string): string | Promise<string>

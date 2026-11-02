@@ -64,5 +64,6 @@ pub mod updates;
 pub mod value_monitors;
 pub mod variable_scopes;
 pub mod version_control;
+pub mod websocket;
 pub mod workspace_operation_coordinator;
 pub mod workspaces;

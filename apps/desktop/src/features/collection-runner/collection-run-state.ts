@@ -7,7 +7,7 @@ export type RunPhase = 'idle' | 'running' | 'finished'
 export interface RunPlanEntry {
   requestId: string
   name: string
-  protocol: 'rest' | 'graphql' | 'grpc' | null
+  protocol: 'rest' | 'graphql' | 'grpc' | 'websocket' | null
   method: string
 }
 
@@ -98,7 +98,10 @@ export function runStateFromDetail(detail: CollectionRunDetailDto): CollectionRu
     plan: detail.plan.map((item) => ({
       requestId: item.requestId,
       name: item.name,
-      protocol: item.protocol === 'rest' || item.protocol === 'graphql' || item.protocol === 'grpc' ? item.protocol : null,
+      protocol:
+        item.protocol === 'rest' || item.protocol === 'graphql' || item.protocol === 'grpc' || item.protocol === 'websocket'
+          ? item.protocol
+          : null,
       method: item.method,
     })),
     current: null,

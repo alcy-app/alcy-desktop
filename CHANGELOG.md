@@ -11,6 +11,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
 - **Mencionar no chat**: requisições, coleções, pastas, flows, ambientes, mock servers e abas abertas podem ser mencionados no chat do agente pelo menu de cada item, assim como um valor da resposta, pelo menu do botão direito sobre ele.
 - Nova opção "Instalar versões Preview" nas configurações de atualização, para receber as versões Preview quando forem mais novas que a versão estável.
+- **Requisições WebSocket**: conecte a servidores WebSocket, envie mensagens de texto, JSON ou binárias e acompanhe as mensagens trocadas em tempo real. Também funcionam em scripts, no runner de coleções e nos flows, e são importadas de arquivos do Insomnia e HAR.
 
 ### Changed
 - Novas conversas com o agente começam no lugar de recuperar o chat da última vez que o Alcy foi aberto. O chat anterior continua disponível no histórico.
@@ -22,6 +23,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - A importação de scripts k6 está disponível no editor de flows e aceita constantes, URLs montadas com templates, parâmetros reutilizáveis e corpos JSON. Variáveis do script podem ser preenchidas no flow antes de executar o teste.
 
 ### Fixed
+- Conexões WebSocket gravadas em arquivos HAR não são mais importadas como requisições GET comuns.
 - A pré-visualização de uma variável abre abaixo do mouse quando não há espaço acima, em vez de ser cortada pelo topo da janela.
 
 ## [0.9.0-preview01] - 30/10/2026

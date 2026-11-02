@@ -564,6 +564,10 @@
   color: var(--accent-strong);
 }
 
+.rw-endpoint-method--websocket {
+  color: var(--info);
+}
+
 .rw-endpoint-action {
   min-width: 96px;
   /* The URL field adds a 1px border around its control on each side. */

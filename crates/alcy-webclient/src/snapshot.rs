@@ -163,6 +163,9 @@ pub enum UnsupportedFeature {
     /// gRPC needs HTTP/2 trailers, which browser `fetch` cannot read
     /// (spec 0129).
     Grpc,
+    /// The webclient sends one request and shows one response; it has no
+    /// live connection view (spec 0140).
+    WebSocket,
 }
 
 /// Ambiente escolhido no export, com os valores que o app tem em memória.
@@ -349,8 +352,8 @@ fn language_name(language: RawBodyLanguage) -> &'static str {
 fn to_request(saved: &SavedRequest) -> SnapshotRequest {
     let request = &saved.request;
     let mut unsupported = Vec::new();
-    // A gRPC request is exported so the tree stays whole, but flagged: the
-    // browser cannot send it.
+    // gRPC and WebSocket requests are exported so the tree stays whole, but
+    // flagged: the webclient cannot send them.
     let protocol = match request.document.protocol {
         ProtocolId::GraphQl => SnapshotProtocol::Graphql,
         ProtocolId::Rest => SnapshotProtocol::Rest,
@@ -358,10 +361,19 @@ fn to_request(saved: &SavedRequest) -> SnapshotRequest {
             unsupported.push(UnsupportedFeature::Grpc);
             SnapshotProtocol::Rest
         }
+        ProtocolId::WebSocket => {
+            unsupported.push(UnsupportedFeature::WebSocket);
+            SnapshotProtocol::Rest
+        }
     };
     let body_payload = match protocol {
         SnapshotProtocol::Graphql => SnapshotBody::None,
-        SnapshotProtocol::Rest if request.document.protocol == ProtocolId::Grpc => {
+        SnapshotProtocol::Rest
+            if matches!(
+                request.document.protocol,
+                ProtocolId::Grpc | ProtocolId::WebSocket
+            ) =>
+        {
             SnapshotBody::None
         }
         SnapshotProtocol::Rest => match &request.body_payload {
@@ -632,6 +644,31 @@ mod tests {
         let root = build_root(&collection, None).unwrap();
 
         assert_eq!(root.requests[0].unsupported, vec![UnsupportedFeature::Grpc]);
+        assert_eq!(root.requests[0].body_payload, SnapshotBody::None);
+    }
+
+    #[test]
+    fn exports_a_websocket_request_flagged_as_unsupported() {
+        let socket = SavedRequest::new(
+            "w1",
+            "Chat",
+            Request::new(
+                Endpoint::new("wss://chat.example.com").unwrap(),
+                RequestDocument::new(ProtocolId::WebSocket, "hello"),
+                "",
+                vec![],
+                Authentication::None,
+            ),
+        )
+        .unwrap();
+        let collection = Collection::new("c", "C", vec![], vec![socket]).unwrap();
+
+        let root = build_root(&collection, None).unwrap();
+
+        assert_eq!(
+            root.requests[0].unsupported,
+            vec![UnsupportedFeature::WebSocket]
+        );
         assert_eq!(root.requests[0].body_payload, SnapshotBody::None);
     }
 }

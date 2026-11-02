@@ -256,7 +256,7 @@ fn reference_issue(
                 .is_some_and(|field| {
                     matches!(
                         field,
-                        "status" | "body" | "headers" | "grpcStatus" | "messages"
+                        "status" | "body" | "headers" | "grpcStatus" | "messages" | "closeCode"
                     )
                 }),
         ),

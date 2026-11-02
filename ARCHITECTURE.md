@@ -449,6 +449,56 @@ formats. Load flow compilation rejects gRPC settings before execution; mock
 servers remain HTTP-only. Webclient snapshots retain gRPC entries marked as
 unsupported, and the browser refuses to prepare HTTP calls from them.
 
+### WebSocket
+
+`alcy-websocket` opens WebSocket connections (spec 0140, ADR 0067). The
+opening handshake is an HTTP/1.1 upgrade sent through the REST executor's
+shared client (`ReqwestRestExecutor::upgrade_client`) with
+`alcy_http_auth::send_authenticated`, so proxy, custom CAs, the "disable TLS
+verification" option (still only on the reviewed client, ADR 0058), session
+cookies and every authentication type apply exactly as on REST. The crate
+verifies the 101 answer (`Sec-WebSocket-Accept`, offered subprotocols, no
+unrequested extension) and hands the upgraded connection to
+`tokio-tungstenite`, used only for framing (no TLS stack or connector of its
+own). A refused upgrade is a `Response` with that status, headers and the
+start of the body, not a transport error. WebSocket over HTTP/2 is not
+available while the shared client is HTTP/1.1. Like the other protocol
+crates, it is dispatched to only from the composition root.
+
+One session engine serves two modes. Interactive connections (the editor)
+stay open until the person disconnects, the server closes or the tab closes;
+`execute_websocket_request` streams `opened`, `message` and `closed` events
+through a Tauri channel and resolves when the connection ends, while
+`send_websocket_message` and `close_websocket` act on the live session,
+keyed by execution id (`WebSocketSessions`). Messages sent later resolve
+`{{variables}}` with the values captured at connect. Cancelling reuses the
+execution registry and drops the connection; a webview reload closes every
+live session, since connections have no deadline. Limits follow gRPC: 256 KiB
+of preview per event and 500 events or 1 MiB of text in the live UI; natively
+16 MiB per message and 50 MiB or 10,000 messages per connection, beyond which
+the connection is closed with 1009.
+
+Collect mode serves runners, flows and `al.sendRequest` through the
+protocol dispatcher: it sends the saved message (if any), then closes with
+1000 at the first of server close, the expected number of replies (1 by
+default) or the wait time (the request timeout by default). A run succeeds
+when the upgrade returns 101 and the connection ends cleanly (1000, 1001, no
+code, or a normal close by Alcy); `Response::protocol_failure` reports the
+rest. The response body holds the received messages: the message itself when
+there is one, a JSON array otherwise (JSON text as is, anything else as a
+string, binary as base64). How the connection ended is kept in memory in
+`Response.websocket` and in history as `websocket-close-code`,
+`websocket-close-reason` and `websocket-closed-by` pseudo-headers, so the
+history format is unchanged. Scripts see `al.request.websocket`
+(subprotocols, message) and `al.response.websocket` (close, counts, received
+messages); flows expose `response.messages` and `response.closeCode`.
+
+Insomnia `websocket_request` resources and HAR WebSocket entries import as
+WebSocket requests (the first saved or sent message becomes the composer
+message); Bruno WebSocket items are reported as skipped. Code sharing
+generates `websocat` commands. Load flows reject WebSocket requests, mock
+servers remain HTTP-only and webclient snapshots mark them unsupported.
+
 ### Scripting
 
 `alcy-scripting` runs pre-request and post-response scripts in `boa_engine`
@@ -473,6 +523,7 @@ crates/alcy-onedrive/  # OneDrive/SharePoint client (Microsoft OAuth PKCE and Gr
 crates/alcy-load/      # reusable load plan, scheduler, runtime and metrics
 crates/alcy-graphql/   # GraphQL capability
 crates/alcy-grpc/      # gRPC capability (reflection, .proto, streaming)
+crates/alcy-websocket/ # WebSocket capability (handshake, framing, sessions)
 crates/alcy-openapi/   # import of OpenAPI documents
 crates/alcy-rest/      # REST capability
 crates/alcy-scripting/ # script interpreter (boa) and `require`

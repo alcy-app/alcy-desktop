@@ -11,7 +11,7 @@ use alcy_storage::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::commands::collections::GrpcCallDto;
+use crate::commands::collections::{GrpcCallDto, WebSocketCallDto};
 use crate::commands::execute_collection_run::{
     RunStepDto, node_output_from_recorded, step_dto_from_recorded,
 };
@@ -174,6 +174,9 @@ pub struct HistoryEntryDetailDto {
     /// gRPC method and schema source (`None` for the other protocols).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grpc: Option<GrpcCallDto>,
+    /// WebSocket call options (`None` for the other protocols).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub websocket: Option<WebSocketCallDto>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -200,6 +203,7 @@ pub(crate) fn protocol_to_str(protocol: ProtocolId) -> &'static str {
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Rest => "rest",
         ProtocolId::Grpc => "grpc",
+        ProtocolId::WebSocket => "websocket",
     }
 }
 
@@ -314,6 +318,8 @@ fn detail_from_entry(entry: HistoryEntry, body_cache: &ResponseBodyCache) -> His
         }),
         grpc: (entry.request.document.protocol == ProtocolId::Grpc)
             .then(|| GrpcCallDto::from(&entry.request.grpc)),
+        websocket: (entry.request.document.protocol == ProtocolId::WebSocket)
+            .then(|| WebSocketCallDto::from(&entry.request.websocket)),
         body: entry.request.document.body,
         variables: entry.request.variables,
         headers: entry

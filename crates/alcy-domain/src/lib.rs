@@ -29,6 +29,7 @@ mod security_settings;
 mod update;
 mod value_monitor;
 mod variable_scope;
+mod websocket_call;
 mod workspace;
 mod workspace_link;
 
@@ -88,7 +89,7 @@ pub use proxy_settings::{ProxySettings, ProxySettingsError};
 pub use request::{RedirectPolicy, Request, RouteParameter};
 pub use response::{
     BodyEncoding, ConnectionInfo, Cookie, GrpcResponseStatus, Response, ResponseHeader,
-    ResponseMetadata,
+    ResponseMetadata, WebSocketClosedBy, WebSocketOutcome,
 };
 pub use security_settings::SecuritySettings;
 pub use update::{
@@ -104,6 +105,7 @@ pub use variable_scope::{
     ScopedVariableChange, VariableScope, VariableScopeKind, apply_scoped_changes, merge_variables,
     record_scoped_change, variable_scopes,
 };
+pub use websocket_call::{WebSocketCall, WebSocketCollect, WebSocketMessageFormat};
 pub use workspace::{Workspace, WorkspaceError};
 pub use workspace_link::{
     API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, MANIFEST_FILE, RemoteLocation,

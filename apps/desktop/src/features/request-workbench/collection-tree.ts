@@ -8,12 +8,13 @@ import type { CollectionLabelDto, DocsRefDto, ScopedVariableDto } from '../../bi
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
 import type { HttpMethodInput, RestBodyInput } from '../../bindings/execute-rest-request'
 import type { GrpcSchemaSourceDto } from '../../bindings/grpc-call'
+import type { WebSocketCallDto, WebSocketMessageFormat } from '../../bindings/websocket-call'
 import type { ItemChangeKind } from '../../bindings/gitlab-types'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
 import { definedVariables } from '../environments/defined-variables'
 import { emptyRestBody } from './body-state'
 
-export type RequestProtocol = 'graphql' | 'rest' | 'grpc'
+export type RequestProtocol = 'graphql' | 'rest' | 'grpc' | 'websocket'
 
 /** What a gRPC request calls (spec 0129); the other protocols keep the
  * default and ignore it, like `method`/`body` for GraphQL. */
@@ -46,6 +47,63 @@ export function sameGrpcCall(a: GrpcCallState, b: GrpcCallState): boolean {
   )
 }
 
+/** What a WebSocket request offers and sends (spec 0140); the other
+ * protocols ignore it. The message is the saved body. */
+export interface WebSocketCallState {
+  message: string
+  messageFormat: WebSocketMessageFormat
+  subprotocols: string[]
+  /** Runs and flows only; `null` uses the request timeout. */
+  waitMs: number | null
+  /** Runs and flows only; `null` means 1, 0 waits for `waitMs`. */
+  expectedMessages: number | null
+}
+
+export const emptyWebSocketCall: WebSocketCallState = {
+  message: '',
+  messageFormat: 'text',
+  subprotocols: [],
+  waitMs: null,
+  expectedMessages: null,
+}
+
+export function sameWebSocketCall(a: WebSocketCallState, b: WebSocketCallState): boolean {
+  return (
+    a.message === b.message &&
+    a.messageFormat === b.messageFormat &&
+    a.waitMs === b.waitMs &&
+    a.expectedMessages === b.expectedMessages &&
+    a.subprotocols.length === b.subprotocols.length &&
+    a.subprotocols.every((subprotocol, index) => subprotocol === b.subprotocols[index])
+  )
+}
+
+/** A content's WebSocket call; contents of the other protocols (and older
+ * snapshots) may omit it. */
+export function websocketOf(content: Pick<RequestContent, 'websocket'>): WebSocketCallState {
+  return content.websocket ?? emptyWebSocketCall
+}
+
+/** The saved call without the message, which is saved as the body. */
+export function websocketCallDto(call: WebSocketCallState): WebSocketCallDto {
+  return {
+    subprotocols: call.subprotocols,
+    messageFormat: call.messageFormat,
+    waitMs: call.waitMs,
+    expectedMessages: call.expectedMessages,
+  }
+}
+
+export function websocketFromDto(dto: WebSocketCallDto | null | undefined, message: string): WebSocketCallState {
+  return {
+    message,
+    messageFormat: dto?.messageFormat ?? 'text',
+    subprotocols: dto?.subprotocols ?? [],
+    waitMs: dto?.waitMs ?? null,
+    expectedMessages: dto?.expectedMessages ?? null,
+  }
+}
+
 export interface RouteParameter {
   name: string
   value: string
@@ -69,6 +127,8 @@ export interface RequestContent {
   postResponseScript: string
   routeParams: RouteParameter[]
   grpc: GrpcCallState
+  /** WebSocket call (spec 0140); absent for the other protocols. */
+  websocket?: WebSocketCallState
 }
 
 export interface RequestSummary {
@@ -89,6 +149,8 @@ export function requestMethodLabel(request: Pick<RequestSummary, 'protocol' | 'c
       return 'GraphQL'
     case 'grpc':
       return 'gRPC'
+    case 'websocket':
+      return 'WS'
     case 'rest':
       return request.content.method.toUpperCase()
   }
@@ -98,6 +160,23 @@ export function requestMethodLabel(request: Pick<RequestSummary, 'protocol' | 'c
  * dependem do protocolo. Nasce sem URL (spec 0089): nenhum endereço base é
  * presumido, nem nas coleções nem nos flows. */
 export function emptyRequestContent(protocol: RequestProtocol): RequestContent {
+  if (protocol === 'websocket') {
+    return {
+      protocol: 'websocket',
+      endpointUrl: '',
+      query: '',
+      variables: '',
+      method: 'get',
+      body: emptyRestBody,
+      headers: [],
+      authentication: { type: 'inherit' },
+      preRequestScript: '',
+      postResponseScript: '',
+      routeParams: [],
+      grpc: emptyGrpcCall,
+      websocket: emptyWebSocketCall,
+    }
+  }
   if (protocol === 'grpc') {
     return {
       protocol: 'grpc',

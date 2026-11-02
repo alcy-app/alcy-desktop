@@ -63,7 +63,7 @@ pub enum NodeReferenceError {
     )]
     ResponseUnavailable(String),
     #[error(
-        "campo de resposta desconhecido em '{1}' para o node '{0}' (esperado status, body, headers, grpcStatus ou messages)"
+        "campo de resposta desconhecido em '{1}' para o node '{0}' (esperado status, body, headers, grpcStatus, messages ou closeCode)"
     )]
     UnknownField(String, String),
     #[error("'response.status' não aceita caminho adicional ('{1}')")]
@@ -95,7 +95,25 @@ pub fn is_node_reference(name: &str) -> bool {
     name.starts_with("nodes.")
 }
 
-/// Resolve ancestor response fields (status/body/headers/grpcStatus/messages), captured request fields, or server.url. Require actual ancestry.
+/// The received WebSocket messages as a JSON array, from the body the
+/// executor writes: the message itself when there is one (parsed when it is
+/// JSON), a JSON array when there are several (spec 0140).
+fn websocket_messages(body: &str, received: u32) -> serde_json::Value {
+    let parsed = |text: &str| {
+        serde_json::from_str::<serde_json::Value>(text)
+            .unwrap_or_else(|_| serde_json::Value::String(text.to_string()))
+    };
+    match received {
+        0 => serde_json::json!([]),
+        1 => serde_json::json!([parsed(body)]),
+        _ => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(array @ serde_json::Value::Array(_)) => array,
+            _ => serde_json::json!([parsed(body)]),
+        },
+    }
+}
+
+/// Resolve ancestor response fields (status/body/headers/grpcStatus/messages/closeCode), captured request fields, or server.url. Require actual ancestry.
 pub fn resolve_node_reference(
     name: &str,
     history: &NodeRunHistory,
@@ -154,6 +172,32 @@ pub fn resolve_node_reference(
                 ));
             }
             Ok(response.status_code.to_string())
+        }
+        "closeCode" => {
+            let websocket = response.websocket.as_ref().ok_or_else(|| {
+                NodeReferenceError::UnknownField(node_id.to_string(), field.to_string())
+            })?;
+            if let Some(tail) = path_rest {
+                return Err(NodeReferenceError::StatusHasNoPath(
+                    node_id.to_string(),
+                    tail.to_string(),
+                ));
+            }
+            Ok(websocket
+                .close_code
+                .map(|code| code.to_string())
+                .unwrap_or_default())
+        }
+        "messages" if response.websocket.is_some() => {
+            let received = response
+                .websocket
+                .as_ref()
+                .map(|websocket| websocket.received)
+                .unwrap_or_default();
+            let value = websocket_messages(&response.body, received);
+            let extracted = evaluate_json_path(&value, path_rest.unwrap_or(""))
+                .map_err(|error| NodeReferenceError::JsonPathFailed(node_id.to_string(), error))?;
+            Ok(stringify_extracted(extracted))
         }
         "grpcStatus" | "messages" => {
             let grpc = response.grpc.as_ref().ok_or_else(|| {
@@ -305,6 +349,52 @@ mod tests {
 
     fn ancestors_of(node_id: &str) -> HashSet<String> {
         HashSet::from([node_id.to_string()])
+    }
+
+    fn websocket_response(body: &str, received: u32) -> Response {
+        let mut response = response_with_body(101, body);
+        response.websocket = Some(Box::new(alcy_domain::WebSocketOutcome {
+            close_code: Some(4001),
+            close_reason: "bye".to_string(),
+            closed_by: alcy_domain::WebSocketClosedBy::Server,
+            subprotocol: None,
+            sent: 1,
+            received,
+        }));
+        response
+    }
+
+    #[test]
+    fn resolves_websocket_messages_and_close_code() {
+        let ancestors = ancestors_of("ws");
+        let single_text = history_with("ws", websocket_response("pong", 1));
+        assert_eq!(
+            resolve_node_reference("nodes.ws.response.messages.0", &single_text, &ancestors)
+                .unwrap(),
+            "pong"
+        );
+        assert_eq!(
+            resolve_node_reference("nodes.ws.response.closeCode", &single_text, &ancestors)
+                .unwrap(),
+            "4001"
+        );
+
+        let several = history_with("ws", websocket_response("[\n{\"id\":7},\n\"plain\"\n]", 2));
+        assert_eq!(
+            resolve_node_reference("nodes.ws.response.messages.0.id", &several, &ancestors)
+                .unwrap(),
+            "7"
+        );
+        assert_eq!(
+            resolve_node_reference("nodes.ws.response.messages.1", &several, &ancestors).unwrap(),
+            "plain"
+        );
+
+        let http = history_with("ws", response_with_body(200, "{}"));
+        assert!(matches!(
+            resolve_node_reference("nodes.ws.response.closeCode", &http, &ancestors),
+            Err(NodeReferenceError::UnknownField(_, _))
+        ));
     }
 
     #[test]

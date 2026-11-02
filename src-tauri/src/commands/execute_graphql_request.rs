@@ -567,6 +567,7 @@ async fn execute_graphql_request_inner(
     // GraphQL sends POST; al.request.body contains the query.
     let mut scripted = ScriptedRequest {
         grpc: None,
+        websocket: None,
         url: input.endpoint_url.clone(),
         method: "post".to_string(),
         body: input.query.clone(),

@@ -10,7 +10,8 @@ import { Checkbox } from '../../shared/ui/Checkbox'
 import { TrashIcon } from '../../shared/ui/icons'
 import { toAuthenticationInput, toAuthorizationState } from '../request-workbench/authorization-state'
 import { contentTypeFor, syncContentTypeHeader, toBodyState, toRestBodyInput } from '../request-workbench/body-state'
-import type { RequestContent } from '../request-workbench/collection-tree'
+import { websocketOf, type RequestContent } from '../request-workbench/collection-tree'
+import { WebSocketSettingsPanel } from '../request-workbench/components/WebSocketSettingsPanel'
 import { AuthorizationPanel } from '../request-workbench/components/AuthorizationPanel'
 import { GrpcSchemaSource } from '../request-workbench/components/GrpcSchemaSource'
 import { HeadersPanel } from '../request-workbench/components/HeadersPanel'
@@ -76,11 +77,13 @@ export function FlowRequestEditor({ content, rootPath, variables: environmentVar
   const updateParams = (next: typeof params) => { setParams(next); patch({ endpointUrl: buildUrlWithParams(content.endpointUrl, next) }) }
   const save = async () => { setSaving(true); setError(''); try { await onSave() } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) } finally { setSaving(false) } }
   const updateGrpc = (changes: Partial<RequestContent['grpc']>) => patch({ grpc: { ...content.grpc, ...changes } })
+  const websocket = websocketOf(content)
+  const updateWebSocket = (changes: Partial<NonNullable<RequestContent['websocket']>>) => patch({ websocket: { ...websocket, ...changes } })
 
   return <section className="flow-request-editor" aria-label={t('flows.studio.requestEditor')}>
     <div className="flow-request-destination"><span>{targetLabel}</span>{dirty && <span className="flow-request-dirty">● {t('flows.studio.unsaved')}</span>}</div>
     <div className="flow-request-endpoint">
-      {content.protocol === 'rest' ? <Select aria-label={t('flows.studio.method')} value={content.method} onChange={(event) => patch({ method: event.target.value as RequestContent['method'] })}>{METHODS.map((method) => <option key={method} value={method}>{method.toUpperCase()}</option>)}</Select> : <span className="flow-request-protocol">{content.protocol === 'grpc' ? 'gRPC' : 'GraphQL'}</span>}
+      {content.protocol === 'rest' ? <Select aria-label={t('flows.studio.method')} value={content.method} onChange={(event) => patch({ method: event.target.value as RequestContent['method'] })}>{METHODS.map((method) => <option key={method} value={method}>{method.toUpperCase()}</option>)}</Select> : <span className="flow-request-protocol">{content.protocol === 'grpc' ? 'gRPC' : content.protocol === 'websocket' ? 'WebSocket' : 'GraphQL'}</span>}
       <label className="rw-visually-hidden" htmlFor="flow-request-url">{t('endpointBar.endpointLabel')}</label><TemplateHighlightedField id="flow-request-url" fieldClassName="ui-input ui-input--mono" value={content.endpointUrl} onChange={(endpointUrl) => patch({ endpointUrl })} variables={variables} placeholder={t('endpointBar.endpointLabel')} />
     </div>
     <FlowTabs className="flow-request-tabs" items={(['body', 'headers', 'params', 'auth', 'scripts'] as const).map((id) => ({ id, label: `${t(`flows.studio.${id}`)}${id === 'headers' && content.headers.length > 0 ? ` (${content.headers.length})` : ''}` }))} value={tab} onChange={setTab} label={t('flows.studio.request')} />
@@ -98,6 +101,16 @@ export function FlowRequestEditor({ content, rootPath, variables: environmentVar
       /> : content.protocol === 'graphql' ? <>
         <Field label={t('flows.studio.query')}><QueryPanel value={content.query} onChange={(query) => patch({ query })} environmentVariables={variables} schema={null} /></Field>
         <Field label={t('flows.studio.variables')}><RequestBodyPanel value={content.variables} onChange={(value) => patch({ variables: value })} environmentVariables={variables} /></Field>
+      </> : content.protocol === 'websocket' ? <>
+        <Field label={t('flows.studio.message')}>
+          <Select aria-label={t('websocket.formatLabel')} value={websocket.messageFormat} onChange={(event) => updateWebSocket({ messageFormat: event.target.value as typeof websocket.messageFormat })}>
+            <option value="text">{t('websocket.format.text')}</option>
+            <option value="json">JSON</option>
+            <option value="binary">{t('websocket.format.binary')}</option>
+          </Select>
+        </Field>
+        <RequestBodyPanel key={websocket.messageFormat} value={websocket.message} language={websocket.messageFormat === 'json' ? 'json' : 'none'} label={t('websocket.messageLabel')} onChange={(message) => updateWebSocket({ message })} environmentVariables={variables} />
+        <WebSocketSettingsPanel websocket={websocket} onChange={updateWebSocket} />
       </> : <>
         <GrpcSchemaSource rootPath={rootPath} grpc={content.grpc} onChange={updateGrpc} />
         <Field label={t('flows.studio.service')}><Input value={content.grpc.service} onChange={(event) => updateGrpc({ service: event.target.value })} /></Field>

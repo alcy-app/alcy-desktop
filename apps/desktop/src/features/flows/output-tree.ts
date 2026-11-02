@@ -64,8 +64,19 @@ export function outputRoots(output: FlowNodeOutputDto): OutputEntry[] {
   const grpc = grpcCode !== undefined && /^\d+$/.test(grpcCode)
     ? { code: Number(grpcCode), codeName: grpcCodeName(Number(grpcCode)), message: output.headers.find((header) => header.name.toLowerCase() === 'grpc-message')?.value ?? '' }
     : null
+  // A WebSocket step keeps how it closed in pseudo-headers (spec 0140).
+  const closedBy = output.headers.find((header) => header.name.toLowerCase() === 'websocket-closed-by')?.value
+  const closeCode = output.headers.find((header) => header.name.toLowerCase() === 'websocket-close-code')?.value
+  const websocketMessages =
+    output.body === '' ? [] : output.body.startsWith('[\n') && Array.isArray(parsed) ? parsed : [parsed === undefined ? output.body : parsed]
   return [
     ...head,
+    ...(closedBy !== undefined
+      ? [
+          { key: 'closeCode', path: 'closeCode', value: closeCode === undefined ? null : Number(closeCode) },
+          { key: 'messages', path: 'messages', value: websocketMessages },
+        ]
+      : []),
     ...(grpc ? [{ key: 'grpcStatus', path: 'grpcStatus', value: grpc },
       ...(parsed === undefined ? [] : [{ key: 'messages', path: 'messages', value: Array.isArray(parsed) ? parsed : [parsed] }])] : []),
     { key: 'headers', path: null, value: headers },

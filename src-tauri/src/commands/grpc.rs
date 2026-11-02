@@ -729,6 +729,7 @@ pub async fn execute_grpc_request(
                 service: input.service,
                 method: input.method,
             }),
+            websocket: None,
         };
         run_pre_request(
             &input.pre_request_script,

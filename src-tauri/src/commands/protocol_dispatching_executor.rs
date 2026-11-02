@@ -5,7 +5,7 @@ use alcy_domain::{ExecutionError, ProtocolId, Request, Response};
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_rest::ReqwestRestExecutor;
 
-/// Composition-root dispatch for mixed protocols. Application use cases depend on RequestExecutor; concrete GraphQL/REST/gRPC adapters stay here.
+/// Composition-root dispatch for mixed protocols. Application use cases depend on RequestExecutor; concrete GraphQL/REST/gRPC/WebSocket adapters stay here.
 pub(crate) struct ProtocolDispatchingExecutor<'a> {
     pub(crate) app: Option<&'a tauri::AppHandle>,
     pub(crate) graphql: &'a ReqwestGraphqlExecutor,
@@ -27,6 +27,9 @@ impl RequestExecutor for ProtocolDispatchingExecutor<'_> {
             ProtocolId::GraphQl => self.graphql.execute(request).await,
             ProtocolId::Grpc => {
                 super::grpc::execute_saved_request(request, self.workspace_root, self.app).await
+            }
+            ProtocolId::WebSocket => {
+                super::websocket::execute_saved_request(request, self.rest, self.app).await
             }
         }
     }

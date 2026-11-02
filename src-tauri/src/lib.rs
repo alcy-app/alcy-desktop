@@ -119,6 +119,9 @@ use commands::version_control::{
     preview_conflict_resolution, preview_pull_changes, pull_changes, resolve_conflict,
     unlink_workspace,
 };
+use commands::websocket::{
+    WebSocketSessions, close_websocket, execute_websocket_request, send_websocket_message,
+};
 use commands::workspace_operation_coordinator::WorkspaceOperationCoordinator;
 use commands::workspaces::{
     create_workspace, list_recent_workspaces, open_workspace, remove_workspace, rename_workspace,
@@ -233,6 +236,7 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(ExecutionRegistry::default())
         .manage(GrpcSchemaCache::default())
         .manage(GrpcCalls::default())
+        .manage(WebSocketSessions::default())
         .manage(WorkspaceOperationCoordinator::default())
         .manage(FlowExecutionRegistry::default())
         .manage(FlowRunOutputs::default())
@@ -261,6 +265,14 @@ pub fn run_with(extensions: Vec<Extension>) {
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Finished {
                 window_state::show_main_window(webview.app_handle());
+            }
+            // A reload leaves no page to show or close open WebSocket
+            // connections (they have no deadline): close them.
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                webview
+                    .app_handle()
+                    .state::<WebSocketSessions>()
+                    .close_all();
             }
         })
         .setup(move |app| {
@@ -414,6 +426,9 @@ pub fn run_with(extensions: Vec<Extension>) {
                 load_grpc_schema,
                 send_grpc_message,
                 close_grpc_send,
+                execute_websocket_request,
+                send_websocket_message,
+                close_websocket,
                 check_body_files,
                 cancel_graphql_request,
                 list_environments,

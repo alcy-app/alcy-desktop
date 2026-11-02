@@ -30,10 +30,10 @@ export function RequestMethodBadge({ protocol, method, className, 'aria-hidden':
     )
   }
 
-  if (protocol === 'grpc') {
+  if (protocol === 'grpc' || protocol === 'websocket') {
     return (
       <Badge tone="info" className={className} aria-hidden={ariaHidden}>
-        gRPC
+        {protocol === 'grpc' ? 'gRPC' : 'WS'}
       </Badge>
     )
   }

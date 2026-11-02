@@ -1,5 +1,7 @@
 import { GrpcResponseView } from './GrpcResponseView'
 import type { GrpcStreamState } from '../grpc-stream'
+import type { WebSocketStreamState } from '../websocket-stream'
+import { WebSocketResponseView } from './WebSocketResponseView'
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ResponseBodyOutput } from '../../../bindings/execute-graphql-request'
 import type { RequestSendDto, RequestSendsSource } from '../../../bindings/list-request-sends'
@@ -12,7 +14,7 @@ import { IconButton } from '../../../shared/ui/IconButton'
 import { LoadingBar } from '../../../shared/ui/LoadingBar'
 import { Tooltip } from '../../../shared/ui/Tooltip'
 import { useToast } from '../../../shared/ui/use-toast'
-import { graphqlErrorsOf, grpcResultOf, httpResultOf } from '../request-workbench.types'
+import { graphqlErrorsOf, grpcResultOf, httpResultOf, websocketResultOf } from '../request-workbench.types'
 import { describeError, errorDetail, errorLabel, formatSize, statusTone } from '../response-summary'
 import type { ExecutionState, ResponseTabId } from '../request-workbench.types'
 import { Tabs } from '../../../shared/ui/Tabs'
@@ -50,6 +52,8 @@ export type ResponsePanelLayout = 'bottom' | 'right'
 interface ResponsePanelProps {
   execution: ExecutionState
   grpcStream?: GrpcStreamState
+  /** Live view of the tab's WebSocket connection (spec 0140). */
+  websocketStream?: WebSocketStreamState
   onClear: () => void
   layout: ResponsePanelLayout
   onToggleLayout: () => void
@@ -85,11 +89,18 @@ const CURRENT_VIEW: ResponseView = { kind: 'current' }
 
 /** gRPC messages are shown as JSON (spec 0129). */
 const GRPC_BODY_HEADERS = [{ name: 'content-type', value: 'application/json' }]
+
+/** A normal close (1000/1001/no code) or one Alcy made normally. */
+function websocketCleanClose(close: { code: number | null; closedBy: string }): boolean {
+  if (close.closedBy === 'transport' || close.closedBy === 'rejected') return false
+  return close.code === null || close.code === 1000 || (close.closedBy === 'server' && close.code === 1001)
+}
 const NO_SOURCE: RequestSendsSource = { rootPath: '', requestId: null, tabId: null }
 
 export const ResponsePanel = memo(function ResponsePanel({
   execution,
   grpcStream,
+  websocketStream,
   onClear,
   layout,
   onToggleLayout,
@@ -153,6 +164,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   const hasGraphqlErrors = !!graphqlErrors && graphqlErrors.length > 0
   const http = success ? httpResultOf(success.result) : null
   const grpc = grpcResultOf(success?.result)
+  const websocket = websocketResultOf(success?.result)
   // Older restored executions may omit testResults.
   const testResults = success ? (success.result.testResults ?? []) : []
   const hasTests = testResults.length > 0
@@ -240,6 +252,23 @@ export const ResponsePanel = memo(function ResponsePanel({
               <span className="rw-response-metric">{t('response.grpcMessageCount', { count: grpc.messageCount })}</span>
             </span>
           )}
+          {view.kind !== 'compare' && websocket && (
+            <span className="rw-response-summary">
+              {websocket.close.closedBy === 'rejected' ? (
+                <span className={`rw-response-status rw-response-status--${statusTone(websocket.statusCode)}`}>
+                  HTTP {websocket.statusCode}
+                </span>
+              ) : (
+                <span className={`rw-response-status rw-response-status--${websocketCleanClose(websocket.close) ? 'success' : 'error'}`}>
+                  {t(`websocket.closedBy.${websocket.close.closedBy}`)}
+                  {websocket.close.code !== null ? ` · ${websocket.close.code}` : ''}
+                </span>
+              )}
+              <span className="rw-response-metric">{websocket.durationMs} ms</span>
+              <span className="rw-response-metric">{formatSize(websocket.sizeBytes)}</span>
+              <span className="rw-response-metric">{t('websocket.receivedCount', { count: websocket.receivedCount })}</span>
+            </span>
+          )}
           {view.kind !== 'compare' && displayed?.status === 'success' && http && (
             <span className="rw-response-summary">
               {/* History sends do not retain connection details, including the HTTP version. */}
@@ -261,8 +290,8 @@ export const ResponsePanel = memo(function ResponsePanel({
           )}
           {displayed?.status === 'loading' && (
             <span className="rw-response-summary">
-              <Spinner size={12} />
-              {t('response.sending')}
+              {websocketStream?.status !== 'open' && <Spinner size={12} />}
+              {websocketStream ? t(`websocket.status.${websocketStream.status}`) : t('response.sending')}
               <ElapsedTimer startedAt={displayed.startedAt} label={t('response.elapsedAria')} />
             </span>
           )}
@@ -289,7 +318,7 @@ export const ResponsePanel = memo(function ResponsePanel({
         </div>
       </div>
 
-      {execution.status === 'loading' && <LoadingBar />}
+      {execution.status === 'loading' && websocketStream?.status !== 'open' && <LoadingBar />}
 
       {view.kind === 'past' && (
         <div className="rw-history-banner" role="status">
@@ -306,7 +335,7 @@ export const ResponsePanel = memo(function ResponsePanel({
       )}
 
       {/* Remount content on view/state changes to trigger its entrance animation. */}
-      <div key={`${view.kind}-${grpcStream ? 'grpc' : displayed?.status ?? 'pending'}`} className="rw-response-content">
+      <div key={`${view.kind}-${grpcStream ? 'grpc' : websocketStream ? 'websocket' : displayed?.status ?? 'pending'}`} className="rw-response-content">
         {view.kind === 'compare' ? (
           <div className="rw-response-body">
             {comparePair && sendsSource ? (
@@ -323,6 +352,10 @@ export const ResponsePanel = memo(function ResponsePanel({
           </div>
         ) : view.kind === 'current' && grpcStream && !notStored ? (
           <GrpcResponseView key={viewKey} stream={grpcStream} result={grpc}
+            error={displayed?.status === 'error' ? describeError(t, displayed.error) : undefined}
+            onCaptureValue={onCaptureValue} monitor={bodyMonitor} />
+        ) : view.kind === 'current' && websocketStream && !notStored ? (
+          <WebSocketResponseView key={viewKey} stream={websocketStream} result={websocket}
             error={displayed?.status === 'error' ? describeError(t, displayed.error) : undefined}
             onCaptureValue={onCaptureValue} monitor={bodyMonitor} />
         ) : success ? (

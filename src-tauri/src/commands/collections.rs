@@ -8,7 +8,8 @@ use alcy_domain::{
     ApiDocsSourceKind, Authentication, BodyPayload, Collection, CollectionError, CollectionLabel,
     DocsRef, Endpoint, EnvironmentVariable, EnvironmentVariableError, Folder, FolderError,
     GrpcCall, GrpcSchemaSource, HeaderEntry, HeaderError, LabelColor, ProtocolId, Request,
-    RequestDocument, RouteParameter, SavedRequest, SavedRequestError,
+    RequestDocument, RouteParameter, SavedRequest, SavedRequestError, WebSocketCall,
+    WebSocketCollect, WebSocketMessageFormat,
 };
 use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, StorageError};
 use serde::{Deserialize, Serialize};
@@ -98,6 +99,64 @@ pub struct SavedRequestDto {
     /// other protocols and in older DTOs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grpc: Option<GrpcCallDto>,
+    /// Subprotocols, message format and run options of a WebSocket request
+    /// (spec 0140); absent for the other protocols and in older DTOs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub websocket: Option<WebSocketCallDto>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WebSocketMessageFormatDto {
+    #[default]
+    Text,
+    Json,
+    Binary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSocketCallDto {
+    #[serde(default)]
+    pub subprotocols: Vec<String>,
+    #[serde(default)]
+    pub message_format: WebSocketMessageFormatDto,
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+    #[serde(default)]
+    pub expected_messages: Option<u32>,
+}
+
+impl From<&WebSocketCall> for WebSocketCallDto {
+    fn from(call: &WebSocketCall) -> Self {
+        Self {
+            subprotocols: call.subprotocols.clone(),
+            message_format: match call.message_format {
+                WebSocketMessageFormat::Text => WebSocketMessageFormatDto::Text,
+                WebSocketMessageFormat::Json => WebSocketMessageFormatDto::Json,
+                WebSocketMessageFormat::Binary => WebSocketMessageFormatDto::Binary,
+            },
+            wait_ms: call.collect.wait_ms,
+            expected_messages: call.collect.expected_messages,
+        }
+    }
+}
+
+impl From<WebSocketCallDto> for WebSocketCall {
+    fn from(dto: WebSocketCallDto) -> Self {
+        Self {
+            subprotocols: dto.subprotocols,
+            message_format: match dto.message_format {
+                WebSocketMessageFormatDto::Text => WebSocketMessageFormat::Text,
+                WebSocketMessageFormatDto::Json => WebSocketMessageFormat::Json,
+                WebSocketMessageFormatDto::Binary => WebSocketMessageFormat::Binary,
+            },
+            collect: WebSocketCollect {
+                wait_ms: dto.wait_ms,
+                expected_messages: dto.expected_messages,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -293,6 +352,7 @@ fn protocol_to_str(protocol: ProtocolId) -> &'static str {
         ProtocolId::GraphQl => "graphql",
         ProtocolId::Rest => "rest",
         ProtocolId::Grpc => "grpc",
+        ProtocolId::WebSocket => "websocket",
     }
 }
 
@@ -301,6 +361,7 @@ fn protocol_from_str(value: &str) -> Result<ProtocolId, CollectionsCommandError>
         "graphql" => Ok(ProtocolId::GraphQl),
         "rest" => Ok(ProtocolId::Rest),
         "grpc" => Ok(ProtocolId::Grpc),
+        "websocket" => Ok(ProtocolId::WebSocket),
         other => Err(invalid(format!(
             "protocolo de requisição desconhecido: {other}"
         ))),
@@ -415,6 +476,8 @@ pub(crate) fn request_to_dto(request: &SavedRequest) -> SavedRequestDto {
         }),
         grpc: (request.request.document.protocol == ProtocolId::Grpc)
             .then(|| GrpcCallDto::from(&request.request.grpc)),
+        websocket: (request.request.document.protocol == ProtocolId::WebSocket)
+            .then(|| WebSocketCallDto::from(&request.request.websocket)),
     }
 }
 
@@ -453,7 +516,8 @@ pub(crate) fn request_from_dto(
                 .collect(),
         )
         .with_scripts(dto.pre_request_script, dto.post_response_script)
-        .with_grpc(dto.grpc.map(GrpcCall::from).unwrap_or_default());
+        .with_grpc(dto.grpc.map(GrpcCall::from).unwrap_or_default())
+        .with_websocket(dto.websocket.map(WebSocketCall::from).unwrap_or_default());
 
     let saved = SavedRequest::new(dto.id, dto.name, request)
         .map_err(|error: SavedRequestError| invalid(error))?;
@@ -1669,6 +1733,7 @@ mod tests {
             post_response_script: String::new(),
             docs_ref: None,
             grpc: None,
+            websocket: None,
         }
     }
 
@@ -1746,6 +1811,40 @@ mod tests {
         let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
 
         assert_eq!(collections, dtos);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_then_list_round_trips_a_websocket_request_with_its_call() {
+        let root = temp_root();
+        let mut request = sample_saved_request("request-1", "Chat");
+        request.protocol = "websocket".to_string();
+        request.endpoint = "wss://chat.example.com/{{room}}".to_string();
+        request.body = "{\"join\":\"general\"}".to_string();
+        request.websocket = Some(WebSocketCallDto {
+            subprotocols: vec!["chat.v2".to_string()],
+            message_format: WebSocketMessageFormatDto::Json,
+            wait_ms: Some(2_000),
+            expected_messages: Some(0),
+        });
+        let dtos = vec![CollectionDto {
+            variables: vec![],
+            labels: vec![],
+            authentication: SavedRequestAuthenticationDto::Inherit,
+            id: "collection-1".to_string(),
+            name: "Sockets".to_string(),
+            folders: vec![],
+            requests: vec![request],
+        }];
+
+        save_collections_inner(root.clone(), dtos.clone()).unwrap();
+        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+
+        assert_eq!(collections, dtos);
+        let json = serde_json::to_value(&collections[0].requests[0]).unwrap();
+        assert_eq!(json["websocket"]["messageFormat"], "json");
+        assert_eq!(json["websocket"]["expectedMessages"], 0);
 
         fs::remove_dir_all(&root).ok();
     }

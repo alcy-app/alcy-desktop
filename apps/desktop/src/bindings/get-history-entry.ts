@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { WebSocketCallDto } from './websocket-call'
 import type { GrpcCallDto } from './grpc-call'
 import type {
   AuthenticationInput,
@@ -43,6 +44,8 @@ export interface HistoryEntryDetailDto {
   outcome: HistoryOutcomeDetail
   /** gRPC method and schema source; absent for the other protocols. */
   grpc?: GrpcCallDto | null
+  /** WebSocket call options; absent for the other protocols. */
+  websocket?: WebSocketCallDto | null
 }
 
 export type GetHistoryEntryResult = { ok: true; value: HistoryEntryDetailDto } | { ok: false; error: HistoryError }

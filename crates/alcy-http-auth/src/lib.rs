@@ -7,9 +7,11 @@
 
 mod execution_failure;
 mod response_body;
+mod response_metadata;
 
 pub use execution_failure::{map_auth_error, map_reqwest_error};
 pub use response_body::{ConfiguredResponseLimit, body_text, read_response_body};
+pub use response_metadata::build_response_metadata;
 
 use alcy_domain::Authentication;
 use reqwest::header::{AUTHORIZATION, HeaderValue, WWW_AUTHENTICATE};

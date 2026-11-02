@@ -20,6 +20,7 @@ import {
 } from '../code-snippets/generators'
 import { loadSnippetHighlight } from '../code-snippets/snippet-highlight'
 import { buildSnippetRequest, type SnippetTab } from '../code-snippets/snippet-request'
+import { generateWebsocatSnippet } from '../code-snippets/websocat'
 import { generateGrpcurlSnippet } from '../code-snippets/grpcurl'
 import type { WorkbenchTab } from '../request-workbench.types'
 import { OptionSelect, type SelectOption } from './OptionSelect'
@@ -120,13 +121,19 @@ export function ShareRequestModal({ tab, inheritedAuthentication, environmentVar
   const selectId = useId()
   const [languageId, setLanguageId] = useState<SnippetLanguageId>(loadPersistedLanguage)
   const isGrpc = tab.protocol === 'grpc'
+  const isWebSocket = tab.protocol === 'websocket'
+  // gRPC and WebSocket have one command-line client each instead of the HTTP languages.
+  const singleTool = isGrpc ? 'grpcurl' : isWebSocket ? 'websocat' : null
   const language = SNIPPET_LANGUAGES.find((candidate) => candidate.id === languageId) ?? SNIPPET_LANGUAGES[0]
 
   const request = useMemo(
     () => buildSnippetRequest(tab, inheritedAuthentication, environmentVariables),
     [tab, inheritedAuthentication, environmentVariables],
   )
-  const code = useMemo(() => isGrpc ? generateGrpcurlSnippet(request) : generateSnippet(language.id, request), [isGrpc, language.id, request])
+  const code = useMemo(
+    () => isGrpc ? generateGrpcurlSnippet(request) : isWebSocket ? generateWebsocatSnippet(request) : generateSnippet(language.id, request),
+    [isGrpc, isWebSocket, language.id, request],
+  )
   const hasScripts = tab.preRequestScript.trim() !== '' || tab.postResponseScript.trim() !== ''
 
   const handleLanguageChange = (value: SnippetLanguageId) => {
@@ -155,8 +162,8 @@ export function ShareRequestModal({ tab, inheritedAuthentication, environmentVar
           {t('share.languageLabel')}
         </label>
         <div className="share-modal-language">
-          {isGrpc
-            ? <OptionSelect id={selectId} value="grpcurl" options={[{ value: 'grpcurl', label: 'grpcurl' }]} onChange={() => {}} />
+          {singleTool
+            ? <OptionSelect id={selectId} value={singleTool} options={[{ value: singleTool, label: singleTool }]} onChange={() => {}} />
             : <OptionSelect id={selectId} value={language.id} options={LANGUAGE_OPTIONS} onChange={handleLanguageChange} />}
         </div>
         <IconButton
@@ -167,7 +174,7 @@ export function ShareRequestModal({ tab, inheritedAuthentication, environmentVar
           onClick={() => void handleCopy()}
         />
       </div>
-      <SnippetPreview code={code} highlight={isGrpc ? 'shell' : language.highlight} ariaLabel={t('share.previewLabel')} />
+      <SnippetPreview code={code} highlight={singleTool ? 'shell' : language.highlight} ariaLabel={t('share.previewLabel')} />
       {hasScripts && <p className="share-modal-note">{t('share.scriptsNotIncluded')}</p>}
     </Modal>
   )

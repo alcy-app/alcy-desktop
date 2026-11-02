@@ -168,7 +168,7 @@ impl CookieJar {
     fn header_at(&self, url: &str, now: SystemTime) -> Option<String> {
         let url = Url::parse(url).ok()?;
         let host = url.host_str()?.to_ascii_lowercase();
-        let secure = url.scheme() == "https";
+        let secure = matches!(url.scheme(), "https" | "wss");
         let path = url.path();
 
         let mut cookies = self.lock();

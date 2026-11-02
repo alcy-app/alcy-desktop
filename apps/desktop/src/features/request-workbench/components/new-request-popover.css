@@ -109,7 +109,8 @@
   font-size: var(--font-size-sm);
 }
 
-.new-request-popover-badge--grpc {
+.new-request-popover-badge--grpc,
+.new-request-popover-badge--websocket {
   background: color-mix(in srgb, var(--info) 13%, transparent);
   color: var(--info);
 }

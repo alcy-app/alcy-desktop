@@ -9,10 +9,11 @@ interface RestScreenProps {
   onAddGraphqlRequest: () => void
   onAddRestRequest: () => void
   onAddGrpcRequest: () => void
+  onAddWebSocketRequest: () => void
 }
 
 const ACTIONS: Array<{
-  protocol: 'graphql' | 'rest' | 'grpc'
+  protocol: 'graphql' | 'rest' | 'grpc' | 'websocket'
   badge: string
   titleKey: TranslationKey
   hintKey: TranslationKey
@@ -35,13 +36,19 @@ const ACTIONS: Array<{
     titleKey: 'workbench.openTabs.newGrpcTabMenuItem',
     hintKey: 'collections.protocolGrpcHint',
   },
+  {
+    protocol: 'websocket',
+    badge: 'WS',
+    titleKey: 'workbench.openTabs.newWebSocketTabMenuItem',
+    hintKey: 'collections.protocolWebSocketHint',
+  },
 ]
 
-export function RestScreen({ onAddGraphqlRequest, onAddRestRequest, onAddGrpcRequest }: RestScreenProps) {
+export function RestScreen({ onAddGraphqlRequest, onAddRestRequest, onAddGrpcRequest, onAddWebSocketRequest }: RestScreenProps) {
   const { t } = useLanguage()
   const id = useId()
   const titleId = `${id}-title`
-  const handlers = { graphql: onAddGraphqlRequest, rest: onAddRestRequest, grpc: onAddGrpcRequest }
+  const handlers = { graphql: onAddGraphqlRequest, rest: onAddRestRequest, grpc: onAddGrpcRequest, websocket: onAddWebSocketRequest }
 
   return (
     <div className="rw-rest-screen">

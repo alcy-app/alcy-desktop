@@ -48,8 +48,14 @@ describe('completionSource', () => {
   })
 
   it('oferece os métodos de al.response apenas no pós-resposta', () => {
-    expect(labels(complete('al.response.', 'post'))).toEqual(['grpc', 'status', 'time', 'statusText', 'size', 'url', 'body', 'headers', 'text', 'json'])
+    expect(labels(complete('al.response.', 'post'))).toEqual(['grpc', 'websocket', 'status', 'time', 'statusText', 'size', 'url', 'body', 'headers', 'text', 'json'])
     expect(complete('al.response.', 'pre')).toBeNull()
+  })
+
+  it('completes WebSocket request and response fields', () => {
+    expect(labels(complete('al.request.websocket.', 'pre'))).toEqual(['subprotocols', 'message'])
+    expect(labels(complete('al.response.websocket.', 'post'))).toContain('closeCode')
+    expect(complete('al.response.websocket.', 'pre')).toBeNull()
   })
 
   it('completes gRPC message, metadata and status fields', () => {

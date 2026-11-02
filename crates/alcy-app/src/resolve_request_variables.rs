@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use alcy_domain::{
     Authentication, BodyPayload, Endpoint, EndpointError, EnvironmentVariable, FormDataField,
     FormDataFieldValue, HeaderEntry, HeaderError, ProtocolId, Request, RequestDocument,
-    RouteParameter, UrlEncodedField,
+    RouteParameter, UrlEncodedField, WebSocketCall,
 };
 use thiserror::Error;
 
@@ -86,9 +86,12 @@ pub fn resolve_request_variables(
     let endpoint = Endpoint::new(endpoint_url).map_err(ResolveRequestError::Endpoint)?;
 
     // A GraphQL query is sent as typed (its own `$variables` carry values);
-    // REST bodies and gRPC messages (JSON) take `{{variables}}`.
+    // REST bodies, gRPC messages (JSON) and WebSocket messages take
+    // `{{variables}}`.
     let body = match request.document.protocol {
-        ProtocolId::Rest | ProtocolId::Grpc => resolve(&request.document.body)?,
+        ProtocolId::Rest | ProtocolId::Grpc | ProtocolId::WebSocket => {
+            resolve(&request.document.body)?
+        }
         ProtocolId::GraphQl => request.document.body.clone(),
     };
     let document = RequestDocument::new(request.document.protocol, body);
@@ -190,7 +193,16 @@ pub fn resolve_request_variables(
         request.post_response_script.clone(),
     )
     .with_redirect_policy(request.redirect_policy)
-    .with_grpc(request.grpc.clone()))
+    .with_grpc(request.grpc.clone())
+    .with_websocket(WebSocketCall {
+        subprotocols: request
+            .websocket
+            .subprotocols
+            .iter()
+            .map(|subprotocol| resolve(subprotocol))
+            .collect::<Result<Vec<_>, _>>()?,
+        ..request.websocket.clone()
+    }))
 }
 
 #[cfg(test)]

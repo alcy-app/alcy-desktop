@@ -17,6 +17,8 @@ const KNOWN_TOOLS = new Set([
   'cancel_request',
   'send_grpc_message',
   'close_grpc_send',
+  'send_websocket_message',
+  'close_websocket',
   'save_request',
   'import_from_text',
   'create_collection',

@@ -276,6 +276,7 @@ mod tests {
             route_params: vec![],
             docs_ref: None,
             grpc: None,
+            websocket: None,
         };
         CollectionDto {
             id: "c1".into(),

@@ -572,7 +572,8 @@
   --method-color: var(--accent-strong);
 }
 
-.flow-node-method--grpc {
+.flow-node-method--grpc,
+.flow-node-method--websocket {
   --method-color: var(--info);
 }
 

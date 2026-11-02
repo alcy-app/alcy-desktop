@@ -3,6 +3,8 @@ import { cancelGraphqlRequest } from '../../bindings/cancel-graphql-request'
 import { executeGraphqlRequest } from '../../bindings/execute-graphql-request'
 import { closeGrpcSend, executeGrpcRequest, sendGrpcMessage } from '../../bindings/execute-grpc-request'
 import { appendGrpcEvent, emptyGrpcStream } from './grpc-stream'
+import { closeWebSocket, executeWebSocketRequest, sendWebSocketMessage } from '../../bindings/execute-websocket-request'
+import { appendWebSocketEvent, emptyWebSocketStream } from './websocket-stream'
 import { executeRestRequest } from '../../bindings/execute-rest-request'
 import type { HttpMethodInput, RawBodyLanguage } from '../../bindings/execute-rest-request'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
@@ -21,14 +23,24 @@ import {
   toBodyState,
   toRestBodyInput,
 } from './body-state'
-import { emptyGrpcCall, emptyRequestContent, mergeScopedVariables, sameGrpcCall, variableScopesFor } from './collection-tree'
+import {
+  emptyGrpcCall,
+  emptyRequestContent,
+  emptyWebSocketCall,
+  mergeScopedVariables,
+  sameGrpcCall,
+  sameWebSocketCall,
+  variableScopesFor,
+  websocketCallDto,
+  websocketOf,
+} from './collection-tree'
 import {
   emptyAuthorizationState,
   sameAuthentication,
   toAuthenticationInput,
   toAuthorizationState,
 } from './authorization-state'
-import type { GrpcCallState, RequestContent, RequestProtocol, TreeNode } from './collection-tree'
+import type { GrpcCallState, RequestContent, RequestProtocol, TreeNode, WebSocketCallState } from './collection-tree'
 import { createEmptyQuery, ensureFieldPath, parseQuery, setFieldArgument, toggleField } from './graphql-query-tree'
 import {
   buildUrlWithParams,
@@ -63,9 +75,14 @@ function releaseIfWindowed(execution: ExecutionState) {
   }
 }
 
-/** Closing a tab also stops an interactive gRPC call that could otherwise stay open indefinitely. */
+/** Closing a tab also stops an interactive gRPC call or WebSocket connection that could otherwise stay open indefinitely. */
 function disposeTab(tab: WorkbenchTab) {
   if (tab.protocol === 'grpc' && tab.executionId) void cancelGraphqlRequest(tab.executionId)
+  if (tab.protocol === 'websocket' && tab.executionId) {
+    const executionId = tab.executionId
+    // A graceful close when open; the cancel ends a connection still opening.
+    void closeWebSocket(executionId).finally(() => void cancelGraphqlRequest(executionId))
+  }
   releaseIfWindowed(tab.execution)
 }
 
@@ -123,6 +140,7 @@ function createTab(overrides: Partial<WorkbenchTab> = {}): WorkbenchTab {
     schemaExecutionId: null,
     grpc: emptyGrpcCall,
     grpcSchema: { status: 'idle' },
+    websocket: emptyWebSocketCall,
     ...overrides,
   }
 }
@@ -133,6 +151,7 @@ function firstSectionOf(protocol: RequestProtocol): RequestTabId {
     case 'rest':
       return 'params'
     case 'grpc':
+    case 'websocket':
       return 'message'
     case 'graphql':
       return 'query'
@@ -159,6 +178,7 @@ function tabFromContent(requestId: string | null, name: string, content: Request
     routeParams: routeParamsFromUrl(content.endpointUrl, content.routeParams),
     authorization: toAuthorizationState(content.authentication),
     grpc: content.grpc,
+    websocket: websocketOf(content),
     savedContent: content,
     dirty: requestId === null,
   })
@@ -179,6 +199,7 @@ export function contentOf(tab: WorkbenchTab): RequestContent {
     preRequestScript: tab.preRequestScript,
     postResponseScript: tab.postResponseScript,
     grpc: tab.grpc,
+    ...(tab.protocol === 'websocket' ? { websocket: tab.websocket } : {}),
   }
 }
 
@@ -209,7 +230,8 @@ function contentDiffersFromSaved(tab: WorkbenchTab): boolean {
     !sameHeaders(tab.headers, saved.headers) ||
     !sameRouteParams(tab.routeParams, saved.routeParams) ||
     !sameAuthentication(toAuthenticationInput(tab.authorization), saved.authentication) ||
-    !sameGrpcCall(tab.grpc, saved.grpc)
+    !sameGrpcCall(tab.grpc, saved.grpc) ||
+    (tab.protocol === 'websocket' && !sameWebSocketCall(tab.websocket, websocketOf(saved)))
   )
 }
 
@@ -387,6 +409,78 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     })
   }, [state.activeTabId, activeTab.executionId, activeTab.grpcStream, activeTab.grpc.message, activeTab.requestId, environmentVariables, collections, updateTab])
 
+  /** Opens the active WebSocket tab's connection (spec 0140); resolves when it ends. */
+  const connectWebSocket = useCallback(async () => {
+    const tabId = state.activeTabId
+    const tab = activeTab
+    releaseIfWindowed(tab.execution)
+    const id = crypto.randomUUID()
+    const startedAt = Date.now()
+    updateTab(tabId, {
+      pinned: true,
+      executionId: id,
+      lastSendId: id,
+      execution: { status: 'loading', startedAt },
+      websocketStream: { ...emptyWebSocketStream, startedAt },
+    })
+
+    const result = await executeWebSocketRequest({
+      executionId: id,
+      rootPath,
+      endpointUrl: tab.endpointUrl,
+      routeParams: tab.routeParams.map(({ name, value }) => ({ name, value })),
+      headers: tab.headers.map((header) => ({ name: header.name, value: header.value, enabled: header.enabled })),
+      authentication: toAuthenticationInput(tab.authorization),
+      requestId: tab.requestId,
+      tabId,
+      environmentVariables: environmentVariables.map(({ name, value, sensitive }) => ({ name, value, sensitive })),
+      variableScopes: variableScopesFor(collections, tab.requestId),
+      preRequestScript: tab.preRequestScript,
+      postResponseScript: tab.postResponseScript,
+      message: tab.websocket.message,
+      websocket: websocketCallDto(tab.websocket),
+    }, (event) => {
+      updateTab(tabId, (current) => current.executionId === id
+        ? { websocketStream: appendWebSocketEvent(current.websocketStream ?? emptyWebSocketStream, event) }
+        : {})
+    })
+
+    updateTab(tabId, (current) => current.executionId !== id ? {} : {
+      websocketStream: { ...(current.websocketStream ?? emptyWebSocketStream), status: 'closed', busy: false },
+      executionId: null,
+      lastSendId: id,
+      execution: result.ok ? { status: 'success', result: result.value } : { status: 'error', error: result.error },
+    })
+    return result
+  }, [state.activeTabId, activeTab, environmentVariables, collections, rootPath, updateTab])
+
+  /** Sends the composer message on the active tab's open connection. */
+  const sendWebSocketComposerMessage = useCallback(async () => {
+    const tabId = state.activeTabId
+    const id = activeTab.executionId
+    const stream = activeTab.websocketStream
+    if (!id || stream?.status !== 'open' || stream.busy) return
+    updateTab(tabId, (tab) => ({ websocketStream: { ...(tab.websocketStream ?? emptyWebSocketStream), busy: true, error: null } }))
+    const result = await sendWebSocketMessage(id, activeTab.websocket.message, activeTab.websocket.messageFormat)
+    updateTab(tabId, (tab) => tab.executionId !== id ? {} : {
+      websocketStream: { ...(tab.websocketStream ?? emptyWebSocketStream), busy: false, error: result.ok ? null : result.error },
+    })
+  }, [state.activeTabId, activeTab.executionId, activeTab.websocketStream, activeTab.websocket, updateTab])
+
+  /** Closes the active tab's connection normally (1000). */
+  const disconnectWebSocket = useCallback(async () => {
+    const tabId = state.activeTabId
+    const id = activeTab.executionId
+    if (!id) return
+    if (activeTab.websocketStream?.status !== 'open') {
+      // Still connecting: there is no session to close yet.
+      void cancelGraphqlRequest(id)
+      return
+    }
+    updateTab(tabId, (tab) => ({ websocketStream: { ...(tab.websocketStream ?? emptyWebSocketStream), status: 'closing' } }))
+    await closeWebSocket(id)
+  }, [state.activeTabId, activeTab.executionId, activeTab.websocketStream, updateTab])
+
   const cancel = useCallback(() => {
     if (activeTab.executionId) {
       void cancelGraphqlRequest(activeTab.executionId)
@@ -396,7 +490,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   const clearResponse = useCallback(() => {
     if (activeTab.executionId) void cancelGraphqlRequest(activeTab.executionId)
     releaseIfWindowed(activeTab.execution)
-    updateTab(state.activeTabId, { executionId: null, lastSendId: null, execution: { status: 'idle' }, grpcStream: undefined })
+    updateTab(state.activeTabId, { executionId: null, lastSendId: null, execution: { status: 'idle' }, grpcStream: undefined, websocketStream: undefined })
   }, [state.activeTabId, activeTab.execution, activeTab.executionId, updateTab])
 
   const loadSchema = useCallback(
@@ -460,6 +554,11 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
       })
     },
     [state.activeTabId, activeTab, environmentVariables, collections, rootPath, updateTab],
+  )
+
+  const updateWebSocket = useCallback(
+    (patch: Partial<WebSocketCallState>) => updateActiveTab((tab) => ({ websocket: { ...tab.websocket, ...patch } })),
+    [updateActiveTab],
   )
 
   const updateGrpc = useCallback(
@@ -728,7 +827,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
         : tab.requestId === request.id)
       const base = existing ?? { ...tabFromContent(flowNodeRef ? null : request.id, request.name, request.content), flowNodeRef, pinned: true }
       const next = tabFromContent(base.requestId, base.name, content)
-      const updated = { ...base, protocol: next.protocol, endpointUrl: next.endpointUrl, query: next.query, variables: next.variables, method: next.method, body: next.body, headers: next.headers, params: next.params, routeParams: next.routeParams, authorization: next.authorization, grpc: next.grpc, preRequestScript: next.preRequestScript, postResponseScript: next.postResponseScript, pinned: true }
+      const updated = { ...base, protocol: next.protocol, endpointUrl: next.endpointUrl, query: next.query, variables: next.variables, method: next.method, body: next.body, headers: next.headers, params: next.params, routeParams: next.routeParams, authorization: next.authorization, grpc: next.grpc, websocket: next.websocket, preRequestScript: next.preRequestScript, postResponseScript: next.postResponseScript, pinned: true }
       updated.dirty = computeDirty(updated)
       return { ...current, tabs: existing ? current.tabs.map((tab) => tab.id === existing.id ? updated : tab) : [...current.tabs, updated] }
     })
@@ -744,7 +843,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
       if (tab.flowNodeRef?.flowId !== flowId) return tab
       const content = renameNodeReferences(contentOf(tab), previous, next)
       const restored = tabFromContent(null, tab.name, content)
-      const updated = { ...tab, protocol: restored.protocol, endpointUrl: restored.endpointUrl, query: restored.query, variables: restored.variables, method: restored.method, body: restored.body, headers: restored.headers, params: restored.params, routeParams: restored.routeParams, authorization: restored.authorization, grpc: restored.grpc, preRequestScript: restored.preRequestScript, postResponseScript: restored.postResponseScript, savedContent: renameNodeReferences(tab.savedContent, previous, next), flowNodeRef: { flowId, nodeId: tab.flowNodeRef.nodeId === previous ? next : tab.flowNodeRef.nodeId } }
+      const updated = { ...tab, protocol: restored.protocol, endpointUrl: restored.endpointUrl, query: restored.query, variables: restored.variables, method: restored.method, body: restored.body, headers: restored.headers, params: restored.params, routeParams: restored.routeParams, authorization: restored.authorization, grpc: restored.grpc, websocket: restored.websocket, preRequestScript: restored.preRequestScript, postResponseScript: restored.postResponseScript, savedContent: renameNodeReferences(tab.savedContent, previous, next), flowNodeRef: { flowId, nodeId: tab.flowNodeRef.nodeId === previous ? next : tab.flowNodeRef.nodeId } }
       updated.dirty = computeDirty(updated)
       return updated
     }) }))
@@ -944,6 +1043,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
           routeParams: next.routeParams,
           authorization: next.authorization,
           grpc: next.grpc,
+          websocket: next.websocket,
           grpcSchema: { status: 'idle' },
           schemaExecutionId: null,
         }
@@ -1114,6 +1214,12 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     sendGrpc,
     grpcStream: activeTab.grpcStream,
     controlGrpcStream,
+    connectWebSocket,
+    sendWebSocketComposerMessage,
+    disconnectWebSocket,
+    websocketStream: activeTab.websocketStream,
+    websocket: activeTab.websocket,
+    updateWebSocket,
     cancel,
     clearResponse,
     schema: activeTab.schema,
