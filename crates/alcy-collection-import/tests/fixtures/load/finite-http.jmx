@@ -20,6 +20,7 @@
       </ThreadGroup>
       <hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="List items" enabled="true">
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <stringProp name="HTTPSampler.protocol">https</stringProp>
           <stringProp name="HTTPSampler.domain">catalog.example.test</stringProp>
           <stringProp name="HTTPSampler.path">/items</stringProp>
@@ -27,6 +28,7 @@
         </HTTPSamplerProxy>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Excluded request" enabled="false">
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <stringProp name="HTTPSampler.protocol">https</stringProp>
           <stringProp name="HTTPSampler.domain">excluded.example.test</stringProp>
           <stringProp name="HTTPSampler.path">/must-not-run</stringProp>
@@ -34,6 +36,7 @@
         </HTTPSamplerProxy>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Create item" enabled="true">
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <stringProp name="HTTPSampler.protocol">https</stringProp>
           <stringProp name="HTTPSampler.domain">catalog.example.test</stringProp>
           <stringProp name="HTTPSampler.path">/items/body</stringProp>
@@ -62,6 +65,7 @@
       </ThreadGroup>
       <hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Get cart" enabled="true">
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <stringProp name="HTTPSampler.protocol">https</stringProp>
           <stringProp name="HTTPSampler.domain">checkout.example.test</stringProp>
           <stringProp name="HTTPSampler.path">/cart</stringProp>

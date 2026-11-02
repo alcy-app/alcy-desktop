@@ -1873,6 +1873,7 @@ fn build_jmeter_flow(
                     "method": request.method,
                     "url": request.url,
                     "body": request.body.as_deref().unwrap_or_default(),
+                    "redirectPolicy": if request.source_properties.iter().any(|(name, value)| name == "HTTPSampler.follow_redirects" && value.eq_ignore_ascii_case("true")) { "follow" } else { "manual" },
                     "sourceProperties": request.source_properties,
                     "source": { "line": request.line },
                 }),
@@ -1940,44 +1941,7 @@ fn requests_from_jmeter_group(
         .samplers
         .iter()
         .filter_map(|sampler| {
-            let Some(domain) = sampler.properties.get("HTTPSampler.domain") else {
-                diagnostics.push(diag(
-                    source,
-                    sampler.offset,
-                    format!("HTTP Sampler '{}' não tem domínio", sampler.name),
-                ));
-                return None;
-            };
-            let protocol = sampler
-                .properties
-                .get("HTTPSampler.protocol")
-                .filter(|value| !value.is_empty())
-                .map(String::as_str)
-                .unwrap_or("http");
-            if !matches!(protocol, "http" | "https") {
-                diagnostics.push(diag(
-                    source,
-                    sampler.offset,
-                    format!("protocolo HTTP não suportado: {protocol}"),
-                ));
-                return None;
-            }
-            let port = sampler
-                .properties
-                .get("HTTPSampler.port")
-                .filter(|value| !value.is_empty())
-                .map(|port| format!(":{port}"))
-                .unwrap_or_default();
-            let path = sampler
-                .properties
-                .get("HTTPSampler.path")
-                .map(String::as_str)
-                .unwrap_or("/");
-            let path = if path.starts_with('/') {
-                path.to_string()
-            } else {
-                format!("/{path}")
-            };
+            let url = jmeter_request_url(source, sampler, diagnostics)?;
             let method = sampler
                 .properties
                 .get("HTTPSampler.method")
@@ -2001,11 +1965,6 @@ fn requests_from_jmeter_group(
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect::<Vec<_>>();
             source_properties.sort_unstable();
-            let url = if domain.starts_with("http://") || domain.starts_with("https://") {
-                format!("{domain}{path}")
-            } else {
-                format!("{protocol}://{domain}{port}{path}")
-            };
             Some(LoadImportRequest {
                 method,
                 url,
@@ -2015,6 +1974,74 @@ fn requests_from_jmeter_group(
             })
         })
         .collect()
+}
+
+/// A full HTTP(S) URL in Path overrides server, protocol and port in JMeter.
+/// Otherwise only the separate server/port fields may determine authority.
+fn jmeter_request_url(
+    source: &str,
+    sampler: &JmeterHttpSampler,
+    diagnostics: &mut Vec<LoadImportDiagnostic>,
+) -> Option<String> {
+    let property = |name: &str| {
+        sampler
+            .properties
+            .get(name)
+            .map(String::as_str)
+            .unwrap_or_default()
+    };
+    let path = property("HTTPSampler.path");
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return Some(path.to_string());
+    }
+    let domain = property("HTTPSampler.domain");
+    let ipv6 = domain.parse::<std::net::Ipv6Addr>().is_ok();
+    let bracketed_ipv6 = domain
+        .strip_prefix('[')
+        .and_then(|domain| domain.strip_suffix(']'))
+        .is_some_and(|domain| domain.parse::<std::net::Ipv6Addr>().is_ok());
+    if domain.is_empty()
+        || domain.contains(['/', '?', '#', '@'])
+        || (domain.contains(':') && !ipv6 && !bracketed_ipv6)
+    {
+        diagnostics.push(diag(source, sampler.offset, format!("HTTP Sampler '{}' requires a hostname in HTTPSampler.domain or an absolute HTTP(S) URL in HTTPSampler.path", sampler.name)));
+        return None;
+    }
+    let domain = if ipv6 {
+        format!("[{domain}]")
+    } else {
+        domain.to_string()
+    };
+    let protocol = property("HTTPSampler.protocol").to_ascii_lowercase();
+    let protocol = if protocol.is_empty() {
+        "http"
+    } else {
+        &protocol
+    };
+    if !matches!(protocol, "http" | "https") {
+        diagnostics.push(diag(
+            source,
+            sampler.offset,
+            "HTTPSampler.protocol must be HTTP or HTTPS",
+        ));
+        return None;
+    }
+    let port = match property("HTTPSampler.port") {
+        "" | "0" | "-1" => String::new(),
+        value => match value.parse::<u16>().ok().filter(|port| *port > 0) {
+            Some(port) => format!(":{port}"),
+            None => {
+                diagnostics.push(diag(
+                    source,
+                    sampler.offset,
+                    "HTTPSampler.port must be a valid port or an unspecified-port value",
+                ));
+                return None;
+            }
+        },
+    };
+    let separator = if path.starts_with('/') { "" } else { "/" };
+    Some(format!("{protocol}://{domain}{port}{separator}{path}"))
 }
 
 /// JMeter uses an `HTTPArgument` list for both encoded parameters and raw
@@ -3140,11 +3167,13 @@ mod tests {
                 <stringProp name="ThreadGroup.num_threads">1</stringProp>
               </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="Disabled" enabled="false">
+                  <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                   <stringProp name="HTTPSampler.domain">excluded.example.test</stringProp>
                 </HTTPSamplerProxy><hashTree>
                   <JSR223Sampler enabled="true"/><hashTree/>
                 </hashTree>
                 <HTTPSamplerProxy testname="Active">
+                  <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                   <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 </HTTPSamplerProxy><hashTree/>
               </hashTree>
@@ -3174,6 +3203,7 @@ mod tests {
                   </elementProp>
                 </ThreadGroup><hashTree>
                   <HTTPSamplerProxy testname="Get health">
+                    <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                     <stringProp name="HTTPSampler.protocol">https</stringProp>
                     <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                     <stringProp name="HTTPSampler.path">health</stringProp>
@@ -3222,10 +3252,12 @@ mod tests {
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
             </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="health">
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <stringProp name="HTTPSampler.method">HEAD</stringProp>
               </HTTPSamplerProxy><hashTree/>
               <HTTPSamplerProxy testname="cors">
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <stringProp name="HTTPSampler.method">OPTIONS</stringProp>
               </HTTPSamplerProxy><hashTree/>
@@ -3250,6 +3282,7 @@ mod tests {
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
             </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="create">
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                 <stringProp name="HTTPSampler.protocol">https</stringProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <stringProp name="HTTPSampler.path">items</stringProp>
@@ -3398,6 +3431,7 @@ mod tests {
                 </elementProp>
               </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="list">
+                  <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                   <stringProp name="HTTPSampler.protocol">https</stringProp>
                   <stringProp name="HTTPSampler.domain">catalog.example.test</stringProp>
                   <stringProp name="HTTPSampler.path">items</stringProp>
@@ -3410,6 +3444,7 @@ mod tests {
                 </elementProp>
               </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="cart">
+                  <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                   <stringProp name="HTTPSampler.protocol">https</stringProp>
                   <stringProp name="HTTPSampler.domain">checkout.example.test</stringProp>
                   <stringProp name="HTTPSampler.path">cart</stringProp>
@@ -3457,6 +3492,7 @@ mod tests {
               <stringProp name="ThreadGroup.ramp_time">1</stringProp>
             </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="request">
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
               </HTTPSamplerProxy><hashTree/>
             </hashTree></hashTree></hashTree></jmeterTestPlan>
@@ -3491,6 +3527,7 @@ mod tests {
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
             </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="request">
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <elementProp name="argument" elementType="HTTPArgument">
                   <stringProp name="Argument.value">payload</stringProp>
@@ -3512,6 +3549,7 @@ mod tests {
               <stringProp name="ThreadGroup.num_threads">1</stringProp>
             </ThreadGroup><hashTree>
               <HTTPSamplerProxy testname="request">
+                <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                 <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                 <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
                 <elementProp name="HTTPsampler.Arguments" elementType="Arguments"><collectionProp name="Arguments.arguments">

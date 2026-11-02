@@ -219,6 +219,18 @@ active unsupported elements reject the import atomically. The initial JMeter
 schedule remains finite per-VU iterations without ramp-up or scheduler, using
 the existing graph and persistence contracts.
 
+JMeter scalar properties use an explicit compatibility matrix: translated
+fields and known neutral values are accepted; unsupported options reject the
+whole import with a source position and property name, without echoing values.
+Source metadata alone never establishes compatibility. Sampler redirects map
+to the existing native policy (absent/false means manual, true means follow).
+The shared native transport requires explicit `use_keepalive=true`; connection
+reset, per-phase timeouts, embedded resources and automatic redirect handling
+remain unsupported. A literal absolute HTTP(S) Path overrides server fields;
+otherwise authority and port are validated separately. JMeter literals that
+would become native `{{...}}` interpolation reject import. These corrections
+apply to new imports; existing saved flows keep their persisted configuration.
+
 The runner checks scenarios, simultaneous VU peaks, open rate, steps and
 configured duration against the consumer's budgets before starting any
 effect. Numeric samples share a budget per run; percentiles stay exact, with

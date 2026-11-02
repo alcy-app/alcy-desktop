@@ -249,6 +249,78 @@ struct PropertyValues {
     arguments: Vec<JmeterHttpArgument>,
 }
 
+/// Metadata alone cannot preserve an option's effects. Accept only translated
+/// fields or explicitly inert values of known options; fail closed for new ones.
+fn supported_scalar(scope: PropertyScope, name: &str, value: &str) -> bool {
+    let boolean = value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false");
+    let disabled = value.eq_ignore_ascii_case("false");
+    let enabled = value.eq_ignore_ascii_case("true");
+    if name == "TestElement.comments" {
+        return true;
+    }
+    match scope {
+        PropertyScope::TestPlan => true, // Validated separately by test_plan_properties.
+        PropertyScope::Group => match name {
+            "ThreadGroup.num_threads"
+            | "ThreadGroup.ramp_time"
+            | "ThreadGroup.scheduler"
+            | "ThreadGroup.duration"
+            | "ThreadGroup.delay"
+            | "ThreadGroup.on_sample_error"
+            | "LoopController.loops"
+            | "LoopController.continue_forever" => true, // Schedule validation follows.
+            "ThreadGroup.same_user_on_next_iteration" => enabled,
+            "ThreadGroup.delayedStart" => disabled,
+            _ => false,
+        },
+        PropertyScope::Sampler => match name {
+            "HTTPSampler.protocol"
+            | "HTTPSampler.domain"
+            | "HTTPSampler.port"
+            | "HTTPSampler.path"
+            | "HTTPSampler.method" => true,
+            "HTTPSampler.follow_redirects" | "HTTPSampler.postBodyRaw" => boolean,
+            "HTTPSampler.use_keepalive" => enabled,
+            "HTTPSampler.auto_redirects"
+            | "HTTPSampler.image_parser"
+            | "HTTPSampler.concurrentDwn"
+            | "HTTPSampler.DO_MULTIPART_POST"
+            | "HTTPSampler.BROWSER_COMPATIBLE_MULTIPART"
+            | "HTTPSampler.monitor"
+            | "HTTPSampler.md5" => disabled,
+            "HTTPSampler.contentEncoding" => {
+                value.is_empty() || value.eq_ignore_ascii_case("UTF-8")
+            }
+            "HTTPSampler.concurrentPool" => value.is_empty() || value == "6",
+            "HTTPSampler.ipSourceType" => value.is_empty() || value == "0",
+            "HTTPSampler.connect_timeout"
+            | "HTTPSampler.response_timeout"
+            | "HTTPSampler.implementation"
+            | "HTTPSampler.proxyScheme"
+            | "HTTPSampler.proxyHost"
+            | "HTTPSampler.proxyPort"
+            | "HTTPSampler.proxyUser"
+            | "HTTPSampler.proxyPass"
+            | "HTTPSampler.ipSource"
+            | "HTTPSampler.embedded_url_re"
+            | "HTTPSampler.embedded_url_exclude_re"
+            | "HTTPSampler.FILE_NAME"
+            | "HTTPSampler.FILE_FIELD"
+            | "HTTPSampler.mimetype"
+            | "HTTPSampler.CONTENT_TYPE" => value.is_empty(),
+            _ => false,
+        },
+        PropertyScope::Argument => match name {
+            "Argument.value" => true,
+            "Argument.name" => value.is_empty(),
+            "Argument.metadata" => value.is_empty() || value == "=",
+            "HTTPArgument.always_encode" => disabled,
+            "HTTPArgument.use_equals" => boolean,
+            _ => false,
+        },
+    }
+}
+
 fn properties(
     source: &str,
     element: &XmlElement,
@@ -275,11 +347,31 @@ fn properties(
                 } else {
                     child.text.trim()
                 };
-                if property_name != "TestPlan.comments" && value.contains("${") {
+                if !matches!(property_name, "TestPlan.comments" | "TestElement.comments")
+                    && value.contains("${")
+                {
                     return Err(incompatible(
                         source,
                         child.offset,
                         "expressões e variáveis dinâmicas JMeter ainda não são traduzidas",
+                    ));
+                }
+                if !matches!(property_name, "TestPlan.comments" | "TestElement.comments")
+                    && value.contains("{{")
+                {
+                    return Err(incompatible(
+                        source,
+                        child.offset,
+                        format!(
+                            "JMeter literal contains an unrepresented native template: {property_name}"
+                        ),
+                    ));
+                }
+                if !supported_scalar(scope, property_name, value) {
+                    return Err(incompatible(
+                        source,
+                        child.offset,
+                        format!("unsupported JMeter option or value: {property_name}"),
                     ));
                 }
                 if result
@@ -376,7 +468,7 @@ fn test_plan_properties(source: &str, element: &XmlElement) -> Result<(), LoadTe
     properties(source, element, PropertyScope::TestPlan, &mut values)?;
     for (name, value) in values.fields {
         let supported = match name.as_str() {
-            "TestPlan.comments" => true,
+            "TestPlan.comments" | "TestElement.comments" => true,
             "TestPlan.functional_mode" | "TestPlan.serialize_threadgroups" => {
                 value.eq_ignore_ascii_case("false")
             }
@@ -476,6 +568,19 @@ fn walk_tree(
             (TreeOwner::Group(group), "HTTPSamplerProxy") => {
                 let mut values = PropertyValues::default();
                 properties(source, element, PropertyScope::Sampler, &mut values)?;
+                // JMeter defaults this to false. The native shared transport
+                // cannot promise a fresh connection for each sampler request.
+                if !values
+                    .fields
+                    .get("HTTPSampler.use_keepalive")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+                {
+                    return Err(incompatible(
+                        source,
+                        element.offset,
+                        "JMeter import requires explicit HTTPSampler.use_keepalive=true; per-request connection reset is not supported",
+                    ));
+                }
                 groups[group].samplers.push(JmeterHttpSampler {
                     name: element
                         .attributes

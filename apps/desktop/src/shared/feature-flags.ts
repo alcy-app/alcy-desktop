@@ -32,7 +32,7 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * Visual creation, import and execution of load tests.
    * The runtime remains isolated in Rust.
    */
-  loadTesting: false,
+  loadTesting: true,
   /**
    * Agent chat panel (ADR 0064): the panel, its status bar button, its
    * shortcut and the Agent settings category. Nothing is sent to

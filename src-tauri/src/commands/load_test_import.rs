@@ -351,7 +351,8 @@ mod tests {
         execute_load_flow_report,
     };
     use alcy_domain::{
-        Cookie, ExecutionError, HttpMethod, Request, Response, ResponseHeader, ResponseMetadata,
+        Cookie, ExecutionError, HttpMethod, RedirectPolicy, Request, Response, ResponseHeader,
+        ResponseMetadata,
     };
 
     use crate::commands::flows::{FlowNodeKindDto, LoadNodeKindDto};
@@ -476,6 +477,7 @@ mod tests {
                 </elementProp>
             </ThreadGroup><hashTree>
                 <HTTPSamplerProxy testname="health">
+                    <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                     <stringProp name="HTTPSampler.protocol">https</stringProp>
                     <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                     <stringProp name="HTTPSampler.path">health</stringProp>
@@ -714,10 +716,15 @@ mod tests {
     #[derive(Default)]
     struct JmeterExecutor {
         calls: Mutex<Vec<(HttpMethod, String, String)>>,
+        redirect_policies: Mutex<Vec<RedirectPolicy>>,
     }
 
     impl RequestExecutor for JmeterExecutor {
         async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {
+            self.redirect_policies
+                .lock()
+                .unwrap()
+                .push(request.redirect_policy);
             self.calls.lock().unwrap().push((
                 request.method,
                 request.endpoint.url().to_string(),
@@ -936,6 +943,114 @@ mod tests {
                 !root.exists(),
                 "{element} created workspace files or assets"
             );
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn jmeter_redirect_policy_survives_preview_commit_reopen_and_execution() {
+        for (flag, expected) in [
+            (None, RedirectPolicy::Manual),
+            (Some("false"), RedirectPolicy::Manual),
+            (Some("true"), RedirectPolicy::Follow),
+        ] {
+            let source = if let Some(flag) = flag {
+                FINITE_JMETER.replace(
+                    "<boolProp name=\"HTTPSampler.use_keepalive\">true</boolProp>",
+                    &format!("<boolProp name=\"HTTPSampler.use_keepalive\">true</boolProp><boolProp name=\"HTTPSampler.follow_redirects\">{flag}</boolProp>"),
+                )
+            } else {
+                FINITE_JMETER.to_string()
+            };
+            let path = temp_file("redirect-policy.jmx", &source);
+            let root = path.with_extension("workspace");
+            let preview = analyze_load_test_import(AnalyzeLoadTestImportInput {
+                source_path: path.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+            assert!(!root.exists());
+            let committed = commit_load_test_import(CommitLoadTestImportInput {
+                root_path: root.to_string_lossy().into_owned(),
+                source_path: path.to_string_lossy().into_owned(),
+                analysis_hash: preview.analysis_hash,
+            })
+            .unwrap();
+            let snapshot = FlowStore::new(root.clone()).load().unwrap();
+            let flow = snapshot
+                .flows
+                .iter()
+                .find(|flow| flow.id == committed.id)
+                .unwrap();
+            let executor = JmeterExecutor::default();
+            let report = execute_load_flow_report(flow, &executor, &SilentSink, &NeverCancelled)
+                .await
+                .unwrap();
+            assert_eq!(report.summary.requests, 14);
+            let policies = executor.redirect_policies.lock().unwrap();
+            assert_eq!(policies.len(), 14);
+            assert!(
+                policies.iter().all(|policy| *policy == expected),
+                "{flag:?}: {policies:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(
+                    root.join(ASSET_DIRECTORY)
+                        .join(&committed.id)
+                        .join("source.jmx")
+                )
+                .unwrap(),
+                source
+            );
+            fs::remove_dir_all(root).unwrap();
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn jmeter_unsupported_scalar_options_reject_preview_and_commit_without_writes() {
+        for (marker, option) in [
+            (
+                "<stringProp name=\"HTTPSampler.path\">/cart</stringProp>",
+                "<stringProp name=\"HTTPSampler.response_timeout\">500</stringProp>",
+            ),
+            (
+                "<stringProp name=\"HTTPSampler.path\">/cart</stringProp>",
+                "<boolProp name=\"HTTPSampler.image_parser\">true</boolProp>",
+            ),
+            (
+                "<stringProp name=\"ThreadGroup.num_threads\">1</stringProp>",
+                "<boolProp name=\"ThreadGroup.same_user_on_next_iteration\">false</boolProp>",
+            ),
+        ] {
+            assert!(FINITE_JMETER.contains(marker));
+            let source = FINITE_JMETER.replacen(marker, &format!("{marker}\n{option}"), 1);
+            let path = temp_file("late-option.jmx", &source);
+            let root = path.with_extension("workspace");
+            for result in [
+                analyze_load_test_import(AnalyzeLoadTestImportInput {
+                    source_path: path.to_string_lossy().into_owned(),
+                })
+                .map(|_| ()),
+                commit_load_test_import(CommitLoadTestImportInput {
+                    root_path: root.to_string_lossy().into_owned(),
+                    source_path: path.to_string_lossy().into_owned(),
+                    analysis_hash: content_hash(source.as_bytes()),
+                })
+                .map(|_| ()),
+            ] {
+                let Err(LoadTestImportErrorDto::Incompatible { diagnostics }) = result else {
+                    panic!("unsupported scalar option was accepted: {option}")
+                };
+                assert!(
+                    diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic.line > 1 && diagnostic.column > 0)
+                );
+                assert!(
+                    !root.exists(),
+                    "an incompatible plan created workspace files or assets"
+                );
+            }
             fs::remove_file(path).unwrap();
         }
     }
@@ -1205,6 +1320,7 @@ mod tests {
                     </elementProp>
                 </ThreadGroup><hashTree>
                     <HTTPSamplerProxy>
+                        <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
                         <stringProp name="HTTPSampler.domain">api.example.test</stringProp>
                     </HTTPSamplerProxy><hashTree/>
                 </hashTree>
