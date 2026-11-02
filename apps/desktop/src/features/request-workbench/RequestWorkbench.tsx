@@ -36,7 +36,7 @@ import { Tooltip } from '../../shared/ui/Tooltip'
 import { useTooltip } from '../../shared/ui/use-tooltip'
 import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RobotIcon, RunnerIcon, Spinner } from '../../shared/ui/icons'
 import { Button } from '../../shared/ui/Button'
-import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { ImportLoadTestModal } from './components/ImportLoadTestModal'
 import { IconButton } from '../../shared/ui/IconButton'
 import { TitleBar } from '../../shared/ui/TitleBar'
 import { useToast } from '../../shared/ui/use-toast'
@@ -1858,24 +1858,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   return (
     <VariableEditingContext value={variableEditing}>
       {pendingLoadTestImport && (
-        <ConfirmDialog
-          title={t('flows.importLoadTestAria')}
-          description={t('flows.importLoadTestConfirm', {
-            format: pendingLoadTestImport.preview.format,
-            blocks: pendingLoadTestImport.preview.blocks,
-            destinations: pendingLoadTestImport.preview.destinations.length > 0
-              ? pendingLoadTestImport.preview.destinations.join(', ')
-              : t('flows.importLoadTestNoDestination'),
-            assets: pendingLoadTestImport.preview.assets.join(', ') || t('common.empty'),
-          }) + (pendingLoadTestImport.preview.requiredVariables.length > 0
-            ? ` ${t('flows.importLoadTestRequiredVariables', { variables: pendingLoadTestImport.preview.requiredVariables.join(', ') })}`
-            : '')}
-          confirmLabel={t('flows.importLoadTestConfirmButton')}
-          cancelLabel={t('common.cancel')}
-          closeAriaLabel={t('common.cancel')}
+        <ImportLoadTestModal
+          sourcePath={pendingLoadTestImport.sourcePath}
+          preview={pendingLoadTestImport.preview}
           onConfirm={confirmLoadTestImport}
-          onCancel={() => setPendingLoadTestImport(null)}
-          tone="primary"
+          onClose={() => setPendingLoadTestImport(null)}
         />
       )}
       <div className="rw-shell">

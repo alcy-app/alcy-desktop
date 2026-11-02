@@ -127,6 +127,10 @@
 .flow-studio .flow-canvas-panel { max-width: calc(100% - 140px); flex-wrap: wrap; }
 .flow-studio .react-flow__controls { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: none; }
 .flow-studio .react-flow__controls-button { width: 28px; height: 28px; }
+.flow-canvas-navigation { display: flex; align-items: flex-end; gap: var(--space-3); width: calc(100% - var(--space-8)); pointer-events: none; }
+.flow-canvas-navigation .react-flow__controls { position: static; flex-shrink: 0; margin: 0; pointer-events: auto; }
+.flow-canvas-navigation .flow-canvas-load-progress { flex-wrap: wrap; min-width: 0; }
+.flow-canvas-navigation .flow-canvas-experimental-badge { flex-shrink: 0; margin-left: auto; }
 .flow-studio .flow-canvas-experimental-badge { opacity: 0.6; }
 .flow-block-palette-item-icon { width: 24px; height: 24px; border-radius: 0; background: transparent; color: var(--text-muted); }
 

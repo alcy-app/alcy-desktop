@@ -192,6 +192,13 @@ uses existing runtime isolation: setup cookies and headers are not copied into
 VUs. Preview and commit compile the graph before success, and commit rechecks
 the source hash before saving assets.
 
+Imported k6 thresholds connect to every execution scenario's `done` output.
+These edges describe global completion assertions: the compiler accepts only
+thresholds on that output and keeps their evaluation once per run, after all
+scenarios and teardown. Existing flows with unconnected thresholds remain
+compatible. Import analysis rejects more than 10,000 threshold completion
+connections before constructing the graph, bounding scenario/threshold expansion.
+
 The k6 importer resolves bounded declarative constants and request arguments
 from the AST, including static JSON serialization, without executing the
 script. `__ENV` string references become `K6_ENV_*` flow variables in a leading

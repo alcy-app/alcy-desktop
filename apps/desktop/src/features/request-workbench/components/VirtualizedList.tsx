@@ -23,6 +23,8 @@ interface VirtualizedListProps<T> {
   renderItem: (item: T) => ReactNode
   className?: string
   ariaLabel: string
+  /** Row groups let data tables reuse measured virtualization and table semantics. */
+  role?: 'list' | 'rowgroup'
   onScrollStateChange?: (atEnd: boolean) => void
 }
 
@@ -38,9 +40,12 @@ interface MeasuredRowProps {
   top: number
   onMeasure: (key: string, height: number) => void
   children: ReactNode
+  role: 'listitem' | 'row'
+  index: number
+  total: number
 }
 
-function MeasuredRow({ itemKey, top, onMeasure, children }: MeasuredRowProps) {
+function MeasuredRow({ itemKey, top, onMeasure, children, role, index, total }: MeasuredRowProps) {
   const rowRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -55,7 +60,7 @@ function MeasuredRow({ itemKey, top, onMeasure, children }: MeasuredRowProps) {
   }, [children, itemKey, onMeasure])
 
   return (
-    <div ref={rowRef} role="listitem" className="virtual-list-row" style={{ transform: `translateY(${top}px)` }}>
+    <div ref={rowRef} role={role} aria-rowindex={role === 'row' ? index + 2 : undefined} aria-posinset={role === 'listitem' ? index + 1 : undefined} aria-setsize={role === 'listitem' ? total : undefined} className="virtual-list-row" style={{ transform: `translateY(${top}px)` }}>
       {children}
     </div>
   )
@@ -70,6 +75,7 @@ function VirtualizedListInner<T>(
     renderItem,
     className,
     ariaLabel,
+    role = 'list',
     onScrollStateChange,
   }: VirtualizedListProps<T>,
   ref: React.ForwardedRef<VirtualizedListHandle>,
@@ -158,17 +164,17 @@ function VirtualizedListInner<T>(
   return (
     <div
       ref={viewportRef}
-      role="list"
+      role={role}
       aria-label={ariaLabel}
       className={['virtual-list', className].filter(Boolean).join(' ')}
       onScroll={handleScroll}
     >
-      <div className="virtual-list-spacer" style={{ height: layout.totalHeight }}>
+      <div className="virtual-list-spacer" role={role === 'rowgroup' ? 'presentation' : undefined} style={{ height: layout.totalHeight }}>
         {items.slice(startIndex, endIndex).map((item, visibleIndex) => {
           const index = startIndex + visibleIndex
           const key = getKey(item)
           return (
-            <MeasuredRow key={key} itemKey={key} top={layout.offsets[index]} onMeasure={measureRow}>
+            <MeasuredRow key={key} itemKey={key} top={layout.offsets[index]} onMeasure={measureRow} role={role === 'rowgroup' ? 'row' : 'listitem'} index={index} total={items.length}>
               {renderItem(item)}
             </MeasuredRow>
           )

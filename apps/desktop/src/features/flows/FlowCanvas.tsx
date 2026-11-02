@@ -52,6 +52,7 @@ import { useFlowRun } from './use-flow-run'
 import { consoleEntryFromFlowCall } from './flow-call-recording'
 import type { FlowRecordedCall } from './flow-call-recording'
 import { LoadRunResults } from './LoadRunResults'
+import { LoadRunConfirmationModal } from './LoadRunConfirmationModal'
 import { useLoadFlowRun } from './use-load-flow-run'
 import { EXECUTABLE_LOAD_NODE_KINDS, defaultLoadNodeConfig, defaultLoadNodeLabel } from './load-node-config'
 import { defaultMockStartNodeId, findMockRoute, mockRouteLabel, resolveMockStarts, savedMockServerIds } from './mock-nodes'
@@ -1244,7 +1245,7 @@ export function FlowCanvas({
     {waitingNodes.length > 0 && <div className="flow-human-notice" role="status"><span>{t('flows.forms.pending')}</span>{waitingNodes.map((node) => <Button variant="ghost" size="sm" key={node.id} onClick={() => setHumanFormNodeId(node.id)}>{node.kind === 'humanAction' && node.form.title || node.id} · {t('flows.forms.open')}</Button>)}</div>}
     <div
       className="flow-canvas"
-      style={{ display: viewMode === 'panels' ? 'none' : undefined }}
+      style={{ display: viewMode === 'panels' || loadRun.detail ? 'none' : undefined }}
       ref={containerRef}
       data-drop-id={flow.id}
       data-drop-kind="flow"
@@ -1290,7 +1291,18 @@ export function FlowCanvas({
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={G.grid} size={1} />
-        <Controls showInteractive={false} />
+        <Panel position="bottom-left" className="flow-canvas-navigation">
+          <Controls showInteractive={false} />
+          {isLoadFlow && isRunning && (
+            <div className="flow-canvas-load-progress" role="status">
+              <strong>{t('flows.loadRun.running')}</strong>
+              <span>{t('flows.loadRun.vus', { active: String(loadRun.progress.activeVus), planned: String(loadRun.progress.plannedVus) })}</span>
+              <span>{t('flows.loadRun.requests')}: {loadRun.progress.requests}</span>
+              <span>{t('flows.loadRun.errors')}: {loadRun.progress.failedRequests}</span>
+            </div>
+          )}
+          <Badge tone="accent" className="flow-canvas-experimental-badge">{t('flows.canvas.experimentalBadge')}</Badge>
+        </Panel>
 
         <Panel position="top-left" className="flow-canvas-panel">
           <button
@@ -1321,18 +1333,6 @@ export function FlowCanvas({
           </Button>
         </Panel>
 
-        {isLoadFlow && isRunning && (
-          <Panel position="bottom-left" className="flow-canvas-load-progress" aria-live="polite">
-            <strong>{t('flows.loadRun.running')}</strong>
-            <span>{t('flows.loadRun.vus', { active: String(loadRun.progress.activeVus), planned: String(loadRun.progress.plannedVus) })}</span>
-            <span>{t('flows.loadRun.requests')}: {loadRun.progress.requests}</span>
-            <span>{t('flows.loadRun.errors')}: {loadRun.progress.failedRequests}</span>
-          </Panel>
-        )}
-
-        <Panel position="bottom-right" className="flow-canvas-experimental-badge">
-          <Badge tone="accent">{t('flows.canvas.experimentalBadge')}</Badge>
-        </Panel>
       </ReactFlow>
 
       {paletteTrigger && (
@@ -1386,35 +1386,20 @@ export function FlowCanvas({
         />
       )}
       {loadPreview && (
-        <Modal title={t('flows.loadRun.confirmTitle')} closeAriaLabel={t('flows.loadRun.confirmCloseAria')} onClose={() => setLoadPreview(null)} onEnter={() => { setLoadPreview(null); loadRun.start() }} className="ui-modal--form">
-          {(requestClose) => (
-            <>
-              <p className="ui-modal-description">{t('flows.loadRun.confirmDescription')}</p>
-              <dl className="load-run-confirmation-summary">
-                <div><dt>{t('flows.loadRun.peakVus')}</dt><dd>{loadPreview.peakVus}</dd></div>
-                <div><dt>{t('flows.loadRun.duration')}</dt><dd>{loadPreview.durationMs === null ? t('flows.loadRun.durationOpen') : `${loadPreview.durationMs} ms`}</dd></div>
-                {loadPreview.peakArrivalRatePerSecond !== null && <div><dt>{t('flows.loadRun.peakRate')}</dt><dd>{loadPreview.peakArrivalRatePerSecond.toFixed(2)} {t('flows.loadRun.requestsPerSecond')}</dd></div>}
-              </dl>
-              <h3>{t('flows.loadRun.destinations')}</h3>
-              <ul className="load-run-confirmation-list">{loadPreview.destinations.map((destination) => <li key={destination}>{destination}</li>)}</ul>
-              <h3>{t('flows.loadRun.scenarios')}</h3>
-              <ul className="load-run-confirmation-list">{loadPreview.scenarios.map((scenario) => <li key={scenario.nodeId}>{scenario.label} · {scenario.peakVus} VUs{scenario.peakArrivalRatePerSecond === null ? '' : ` · ${scenario.peakArrivalRatePerSecond.toFixed(2)} ${t('flows.loadRun.requestsPerSecond')}`} · {scenario.requestCount} {t('flows.loadRun.requests').toLocaleLowerCase()}</li>)}</ul>
-              <div className="ui-modal-actions">
-                <Button variant="ghost" onClick={requestClose}>{t('common.cancel')}</Button>
-                <Button variant="primary" onClick={() => { setLoadPreview(null); loadRun.start() }}>{t('flows.loadRun.confirmButton')}</Button>
-              </div>
-            </>
-          )}
-        </Modal>
+        <LoadRunConfirmationModal
+          preview={loadPreview}
+          onClose={() => setLoadPreview(null)}
+          onConfirm={() => { setLoadPreview(null); loadRun.start() }}
+        />
       )}
       {pendingRun && <Modal title={t('flows.studio.runPendingTitle')} closeAriaLabel={t('common.close')} onClose={() => setPendingRun(false)} className="ui-modal--form">
         <p className="ui-modal-description">{t('flows.studio.runPendingDescription')}</p><div className="ui-modal-actions"><Button variant="ghost" disabled={savingDrafts} onClick={() => setPendingRun(false)}>{t('common.cancel')}</Button><Button variant="ghost" disabled={savingDrafts} onClick={() => { onDiscardRequestDrafts?.(draftNodeIds); setPendingRun(false); setRunAfterSave(true) }}>{t('flows.studio.discardAndRun')}</Button><Button variant="primary" disabled={savingDrafts} aria-busy={savingDrafts} onClick={() => { setSavingDrafts(true); void saveDrafts(draftNodeIds).then(() => { setPendingRun(false); setRunAfterSave(true) }).catch((reason: unknown) => showToast(t('flows.canvas.runErrorToast', { message: reason instanceof Error ? reason.message : String(reason) }), 'error')).finally(() => setSavingDrafts(false)) }}>{t('flows.studio.saveAndRun')}</Button></div>
       </Modal>}
     </div>
-    {viewMode === 'panels' && <FlowPanels nodes={fromFlowNodes(nodes)} presentation={presentation} onChange={changePresentation} statuses={statuses} renderContent={renderPanelContent} />}
+    {viewMode === 'panels' && !loadRun.detail && <FlowPanels nodes={fromFlowNodes(nodes)} presentation={presentation} onChange={changePresentation} statuses={statuses} renderContent={renderPanelContent} />}
     {initialFormOpen && initialForm && <Modal title={t('flows.forms.start')} closeAriaLabel={t('common.cancel')} onClose={() => setInitialFormOpen(false)} className="ui-modal--form flow-form-modal">{renderInitialForm()}</Modal>}
     {humanFormNodeId && waitingNodes.some((node) => node.id === humanFormNodeId) && <Modal key={humanFormNodeId} title={t('flows.forms.humanAction')} closeAriaLabel={t('common.cancel')} onClose={() => setHumanFormNodeId(null)} className="ui-modal--form flow-form-modal">{renderHumanForm(humanFormNodeId)}</Modal>}
-    {logOpen && (
+    {logOpen && !loadRun.detail && (
       <RunLogPanel
         rootPath={rootPath}
         onSelectNode={(nodeId) => { const currentId = Object.entries(snapshotNodeIds).find(([, snapshotId]) => snapshotId === nodeId)?.[0] ?? nodeId; setSelectedNodeId(currentId); setMappingNodeId(currentId); setInspectorTab('output'); void reactFlowInstanceRef.current?.fitView({ nodes: [{ id: currentId }], maxZoom: 1, duration: 200 }) }}

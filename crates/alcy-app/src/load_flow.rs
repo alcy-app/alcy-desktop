@@ -369,11 +369,20 @@ pub fn plan_load_flow_with_datasets(
     }
 
     for (scenario_id, label, config) in scenarios {
-        if compiler.next(scenario_id, Some("done"))?.is_some() {
-            return Err(compiler.error(
-                scenario_id,
-                "saída done do cenário não admite efeitos; use phase para lifecycle",
-            ));
+        // Completion edges describe global assertions, never per-VU effects.
+        for target in compiler
+            .edges
+            .get(&(scenario_id, Some("done")))
+            .into_iter()
+            .flatten()
+        {
+            if !matches!(nodes.get(target), Some(FlowNodeKind::Load { node }) if node.kind == LoadNodeKind::Threshold)
+            {
+                return Err(compiler.error(
+                    scenario_id,
+                    "scenario done outputs may only connect to global thresholds; use phase for lifecycle effects",
+                ));
+            }
         }
         let first = compiler.next(scenario_id, Some("iteration"))?;
         let body = match first.and_then(|id| root_bodies.get(id)) {
@@ -1718,6 +1727,72 @@ mod tests {
             UNIX_EPOCH,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn scenario_completion_links_keep_thresholds_global_and_outside_iteration_bodies() {
+        let nodes = vec![
+            scenario_node("first"),
+            scenario_node("second"),
+            request_node("a"),
+            request_node("b"),
+            node(
+                "requests",
+                LoadNodeKind::Threshold,
+                json!({"metric":"http_requests", "statistic":"count", "comparison":"gt", "target":0}),
+            ),
+            node(
+                "errors",
+                LoadNodeKind::Threshold,
+                json!({"metric":"http_req_failed", "statistic":"rate", "comparison":"lt", "target":0.01}),
+            ),
+        ];
+        let body_edges = vec![
+            link("first", Some("iteration"), "a"),
+            link("second", Some("iteration"), "b"),
+        ];
+        let legacy = plan_load_flow(&structured_flow(nodes.clone(), body_edges.clone())).unwrap();
+        let mut edges = body_edges;
+        for scenario in ["first", "second"] {
+            for threshold in ["requests", "errors"] {
+                edges.push(link(scenario, Some("done"), threshold));
+            }
+        }
+        let flow = structured_flow(nodes.clone(), edges.clone());
+        let plan = plan_load_flow(&flow).unwrap();
+        assert_eq!(plan.thresholds, legacy.thresholds);
+        assert_eq!(plan.thresholds.len(), 2);
+        assert_eq!(plan.scenarios.len(), 2);
+        assert!(
+            plan.scenarios
+                .iter()
+                .all(|scenario| scenario.requests.len() == 1 && scenario.body.is_empty())
+        );
+        assert!(
+            preview_load_flow(&flow)
+                .unwrap()
+                .scenarios
+                .iter()
+                .all(|scenario| scenario.request_count == 1)
+        );
+
+        for invalid in [
+            link("first", Some("done"), "b"),
+            link("requests", Some("passed"), "a"),
+        ] {
+            let mut invalid_edges = edges.clone();
+            invalid_edges.push(invalid);
+            assert!(matches!(
+                plan_load_flow(&structured_flow(nodes.clone(), invalid_edges)),
+                Err(LoadFlowError::InvalidScenarioBody { .. })
+            ));
+        }
+        let mut iteration_threshold = edges;
+        iteration_threshold.retain(|edge| {
+            edge.source_node_id != "first" || edge.source_handle.as_deref() != Some("iteration")
+        });
+        iteration_threshold.push(link("first", Some("iteration"), "requests"));
+        assert!(plan_load_flow(&structured_flow(nodes, iteration_threshold)).is_err());
     }
 
     fn scenario_node(id: &str) -> FlowNode {

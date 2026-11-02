@@ -22,6 +22,8 @@ use k6_values::K6Value;
 
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REQUESTS: usize = 10_000;
+// Global thresholds join every scenario; bound this graph expansion before allocation.
+const MAX_THRESHOLD_CONNECTIONS: usize = 10_000;
 const MAX_JMETER_XML_DEPTH: usize = 128;
 const MAX_JMETER_XML_NODES: usize = 50_000;
 
@@ -196,6 +198,15 @@ fn analyze_k6(
             source,
             0,
             format!("mais de {MAX_REQUESTS} requisições estáticas"),
+        ));
+    }
+    if scenarios.len().saturating_mul(thresholds.len()) > MAX_THRESHOLD_CONNECTIONS {
+        diagnostics.push(diag(
+            source,
+            0,
+            format!(
+                "k6 thresholds require more than {MAX_THRESHOLD_CONNECTIONS} completion connections"
+            ),
         ));
     }
     for (scenario, effects) in scenarios.iter().zip(&scenario_effects) {
@@ -1612,8 +1623,9 @@ fn build_k6_flow(
         add_k6_lifecycle(&mut nodes, &mut edges, "teardown", effects, y);
     }
     for (index, threshold) in thresholds.iter().enumerate() {
+        let id = format!("threshold-{}", index + 1);
         nodes.push(load_node(
-            &format!("threshold-{}", index + 1),
+            &id,
             LoadNodeKind::Threshold,
             &threshold.label,
             json!({
@@ -1624,8 +1636,17 @@ fn build_k6_flow(
                 "target": threshold.target,
             }),
             600.0,
-            180.0 * (scenarios.len() + index) as f64,
+            180.0 * (scenarios.len() + usize::from(teardown_effects.is_some()) + index) as f64,
         ));
+        for scenario_index in 0..scenarios.len() {
+            let scenario_id = format!("scenario-{}", scenario_index + 1);
+            edges.push(edge(
+                &format!("{scenario_id}-{id}"),
+                &scenario_id,
+                &id,
+                Some("done"),
+            ));
+        }
     }
     Flow::new_with_execution_kind(
         "",
@@ -2643,6 +2664,18 @@ mod tests {
                 json!({"metric":"http_req_duration","tags":{"method":"GET"},"statistic":"p95","comparison":"lt","target":200.0}),
                 json!({"metric":"checks","tags":{},"statistic":"rate","comparison":"gt","target":0.9}),
             ]
+        );
+    }
+
+    #[test]
+    fn rejects_unbounded_threshold_completion_connections_before_building_the_flow() {
+        let expressions = vec!["'count>0'"; MAX_THRESHOLD_CONNECTIONS / 2 + 1].join(",");
+        let source = format!(
+            "import http from 'k6/http'; export const options = {{ scenarios: {{ first: {{executor:'shared-iterations',vus:1,iterations:1}}, second: {{executor:'shared-iterations',vus:1,iterations:1}} }}, thresholds: {{ http_reqs: [{expressions}] }} }}; export default function() {{ http.get('http://127.0.0.1:8787/health'); }}"
+        );
+        let error = analyze_load_test("threshold-limit.k6.js", &source, UNIX_EPOCH).unwrap_err();
+        assert!(
+            matches!(error, LoadTestImportError::Incompatible { diagnostics } if diagnostics.iter().any(|diagnostic| diagnostic.message.contains("completion connections")))
         );
     }
 
