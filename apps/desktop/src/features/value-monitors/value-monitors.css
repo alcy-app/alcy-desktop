@@ -11,6 +11,27 @@
 
 /* ---- Lista ---- */
 
+/* Each monitor sits on a darker card so it stands apart from the sidebar. */
+.env-list:has(> .vm-list-row) {
+  gap: 4px;
+}
+
+.vm-list-row {
+  padding-right: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.vm-list-row:hover {
+  border-color: var(--border);
+}
+
+.vm-list-row:has(> .vm-list-item[aria-current='true']) {
+  border-color: var(--border-strong);
+}
+
 .vm-list-item {
   min-height: 36px;
 }
@@ -49,6 +70,18 @@
 /* Ações secundárias só aparecem no hover ou com foco na linha. */
 .vm-reveal {
   opacity: 0;
+}
+
+.vm-menu-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.vm-list-row:hover .vm-menu-wrapper,
+.vm-menu-wrapper:focus-within,
+.vm-menu-wrapper.ui-menu-host--open {
+  opacity: 1;
 }
 
 .vm-list-row:hover .vm-reveal,
@@ -107,6 +140,10 @@
 }
 
 .vm-detail-name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-heading);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);

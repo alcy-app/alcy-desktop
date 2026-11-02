@@ -53,6 +53,33 @@ describe('ValueMonitorsPanel', () => {
     expect(props.onSetMonitorEnabled).toHaveBeenCalledWith('m1', false)
   })
 
+  it('renomeia o monitor pelo menu de opções', () => {
+    const props = renderPanel()
+    // O nome no detalhe é só leitura: renomear passa pelo menu.
+    expect(screen.queryByRole('textbox', { name: 'Nome do monitor' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Nome curto' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
+    const input = screen.getByRole('textbox', { name: 'Nome do monitor' })
+    fireEvent.change(input, { target: { value: 'Outro nome' } })
+    expect(props.onRenameMonitor).toHaveBeenCalledWith('m1', 'Outro nome')
+  })
+
+  it('abre o menu de opções com o botão direito na linha', () => {
+    renderPanel()
+    fireEvent.contextMenu(screen.getByText('1 campo · 2 regras'))
+    expect(screen.getByRole('menu', { name: 'Mais opções de Nome curto' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Renomear' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Remover' })).toBeInTheDocument()
+  })
+
+  it('remove o monitor pelo menu de opções após confirmar', () => {
+    const props = renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Nome curto' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remover' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remover' }))
+    expect(props.onRemoveMonitor).toHaveBeenCalledWith('m1')
+  })
+
   it('adiciona um campo ao confirmar com Enter', () => {
     const props = renderPanel()
     const input = screen.getByRole('textbox', { name: 'Adicionar campo monitorado' })

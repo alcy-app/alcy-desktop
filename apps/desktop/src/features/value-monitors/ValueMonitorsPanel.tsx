@@ -7,7 +7,7 @@ import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
 import { InlineEditInput } from '../../shared/ui/InlineEditInput'
-import { MenuItem } from '../../shared/ui/Menu'
+import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
 import { AlertIcon, ChevronDownIcon, PlusIcon, TrashIcon } from '../../shared/ui/icons'
 import '../../shared/ui/menu.css'
 import { RuleEditor } from './RuleEditor'
@@ -46,6 +46,8 @@ export function ValueMonitorsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null)
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
 
   const selected = monitors.find((monitor) => monitor.id === selectedId) ?? monitors[0] ?? null
   const pendingRemove = monitors.find((monitor) => monitor.id === pendingRemoveId) ?? null
@@ -73,25 +75,54 @@ export function ValueMonitorsPanel({
         <ul className="env-list">
           {monitors.map((monitor) => {
             const label = monitorLabel(monitor)
+            const isCurrent = monitor.id === selected?.id
             return (
-              <li key={monitor.id} className="env-list-row vm-list-row">
-                <button
-                  type="button"
-                  className="env-list-item vm-list-item"
-                  aria-current={monitor.id === selected?.id}
-                  onClick={() => {
-                    setSelectedId(monitor.id)
-                    setEditingRuleId(null)
-                  }}
-                >
-                  <span className="vm-list-text">
-                    <span className={`vm-list-name${monitor.enabled ? '' : ' vm-list-name--disabled'}`}>
-                      {label}
-                      {invalid?.monitorId === monitor.id && <AlertIcon size={12} className="vm-list-alert" />}
+              <li
+                key={monitor.id}
+                className="env-list-row vm-list-row"
+                onContextMenu={(event) => {
+                  // While renaming, keep the native menu for the text field.
+                  if (monitor.id === renamingId) return
+                  event.preventDefault()
+                  setMenuOpenId(monitor.id)
+                }}
+              >
+                {monitor.id === renamingId ? (
+                  // Outside a <button>: clicking an input nested in a button moves focus to the button and ends editing.
+                  <div className="env-list-item vm-list-item" aria-current={isCurrent}>
+                    <span className="vm-list-text">
+                      <InlineEditInput
+                        value={monitor.name}
+                        autoFocus
+                        aria-label={t('monitors.nameAria')}
+                        onChange={(event) => onRenameMonitor(monitor.id, event.target.value)}
+                        onBlur={() => setRenamingId(null)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === 'Escape') setRenamingId(null)
+                        }}
+                      />
+                      <span className="vm-list-meta">{summary(monitor)}</span>
                     </span>
-                    <span className="vm-list-meta">{summary(monitor)}</span>
-                  </span>
-                </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="env-list-item vm-list-item"
+                    aria-current={isCurrent}
+                    onClick={() => {
+                      setSelectedId(monitor.id)
+                      setEditingRuleId(null)
+                    }}
+                  >
+                    <span className="vm-list-text">
+                      <span className={`vm-list-name${monitor.enabled ? '' : ' vm-list-name--disabled'}`}>
+                        {label}
+                        {invalid?.monitorId === monitor.id && <AlertIcon size={12} className="vm-list-alert" />}
+                      </span>
+                      <span className="vm-list-meta">{summary(monitor)}</span>
+                    </span>
+                  </button>
+                )}
                 <button
                   type="button"
                   role="switch"
@@ -102,13 +133,32 @@ export function ValueMonitorsPanel({
                 >
                   <span className="vm-switch-thumb" aria-hidden="true" />
                 </button>
-                <IconButton
-                  variant="danger"
-                  className="vm-reveal"
-                  icon={<TrashIcon size={13} />}
-                  label={t('monitors.removeAria', { name: label })}
-                  onClick={() => setPendingRemoveId(monitor.id)}
-                />
+                <OptionsMenu
+                  label={t('monitors.moreOptionsAria', { name: label })}
+                  wrapperClassName="vm-menu-wrapper"
+                  menuPlacement="auto"
+                  menuPortal
+                  isOpen={menuOpenId === monitor.id}
+                  onToggle={() => setMenuOpenId((current) => (current === monitor.id ? null : monitor.id))}
+                  onClose={() => setMenuOpenId(null)}
+                >
+                  <MenuItem
+                    label={t('monitors.renameMenuItem')}
+                    onSelect={() => {
+                      setSelectedId(monitor.id)
+                      setRenamingId(monitor.id)
+                      setMenuOpenId(null)
+                    }}
+                  />
+                  <MenuItem
+                    label={t('common.remove')}
+                    danger
+                    onSelect={() => {
+                      setPendingRemoveId(monitor.id)
+                      setMenuOpenId(null)
+                    }}
+                  />
+                </OptionsMenu>
               </li>
             )
           })}
@@ -129,12 +179,8 @@ export function ValueMonitorsPanel({
 
       {selected && (
         <div className="env-detail vm-detail">
-          <InlineEditInput
-            className="vm-detail-name"
-            value={selected.name}
-            aria-label={t('monitors.nameAria')}
-            onChange={(event) => onRenameMonitor(selected.id, event.target.value)}
-          />
+          {/* Read-only: renaming happens through the row's options menu. */}
+          <h3 className="vm-detail-name">{monitorLabel(selected)}</h3>
           {invalid?.monitorId === selected.id && invalid.ruleId === null && (
             <p className="vm-error" role="alert">
               {invalid.message}
