@@ -23,6 +23,8 @@ import {
   TrashIcon,
 } from '../../shared/ui/icons'
 import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
+import { useCappedList } from '../../shared/ui/use-capped-list'
+import { ResizeHandle } from '../../shared/ResizeHandle'
 import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { DragPreview } from '../../shared/DragPreview'
@@ -33,6 +35,9 @@ import { RemoveEnvironmentModal } from './RemoveEnvironmentModal'
 import { filterVariables, normalizeVariableQuery } from './filter-variables'
 import { isReorderKey, keyboardMove } from './reorder'
 import './environments.css'
+
+/** Environments shown before the list scrolls, until the user drags the divider below it. */
+const MAX_VISIBLE_ENVIRONMENTS = 10
 
 interface EnvironmentsPanelProps {
   environments: EnvironmentState[]
@@ -112,6 +117,12 @@ export function EnvironmentsPanel({
 }: EnvironmentsPanelProps) {
   const { t } = useLanguage()
   const { bindings: shortcutBindings } = useShortcuts()
+  const { listRef, resizing: resizingList, separatorProps: listSeparatorProps } = useCappedList<HTMLUListElement>({
+    defaultRows: MAX_VISIBLE_ENVIRONMENTS,
+    itemCount: environments.length,
+    currentKey: activeEnvironmentId,
+    storageKey: 'alcy:list:environments',
+  })
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   // Row that takes focus back once a keyboard rename ends, so F2/Delete keep working.
@@ -241,7 +252,7 @@ export function EnvironmentsPanel({
       <div className="rw-visually-hidden" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
-      <ul className="env-list">
+      <ul ref={listRef} className="env-list ui-capped-list">
         {environments.map((environment) => {
           const isActive = environment.id === activeEnvironmentId
           const isRenaming = environment.id === renamingId
@@ -375,8 +386,12 @@ export function EnvironmentsPanel({
         {t('environments.addButton')}
       </Button>
 
+      {/* Dragging this divider sets how many rows the list above shows. */}
+      {activeEnvironment && <ResizeHandle orientation="horizontal" ariaLabel={t('environments.resizeListAria')} {...listSeparatorProps} />}
+      {resizingList && <div className="resize-drag-overlay" style={{ cursor: 'row-resize' }} />}
+
       {activeEnvironment && (
-        <div className="env-detail">
+        <div className="env-detail env-detail--resizable">
           <p className="env-detail-title">{activeEnvironment.name || t('common.unnamed')}</p>
 
           <BulkEditToggle

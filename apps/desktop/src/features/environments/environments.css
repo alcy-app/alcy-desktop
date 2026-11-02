@@ -350,6 +350,12 @@
   align-self: flex-start;
 }
 
+/* The resize handle above (shared/ResizeHandle) is the divider line now. */
+.env-detail.env-detail--resizable {
+  border-top: none;
+  padding-top: 0;
+}
+
 .env-detail {
   display: flex;
   flex-direction: column;

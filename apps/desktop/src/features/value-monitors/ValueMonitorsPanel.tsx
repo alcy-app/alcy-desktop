@@ -10,12 +10,17 @@ import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { IconButton } from '../../shared/ui/IconButton'
 import { InlineEditInput } from '../../shared/ui/InlineEditInput'
 import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
+import { useCappedList } from '../../shared/ui/use-capped-list'
+import { ResizeHandle } from '../../shared/ResizeHandle'
 import { AlertIcon, ChevronDownIcon, PlusIcon, TrashIcon } from '../../shared/ui/icons'
 import '../../shared/ui/menu.css'
 import { RuleEditor } from './RuleEditor'
 import { RULE_GROUPS, describeRule, hasParameters, ruleName, type RuleKindName } from './rule-catalog'
 import { TokenInput } from './TokenInput'
 import './value-monitors.css'
+
+/** Monitors shown before the list scrolls, until the user drags the divider below it. */
+const MAX_VISIBLE_MONITORS = 10
 
 export interface ValueMonitorsPanelProps {
   monitors: ValueMonitorDto[]
@@ -55,6 +60,12 @@ export function ValueMonitorsPanel({
   const refocusRowIdRef = useRef<string | null>(null)
 
   const selected = monitors.find((monitor) => monitor.id === selectedId) ?? monitors[0] ?? null
+  const { listRef, resizing: resizingList, separatorProps: listSeparatorProps } = useCappedList<HTMLUListElement>({
+    defaultRows: MAX_VISIBLE_MONITORS,
+    itemCount: monitors.length,
+    currentKey: selected?.id ?? null,
+    storageKey: 'alcy:list:monitors',
+  })
   const pendingRemove = monitors.find((monitor) => monitor.id === pendingRemoveId) ?? null
   const invalid = error?.kind === 'invalid' ? error : null
   const monitorLabel = (monitor: ValueMonitorDto) => monitor.name.trim() || t('common.unnamed')
@@ -77,7 +88,7 @@ export function ValueMonitorsPanel({
       {monitors.length === 0 ? (
         <p className="vm-empty">{t('monitors.empty')}</p>
       ) : (
-        <ul className="env-list">
+        <ul ref={listRef} className="env-list ui-capped-list">
           {monitors.map((monitor) => {
             const label = monitorLabel(monitor)
             const isCurrent = monitor.id === selected?.id
@@ -204,8 +215,12 @@ export function ValueMonitorsPanel({
         {t('monitors.addButton')}
       </Button>
 
+      {/* Dragging this divider sets how many rows the list above shows. */}
+      {selected && <ResizeHandle orientation="horizontal" ariaLabel={t('monitors.resizeListAria')} {...listSeparatorProps} />}
+      {resizingList && <div className="resize-drag-overlay" style={{ cursor: 'row-resize' }} />}
+
       {selected && (
-        <div className="env-detail vm-detail">
+        <div className="env-detail vm-detail env-detail--resizable">
           {/* Read-only: renaming happens through the row's options menu. */}
           <h3 className="vm-detail-name">{monitorLabel(selected)}</h3>
           {invalid?.monitorId === selected.id && invalid.ruleId === null && (

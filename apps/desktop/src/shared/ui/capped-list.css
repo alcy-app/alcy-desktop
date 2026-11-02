@@ -1,0 +1,57 @@
+/* A list capped at a number of visible rows by useCappedList; past that it
+   scrolls inside itself. The doubled class outranks the feature's own list
+   reset (`margin: 0; padding: 0`) whatever order the stylesheets load in. */
+.ui-capped-list.ui-capped-list {
+  --capped-list-fade: 14px;
+  --capped-list-inset: 4px;
+
+  /* Positioned so row offsets are measured against the list. */
+  position: relative;
+  /* Room for focus rings (2px ring + 2px offset), which the scroll area
+     would otherwise clip; the negative margin keeps the layout unchanged. */
+  padding: var(--capped-list-inset);
+  margin: calc(var(--capped-list-inset) * -1);
+  /* Resizing (drag preview, keyboard, reset) eases between whole-row heights. */
+  transition: max-height var(--duration-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-capped-list.ui-capped-list {
+    transition: none;
+  }
+}
+
+.ui-capped-list[data-scrollable] {
+  overflow-y: auto;
+  /* Reaching either end does not start scrolling the sidebar behind it. */
+  overscroll-behavior: contain;
+}
+
+/* Fade the edges that hide rows, so the cut-off reads as "more below/above".
+   Masks only read opacity: `black` means fully visible, not a theme color. */
+.ui-capped-list[data-overflow-top] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--capped-list-fade));
+  mask-image: linear-gradient(to bottom, transparent, black var(--capped-list-fade));
+}
+
+.ui-capped-list[data-overflow-bottom] {
+  -webkit-mask-image: linear-gradient(to top, transparent, black var(--capped-list-fade));
+  mask-image: linear-gradient(to top, transparent, black var(--capped-list-fade));
+}
+
+.ui-capped-list[data-overflow-top][data-overflow-bottom] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--capped-list-fade),
+    black calc(100% - var(--capped-list-fade)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--capped-list-fade),
+    black calc(100% - var(--capped-list-fade)),
+    transparent
+  );
+}
