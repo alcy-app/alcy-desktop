@@ -7,38 +7,31 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ## Unreleased
 
 ### Added
-- **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.]
+
+- **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
-- **Mencionar no chat**: requisições, coleções, pastas, flows, ambientes, mock servers e abas abertas podem ser mencionados no chat do agente pelo menu de cada item, assim como um valor da resposta, pelo menu do botão direito sobre ele.
-- Nova opção "Instalar versões Preview" nas configurações de atualização, para receber as versões Preview quando forem mais novas que a versão estável.
-- **Requisições WebSocket**: conecte a servidores WebSocket, envie mensagens de texto, JSON ou binárias e acompanhe as mensagens trocadas em tempo real. Também funcionam em scripts, no runner de coleções e nos flows, e são importadas de arquivos do Insomnia e HAR.
-- **Formato de data e hora personalizado nos monitores**: a regra Formato aceita um padrão como `DD/MM/YYYY HH:mm` e confere se o valor segue esse formato e é uma data válida.
-- Nova aba Telemetria nas configurações, que mostra o que o app registra sobre o uso, o que nunca registra e os eventos da sessão atual, e permite desligar o envio. Este build não coleta nem envia dados de uso.
 
-### Changed
-- Novas conversas com o agente começam no lugar de recuperar o chat da última vez que o Alcy foi aberto. O chat anterior continua disponível no histórico.
-- O nome da requisição aparece completo no caminho acima da URL e pode ser renomeado clicando nele.
-- As menções com `@` no chat do agente ficam no próprio texto da mensagem, com o ícone do item, em vez de aparecerem como contexto acima da caixa de mensagem.
-- As abas abertas têm todas a mesma largura, com o botão de fechar sempre no mesmo lugar, e diminuem juntas conforme novas abas são abertas. Quando não cabem mais na barra, um menu ao lado do botão de nova aba lista todas elas, com busca pelo nome.
-- O agente monta flows passo a passo: adiciona e conecta etapas, organiza o canvas, parte de exemplos prontos e confere o flow antes de executar. As alterações no grafo podem ser desfeitas pelo chat.
-- O agente entende melhor pedidos feitos com modelos menores e, quando erra, recebe instruções de como corrigir.
-- A importação de scripts k6 está disponível no editor de flows e aceita constantes, URLs montadas com templates, parâmetros reutilizáveis e corpos JSON. Variáveis do script podem ser preenchidas no flow antes de executar o teste.
-
-### Fixed
-- Conexões WebSocket gravadas em arquivos HAR não são mais importadas como requisições GET comuns.
-- A pré-visualização de uma variável abre abaixo do mouse quando não há espaço acima, em vez de ser cortada pelo topo da janela.
-- Os monitores de valores passam a reconhecer campos que guardam listas: cada item é avaliado pelas regras, e uma lista vazia é reprovada.
-
-## [0.9.0-preview01] - 30/10/2026
+## [0.9.0] - 03/11/2026
 
 ### Added
 
+- **Requisições WebSocket**: conecte a servidores WebSocket, envie mensagens de texto, JSON ou binárias e acompanhe as mensagens trocadas em tempo real. Também funcionam em scripts, no runner de coleções e nos flows, e são importadas de arquivos do Insomnia e HAR.
+- **Formato de data e hora personalizado nos monitores**: a regra Formato aceita um padrão como `DD/MM/YYYY HH:mm` e confere se o valor segue esse formato e é uma data válida.
+- **Telemetria**: Novos registros de uso. Para mais informações, confira os eventos de sessão presentes na aba "Telemetria" no menu de configurações.
+- **Agente**: utilize seu provedor favorito para operações agenticas no Alcy
+- Possibilidade de criar flows de testes de carga
 - Arraste arquivos de coleção, arquivos de texto com comandos cURL e pastas para a janela para importar sem abrir a modal de importação.
 - Grupos de abas com nome e cor para organizar as abas abertas, recolher conjuntos e retomar a organização ao reabrir o workspace.
-- **Agente**: utilize seu provedor favorito para operações agenticas no Alcy
+
+### Changed
+
+- O nome da requisição aparece completo no caminho acima da URL e pode ser renomeado clicando nele.
+- As abas abertas têm todas a mesma largura, com o botão de fechar sempre no mesmo lugar, e diminuem juntas conforme novas abas são abertas. Quando não cabem mais na barra, um menu ao lado do botão de nova aba lista todas elas, com busca pelo nome.
 
 ### Fixed
 
+- A pré-visualização de uma variável abre abaixo do mouse quando não há espaço acima, em vez de ser cortada pelo topo da janela.
+- Os monitores de valores passam a reconhecer campos que guardam listas: cada item é avaliado pelas regras, e uma lista vazia é reprovada.
 - O histórico de envios de uma requisição não lista mais os envios cujas respostas não foram salvas, que abriam sem conteúdo.
 - Removidas as transições ao passar o mouse pela lista de flows para evitar piscadas na tela.
 
