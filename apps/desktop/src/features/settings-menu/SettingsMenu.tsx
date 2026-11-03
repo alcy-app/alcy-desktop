@@ -19,7 +19,7 @@ import { Modal } from '../../shared/ui/Modal'
 import { RangeSlider } from '../../shared/ui/RangeSlider'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Tooltip } from '../../shared/ui/Tooltip'
-import { AlertIcon, CheckIcon, ComponentsIcon, FolderIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
+import { AlertIcon, CheckIcon, ComponentsIcon, EyeIcon, FolderIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
 import { UpdatesSection } from '../updates/UpdatesSection'
 import { AgentSection } from './AgentSection'
 import { GeneralSection } from './GeneralSection'
@@ -29,6 +29,7 @@ import { OnedriveAccountSection } from './OnedriveAccountSection'
 import { SensitiveSyncSection } from './SensitiveSyncSection'
 import { TlsVerificationSection } from './TlsVerificationSection'
 import { ShortcutsSection } from './ShortcutsSection'
+import { TelemetrySection } from './TelemetrySection'
 import './settings-menu.css'
 import { trackUsage } from '../../shared/usage-events/track-usage'
 
@@ -191,6 +192,7 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
           <div id={`${id}-shortcuts`} hidden={category !== 'shortcuts'}><ShortcutsSection /></div>
           <div id={`${id}-network`} hidden={category !== 'network'}><ProxySection /><TlsVerificationSection /><CustomCaCertificatesSection /></div>
           <div id={`${id}-security`} hidden={category !== 'security'}><SecuritySection /></div>
+          {FEATURE_FLAGS.usageEvents && <div id={`${id}-telemetry`} hidden={category !== 'telemetry'}><TelemetrySection /></div>}
           {FEATURE_FLAGS.agent && <div id={`${id}-agent`} hidden={category !== 'agent'}><AgentSection /></div>}
           {FEATURE_FLAGS.gitlab && <div id={`${id}-gitlab`} hidden={category !== 'gitlab'}><GitlabAccountSection /></div>}
           {FEATURE_FLAGS.onedrive && <div id={`${id}-onedrive`} hidden={category !== 'onedrive'}><OnedriveAccountSection /></div>}
@@ -249,6 +251,7 @@ const CATEGORIES = [
   { key: 'shortcuts', icon: KeyboardIcon },
   { key: 'network', icon: ProxyIcon },
   { key: 'security', icon: LockIcon },
+  { key: 'telemetry', icon: EyeIcon },
   { key: 'agent', icon: SparkleIcon },
   { key: 'gitlab', icon: GitIcon },
   { key: 'onedrive', icon: FolderIcon },
@@ -262,6 +265,7 @@ function isCategoryHidden(key: SettingsCategory): boolean {
   if (key === 'gitlab') return !FEATURE_FLAGS.gitlab
   if (key === 'onedrive') return !FEATURE_FLAGS.onedrive
   if (key === 'agent') return !FEATURE_FLAGS.agent
+  if (key === 'telemetry') return !FEATURE_FLAGS.usageEvents
   return false
 }
 

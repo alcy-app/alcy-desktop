@@ -1,10 +1,11 @@
-import { activateUsageEvents, recordUsageEvent, type UsageEventInput } from '../../bindings/usage-events'
+import { activateUsageEvents, recordUsageEvent, type UsageEventInput, type UsageEventsStatus } from '../../bindings/usage-events'
 import { FEATURE_FLAGS } from '../feature-flags'
 
 /**
  * Usage events from the interface (spec 0142). Dormant until
- * `startUsageEvents` learns that an extension collects them; in the public
- * build the answer is no and every later call returns without IPC.
+ * `startUsageEvents` learns that an extension collects them and the person
+ * lets it; in the public build the answer is no and every later call
+ * returns without IPC.
  */
 
 /** Events kept while activation is pending; later ones are dropped. */
@@ -24,11 +25,20 @@ export async function startUsageEvents(): Promise<void> {
   }
   state = 'starting'
   // `getTimezoneOffset` is UTC minus local time; the hub adds minutes to UTC.
-  const active = await activateUsageEvents(-new Date().getTimezoneOffset())
-  state = active ? 'active' : 'off'
+  const status = await activateUsageEvents(-new Date().getTimezoneOffset())
   const queued = pending
   pending = []
-  if (active) queued.forEach((event) => void recordUsageEvent(event))
+  if (applyUsageEventsStatus(status)) queued.forEach((event) => void recordUsageEvent(event))
+}
+
+/** Follows the person's choice made in Settings > Telemetry. Returns
+ * whether interface events are reported. */
+export function applyUsageEventsStatus(status: UsageEventsStatus): boolean {
+  if (!FEATURE_FLAGS.usageEvents) return false
+  const active = status.available && status.enabled
+  state = active ? 'active' : 'off'
+  if (!active) pending = []
+  return active
 }
 
 /** Reports one event; fire-and-forget. */

@@ -7,6 +7,7 @@ use alcy_app::{
     UsageOutcome,
 };
 use alcy_domain::ProtocolId;
+use alcy_storage::UsagePreferencesStore;
 use serde::{Deserialize, Serialize};
 
 /// How long closing the app may wait for the sink to deliver or persist.
@@ -180,13 +181,79 @@ pub(crate) fn record_setting<T, E>(
     });
 }
 
-/// Starts recording when an extension registered a sink. The interface
-/// sends its offset from UTC (`-new Date().getTimezoneOffset()`) so events
-/// carry the local date; an offset outside UTC−14:00..UTC+14:00 is refused.
-/// `false` means nothing is recorded: the interface stops reporting events.
+/// Whether this build collects usage events and whether the person lets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageEventsStatusDto {
+    /// An extension collects usage events in this build.
+    pub available: bool,
+    /// The person's preference (on by default).
+    pub enabled: bool,
+}
+
+fn status(usage: &UsageHub) -> UsageEventsStatusDto {
+    UsageEventsStatusDto {
+        available: usage.is_available(),
+        enabled: usage.is_enabled(),
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum UsageEventsError {
+    Storage { message: String },
+}
+
+/// Starts the hub when an extension registered a sink. The interface sends
+/// its offset from UTC (`-new Date().getTimezoneOffset()`) so events carry
+/// the local date; an offset outside UTC−14:00..UTC+14:00 is refused. The
+/// interface reports events only when the answer is available and enabled.
 #[tauri::command]
-pub fn activate_usage_events(utc_offset_minutes: i32, usage: tauri::State<'_, UsageHub>) -> bool {
-    usage.activate(utc_offset_minutes)
+pub fn activate_usage_events(
+    utc_offset_minutes: i32,
+    usage: tauri::State<'_, UsageHub>,
+) -> UsageEventsStatusDto {
+    let available = usage.activate(utc_offset_minutes);
+    UsageEventsStatusDto {
+        available,
+        ..status(&usage)
+    }
+}
+
+#[tauri::command]
+pub fn get_usage_events_status(usage: tauri::State<'_, UsageHub>) -> UsageEventsStatusDto {
+    status(&usage)
+}
+
+/// Saves the person's choice and applies it at once; turning usage events
+/// off drops what was recorded and not sent yet.
+#[tauri::command]
+pub fn set_usage_events_enabled(
+    enabled: bool,
+    usage: tauri::State<'_, UsageHub>,
+    store: tauri::State<'_, UsagePreferencesStore>,
+) -> Result<UsageEventsStatusDto, UsageEventsError> {
+    let result = store
+        .save(enabled)
+        .map(|()| {
+            usage.set_enabled(enabled);
+            status(&usage)
+        })
+        .map_err(|error| UsageEventsError::Storage {
+            message: error.to_string(),
+        });
+    crate::logging::logged("alcy::settings", "salvar preferência de telemetria", result)
+}
+
+/// The events recorded in this run, as they are handed to the extension,
+/// for Settings > Telemetry.
+#[tauri::command]
+pub fn list_recent_usage_events(usage: tauri::State<'_, UsageHub>) -> Vec<serde_json::Value> {
+    usage
+        .recent_events()
+        .iter()
+        .map(alcy_app::UsageEnvelope::to_json)
+        .collect()
 }
 
 /// Records an interface event. Returns whether it was accepted.

@@ -30,6 +30,7 @@ mod synced_workspace_files;
 mod tab_session_store;
 mod tls_settings_store;
 mod update_settings_store;
+mod usage_preferences_store;
 mod value_monitor_store;
 mod workspace_backup;
 mod workspace_link_store;
@@ -82,6 +83,7 @@ pub use synced_workspace_files::SyncedWorkspaceFiles;
 pub use tab_session_store::{MAX_TAB_SESSION_BYTES, TabSessionStore};
 pub use tls_settings_store::{TlsSettings, TlsSettingsStore};
 pub use update_settings_store::UpdateSettingsStore;
+pub use usage_preferences_store::UsagePreferencesStore;
 pub use value_monitor_store::{
     CaseStyleRecord, InvalidValueMonitor, RuleKindRecord, ValueFormatRecord, ValueMonitorRecord,
     ValueMonitorStore, ValueRuleRecord, ValueTypeRecord,

@@ -13,7 +13,7 @@ use alcy_rest::ReqwestRestExecutor;
 use alcy_storage::{
     ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitlabAccountsStore,
     LocalSecrets, OnedriveAccountsStore, ProxySettingsStore, RecentWorkspacesStore, SchemaStore,
-    SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore,
+    SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore, UsagePreferencesStore,
 };
 use commands::agent::{
     AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, compact_agent_session,
@@ -113,7 +113,10 @@ use commands::updates::{
     PendingUpdate, cancel_update_operation, check_for_update, download_update, get_update_settings,
     install_update_and_restart, set_update_check_on_startup, set_update_include_prereleases,
 };
-use commands::usage_events::{USAGE_SHUTDOWN_DEADLINE, activate_usage_events, record_usage_event};
+use commands::usage_events::{
+    USAGE_SHUTDOWN_DEADLINE, activate_usage_events, get_usage_events_status,
+    list_recent_usage_events, record_usage_event, set_usage_events_enabled,
+};
 use commands::value_monitors::{evaluate_value_monitors, list_value_monitors, save_value_monitors};
 use commands::version_control::{
     VersionControlFiles, commit_and_push, get_file_diff, get_local_version_status,
@@ -336,6 +339,13 @@ pub fn run_with(extensions: Vec<Extension>) {
             app.manage(UpdateSettingsStore::new(
                 app_data_dir.join("update-settings.json"),
             ));
+            // The person's telemetry choice applies before any extension
+            // registers its sink. An unreadable file keeps usage events off.
+            let usage_preferences =
+                UsagePreferencesStore::new(app_data_dir.join("usage-preferences.json"));
+            app.state::<UsageHub>()
+                .set_enabled(usage_preferences.load().unwrap_or(false));
+            app.manage(usage_preferences);
             app.manage(SecuritySettingsStore::new(
                 app_data_dir.join("security-settings.json"),
             ));
@@ -420,6 +430,9 @@ pub fn run_with(extensions: Vec<Extension>) {
             log_invocations(tauri::generate_handler![
                 activate_usage_events,
                 record_usage_event,
+                get_usage_events_status,
+                set_usage_events_enabled,
+                list_recent_usage_events,
                 get_agent_settings,
                 notify_when_unfocused,
                 save_agent_settings,

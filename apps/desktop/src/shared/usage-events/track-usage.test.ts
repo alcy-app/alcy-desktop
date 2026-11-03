@@ -5,7 +5,7 @@ const invoke = vi.hoisted(() => vi.fn())
 vi.mock('../feature-flags', () => ({ FEATURE_FLAGS: flags }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }))
 
-import { resetUsageEventsForTests, startUsageEvents, trackUsage } from './track-usage'
+import { applyUsageEventsStatus, resetUsageEventsForTests, startUsageEvents, trackUsage } from './track-usage'
 
 const recorded = () => invoke.mock.calls.filter(([command]) => command === 'record_usage_event').map(([, args]) => args)
 
@@ -26,7 +26,7 @@ describe('trackUsage', () => {
   })
 
   it('stops reporting when no extension collects events', async () => {
-    invoke.mockResolvedValueOnce(false)
+    invoke.mockResolvedValueOnce({ available: false, enabled: true })
     trackUsage({ name: 'environment_switched' })
     await startUsageEvents()
     trackUsage({ name: 'sidebar_module_opened', module: 'flows' })
@@ -35,7 +35,7 @@ describe('trackUsage', () => {
   })
 
   it('sends queued and later events once active', async () => {
-    invoke.mockResolvedValue(true)
+    invoke.mockResolvedValue({ available: true, enabled: true })
     trackUsage({ name: 'environment_switched' })
     await startUsageEvents()
     trackUsage({ name: 'shortcut_changed', action: 'request.send', change: 'assigned' })
@@ -53,9 +53,25 @@ describe('trackUsage', () => {
   })
 
   it('activates only once', async () => {
-    invoke.mockResolvedValue(true)
+    invoke.mockResolvedValue({ available: true, enabled: true })
     await startUsageEvents()
     await startUsageEvents()
     expect(invoke.mock.calls.filter(([command]) => command === 'activate_usage_events')).toHaveLength(1)
+  })
+
+  it('reports nothing while the person keeps telemetry off, and resumes when turned on', async () => {
+    invoke.mockResolvedValue({ available: true, enabled: false })
+    trackUsage({ name: 'environment_switched' })
+    await startUsageEvents()
+    trackUsage({ name: 'environment_switched' })
+    expect(recorded()).toEqual([])
+
+    applyUsageEventsStatus({ available: true, enabled: true })
+    trackUsage({ name: 'sidebar_module_opened', module: 'flows' })
+    expect(recorded()).toEqual([{ event: { name: 'sidebar_module_opened', module: 'flows' } }])
+
+    applyUsageEventsStatus({ available: true, enabled: false })
+    trackUsage({ name: 'environment_switched' })
+    expect(recorded()).toHaveLength(1)
   })
 })

@@ -91,10 +91,10 @@ pub use run_collection::{
     RunStepReport, StepResult, run_collection, step_variables,
 };
 pub use usage::{
-    ImportSource, MAX_USAGE_IDENTIFIER_LEN, MockServerOrigin, MonitorChange, RequestExecuted,
-    ShortcutChange, StatusClass, USAGE_EVENT_SCHEMA_VERSION, UTC_OFFSET_RANGE_MINUTES,
-    UsageEnvelope, UsageEvent, UsageEventSink, UsageHub, UsageIdentifier, UsageOutcome,
-    WorkspaceOpenKind, millis,
+    ImportSource, MAX_RECENT_USAGE_EVENTS, MAX_USAGE_IDENTIFIER_LEN, MockServerOrigin,
+    MonitorChange, RequestExecuted, ShortcutChange, StatusClass, USAGE_EVENT_SCHEMA_VERSION,
+    UTC_OFFSET_RANGE_MINUTES, UsageEnvelope, UsageEvent, UsageEventSink, UsageHub, UsageIdentifier,
+    UsageOutcome, WorkspaceOpenKind, millis,
 };
 pub use version_control::{
     ChangeSelection, ChangedItem, CommitAction, ConflictSide, DiffHunk, DiffLine, DiffLineKind,

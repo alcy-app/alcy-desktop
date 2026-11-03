@@ -13,6 +13,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Nova opção "Instalar versões Preview" nas configurações de atualização, para receber as versões Preview quando forem mais novas que a versão estável.
 - **Requisições WebSocket**: conecte a servidores WebSocket, envie mensagens de texto, JSON ou binárias e acompanhe as mensagens trocadas em tempo real. Também funcionam em scripts, no runner de coleções e nos flows, e são importadas de arquivos do Insomnia e HAR.
 - **Formato de data e hora personalizado nos monitores**: a regra Formato aceita um padrão como `DD/MM/YYYY HH:mm` e confere se o valor segue esse formato e é uma data válida.
+- Nova aba Telemetria nas configurações, que mostra o que o app registra sobre o uso, o que nunca registra e os eventos da sessão atual, e permite desligar o envio. Este build não coleta nem envia dados de uso.
 
 ### Changed
 - Novas conversas com o agente começam no lugar de recuperar o chat da última vez que o Alcy foi aberto. O chat anterior continua disponível no histórico.

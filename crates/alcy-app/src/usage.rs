@@ -12,7 +12,7 @@
 //! Durations measure latency or performance (a request, a flow, a load test,
 //! the app's startup), never how long someone used the app.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -25,6 +25,9 @@ pub const USAGE_EVENT_SCHEMA_VERSION: u32 = 1;
 
 /// Longest code identifier accepted in an event (`action`, `category`…).
 pub const MAX_USAGE_IDENTIFIER_LEN: usize = 64;
+
+/// Events of this run kept for the person to see in Settings > Telemetry.
+pub const MAX_RECENT_USAGE_EVENTS: usize = 200;
 
 /// Valid local time offsets from UTC, in minutes (UTC−14:00 to UTC+14:00).
 pub const UTC_OFFSET_RANGE_MINUTES: std::ops::RangeInclusive<i32> = -840..=840;
@@ -491,6 +494,9 @@ pub trait UsageEventSink: Send + Sync {
     /// The app is closing: deliver or persist what is pending, within
     /// `deadline`.
     fn shutdown(&self, _deadline: Duration) {}
+
+    /// The person turned usage events off: drop everything not sent yet.
+    fn discard(&self) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -507,7 +513,12 @@ struct MockHits {
 
 struct HubInner {
     sink: OnceLock<Arc<dyn UsageEventSink>>,
-    active: AtomicBool,
+    /// The interface started the hub (once per run).
+    activated: AtomicBool,
+    /// The person's preference; on by default.
+    enabled: AtomicBool,
+    /// Events of this run, newest last, for the person to see.
+    recent: Mutex<VecDeque<UsageEnvelope>>,
     /// Minutes to add to UTC for the local date, set on activation.
     utc_offset_minutes: AtomicI32,
     app_version: String,
@@ -518,8 +529,9 @@ struct HubInner {
 
 /// Entry point for recording usage events. Cheap to clone.
 ///
-/// Dormant until [`UsageHub::activate`] is called with a sink registered:
-/// until then [`UsageHub::record`] does nothing.
+/// Dormant until [`UsageHub::activate`] is called with a sink registered,
+/// and silent while the person keeps usage events off
+/// ([`UsageHub::set_enabled`]): [`UsageHub::record`] then does nothing.
 #[derive(Clone)]
 pub struct UsageHub {
     inner: Arc<HubInner>,
@@ -536,7 +548,9 @@ impl UsageHub {
         Self {
             inner: Arc::new(HubInner {
                 sink: OnceLock::new(),
-                active: AtomicBool::new(false),
+                activated: AtomicBool::new(false),
+                enabled: AtomicBool::new(true),
+                recent: Mutex::new(VecDeque::new()),
                 utc_offset_minutes: AtomicI32::new(0),
                 app_version: app_version.into(),
                 platform: platform.into(),
@@ -555,10 +569,10 @@ impl UsageHub {
         self.inner.sink.set(sink).is_ok()
     }
 
-    /// Starts recording when a sink is registered and the offset is a real
-    /// one, and records `app_opened` the first time. `utc_offset_minutes` is
-    /// added to UTC to get the local date. Returns whether events are being
-    /// recorded.
+    /// Starts the hub when a sink is registered and the offset is a real
+    /// one, and records `app_opened` the first time if the person has usage
+    /// events on. `utc_offset_minutes` is added to UTC to get the local date.
+    /// Returns whether this build collects usage events at all.
     pub fn activate(&self, utc_offset_minutes: i32) -> bool {
         if self.inner.sink.get().is_none()
             || !UTC_OFFSET_RANGE_MINUTES.contains(&utc_offset_minutes)
@@ -568,7 +582,7 @@ impl UsageHub {
         self.inner
             .utc_offset_minutes
             .store(utc_offset_minutes, Ordering::Relaxed);
-        if !self.inner.active.swap(true, Ordering::SeqCst) {
+        if !self.inner.activated.swap(true, Ordering::SeqCst) {
             self.record(UsageEvent::AppOpened {
                 startup_ms: millis(self.inner.started.elapsed()),
             });
@@ -576,12 +590,43 @@ impl UsageHub {
         true
     }
 
+    /// Whether this build collects usage events (an extension registered a
+    /// sink).
+    pub fn is_available(&self) -> bool {
+        self.inner.sink.get().is_some()
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.inner.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Applies the person's preference. Turning usage events off drops what
+    /// was recorded and not sent yet, here and in the sink.
+    pub fn set_enabled(&self, enabled: bool) {
+        let was_enabled = self.inner.enabled.swap(enabled, Ordering::SeqCst);
+        if was_enabled && !enabled {
+            lock(&self.inner.mock_hits).counts.clear();
+            lock(&self.inner.recent).clear();
+            if let Some(sink) = self.inner.sink.get() {
+                sink.discard();
+            }
+        }
+    }
+
     pub fn is_active(&self) -> bool {
-        self.inner.active.load(Ordering::Relaxed) && self.inner.sink.get().is_some()
+        self.inner.activated.load(Ordering::Relaxed)
+            && self.is_enabled()
+            && self.inner.sink.get().is_some()
+    }
+
+    /// Events recorded in this run, oldest first (at most
+    /// [`MAX_RECENT_USAGE_EVENTS`]), exactly as handed to the sink.
+    pub fn recent_events(&self) -> Vec<UsageEnvelope> {
+        lock(&self.inner.recent).iter().cloned().collect()
     }
 
     pub fn record(&self, event: UsageEvent) {
-        if !self.inner.active.load(Ordering::Relaxed) {
+        if !self.is_active() {
             return;
         }
         let Some(sink) = self.inner.sink.get() else {
@@ -592,13 +637,21 @@ impl UsageHub {
             return;
         };
         let offset = self.inner.utc_offset_minutes.load(Ordering::Relaxed);
-        sink.record(UsageEnvelope {
+        let envelope = UsageEnvelope {
             event_id,
             occurred_on: local_date(now_ms(), offset),
             app_version: self.inner.app_version.clone(),
             platform: self.inner.platform.clone(),
             event,
-        });
+        };
+        {
+            let mut recent = lock(&self.inner.recent);
+            if recent.len() == MAX_RECENT_USAGE_EVENTS {
+                recent.pop_front();
+            }
+            recent.push_back(envelope.clone());
+        }
+        sink.record(envelope);
     }
 
     /// Counts one mock call; counts are emitted as `mock_requests_served`
@@ -647,7 +700,7 @@ impl UsageHub {
         }
         self.flush_mock_hits();
         self.record(UsageEvent::AppClosed);
-        self.inner.active.store(false, Ordering::SeqCst);
+        self.inner.activated.store(false, Ordering::SeqCst);
         if let Some(sink) = self.inner.sink.get() {
             sink.shutdown(deadline);
         }
@@ -704,6 +757,7 @@ mod tests {
     struct RecordingSink {
         events: Mutex<Vec<UsageEnvelope>>,
         shutdowns: std::sync::atomic::AtomicU64,
+        discards: std::sync::atomic::AtomicU64,
     }
 
     impl RecordingSink {
@@ -722,6 +776,10 @@ mod tests {
 
         fn shutdown(&self, _deadline: Duration) {
             self.shutdowns.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn discard(&self) {
+            self.discards.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -795,6 +853,54 @@ mod tests {
         assert_eq!(local_date(utc, 840), "2026-11-02");
         assert_eq!(local_date(0, -1), "1969-12-31");
         assert_eq!(local_date(951_782_400_000, 0), "2000-02-29");
+    }
+
+    #[test]
+    fn turning_usage_events_off_stops_recording_and_discards_what_is_pending() {
+        let (hub, sink) = active_hub();
+        hub.record_mock_hit(MockServerOrigin::Saved, true, 200);
+        assert_eq!(hub.recent_events().len(), 1);
+
+        hub.set_enabled(false);
+        assert!(!hub.is_active());
+        assert!(hub.is_available());
+        assert!(hub.recent_events().is_empty());
+        assert_eq!(sink.discards.load(Ordering::SeqCst), 1);
+        hub.record(UsageEvent::EnvironmentSwitched);
+        hub.shutdown(Duration::ZERO);
+        assert_eq!(sink.names(), ["app_opened"]);
+        assert_eq!(sink.shutdowns.load(Ordering::SeqCst), 0);
+
+        hub.set_enabled(true);
+        hub.record(UsageEvent::EnvironmentSwitched);
+        assert_eq!(sink.names(), ["app_opened", "environment_switched"]);
+        assert_eq!(hub.recent_events().len(), 1);
+    }
+
+    #[test]
+    fn a_hub_started_with_usage_events_off_records_nothing_not_even_app_opened() {
+        let hub = UsageHub::new("1.2.3", "linux");
+        let sink = Arc::new(RecordingSink::default());
+        hub.register_sink(sink.clone());
+        hub.set_enabled(false);
+        assert!(hub.activate(0));
+        hub.record(UsageEvent::EnvironmentSwitched);
+        assert!(sink.names().is_empty());
+    }
+
+    #[test]
+    fn recent_events_keep_only_the_newest() {
+        let (hub, _) = active_hub();
+        for _ in 0..MAX_RECENT_USAGE_EVENTS + 10 {
+            hub.record(UsageEvent::EnvironmentSwitched);
+        }
+        let recent = hub.recent_events();
+        assert_eq!(recent.len(), MAX_RECENT_USAGE_EVENTS);
+        assert!(
+            recent
+                .iter()
+                .all(|envelope| envelope.event.name() == "environment_switched")
+        );
     }
 
     #[test]

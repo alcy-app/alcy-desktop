@@ -551,6 +551,13 @@ and rejects identifiers that are not code identifiers. The native exit hook
 (`RunEvent::Exit`) and the update install record `app_closed` and give the
 sink a bounded deadline to deliver or persist.
 
+Settings > Telemetry shows what is and is never recorded and the events of
+the current run (`list_recent_usage_events`, at most 200, exactly as handed
+to the sink), or that the build collects nothing when no sink exists. The
+person's choice is on by default and stored in `usage-preferences.json` (v1)
+in the app data directory; turning it off stops recording at once and asks
+the sink to discard what was not sent (`UsageEventSink::discard`).
+
 ## Initial structure
 
 ```text
