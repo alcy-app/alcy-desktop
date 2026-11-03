@@ -2,7 +2,7 @@
  * Enable or disable complete interface features without removing their code.
  * Disabling a flag hides the feature and prevents automatic execution.
  */
-export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent', boolean>> = {
+export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent' | 'usageEvents', boolean>> = {
   /** Check for, download and install application updates. */
   updates: true,
   /**
@@ -39,4 +39,11 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * a provider until the user configures one.
    */
   agent: true,
+  /**
+   * Usage events (spec 0142): the interface activates the native hub at
+   * startup and reports shortcut, environment, settings and sidebar events.
+   * Inert unless an extension registers a sink: this build has none, so
+   * nothing is recorded or sent. Off disables usage events in every build.
+   */
+  usageEvents: true,
 }

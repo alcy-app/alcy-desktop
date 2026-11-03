@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use alcy_app::{TemplateError, resolve_variables};
+use alcy_app::{StatusClass, TemplateError, UsageHub, resolve_variables};
 use alcy_domain::{
     Authentication, Endpoint, EndpointError, EnvironmentVariable, EnvironmentVariableError,
     GrpcCall, GrpcSchemaSource, HeaderEntry, HistoryFailureKind, HistoryOutcome, ProtocolId,
@@ -705,7 +705,9 @@ pub async fn execute_grpc_request(
     general_settings: State<'_, GeneralSettingsStore>,
     body_cache: State<'_, ResponseBodyCache>,
     history: State<'_, HistoryPreferencesState>,
+    usage: State<'_, UsageHub>,
 ) -> Result<ExecuteGrpcRequestOutput, ExecutionFailure<GrpcCommandError>> {
+    let started = std::time::Instant::now();
     let mut effects = ScriptEffects::default();
     let result: Result<ExecuteGrpcRequestOutput, GrpcCommandError> = async {
         let execution_id = input.execution_id.clone();
@@ -881,6 +883,26 @@ pub async fn execute_grpc_request(
         })
     }
     .await;
+    usage.record(match &result {
+        // The gRPC status name (`NOT_FOUND`…) is a closed code identifier.
+        Ok(output) => crate::commands::usage_events::request_answered(
+            ProtocolId::Grpc,
+            None,
+            if output.status.is_ok() {
+                StatusClass::Success
+            } else {
+                StatusClass::Error
+            },
+            (!output.status.is_ok()).then_some(output.status.code_name.as_str()),
+            output.duration_ms,
+        ),
+        Err(error) => crate::commands::usage_events::request_failed(
+            ProtocolId::Grpc,
+            None,
+            error,
+            alcy_app::millis(started.elapsed()),
+        ),
+    });
     result.map_err(|error| ExecutionFailure::new(error, effects))
 }
 

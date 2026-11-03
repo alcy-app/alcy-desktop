@@ -564,6 +564,7 @@ pub async fn execute_collection_run(
     graphql_executor: tauri::State<'_, ReqwestGraphqlExecutor>,
     rest_executor: tauri::State<'_, ReqwestRestExecutor>,
     history: tauri::State<'_, HistoryPreferencesState>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<(), ExecuteCollectionRunError> {
     let run_id = input.run_id.clone();
     let started = std::time::Instant::now();
@@ -585,7 +586,7 @@ pub async fn execute_collection_run(
     )
     .await;
     match &result {
-        Ok(()) => log::info!(
+        Ok(_) => log::info!(
             target: "alcy::runner",
             "{run_id}: execução terminou em {} ms",
             started.elapsed().as_millis()
@@ -596,7 +597,31 @@ pub async fn execute_collection_run(
             crate::logging::error_summary(error)
         ),
     }
-    result
+    // Rejected plans never started: only runs that ran are counted.
+    if let Ok(run) = &result {
+        usage.record(alcy_app::UsageEvent::CollectionRunFinished {
+            iterations: u64::from(run.iterations),
+            requests: run.requests,
+            failed: run.failed,
+            duration_ms: alcy_app::millis(started.elapsed()),
+            outcome: if run.cancelled {
+                alcy_app::UsageOutcome::Cancelled
+            } else if run.failed > 0 {
+                alcy_app::UsageOutcome::Failed
+            } else {
+                alcy_app::UsageOutcome::Succeeded
+            },
+        });
+    }
+    result.map(|_| ())
+}
+
+/// Counts of a finished run, for usage events.
+struct CollectionRunCounts {
+    iterations: u32,
+    requests: u64,
+    failed: u64,
+    cancelled: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -609,7 +634,7 @@ async fn execute_collection_run_inner(
     graphql_executor: &ReqwestGraphqlExecutor,
     rest_executor: &ReqwestRestExecutor,
     history: HistoryPreferences,
-) -> Result<(), ExecuteCollectionRunError> {
+) -> Result<CollectionRunCounts, ExecuteCollectionRunError> {
     if input.request_ids.is_empty() {
         return Err(ExecuteCollectionRunError::EmptyPlan);
     }
@@ -695,6 +720,23 @@ async fn execute_collection_run_inner(
     registry.remove(&input.run_id);
 
     let steps = sink.take_steps();
+    let counts = CollectionRunCounts {
+        iterations: sink.iterations(),
+        requests: u64::try_from(steps.len()).unwrap_or(u64::MAX),
+        failed: u64::try_from(
+            steps
+                .iter()
+                .filter(|step| {
+                    matches!(
+                        step.outcome,
+                        RecordedStepOutcome::Failed | RecordedStepOutcome::Error
+                    )
+                })
+                .count(),
+        )
+        .unwrap_or(u64::MAX),
+        cancelled: summary.cancelled,
+    };
     if !steps.is_empty() {
         let record = CollectionRunRecord {
             id: input.run_id.clone(),
@@ -763,7 +805,7 @@ async fn execute_collection_run_inner(
         scoped_changes,
     });
 
-    Ok(())
+    Ok(counts)
 }
 
 #[derive(Debug, Deserialize)]

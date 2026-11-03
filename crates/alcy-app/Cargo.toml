@@ -8,6 +8,9 @@ publish = false
 alcy-domain = { path = "../alcy-domain" }
 alcy-load = { path = "../alcy-load" }
 futures-util = "0.3"
+# Random id of each usage event (spec 0142); already in the lockfile
+# through other crates.
+getrandom = "0.3"
 serde = "1"
 serde_json = "1.0"
 sha2 = "0.10"

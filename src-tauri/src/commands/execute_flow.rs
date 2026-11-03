@@ -26,7 +26,9 @@ use crate::commands::execute_graphql_request::{
 };
 use crate::commands::flow_execution_registry::{FlowExecutionRegistry, WatchCancellation};
 use crate::commands::flow_run_outputs::{FlowNodeOutput, FlowRunOutputs, MAX_STORED_BODY_BYTES};
-use crate::commands::flows::{FlowEdgeDto, FlowNodeDto, edges_from_dto, nodes_from_dto};
+use crate::commands::flows::{
+    FlowEdgeDto, FlowNodeDto, FlowNodeKindDto, edges_from_dto, nodes_from_dto,
+};
 use crate::commands::general_settings::{HistoryPreferences, HistoryPreferencesState};
 use crate::commands::protocol_dispatching_executor::ProtocolDispatchingExecutor;
 use crate::commands::response_body_cache::char_boundary_window;
@@ -639,8 +641,24 @@ pub async fn execute_flow(
     rest_executor: tauri::State<'_, ReqwestRestExecutor>,
     history: tauri::State<'_, HistoryPreferencesState>,
     mock_runtime: tauri::State<'_, MockServerRuntime>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<(), ExecuteFlowError> {
     let flow_execution_id = input.flow_execution_id.clone();
+    let node_count = u64::try_from(input.nodes.len()).unwrap_or(u64::MAX);
+    usage.record(alcy_app::UsageEvent::FlowRunStarted {
+        kind: alcy_domain::FlowExecutionKind::Standard,
+        node_count,
+        uses_mocks: input.nodes.iter().any(|node| {
+            matches!(
+                node.kind,
+                FlowNodeKindDto::MockStart { .. }
+                    | FlowNodeKindDto::MockStop { .. }
+                    | FlowNodeKindDto::MockWaitRequest { .. }
+                    | FlowNodeKindDto::MockSetResponse { .. }
+                    | FlowNodeKindDto::MockAssertCalls { .. }
+            )
+        }),
+    });
     // Register before the first await so closing a tab also cancels preparation.
     let (sender, receiver) = watch::channel(false);
     flow_registry.register(flow_execution_id.clone(), sender);
@@ -678,6 +696,18 @@ pub async fn execute_flow(
             crate::logging::error_summary(error)
         ),
     }
+    usage.record(alcy_app::UsageEvent::FlowRunFinished {
+        kind: alcy_domain::FlowExecutionKind::Standard,
+        node_count,
+        duration_ms: alcy_app::millis(started.elapsed()),
+        outcome: match &result {
+            Err(_) => alcy_app::UsageOutcome::Failed,
+            Ok(()) if alcy_app::FlowCancellation::is_cancelled(&cancellation) => {
+                alcy_app::UsageOutcome::Cancelled
+            }
+            Ok(()) => alcy_app::UsageOutcome::Succeeded,
+        },
+    });
     result
 }
 

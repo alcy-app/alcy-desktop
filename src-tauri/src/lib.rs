@@ -4,6 +4,7 @@ mod mock_runtime;
 mod window_state;
 
 use alcy_agent::AgentHttpClient;
+use alcy_app::UsageHub;
 use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_onedrive::OnedriveClient;
@@ -112,6 +113,7 @@ use commands::updates::{
     PendingUpdate, cancel_update_operation, check_for_update, download_update, get_update_settings,
     install_update_and_restart, set_update_check_on_startup, set_update_include_prereleases,
 };
+use commands::usage_events::{USAGE_SHUTDOWN_DEADLINE, activate_usage_events, record_usage_event};
 use commands::value_monitors::{evaluate_value_monitors, list_value_monitors, save_value_monitors};
 use commands::version_control::{
     VersionControlFiles, commit_and_push, get_file_diff, get_local_version_status,
@@ -232,7 +234,16 @@ pub fn run_with(extensions: Vec<Extension>) {
         extension_setups.push(extension.setup);
     }
 
+    let context = tauri::generate_context!();
+    // Usage events (spec 0142): dormant unless an extension registers a sink
+    // in its setup and the interface activates the hub.
+    let usage = UsageHub::new(
+        context.package_info().version.to_string(),
+        std::env::consts::OS,
+    );
+
     tauri::Builder::default()
+        .manage(usage.clone())
         .manage(ExecutionRegistry::default())
         .manage(GrpcSchemaCache::default())
         .manage(GrpcCalls::default())
@@ -246,7 +257,7 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(ReqwestRestExecutor::new())
         .manage(HistoryPreferencesState::default())
         .manage(ResponseBodyCache::default())
-        .manage(MockServerRuntime::default())
+        .manage(MockServerRuntime::with_usage(usage))
         .manage(SessionCookies::default())
         .manage(ImportFetcher::new())
         .manage(PreparedImports::default())
@@ -407,6 +418,8 @@ pub fn run_with(extensions: Vec<Extension>) {
             extension_commands,
             extension_invokes,
             log_invocations(tauri::generate_handler![
+                activate_usage_events,
+                record_usage_event,
                 get_agent_settings,
                 notify_when_unfocused,
                 save_agent_settings,
@@ -561,8 +574,13 @@ pub fn run_with(extensions: Vec<Extension>) {
                 clear_session_cookies
             ]),
         ))
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<UsageHub>().shutdown(USAGE_SHUTDOWN_DEADLINE);
+            }
+        });
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ import { SensitiveSyncSection } from './SensitiveSyncSection'
 import { TlsVerificationSection } from './TlsVerificationSection'
 import { ShortcutsSection } from './ShortcutsSection'
 import './settings-menu.css'
+import { trackUsage } from '../../shared/usage-events/track-usage'
 
 const LANGUAGES: Language[] = ['pt-BR', 'en']
 const PROXY_MODES: ProxyMode[] = ['disabled', 'system', 'pac']
@@ -101,9 +102,19 @@ interface SettingsModalProps {
 }
 
 function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistoryRetentionChange }: SettingsModalProps) {
-  const { language, setLanguage, t } = useLanguage()
+  const { language, setLanguage: applyLanguage, t } = useLanguage()
   const { textScale, setTextScale, iconScale, setIconScale } = useUiScale()
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme: applyTheme } = useTheme()
+  // Interface-only preferences report which one changed, never its value.
+  // Scale sliders change on every step and are left out.
+  const setLanguage = (value: Language) => {
+    applyLanguage(value)
+    trackUsage({ name: 'settings_changed', category: 'general', key: 'language' })
+  }
+  const setTheme = (value: Parameters<typeof applyTheme>[0]) => {
+    applyTheme(value)
+    trackUsage({ name: 'settings_changed', category: 'appearance', key: 'theme' })
+  }
   const [category, setCategory] = useState<SettingsCategory>(isCategoryDisabled(initialCategory) ? 'general' : initialCategory)
   const navigationRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)

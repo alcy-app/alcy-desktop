@@ -1,8 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { formatCombo, parseCombo, SHORTCUTS_STORAGE_KEY } from './shortcuts'
 import { ShortcutsProvider } from './ShortcutsProvider'
 import { useShortcuts } from './use-shortcuts'
+
+const trackUsage = vi.hoisted(() => vi.fn())
+vi.mock('../usage-events/track-usage', () => ({ trackUsage }))
 
 function Probe() {
   const { bindings, assignShortcut, removeShortcut, resetAllShortcuts } = useShortcuts()
@@ -47,5 +50,18 @@ describe('ShortcutsProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: 'restaurar' }))
     expect(screen.getByRole('status')).toHaveTextContent('Ctrl+S')
     expect(window.localStorage.getItem(SHORTCUTS_STORAGE_KEY)).toBeNull()
+  })
+
+  it('reports which action changed, never the keys', () => {
+    trackUsage.mockClear()
+    renderProbe()
+    fireEvent.click(screen.getByRole('button', { name: 'adicionar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'remover' }))
+    fireEvent.click(screen.getByRole('button', { name: 'restaurar' }))
+    expect(trackUsage.mock.calls.map(([event]) => event)).toEqual([
+      { name: 'shortcut_changed', action: 'saveRequest', change: 'assigned' },
+      { name: 'shortcut_changed', action: 'saveRequest', change: 'removed' },
+      { name: 'shortcut_changed', change: 'resetAll' },
+    ])
   })
 })

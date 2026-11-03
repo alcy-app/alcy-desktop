@@ -5,6 +5,7 @@ import './shared/ui/buttons.css'
 import App from './App.tsx'
 import { installButtonMousedownWorkaround } from './shared/button-mousedown-workaround'
 import { installGlobalLogHandlers } from './shared/logging/logger'
+import { startUsageEvents } from './shared/usage-events/track-usage'
 
 installButtonMousedownWorkaround()
 installGlobalLogHandlers()
@@ -24,3 +25,5 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+void startUsageEvents()

@@ -7,6 +7,7 @@ import { useCommittedState } from '../../shared/use-committed-state'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { matchExistingRows, type BulkRow } from '../../shared/bulk-edit'
 import type { SiblingEdge } from '../../shared/use-pointer-drag'
+import { trackUsage } from '../../shared/usage-events/track-usage'
 import { definedVariables } from './defined-variables'
 import type { EnvironmentState, VariableRow } from './environments.types'
 import { SENSITIVE_MASK } from './environments.types'
@@ -319,6 +320,12 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     )
   }, [])
 
+  // The person picked another environment (never its name: spec 0142).
+  const selectActiveEnvironment = useCallback((id: string | null) => {
+    if (id !== activeEnvironmentId) trackUsage({ name: 'environment_switched' })
+    setActiveEnvironmentId(id)
+  }, [activeEnvironmentId])
+
   return {
     commitEnvironments,
     environments,
@@ -328,7 +335,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     reload,
     activeEnvironmentId,
     activeEnvironment,
-    setActiveEnvironmentId,
+    setActiveEnvironmentId: selectActiveEnvironment,
     addEnvironment,
     removeEnvironment,
     duplicateEnvironment,

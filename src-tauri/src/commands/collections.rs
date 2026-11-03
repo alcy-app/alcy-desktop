@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, time::SystemTime};
 
+use alcy_app::{ImportSource, UsageEvent, UsageHub, UsageIdentifier, UsageOutcome};
 use alcy_domain::{
     ApiDocsSourceKind, Authentication, BodyPayload, Collection, CollectionError, CollectionLabel,
     DocsRef, Endpoint, EnvironmentVariable, EnvironmentVariableError, Folder, FolderError,
@@ -717,6 +718,8 @@ struct PreparedImport {
     imported: alcy_collection_import::ImportedCollectionData,
     root_path: String,
     prepared_at: SystemTime,
+    /// Where the content came from, for usage events.
+    source: ImportSource,
 }
 
 /// Sessões de revisão ficam apenas em memória e têm limite pequeno. Assim o
@@ -932,6 +935,7 @@ fn store_prepared_import(
     prepared: &PreparedImports,
     imported: alcy_collection_import::ImportedCollectionData,
     root_path: String,
+    source: ImportSource,
 ) -> Result<PreparedImportOutput, CollectionsCommandError> {
     let id = format!(
         "import-{}",
@@ -1003,9 +1007,20 @@ fn store_prepared_import(
             imported,
             root_path,
             prepared_at: SystemTime::now(),
+            source,
         },
     );
     Ok(output)
+}
+
+/// Content that could not be read or recognized: the import ends here.
+fn import_failed(source: ImportSource) -> UsageEvent {
+    UsageEvent::ImportFinished {
+        format: None,
+        source,
+        items: 0,
+        outcome: UsageOutcome::Failed,
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -1034,11 +1049,13 @@ pub struct ImportWarningDto {
 #[tauri::command]
 pub async fn export_collections(
     input: ExportCollectionsInput,
+    usage: tauri::State<'_, UsageHub>,
 ) -> Result<(), CollectionsCommandError> {
     let result = run_blocking(move || {
         export_collections_inner(PathBuf::from(input.path), input.collections)
     })
     .await;
+    crate::commands::usage_events::record_export(&usage, "alcy", &result);
     crate::logging::logged("alcy::collections", "exportar coleções", result)
 }
 
@@ -1082,23 +1099,29 @@ pub async fn import_collections(
 pub async fn prepare_import_from_path(
     input: ImportCollectionsInput,
     prepared: tauri::State<'_, PreparedImports>,
+    usage: tauri::State<'_, UsageHub>,
 ) -> Result<PreparedImportOutput, CollectionsCommandError> {
     let root_path = input.root_path;
-    let imported = run_blocking(move || read_import_from_path(PathBuf::from(input.path))).await?;
-    store_prepared_import(&prepared, imported, root_path)
+    let imported = run_blocking(move || read_import_from_path(PathBuf::from(input.path)))
+        .await
+        .inspect_err(|_| usage.record(import_failed(ImportSource::File)))?;
+    store_prepared_import(&prepared, imported, root_path, ImportSource::File)
 }
 
 #[tauri::command]
 pub async fn prepare_import_from_text(
     input: PrepareImportFromTextInput,
     prepared: tauri::State<'_, PreparedImports>,
+    usage: tauri::State<'_, UsageHub>,
 ) -> Result<PreparedImportOutput, CollectionsCommandError> {
     if input.content.trim().is_empty() {
         return Err(invalid("conteúdo vazio"));
     }
     let root_path = input.root_path;
-    let imported = run_blocking(move || parse_import_content(&input.content)).await?;
-    store_prepared_import(&prepared, imported, root_path)
+    let imported = run_blocking(move || parse_import_content(&input.content))
+        .await
+        .inspect_err(|_| usage.record(import_failed(ImportSource::Text)))?;
+    store_prepared_import(&prepared, imported, root_path, ImportSource::Text)
 }
 
 #[tauri::command]
@@ -1106,14 +1129,18 @@ pub async fn prepare_import_from_url(
     input: PrepareImportFromUrlInput,
     fetcher: tauri::State<'_, ImportFetcher>,
     prepared: tauri::State<'_, PreparedImports>,
+    usage: tauri::State<'_, UsageHub>,
 ) -> Result<PreparedImportOutput, CollectionsCommandError> {
     let raw = fetcher
         .fetch_text(&input.url)
         .await
-        .map_err(|message| CollectionsCommandError::Storage { message })?;
+        .map_err(|message| CollectionsCommandError::Storage { message })
+        .inspect_err(|_| usage.record(import_failed(ImportSource::Url)))?;
     let root_path = input.root_path;
-    let imported = run_blocking(move || parse_import_content(&raw)).await?;
-    store_prepared_import(&prepared, imported, root_path)
+    let imported = run_blocking(move || parse_import_content(&raw))
+        .await
+        .inspect_err(|_| usage.record(import_failed(ImportSource::Url)))?;
+    store_prepared_import(&prepared, imported, root_path, ImportSource::Url)
 }
 
 #[tauri::command]
@@ -1121,6 +1148,7 @@ pub async fn commit_prepared_import(
     input: CommitPreparedImportInput,
     prepared: tauri::State<'_, PreparedImports>,
     docs: tauri::State<'_, ApiDocsStore>,
+    usage: tauri::State<'_, UsageHub>,
 ) -> Result<ImportCollectionsOutput, CollectionsCommandError> {
     let CommitPreparedImportInput {
         id,
@@ -1141,11 +1169,26 @@ pub async fn commit_prepared_import(
         return Err(invalid("a revisão pertence a outro workspace"));
     }
 
+    let source = entry.source;
+    let format = UsageIdentifier::new(prepared_format(&entry.imported));
     let target = DocsTarget::new(&docs, root_path);
-    let output = run_blocking(move || {
+    let result = run_blocking(move || {
         commit_with_variables(entry.imported, &target, include_documentation, variables)
     })
-    .await?;
+    .await;
+    usage.record(UsageEvent::ImportFinished {
+        format,
+        source,
+        items: result.as_ref().map_or(0, |output| {
+            u64::try_from(output.collections.len()).unwrap_or(u64::MAX)
+        }),
+        outcome: if result.is_ok() {
+            UsageOutcome::Succeeded
+        } else {
+            UsageOutcome::Failed
+        },
+    });
+    let output = result?;
     prepared
         .entries
         .lock()
@@ -2205,9 +2248,13 @@ collection:
         let prepared = PreparedImports::default();
         let imported = parse_import_content(SAMPLE_OPENAPI_JSON).unwrap();
 
-        let summary =
-            store_prepared_import(&prepared, imported, root.to_string_lossy().into_owned())
-                .unwrap();
+        let summary = store_prepared_import(
+            &prepared,
+            imported,
+            root.to_string_lossy().into_owned(),
+            ImportSource::File,
+        )
+        .unwrap();
 
         assert_eq!(summary.format, "openapi");
         assert_eq!(summary.collection_count, 1);
@@ -2288,9 +2335,13 @@ collection:
         let prepared = PreparedImports::default();
         let imported = read_import_from_path(path).unwrap();
 
-        let summary =
-            store_prepared_import(&prepared, imported, root.to_string_lossy().into_owned())
-                .unwrap();
+        let summary = store_prepared_import(
+            &prepared,
+            imported,
+            root.to_string_lossy().into_owned(),
+            ImportSource::File,
+        )
+        .unwrap();
 
         assert_eq!(summary.format, "har");
         assert_eq!(summary.collection_count, 1);

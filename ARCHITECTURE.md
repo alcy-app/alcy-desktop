@@ -528,6 +528,29 @@ literal `require('npm:…')` calls, fetches the packages from esm.sh and caches
 them in the app data folder, and the interpreter receives their modules as
 plain sources (ADR 0061). This is the only network access scripts can cause.
 
+### Usage events
+
+`alcy-app::UsageHub` records small typed usage events: app opened and closed,
+workspace opened, requests sent from a tab, collection runs, flow and load
+runs, mock servers started and stopped, mock hits, monitor changes, imports,
+exports, settings, shortcuts, sidebar modules, agent messages, sync and
+update installs. Events carry closed enums, counters, latency durations and
+code identifiers only, never URLs, hosts, routes, bodies, headers, variable
+values or text typed by the person. Nothing links events to each other or to
+a person: each one has its own random id and only the local date (the
+interface sends its UTC offset on activation), never a time of day, a session
+or how long the app was used. Mock hits are counted by answer and aggregated
+per minute because a load test can hit a mock thousands of times per second.
+
+The hub forwards events to a `UsageEventSink` port that only enqueues. This
+repository ships no sink: without one the hub stays dormant and nothing is
+recorded, stored or sent. When the `usageEvents` feature flag is on, the
+interface activates the hub once at startup and reports the few events only
+it sees through `record_usage_event`, which accepts a closed set of events
+and rejects identifiers that are not code identifiers. The native exit hook
+(`RunEvent::Exit`) and the update install record `app_closed` and give the
+sink a bounded deadline to deliver or persist.
+
 ## Initial structure
 
 ```text
@@ -607,6 +630,7 @@ A downstream build adds features without editing shared files:
 - Rust: pass `alcy_desktop_lib::Extension` values to `run_with` in `src-tauri/src/main.rs`. Each one declares app commands of its own (handled before the app's) and a setup that runs after the app's.
 - Frontend: add a folder with an `index.ts` under `apps/desktop/src/extensions/` that default-exports an `AppExtension` (`extensions/types.ts`). It can wrap the app, add sidebar modules and add workbench tabs, and translates its own text.
   Its Tauri calls go in its own `bindings/` folder, and its test doubles in its own `test-setup.ts`, loaded by `src/test-setup.ts`.
+- Usage events: an extension's setup can register a `UsageEventSink` with `app.state::<alcy_app::UsageHub>().register_sink(...)`; only the first registration counts.
 - Build: extra Tauri configs merged with `tauri build --config` go in `src-tauri/config/`, which is protected like `tauri.conf.json`.
 
 This repository ships the loader and no extension.

@@ -58,6 +58,7 @@ pub async fn export_collection_run_report(
     input: ExportCollectionRunReportInput,
     app: AppHandle,
     outputs: tauri::State<'_, CollectionRunOutputs>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<(), ExportCollectionRunReportError> {
     let result: Result<(), ExportCollectionRunReportError> = async {
         let in_memory = outputs.record(&input.run_id);
@@ -77,6 +78,7 @@ pub async fn export_collection_run_report(
             })
     }
     .await;
+    crate::commands::usage_events::record_export(&usage, "runReport", &result);
     crate::logging::logged("alcy::export", "exportar relatório de execução", result)
 }
 

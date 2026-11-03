@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use alcy_app::{TemplateError, execute_request, resolve_variables};
+use alcy_app::{StatusClass, TemplateError, UsageHub, execute_request, resolve_variables};
 use alcy_domain::{
     Authentication, BodyEncoding, ConnectionInfo, Cookie, Endpoint, EndpointError,
     EnvironmentVariable, EnvironmentVariableError, ExecutionError, HeaderEntry, HeaderError,
@@ -27,6 +27,7 @@ use crate::commands::scripting::{
     ScriptErrorOutput, ScriptTestOutput, ScriptedRequest, run_post_response, run_pre_request,
 };
 use crate::commands::session_cookies::SessionCookies;
+use crate::commands::usage_events::{graphql_operation_type, request_answered, request_failed};
 use crate::commands::variable_scopes::{VariableScopeDto, scopes_from_dto, with_scoped_variables};
 
 /// Read-only history retention has no pruning effect; pruning uses HistoryPreferencesState.
@@ -513,8 +514,11 @@ pub async fn execute_graphql_request(
     body_cache: tauri::State<'_, ResponseBodyCache>,
     session_cookies: tauri::State<'_, SessionCookies>,
     history: tauri::State<'_, HistoryPreferencesState>,
+    usage: tauri::State<'_, UsageHub>,
 ) -> Result<ExecuteGraphqlRequestOutput, ExecutionFailure<ExecuteGraphqlRequestError>> {
     let execution_id = input.execution_id.clone();
+    let started = std::time::Instant::now();
+    let operation = graphql_operation_type(&input.query);
     log::info!(
         target: "alcy::request",
         "graphql {execution_id}: enviando POST {}",
@@ -544,6 +548,21 @@ pub async fn execute_graphql_request(
             crate::logging::error_summary(failure)
         ),
     }
+    usage.record(match &result {
+        Ok(output) => request_answered(
+            ProtocolId::GraphQl,
+            Some(operation),
+            StatusClass::from_status(output.status_code),
+            (!output.graphql_errors.is_empty()).then_some("graphqlErrors"),
+            output.duration_ms,
+        ),
+        Err(failure) => request_failed(
+            ProtocolId::GraphQl,
+            Some(operation),
+            failure,
+            alcy_app::millis(started.elapsed()),
+        ),
+    });
     result
 }
 

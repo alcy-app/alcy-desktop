@@ -154,8 +154,9 @@ pub fn add_custom_ca_certificate(
     gitlab: State<'_, GitlabClient>,
     onedrive: State<'_, OnedriveProvider>,
     agent: State<'_, AgentHttpClient>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
-    crate::logging::logged_with("alcy::tls", "adicionar CA personalizada", || {
+    let result = crate::logging::logged_with("alcy::tls", "adicionar CA personalizada", || {
         let (name, pem) = read_pem(&path)?;
         let mut certificates = store.load().map_err(storage_error)?;
         if certificates.iter().any(|item| item.pem == pem) {
@@ -182,7 +183,14 @@ pub fn add_custom_ca_certificate(
         .map_err(invalid)?;
         store.save(&certificates).map_err(storage_error)?;
         Ok(certificates.iter().map(to_dto).collect())
-    })
+    });
+    crate::commands::usage_events::record_setting(
+        &usage,
+        "network",
+        Some("customCaAdded"),
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -196,8 +204,9 @@ pub fn remove_custom_ca_certificate(
     gitlab: State<'_, GitlabClient>,
     onedrive: State<'_, OnedriveProvider>,
     agent: State<'_, AgentHttpClient>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
-    crate::logging::logged_with("alcy::tls", "remover CA personalizada", || {
+    let result = crate::logging::logged_with("alcy::tls", "remover CA personalizada", || {
         let mut certificates = store.load().map_err(storage_error)?;
         let before = certificates.len();
         certificates.retain(|item| item.id != id);
@@ -220,5 +229,12 @@ pub fn remove_custom_ca_certificate(
         .map_err(invalid)?;
         store.save(&certificates).map_err(storage_error)?;
         Ok(certificates.iter().map(to_dto).collect())
-    })
+    });
+    crate::commands::usage_events::record_setting(
+        &usage,
+        "network",
+        Some("customCaRemoved"),
+        &result,
+    );
+    result
 }

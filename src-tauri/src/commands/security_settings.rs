@@ -45,8 +45,9 @@ pub fn get_security_settings(
 pub fn save_security_settings(
     input: SecuritySettingsDto,
     store: State<'_, SecuritySettingsStore>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<SecuritySettingsDto, SecuritySettingsCommandError> {
-    crate::logging::logged_with(
+    let result = crate::logging::logged_with(
         "alcy::settings",
         "salvar configurações de segurança",
         || {
@@ -56,5 +57,7 @@ pub fn save_security_settings(
             store.save(&settings)?;
             Ok(to_dto(&settings))
         },
-    )
+    );
+    crate::commands::usage_events::record_setting(&usage, "security", None, &result);
+    result
 }

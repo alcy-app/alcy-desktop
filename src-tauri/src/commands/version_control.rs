@@ -817,6 +817,7 @@ pub async fn commit_and_push(
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
     onedrive: State<'_, OnedriveProvider>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<PushResultDto, RemoteCommandError> {
     let result: Result<PushResultDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
@@ -852,6 +853,7 @@ pub async fn commit_and_push(
         })
     }
     .await;
+    crate::commands::usage_events::record_sync(&usage, "push", &result);
     crate::logging::logged("alcy::vc", "commit e push", result)
 }
 
@@ -909,6 +911,7 @@ pub async fn pull_changes(
     credentials: State<'_, KeyringCredentialStore>,
     accounts: State<'_, GitlabAccountsStore>,
     onedrive: State<'_, OnedriveProvider>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<PullResultDto, RemoteCommandError> {
     let result: Result<PullResultDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
@@ -934,6 +937,7 @@ pub async fn pull_changes(
         })
     }
     .await;
+    crate::commands::usage_events::record_sync(&usage, "pull", &result);
     crate::logging::logged("alcy::vc", "pull", result)
 }
 

@@ -160,6 +160,7 @@ pub async fn execute_load_flow(
     flow_registry: tauri::State<'_, FlowExecutionRegistry>,
     rest_executor: tauri::State<'_, ReqwestRestExecutor>,
     history: tauri::State<'_, HistoryPreferencesState>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<(), ExecuteLoadFlowError> {
     let root = PathBuf::from(&input.root_path);
     let snapshot =
@@ -195,9 +196,20 @@ pub async fn execute_load_flow(
     };
     let started_at = SystemTime::now();
     let retention = history.get().retention.duration();
+    let node_count = u64::try_from(flow.nodes().len()).unwrap_or(u64::MAX);
+    usage.record(alcy_app::UsageEvent::FlowRunStarted {
+        kind: alcy_domain::FlowExecutionKind::Load,
+        node_count,
+        uses_mocks: false,
+    });
+    let started = std::time::Instant::now();
 
     let result = run_load_plan_report(&plan, &*rest_executor, &sink, &cancellation).await;
     flow_registry.remove(&registry_id);
+    usage.record(load_finished_event(
+        &result,
+        alcy_app::millis(started.elapsed()),
+    ));
 
     match result {
         Ok(report) => {
@@ -239,6 +251,43 @@ pub async fn execute_load_flow(
             Ok(())
         }
         Err(error) => Err(execution_error(error)),
+    }
+}
+
+fn load_finished_event<E>(
+    result: &Result<alcy_app::LoadRunReport, E>,
+    duration_ms: u64,
+) -> alcy_app::UsageEvent {
+    let count = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
+    match result {
+        Ok(report) => alcy_app::UsageEvent::LoadTestFinished {
+            requests: report.summary.requests,
+            failed_requests: report.summary.failed_requests,
+            thresholds: count(report.thresholds.len()),
+            failed_thresholds: count(
+                report
+                    .thresholds
+                    .iter()
+                    .filter(|threshold| !threshold.passed)
+                    .count(),
+            ),
+            duration_ms,
+            outcome: if report.summary.cancelled {
+                alcy_app::UsageOutcome::Cancelled
+            } else if report.passed {
+                alcy_app::UsageOutcome::Succeeded
+            } else {
+                alcy_app::UsageOutcome::Failed
+            },
+        },
+        Err(_) => alcy_app::UsageEvent::LoadTestFinished {
+            requests: 0,
+            failed_requests: 0,
+            thresholds: 0,
+            failed_thresholds: 0,
+            duration_ms,
+            outcome: alcy_app::UsageOutcome::Failed,
+        },
     }
 }
 

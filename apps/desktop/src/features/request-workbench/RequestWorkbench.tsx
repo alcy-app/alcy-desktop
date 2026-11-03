@@ -104,6 +104,7 @@ import { markReleaseNotesSeen } from '../updates/release-notes-storage'
 import { APP_VERSION } from '../../shared/app-version'
 import { useUpdates } from '../updates/use-updates'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
+import { trackUsage } from '../../shared/usage-events/track-usage'
 import { useChangedItemMarkers } from '../version-control/use-changed-items'
 import { useVersionControl } from '../version-control/use-version-control'
 import type { VersionReviewTarget } from '../version-control/VersionControlPanel'
@@ -1199,6 +1200,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   }
 
   const onToggleSidebarCollapsed = useCallback(() => setSidebarCollapsed((current) => !current), [])
+  const selectSidebarTab = useCallback((tab: SidebarTab) => {
+    setSidebarTab(tab)
+    trackUsage({ name: 'sidebar_module_opened', module: tab })
+  }, [])
 
   // Stable sidebar props prevent rerendering the sidebar and collection tree on each keystroke.
   const sidebarVersionControl = useMemo(
@@ -1899,7 +1904,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               settingsOpen={settingsOpen}
               settingsCategory={settingsCategory}
               activeTab={sidebarTab}
-              onActiveTabChange={setSidebarTab}
+              onActiveTabChange={selectSidebarTab}
               versionControl={sidebarVersionControl}
               onOpenReleaseNotes={openReleaseNotes}
               onSettingsOpenChange={onSettingsOpenChange}

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use alcy_app::resolve_variables;
+use alcy_app::{StatusClass, UsageHub, resolve_variables};
 use alcy_domain::{
     DEFAULT_REQUEST_TIMEOUT_SECONDS, EnvironmentVariable, ExecutionError, ProtocolId, Request,
     RequestDocument, Response, ResponseHeader, WebSocketCall, WebSocketMessageFormat,
@@ -441,8 +441,10 @@ pub async fn execute_websocket_request(
     session_cookies: State<'_, SessionCookies>,
     body_cache: State<'_, ResponseBodyCache>,
     history: State<'_, HistoryPreferencesState>,
+    usage: State<'_, UsageHub>,
 ) -> Result<ExecuteWebSocketRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let execution_id = input.execution_id.clone();
+    let started = std::time::Instant::now();
     log::info!(
         target: "alcy::request",
         "websocket {execution_id}: conectando em {}",
@@ -474,6 +476,21 @@ pub async fn execute_websocket_request(
             crate::logging::error_summary(failure)
         ),
     }
+    usage.record(match &result {
+        Ok(output) => crate::commands::usage_events::request_answered(
+            ProtocolId::WebSocket,
+            None,
+            StatusClass::from_status(output.status_code),
+            None,
+            output.duration_ms,
+        ),
+        Err(failure) => crate::commands::usage_events::request_failed(
+            ProtocolId::WebSocket,
+            None,
+            failure,
+            alcy_app::millis(started.elapsed()),
+        ),
+    });
     result
 }
 

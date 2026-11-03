@@ -112,10 +112,13 @@ pub fn save_tls_settings(
     store: State<'_, TlsSettingsStore>,
     graphql: State<'_, ReqwestGraphqlExecutor>,
     rest: State<'_, ReqwestRestExecutor>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<TlsSettingsDto, TlsSettingsCommandError> {
-    crate::logging::logged_with("alcy::tls", "salvar preferência de TLS", || {
+    let result = crate::logging::logged_with("alcy::tls", "salvar preferência de TLS", || {
         save_settings(&store, &graphql, &rest, &input)
-    })
+    });
+    crate::commands::usage_events::record_setting(&usage, "network", Some("tls"), &result);
+    result
 }
 
 #[cfg(test)]

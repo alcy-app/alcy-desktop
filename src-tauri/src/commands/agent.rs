@@ -547,6 +547,7 @@ pub async fn save_agent_settings(
     input: SaveAgentSettingsInput,
     paths: State<'_, AgentPaths>,
     credentials: State<'_, KeyringCredentialStore>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<AgentSettingsDto, AgentCommandError> {
     let store = paths.settings_store();
     let result = async {
@@ -575,6 +576,7 @@ pub async fn save_agent_settings(
         Ok(settings_dto(settings, &*credentials))
     }
     .await;
+    crate::commands::usage_events::record_setting(&usage, "agent", None, &result);
     crate::logging::logged("alcy::agent", "save agent settings", result)
 }
 
@@ -837,8 +839,18 @@ pub async fn start_agent_turn(
     runs: State<'_, AgentRuns>,
     credentials: State<'_, KeyringCredentialStore>,
     http: State<'_, AgentHttpClient>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<AgentTurnResultDto, AgentCommandError> {
-    let result = run_turn(input, &on_event, &paths, &runs, &*credentials, &http).await;
+    let result = run_turn(
+        input,
+        &on_event,
+        &paths,
+        &runs,
+        &*credentials,
+        &http,
+        &usage,
+    )
+    .await;
     crate::logging::logged("alcy::agent", "agent turn", result)
 }
 
@@ -849,6 +861,7 @@ async fn run_turn(
     runs: &AgentRuns,
     credentials: &dyn CredentialStore,
     http: &AgentHttpClient,
+    usage: &alcy_app::UsageHub,
 ) -> Result<AgentTurnResultDto, AgentCommandError> {
     let text = input.text.trim().to_string();
     if text.is_empty() {
@@ -870,6 +883,14 @@ async fn run_turn(
         return Err(AgentCommandError::MissingModel);
     }
     let chat = http.chat(&provider, key.as_deref())?;
+    // The provider kind only; never the model, the address or the message.
+    let provider_kind = match provider.kind {
+        alcy_domain::AgentProviderKind::Anthropic => "anthropic",
+        alcy_domain::AgentProviderKind::OpenAiCompatible => "openAiCompatible",
+    };
+    if let Some(provider_kind) = alcy_app::UsageIdentifier::new(provider_kind) {
+        usage.record(alcy_app::UsageEvent::AgentMessageSent { provider_kind });
+    }
 
     let target_session_id = input
         .session_id

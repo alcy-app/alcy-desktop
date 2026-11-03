@@ -227,6 +227,7 @@ pub async fn save_proxy_settings(
     gitlab: State<'_, GitlabClient>,
     onedrive: State<'_, OnedriveProvider>,
     agent: State<'_, AgentHttpClient>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<ProxyStatusDto, ProxyCommandError> {
     let result: Result<ProxyStatusDto, ProxyCommandError> = async {
         save_settings(
@@ -245,6 +246,7 @@ pub async fn save_proxy_settings(
         .await
     }
     .await;
+    crate::commands::usage_events::record_setting(&usage, "network", Some("proxy"), &result);
     crate::logging::logged("alcy::proxy", "salvar proxy", result)
 }
 

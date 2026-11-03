@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use alcy_app::{TemplateError, apply_route_parameters, execute_request, resolve_variables};
+use alcy_app::{
+    StatusClass, TemplateError, apply_route_parameters, execute_request, resolve_variables,
+};
 use alcy_domain::{
     Authentication, BodyPayload, Endpoint, EndpointError, EnvironmentVariable,
     EnvironmentVariableError, ExecutionError, FormDataField, FormDataFieldValue, HeaderEntry,
@@ -28,6 +30,7 @@ use crate::commands::scripting::{
     ScriptErrorOutput, ScriptTestOutput, ScriptedRequest, run_post_response, run_pre_request,
 };
 use crate::commands::session_cookies::SessionCookies;
+use crate::commands::usage_events::{request_answered, request_failed};
 use crate::commands::variable_scopes::{VariableScopeDto, scopes_from_dto, with_scoped_variables};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -592,8 +595,11 @@ pub async fn execute_rest_request(
     body_cache: tauri::State<'_, ResponseBodyCache>,
     session_cookies: tauri::State<'_, SessionCookies>,
     history: tauri::State<'_, HistoryPreferencesState>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let execution_id = input.execution_id.clone();
+    let started = std::time::Instant::now();
+    let method = input.method.as_str().to_ascii_uppercase();
     log::info!(
         target: "alcy::request",
         "rest {execution_id}: enviando {:?} {}",
@@ -623,6 +629,21 @@ pub async fn execute_rest_request(
             crate::logging::error_summary(failure)
         ),
     }
+    usage.record(match &result {
+        Ok(output) => request_answered(
+            ProtocolId::Rest,
+            Some(&method),
+            StatusClass::from_status(output.status_code),
+            None,
+            output.duration_ms,
+        ),
+        Err(failure) => request_failed(
+            ProtocolId::Rest,
+            Some(&method),
+            failure,
+            alcy_app::millis(started.elapsed()),
+        ),
+    });
     result
 }
 

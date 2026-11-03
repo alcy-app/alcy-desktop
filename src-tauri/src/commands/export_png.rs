@@ -33,7 +33,10 @@ fn invalid(message: &str) -> ExportPngError {
 /// frontend) no arquivo escolhido pelo usuário. Os bytes chegam como corpo
 /// binário cru da IPC, uma única vez e com teto de tamanho (ADR 0029).
 #[tauri::command]
-pub async fn export_png(request: Request<'_>) -> Result<(), ExportPngError> {
+pub async fn export_png(
+    request: Request<'_>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
+) -> Result<(), ExportPngError> {
     let result: Result<(), ExportPngError> = async {
         let path = path_from_headers(&request)?;
         let bytes = bytes_from_body(request.body())?;
@@ -46,6 +49,7 @@ pub async fn export_png(request: Request<'_>) -> Result<(), ExportPngError> {
             })
     }
     .await;
+    crate::commands::usage_events::record_export(&usage, "png", &result);
     crate::logging::logged("alcy::export", "exportar PNG", result)
 }
 

@@ -28,6 +28,7 @@ mod resolve_request_variables;
 mod resolve_variables;
 mod run_collection;
 mod run_variables;
+mod usage;
 mod version_control;
 
 pub use alcy_load::LoadVuState;
@@ -88,6 +89,12 @@ pub use resolve_variables::{
 pub use run_collection::{
     CollectionRunPlan, CollectionRunSink, CollectionRunStep, CollectionRunSummary, RunIteration,
     RunStepReport, StepResult, run_collection, step_variables,
+};
+pub use usage::{
+    ImportSource, MAX_USAGE_IDENTIFIER_LEN, MockServerOrigin, MonitorChange, RequestExecuted,
+    ShortcutChange, StatusClass, USAGE_EVENT_SCHEMA_VERSION, UTC_OFFSET_RANGE_MINUTES,
+    UsageEnvelope, UsageEvent, UsageEventSink, UsageHub, UsageIdentifier, UsageOutcome,
+    WorkspaceOpenKind, millis,
 };
 pub use version_control::{
     ChangeSelection, ChangedItem, CommitAction, ConflictSide, DiffHunk, DiffLine, DiffLineKind,

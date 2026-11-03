@@ -21,7 +21,10 @@ pub enum ExportHarError {
 /// usuário. O conteúdo é limitado pela gravação em memória (ver
 /// `use-recorder-state.ts`), então não viola o invariante de dados grandes.
 #[tauri::command]
-pub async fn export_har(input: ExportHarInput) -> Result<(), ExportHarError> {
+pub async fn export_har(
+    input: ExportHarInput,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
+) -> Result<(), ExportHarError> {
     let result: Result<(), ExportHarError> = async {
         let path = PathBuf::from(input.path);
         let content = input.content;
@@ -34,6 +37,7 @@ pub async fn export_har(input: ExportHarInput) -> Result<(), ExportHarError> {
             })
     }
     .await;
+    crate::commands::usage_events::record_export(&usage, "har", &result);
     crate::logging::logged("alcy::export", "exportar HAR", result)
 }
 

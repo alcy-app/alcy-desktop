@@ -184,6 +184,7 @@ pub async fn create_workspace(
     input: CreateWorkspaceInput,
     app: tauri::AppHandle,
     recent_store: tauri::State<'_, RecentWorkspacesStore>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<WorkspaceDto, WorkspaceCommandError> {
     let recent_store = RecentWorkspacesStore::clone(&recent_store);
     let result = match app.path().document_dir() {
@@ -194,6 +195,11 @@ pub async fn create_workspace(
             message: error.to_string(),
         }),
     };
+    if result.is_ok() {
+        usage.record(alcy_app::UsageEvent::WorkspaceOpened {
+            kind: alcy_app::WorkspaceOpenKind::Created,
+        });
+    }
     crate::logging::logged("alcy::workspace", "criar workspace", result)
 }
 
@@ -228,9 +234,15 @@ fn create_workspace_inner(
 pub async fn open_workspace(
     input: OpenWorkspaceInput,
     recent_store: tauri::State<'_, RecentWorkspacesStore>,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<WorkspaceDto, WorkspaceCommandError> {
     let recent_store = RecentWorkspacesStore::clone(&recent_store);
     let result = run_blocking(move || open_workspace_inner(input, &recent_store)).await;
+    if result.is_ok() {
+        usage.record(alcy_app::UsageEvent::WorkspaceOpened {
+            kind: alcy_app::WorkspaceOpenKind::Opened,
+        });
+    }
     crate::logging::logged("alcy::workspace", "abrir workspace", result)
 }
 

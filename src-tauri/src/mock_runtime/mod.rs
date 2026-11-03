@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use alcy_app::CapturedRequest;
+use alcy_app::{CapturedRequest, MockServerOrigin, UsageEvent, UsageHub};
 use alcy_domain::MockServer;
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -70,6 +70,10 @@ struct ServerShared {
     /// Acorda quem espera chamadas a cada captura e quando o servidor para.
     /// `notify_waiters` funciona fora do runtime tokio.
     notify: Notify,
+    /// Usage events (spec 0142): hits are counted by answer, never by path
+    /// or route.
+    usage: UsageHub,
+    origin: MockServerOrigin,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -127,6 +131,7 @@ struct RunningMockServer {
 pub struct MockServerRuntime {
     servers: Mutex<HashMap<String, RunningMockServer>>,
     next_log_id: Arc<AtomicU64>,
+    usage: UsageHub,
 }
 
 /// Fotografia de um servidor ligado, tirada quando um flow o liga ou
@@ -138,6 +143,13 @@ pub(crate) struct RunningSnapshot {
 }
 
 impl MockServerRuntime {
+    pub fn with_usage(usage: UsageHub) -> Self {
+        Self {
+            usage,
+            ..Self::default()
+        }
+    }
+
     fn shared(&self, server_id: &str) -> Option<Arc<ServerShared>> {
         lock(&self.servers)
             .get(server_id)
@@ -172,6 +184,11 @@ impl MockServerRuntime {
             .set_nonblocking(true)
             .map_err(|error| StartError::Io(error.to_string()))?;
         let id = config.id.clone();
+        let origin = origin_of(&id);
+        self.usage.record(UsageEvent::MockServerStarted {
+            origin,
+            route_count: config.routes.len().try_into().unwrap_or(u64::MAX),
+        });
         let shared = Arc::new(ServerShared {
             config: RwLock::new(config),
             stopped: AtomicBool::new(false),
@@ -179,6 +196,8 @@ impl MockServerRuntime {
             captures: Mutex::new(Captures::default()),
             overrides: Mutex::new(HashMap::new()),
             notify: Notify::new(),
+            usage: self.usage.clone(),
+            origin,
         });
         let serving = Arc::clone(&shared);
         let next_log_id = Arc::clone(&self.next_log_id);
@@ -200,6 +219,10 @@ impl MockServerRuntime {
         if let Some(server) = lock(&self.servers).remove(server_id) {
             server.shared.stopped.store(true, Ordering::Relaxed);
             server.shared.notify.notify_waiters();
+            self.usage.flush_mock_hits();
+            self.usage.record(UsageEvent::MockServerStopped {
+                origin: server.shared.origin,
+            });
         }
     }
 
@@ -298,6 +321,16 @@ impl MockServerRuntime {
     }
 }
 
+/// Inline flow mocks are keyed `flow:<execution>:<node>`; everything else is
+/// a mock saved in the workspace.
+fn origin_of(server_id: &str) -> MockServerOrigin {
+    if server_id.starts_with("flow:") {
+        MockServerOrigin::FlowInline
+    } else {
+        MockServerOrigin::Saved
+    }
+}
+
 fn serve(listener: TcpListener, shared: Arc<ServerShared>, next_log_id: Arc<AtomicU64>) {
     while !shared.stopped.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -352,6 +385,11 @@ fn handle_connection(mut stream: TcpStream, shared: &ServerShared, next_log_id: 
         selection.status,
         &selection.response,
         config.cors_enabled,
+    );
+    shared.usage.record_mock_hit(
+        shared.origin,
+        selection.route_id.is_some(),
+        selection.status,
     );
     let log = MockCallLogDto {
         id: next_log_id.fetch_add(1, Ordering::Relaxed),
@@ -428,6 +466,51 @@ mod tests {
         let mut output = String::new();
         stream.read_to_string(&mut output).unwrap();
         output
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<alcy_app::UsageEnvelope>>);
+
+    impl alcy_app::UsageEventSink for RecordingSink {
+        fn record(&self, envelope: alcy_app::UsageEnvelope) {
+            lock(&self.0).push(envelope);
+        }
+    }
+
+    #[test]
+    fn usage_events_count_hits_without_routes_or_paths() {
+        let usage = UsageHub::new("1.0.0", "linux");
+        let sink = Arc::new(RecordingSink::default());
+        usage.register_sink(sink.clone());
+        usage.activate(0);
+        let port = free_port();
+        let runtime = MockServerRuntime::with_usage(usage);
+        runtime.start(health_server("server", port)).unwrap();
+        call(port, "");
+        call(port, "");
+        runtime.stop("server");
+
+        let events: Vec<_> = lock(&sink.0)
+            .iter()
+            .map(|envelope| envelope.to_json())
+            .collect();
+        let names: Vec<_> = events.iter().map(|event| event["name"].clone()).collect();
+        assert_eq!(
+            names,
+            [
+                "app_opened",
+                "mock_server_started",
+                "mock_requests_served",
+                "mock_server_stopped"
+            ]
+        );
+        assert_eq!(events[1]["props"]["routeCount"], 1);
+        assert_eq!(
+            events[2]["props"],
+            serde_json::json!({ "origin": "saved", "matched": true, "statusClass": "2xx", "count": 2 })
+        );
+        assert_eq!(events[3]["props"], serde_json::json!({ "origin": "saved" }));
+        assert!(!serde_json::to_string(&events).unwrap().contains("/health"));
     }
 
     #[test]

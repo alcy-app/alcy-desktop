@@ -141,8 +141,12 @@ pub async fn preview_webclient_export(
 
 /// Gera o webclient e grava no arquivo escolhido.
 #[tauri::command]
-pub async fn export_webclient(input: ExportWebclientInput) -> Result<(), ExportWebclientError> {
+pub async fn export_webclient(
+    input: ExportWebclientInput,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
+) -> Result<(), ExportWebclientError> {
     let result = run_blocking(move || export_inner(input)).await;
+    crate::commands::usage_events::record_export(&usage, "webclient", &result);
     crate::logging::logged("alcy::export", "exportar webclient", result)
 }
 

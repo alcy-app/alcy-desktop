@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use alcy_app::{MonitorCandidate, ValueFinding, evaluate_value_monitors as evaluate_monitors};
+use alcy_app::{
+    MonitorCandidate, MonitorChange, UsageEvent, UsageHub, ValueFinding,
+    evaluate_value_monitors as evaluate_monitors,
+};
 use alcy_domain::{ValueMonitor, ValuePathSegment};
 use alcy_storage::{InvalidValueMonitor, StorageError, ValueMonitorRecord, ValueMonitorStore};
 use serde::{Deserialize, Serialize};
@@ -103,10 +106,54 @@ fn list_value_monitors_inner(
         .collect())
 }
 
-fn save_value_monitors_inner(input: SaveValueMonitorsInput) -> Result<(), ValueMonitorsError> {
+/// Saves and returns the usage events of what changed (created, enabled,
+/// disabled, deleted). Without a readable previous file, nothing is reported.
+fn save_value_monitors_inner(
+    input: SaveValueMonitorsInput,
+) -> Result<Vec<UsageEvent>, ValueMonitorsError> {
     let monitors = to_domain(&input.monitors)?;
-    ValueMonitorStore::new(PathBuf::from(input.root_path)).save(&monitors)?;
-    Ok(())
+    let store = ValueMonitorStore::new(PathBuf::from(input.root_path));
+    let previous: Option<Vec<ValueMonitorRecord>> = store.load().ok().map(|previous| {
+        previous
+            .iter()
+            .map(ValueMonitorRecord::from_domain)
+            .collect()
+    });
+    store.save(&monitors)?;
+    Ok(previous
+        .map(|previous| monitor_changes(&previous, &input.monitors))
+        .unwrap_or_default())
+}
+
+fn monitor_changes(
+    previous: &[ValueMonitorRecord],
+    next: &[ValueMonitorRecord],
+) -> Vec<UsageEvent> {
+    let event = |change, monitor: &ValueMonitorRecord| UsageEvent::MonitorChanged {
+        change,
+        rule_count: u64::try_from(monitor.rules.len()).unwrap_or(u64::MAX),
+    };
+    let mut events = Vec::new();
+    for monitor in next {
+        match previous.iter().find(|old| old.id == monitor.id) {
+            None => events.push(event(MonitorChange::Created, monitor)),
+            Some(old) if old.enabled != monitor.enabled => events.push(event(
+                if monitor.enabled {
+                    MonitorChange::Enabled
+                } else {
+                    MonitorChange::Disabled
+                },
+                monitor,
+            )),
+            Some(_) => {}
+        }
+    }
+    for old in previous {
+        if !next.iter().any(|monitor| monitor.id == old.id) {
+            events.push(event(MonitorChange::Deleted, old));
+        }
+    }
+    events
 }
 
 fn evaluate_value_monitors_inner(
@@ -155,9 +202,13 @@ pub async fn list_value_monitors(
 }
 
 #[tauri::command]
-pub async fn save_value_monitors(input: SaveValueMonitorsInput) -> Result<(), ValueMonitorsError> {
-    let result: Result<(), ValueMonitorsError> =
-        async { run_blocking(move || save_value_monitors_inner(input)).await }.await;
+pub async fn save_value_monitors(
+    input: SaveValueMonitorsInput,
+    usage: tauri::State<'_, UsageHub>,
+) -> Result<(), ValueMonitorsError> {
+    let result = run_blocking(move || save_value_monitors_inner(input))
+        .await
+        .map(|events| events.into_iter().for_each(|event| usage.record(event)));
     crate::logging::logged("alcy::monitors", "salvar monitores", result)
 }
 
@@ -223,6 +274,33 @@ mod tests {
 
         let listed = list_value_monitors_inner(ListValueMonitorsInput { root_path }).unwrap();
         assert_eq!(listed, vec![record("[a-z]+")]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn saving_reports_created_enabled_disabled_and_deleted_monitors() {
+        let root = temp_root();
+        let root_path = root.to_string_lossy().to_string();
+        let save = |monitors: Vec<ValueMonitorRecord>| {
+            save_value_monitors_inner(SaveValueMonitorsInput {
+                root_path: root_path.clone(),
+                monitors,
+            })
+            .unwrap()
+            .iter()
+            .map(UsageEvent::name)
+            .collect::<Vec<_>>()
+        };
+        let disabled = ValueMonitorRecord {
+            enabled: false,
+            ..record("[a-z]+")
+        };
+
+        assert_eq!(save(vec![record("[a-z]+")]), ["monitor_created"]);
+        assert!(save(vec![record("[a-z]+")]).is_empty());
+        assert_eq!(save(vec![disabled.clone()]), ["monitor_disabled"]);
+        assert_eq!(save(vec![record("[a-z]+")]), ["monitor_enabled"]);
+        assert_eq!(save(Vec::new()), ["monitor_deleted"]);
         let _ = std::fs::remove_dir_all(root);
     }
 

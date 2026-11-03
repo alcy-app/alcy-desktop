@@ -51,6 +51,7 @@ impl From<WorkspaceCommandError> for RemoteCommandError {
 /// Opens a team workspace: a recent copy linked to the same folder when
 /// there is one, otherwise a new local copy in the workspaces folder.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn open_onedrive_team_workspace(
     input: OpenTeamWorkspaceInput,
     app: tauri::AppHandle,
@@ -59,6 +60,7 @@ pub async fn open_onedrive_team_workspace(
     credentials: State<'_, KeyringCredentialStore>,
     files_view: State<'_, VersionControlFiles>,
     recent_store: State<'_, RecentWorkspacesStore>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<WorkspaceDto, RemoteCommandError> {
     let result: Result<WorkspaceDto, RemoteCommandError> = async {
         let account = find_onedrive_account(&onedrive.accounts, &input.account_id)?;
@@ -123,6 +125,11 @@ pub async fn open_onedrive_team_workspace(
         .await
     }
     .await;
+    if result.is_ok() {
+        usage.record(alcy_app::UsageEvent::WorkspaceOpened {
+            kind: alcy_app::WorkspaceOpenKind::OnedriveTeam,
+        });
+    }
     crate::logging::logged("alcy::onedrive", "abrir workspace do time", result)
 }
 

@@ -119,17 +119,49 @@ fn analyze_load_test_import_blocking(
 #[tauri::command]
 pub async fn commit_load_test_import(
     input: CommitLoadTestImportInput,
+    usage: tauri::State<'_, alcy_app::UsageHub>,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
-    tauri::async_runtime::spawn_blocking(move || commit_load_test_import_blocking(input))
-        .await
-        .map_err(|error| LoadTestImportErrorDto::Storage {
-            message: error.to_string(),
-        })?
+    let result =
+        tauri::async_runtime::spawn_blocking(move || commit_load_test_import_with_format(input))
+            .await
+            .map_err(|error| LoadTestImportErrorDto::Storage {
+                message: error.to_string(),
+            })
+            .and_then(|result| result);
+    usage.record(alcy_app::UsageEvent::ImportFinished {
+        format: result
+            .as_ref()
+            .ok()
+            .and_then(|(_, format)| alcy_app::UsageIdentifier::new(*format)),
+        source: alcy_app::ImportSource::File,
+        items: u64::from(result.is_ok()),
+        outcome: if result.is_ok() {
+            alcy_app::UsageOutcome::Succeeded
+        } else {
+            alcy_app::UsageOutcome::Failed
+        },
+    });
+    result.map(|(flow, _)| flow)
 }
 
+fn load_format_name(format: LoadImportFormat) -> &'static str {
+    match format {
+        LoadImportFormat::K6 => "k6",
+        LoadImportFormat::Jmeter => "jmeter",
+    }
+}
+
+#[cfg(test)]
 fn commit_load_test_import_blocking(
     input: CommitLoadTestImportInput,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
+    commit_load_test_import_with_format(input).map(|(flow, _)| flow)
+}
+
+/// The saved flow and the source format (`k6`, `jmeter`).
+fn commit_load_test_import_with_format(
+    input: CommitLoadTestImportInput,
+) -> Result<(FlowDto, &'static str), LoadTestImportErrorDto> {
     crate::logging::logged_with(
         "alcy::load-import",
         "confirmar importação de teste de carga",
@@ -183,7 +215,10 @@ fn commit_load_test_import_blocking(
                     message: format!("não foi possível finalizar os assets: {error}"),
                 });
             }
-            Ok(flow_to_dto(&analysis.flow))
+            Ok((
+                flow_to_dto(&analysis.flow),
+                load_format_name(analysis.format),
+            ))
         },
     )
 }
@@ -305,11 +340,7 @@ fn analysis_to_dto(
     analysis: LoadImportAnalysis,
     analysis_hash: String,
 ) -> LoadTestImportAnalysisDto {
-    let format = match analysis.format {
-        LoadImportFormat::K6 => "k6",
-        LoadImportFormat::Jmeter => "jmeter",
-    }
-    .to_string();
+    let format = load_format_name(analysis.format).to_string();
     let destinations = analysis
         .requests
         .iter()

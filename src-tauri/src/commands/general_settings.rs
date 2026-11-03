@@ -242,10 +242,14 @@ pub fn save_general_settings(
     graphql: State<'_, ReqwestGraphqlExecutor>,
     rest: State<'_, ReqwestRestExecutor>,
     history: State<'_, HistoryPreferencesState>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<GeneralSettingsDto, GeneralSettingsCommandError> {
-    crate::logging::logged_with("alcy::settings", "salvar configurações gerais", || {
-        save_settings(&store, &graphql, &rest, &history, &input)
-    })
+    let result =
+        crate::logging::logged_with("alcy::settings", "salvar configurações gerais", || {
+            save_settings(&store, &graphql, &rest, &history, &input)
+        });
+    crate::commands::usage_events::record_setting(&usage, "general", None, &result);
+    result
 }
 
 #[cfg(test)]

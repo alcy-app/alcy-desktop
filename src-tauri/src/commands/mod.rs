@@ -61,6 +61,7 @@ pub mod tab_session;
 pub mod team_workspaces;
 pub mod tls_settings;
 pub mod updates;
+pub mod usage_events;
 pub mod value_monitors;
 pub mod variable_scopes;
 pub mod version_control;

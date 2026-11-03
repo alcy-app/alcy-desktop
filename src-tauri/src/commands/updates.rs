@@ -901,10 +901,18 @@ pub fn set_update_check_on_startup(
     app: AppHandle,
     store: State<'_, UpdateSettingsStore>,
     accounts: State<'_, GitlabAccountsStore>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
-    save_preference(&app, &store, &accounts, |settings| {
+    let result = save_preference(&app, &store, &accounts, |settings| {
         settings.check_on_startup = input.enabled;
-    })
+    });
+    crate::commands::usage_events::record_setting(
+        &usage,
+        "updates",
+        Some("checkOnStartup"),
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -913,10 +921,18 @@ pub fn set_update_include_prereleases(
     app: AppHandle,
     store: State<'_, UpdateSettingsStore>,
     accounts: State<'_, GitlabAccountsStore>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
-    save_preference(&app, &store, &accounts, |settings| {
+    let result = save_preference(&app, &store, &accounts, |settings| {
         settings.include_prereleases = input.enabled;
-    })
+    });
+    crate::commands::usage_events::record_setting(
+        &usage,
+        "updates",
+        Some("includePrereleases"),
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -1035,6 +1051,7 @@ pub fn install_update_and_restart(
     pending: State<'_, PendingUpdate>,
     recents: State<'_, RecentWorkspacesStore>,
     folders: State<'_, AppLogLocation>,
+    usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<(), UpdateCommandError> {
     crate::logging::logged_with("alcy::updates", "instalar atualização", || {
         let downloaded = pending.take().ok_or(UpdateCommandError::NoPendingUpdate)?;
@@ -1050,6 +1067,13 @@ pub fn install_update_and_restart(
             return Err(error);
         }
         crate::window_state::save(&app);
+        // The installer may close the app without an exit event: record and
+        // deliver the session's events first.
+        if let Some(to_version) = alcy_app::UsageIdentifier::new(downloaded.update.version.clone())
+        {
+            usage.record(alcy_app::UsageEvent::UpdateInstalled { to_version });
+        }
+        usage.shutdown(crate::commands::usage_events::USAGE_SHUTDOWN_DEADLINE);
         downloaded.update.install(&downloaded.bytes)?;
         app.restart()
     })
