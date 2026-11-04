@@ -140,6 +140,43 @@ describe('ShareScreenshotModal', () => {
     expect(exportPng).toHaveBeenCalledWith('/tmp/grpc.png', expect.any(Uint8Array))
   })
 
+  it('shares only a selected excerpt, with its context fields and its line range', async () => {
+    pickExportFile.mockResolvedValue('/tmp/trecho.png')
+    exportPng.mockResolvedValue({ ok: true })
+    render(
+      <ShareScreenshotModal
+        tab={tab}
+        execution={{ status: 'success', result }}
+        inheritedAuthentication={undefined}
+        environmentVariables={[{ name: 'baseUrl', value: 'https://api.test', sensitive: false }]}
+        requestName="Listar usuários"
+        environmentName="Homologação"
+        excerpt={{ lines: ['"ok": true'], spans: [[{ text: '"ok": true', tone: 'plain' }]], firstLine: 2, language: 'json' }}
+        onClose={() => {}}
+      />,
+    )
+
+    expect(screen.getByRole('dialog', { name: 'Compartilhar seleção como imagem' })).toBeInTheDocument()
+    expect(screen.getByText('Linha 2')).toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Organização' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Corpo da resposta' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Headers da requisição' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Status, tempo e tamanho' })).toBeChecked()
+
+    await waitFor(() => expect(drawScreenshot).toHaveBeenCalled())
+    const layout = drawScreenshot.mock.calls.at(-1)![1] as ScreenshotLayout
+    const text = layout.ops.flatMap((op) => op.kind === 'text' ? [op.text] : [])
+    expect(text).toEqual(expect.arrayContaining(['Listar usuários', 'GET', 'HTTP 200', 'Body  ·  Linha 2']))
+    expect(text).not.toContain('REQUISIÇÃO')
+    const code = layout.ops.flatMap((op) => op.kind === 'code' ? [op.spans.map((span) => span.text).join('')] : [])
+    expect(code).toEqual(['2', '"ok": true'])
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar PNG' }))
+    expect(await screen.findByText('Imagem salva.')).toBeInTheDocument()
+    expect(pickExportFile).toHaveBeenCalledWith(expect.stringMatching(/^Listar usuários-L2-2-\d{8}-\d{4}$/), 'png')
+  })
+
   it('desenha a prévia no tema escolhido e lembra as opções', async () => {
     const { unmount } = renderModal()
     expect(screen.getByRole('img', { name: 'Prévia da imagem' })).toBeInTheDocument()

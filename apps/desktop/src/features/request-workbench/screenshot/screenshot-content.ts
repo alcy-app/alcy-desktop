@@ -13,7 +13,8 @@ type HttpResult = NonNullable<ReturnType<typeof httpResultOf>>
 import { resolveTemplateForDisplay } from '../resolve-url'
 import { detectBodyMode } from '../response-body-mode'
 import { formatSize, statusTone, type StatusTone } from '../response-summary'
-import type { HighlightLanguage } from './screenshot-highlight'
+import { excerptLastLine, type ResponseExcerpt } from './response-excerpt'
+import type { HighlightLanguage, HighlightSpan } from './screenshot-highlight'
 import { lineLimitValue, type ScreenshotOptions } from './screenshot-options'
 
 export interface ScreenshotRow {
@@ -26,6 +27,10 @@ export interface ScreenshotCodeBlock {
   label: string | null
   language: HighlightLanguage
   lines: string[]
+  /** Number shown beside `lines[0]` (1 unless the block is an excerpt). */
+  firstLineNumber?: number
+  /** Colors already computed for `lines`; otherwise the layout highlights them by `language`. */
+  spans?: HighlightSpan[][]
   /** Lines omitted by the per-body line limit. */
   omittedLines: number
   /** Note below the block, such as a large-body preview notice. */
@@ -71,6 +76,8 @@ export interface ScreenshotSource {
   environmentVariables: EnvironmentVariableDto[]
   requestName: string
   environmentName: string | null
+  /** Response lines the user selected: the image shows only them, without request data. */
+  excerpt?: ResponseExcerpt | null
 }
 
 /** Translated text used in image content. */
@@ -81,6 +88,8 @@ export interface ScreenshotContentText {
   emptyBody: string
   previewOnly: (shown: string, total: string) => string
   file: (path: string) => string
+  /** Label of an excerpt block, from its first and last line numbers. */
+  excerptLabel: (first: number, last: number) => string
 }
 
 const RAW_LANGUAGES: Record<RawBodyLanguage, HighlightLanguage> = {
@@ -160,6 +169,20 @@ function requestBodyBlocks(
         : null
     case 'file':
       return [codeBlock('Body', 'text', text.file(snippetBody.path), limit)]
+  }
+}
+
+function excerptBlock(excerpt: ResponseExcerpt, text: ScreenshotContentText): ScreenshotCodeBlock {
+  const lines = excerpt.lines.slice(0, lineLimitValue('all'))
+  return {
+    kind: 'code',
+    label: text.excerptLabel(excerpt.firstLine, excerptLastLine(excerpt)),
+    language: excerpt.language,
+    lines,
+    firstLineNumber: excerpt.firstLine,
+    spans: excerpt.spans.slice(0, lines.length),
+    omittedLines: excerpt.lines.length - lines.length,
+    note: null,
   }
 }
 
@@ -254,6 +277,19 @@ function buildResponse(
   }
 }
 
+/** The response card around an excerpt: its status when enabled, then the selected lines. */
+function excerptResponse(
+  execution: ExecutionState,
+  excerpt: ResponseExcerpt,
+  options: ScreenshotOptions,
+  redaction: HarRedactionContext | null,
+  text: ScreenshotContentText,
+): ScreenshotResponse {
+  const response = options.fields.status ? buildResponse(execution, options, redaction, text) : null
+  const status = response?.kind === 'success' ? response.status : null
+  return { kind: 'success', status, headers: null, body: excerptBlock(excerpt, text) }
+}
+
 /** Builds image content from the tab and its last execution. Request data
  * reuses the code-sharing resolver. When hiding sensitive data, sensitive
  * variables remain as placeholders and credential headers use HAR redaction. */
@@ -262,8 +298,12 @@ export function buildScreenshotContent(
   options: ScreenshotOptions,
   text: ScreenshotContentText,
 ): ScreenshotContent {
-  const { fields, hideSensitive } = options
-  const { tab, execution } = source
+  const { hideSensitive } = options
+  const { tab, execution, excerpt } = source
+  // An excerpt replaces the bodies and headers; only its context fields still apply.
+  const fields = excerpt
+    ? { ...options.fields, requestHeaders: false, requestBody: false, responseHeaders: false, responseBody: false }
+    : options.fields
   const variables = hideSensitive
     ? source.environmentVariables
     : source.environmentVariables.map((variable) => ({ ...variable, sensitive: false }))
@@ -291,7 +331,7 @@ export function buildScreenshotContent(
       ...(snippet.grpc ? { rpc: [snippet.grpc.service, snippet.grpc.method].filter(Boolean).join('/') } : {}),
     } : null,
     request: requestHeaders || requestBody ? { headers: requestHeaders, body: requestBody } : null,
-    response: buildResponse(execution, options, redaction, text),
+    response: excerpt ? excerptResponse(execution, excerpt, { ...options, fields }, redaction, text) : buildResponse(execution, options, redaction, text),
   }
 }
 

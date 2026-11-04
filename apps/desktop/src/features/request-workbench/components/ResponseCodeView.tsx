@@ -3,7 +3,7 @@ import type { FocusEvent } from 'react'
 import { Compartment, EditorState } from '@codemirror/state'
 import type { StateEffect } from '@codemirror/state'
 import { EditorView, drawSelection, gutters, highlightActiveLine, highlightActiveLineGutter, keymap } from '@codemirror/view'
-import { foldEffect, foldGutter, foldKeymap, foldedRanges, syntaxHighlighting, unfoldEffect } from '@codemirror/language'
+import { ensureSyntaxTree, foldEffect, foldGutter, foldKeymap, foldedRanges, syntaxHighlighting, unfoldEffect } from '@codemirror/language'
 import { standardKeymap } from '@codemirror/commands'
 import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
 import { useLanguage } from '../../../shared/i18n/use-language'
@@ -26,6 +26,8 @@ import { formatResponseText } from '../response-text-format'
 import { accessorFor, type JsonPathSegment } from '../json-value-index'
 import type { AgentMentionRequest } from '../../agent/agent-mention-bridge'
 import { MentionInChatMenuItem } from '../../agent/MentionInChatMenuItem'
+import { excerptFromSelection, type ResponseExcerpt } from '../screenshot/response-excerpt'
+import { highlightTreeRange, type HighlightLanguage } from '../screenshot/screenshot-highlight'
 import { jsonValueAtCoords, valueCaptureExtension } from '../value-capture'
 import { setMonitorHighlights, valueMonitorHighlightExtension } from '../value-monitor-highlight'
 import { monitorTooltipContent } from '../value-monitor-tooltip'
@@ -64,12 +66,16 @@ interface ResponseCodeViewProps {
    * come back when the same response mounts again; read only at mount.
    */
   viewMemoryKey?: string
+  /** When present, the context menu of a selection offers sharing it as an image. */
+  onShareSelection?: (excerpt: ResponseExcerpt) => void
 }
 
 interface ResponseContextMenuState {
   x: number
   y: number
   selectedText: string
+  /** Document range of `selectedText`. */
+  selection: { from: number; to: number }
   /** Texto do valor JSON sob o clique (string sem aspas), copiado quando não há seleção. */
   valueText: string
   /** Caminho do valor JSON sob o clique, quando há um e a captura está disponível. */
@@ -103,6 +109,24 @@ function decodedValueText(raw: string): string {
   } catch {
     return raw
   }
+}
+
+/** Colors are only needed for the image; a parse slower than this falls back to coloring the excerpt alone. */
+const EXCERPT_PARSE_TIMEOUT_MS = 200
+
+/** The selection as an image excerpt, colored by the document's own syntax tree. */
+function selectionExcerpt(state: EditorState, from: number, to: number, language: ResponseCodeLanguage): ResponseExcerpt | null {
+  const text = state.sliceDoc(from, to)
+  const tree = ensureSyntaxTree(state, to, EXCERPT_PARSE_TIMEOUT_MS)
+  const line = state.doc.lineAt(from)
+  const highlightLanguage: HighlightLanguage = language === 'none' ? 'text' : language
+  return excerptFromSelection({
+    text,
+    spans: tree ? highlightTreeRange(tree, text, from) : undefined,
+    startLine: line.number,
+    startColumn: from - line.from,
+    language: highlightLanguage,
+  })
 }
 
 function formattedTextFor(text: string, language: ResponseCodeLanguage, partial: boolean): string {
@@ -212,6 +236,7 @@ export function ResponseCodeView({
   onMonitorFailedCount,
   agentSlot,
   viewMemoryKey,
+  onShareSelection,
 }: ResponseCodeViewProps) {
   const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -299,8 +324,8 @@ export function ResponseCodeView({
             event.preventDefault()
             const selection = editor.state.selection.main
             const selectedText = selection.empty ? '' : editor.state.sliceDoc(selection.from, selection.to)
-            const menuWidth = 136
-            const menuHeight = 108
+            const menuWidth = 220
+            const menuHeight = 140
             const value = isJsonRef.current ? jsonValueAtCoords(editor, event.clientX, event.clientY) : null
             const capturePath = onCaptureValueRef.current ? (value?.path ?? null) : null
             const valueText = value ? decodedValueText(editor.state.sliceDoc(value.from, value.to)) : ''
@@ -308,6 +333,7 @@ export function ResponseCodeView({
               x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
               y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
               selectedText,
+              selection: { from: selection.from, to: selection.to },
               valueText,
               capturePath,
               valuePath: value?.path ?? null,
@@ -442,6 +468,15 @@ export function ResponseCodeView({
     })
   }
 
+  const shareSelection = () => {
+    const view = viewRef.current
+    const range = contextMenu?.selection
+    setContextMenu(null)
+    if (!view || !range) return
+    const excerpt = selectionExcerpt(view.state, range.from, range.to, language)
+    if (excerpt) onShareSelection?.(excerpt)
+  }
+
   const captureValue = () => {
     const path = contextMenu?.capturePath
     setContextMenu(null)
@@ -487,6 +522,9 @@ export function ResponseCodeView({
             autoFocus
             onSelect={() => void copySelection()}
           />
+          {onShareSelection && contextMenu.selectedText.trim() && (
+            <MenuItem label={t('response.shareSelectionAsImage')} onSelect={shareSelection} />
+          )}
           {contextMenu.capturePath && (
             <MenuItem label={t('response.captureInScript')} onSelect={captureValue} />
           )}

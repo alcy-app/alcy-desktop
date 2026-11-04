@@ -289,12 +289,14 @@ function layoutTable(b: LayoutBuilder, block: ScreenshotTableBlock, x: number, y
 function layoutCode(b: LayoutBuilder, block: ScreenshotCodeBlock, x: number, y: number, width: number) {
   const bottom = b.well(x, y, width, (innerX, innerY, innerWidth) => {
     const charWidth = b.charWidth(CODE_FONT)
-    const digits = String(Math.max(block.lines.length, 1)).length
+    const firstNumber = block.firstLineNumber ?? 1
+    const digits = String(firstNumber + Math.max(block.lines.length, 1) - 1).length
     const codeX = innerX + digits * charWidth + 14
     const maxChars = Math.max(MIN_CHARS, Math.floor((innerX + innerWidth - codeX) / charWidth))
     let lineY = innerY
-    highlightLines(block.lines, block.language).forEach((spans, index) => {
-      const number = String(index + 1)
+    const highlighted = block.spans ?? highlightLines(block.lines, block.language)
+    highlighted.forEach((spans, index) => {
+      const number = String(firstNumber + index)
       b.plainCode(innerX + (digits - number.length) * charWidth, lineY, number, 'punctuation')
       const length = block.lines[index].length
       for (const [start, end] of chunkRanges(length, maxChars)) {

@@ -60,6 +60,24 @@ function lezerSpans(text: string, language: LRLanguage): HighlightSpan[] {
   return spans
 }
 
+/**
+ * Colored spans of `text`, the document slice from `from`, using a tree
+ * already parsed for the whole document: a fragment keeps the colors it has
+ * in context (a selected `"name": 1` is still a key, not a string).
+ */
+export function highlightTreeRange(tree: Parameters<typeof highlightTree>[0], text: string, from: number): HighlightSpan[] {
+  const spans: HighlightSpan[] = []
+  let cursor = 0
+  highlightTree(tree, toneHighlighter, (start, end, classes) => {
+    const spanFrom = start - from
+    if (spanFrom > cursor) spans.push({ text: text.slice(cursor, spanFrom), tone: 'plain' })
+    spans.push({ text: text.slice(spanFrom, end - from), tone: classes.split(' ')[0] as HighlightTone })
+    cursor = end - from
+  }, from, from + text.length)
+  if (cursor < text.length) spans.push({ text: text.slice(cursor), tone: 'plain' })
+  return spans
+}
+
 /** Colored spans of a whole text; joined, they rebuild it. Also used by the agent chat code blocks. */
 export function highlightSpans(text: string, language: HighlightLanguage): HighlightSpan[] {
   if (language === 'graphql') return tokenizeGraphql(text).map((token) => ({ text: token.text, tone: GRAPHQL_TONES[token.type] }))

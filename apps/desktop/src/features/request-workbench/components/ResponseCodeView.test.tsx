@@ -155,4 +155,39 @@ describe('ResponseCodeView', () => {
 
     expect(screen.queryByRole('menuitem', { name: 'Capturar em script de resposta' })).not.toBeInTheDocument()
   })
+
+  it('shares the selected lines as an image excerpt, numbered and colored as in the view', () => {
+    const onShareSelection = vi.fn()
+    const { container } = render(<ResponseCodeView text='{"first":1,"second":2}' language="json" onShareSelection={onShareSelection} />)
+    const secondLineNumber = [...container.querySelectorAll<HTMLElement>('.cm-lineNumbers .cm-gutterElement')].find(
+      (element) => element.textContent === '2',
+    )
+
+    fireEvent.mouseDown(secondLineNumber!, { button: 0 })
+    fireEvent.contextMenu(container.querySelector('.cm-content')!, { clientX: 40, clientY: 60 })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compartilhar como imagem' }))
+
+    expect(onShareSelection).toHaveBeenCalledWith(expect.objectContaining({ firstLine: 2, lines: ['"first": 1,'], language: 'json' }))
+    expect(onShareSelection.mock.calls[0][0].spans[0][0]).toEqual({ text: '"first"', tone: 'key' })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('offers sharing as an image only for a selection and with the callback', () => {
+    const openMenu = (container: HTMLElement, selectLine: boolean) => {
+      const line = [...container.querySelectorAll<HTMLElement>('.cm-lineNumbers .cm-gutterElement')].find((element) => element.textContent === '2')
+      if (selectLine) fireEvent.mouseDown(line!, { button: 0 })
+      fireEvent.contextMenu(container.querySelector('.cm-content')!, { clientX: 40, clientY: 60 })
+    }
+    const shareItem = () => screen.queryByRole('menuitem', { name: 'Compartilhar como imagem' })
+
+    const withCallback = render(<ResponseCodeView text='{"a":1}' language="json" onShareSelection={vi.fn()} />)
+    openMenu(withCallback.container, false)
+    expect(shareItem()).not.toBeInTheDocument()
+    withCallback.unmount()
+
+    const withoutCallback = render(<ResponseCodeView text='{"a":1}' language="json" />)
+    openMenu(withoutCallback.container, true)
+    expect(screen.getByRole('menuitem', { name: 'Copiar' })).toBeEnabled()
+    expect(shareItem()).not.toBeInTheDocument()
+  })
 })

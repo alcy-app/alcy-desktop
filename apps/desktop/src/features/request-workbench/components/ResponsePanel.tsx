@@ -19,6 +19,7 @@ import { describeError, errorDetail, errorLabel, formatSize, statusTone } from '
 import type { ExecutionState, ResponseTabId } from '../request-workbench.types'
 import { Tabs } from '../../../shared/ui/Tabs'
 import type { JsonPathSegment } from '../json-value-index'
+import type { ResponseExcerpt } from '../screenshot/response-excerpt'
 import { orderPair } from '../send-history'
 import { usePastSend, useRequestSends } from '../use-send-history'
 import { ResponseBody, type ResponseBodyMonitor } from './ResponseBody'
@@ -70,6 +71,8 @@ interface ResponsePanelProps {
   monitor?: ResponseMonitorControl
   /** Open Save responses settings when history did not retain the displayed body. */
   onOpenHistorySettings?: () => void
+  /** Share lines selected in the current response body as an image. */
+  onShareSelection?: (excerpt: ResponseExcerpt) => void
 }
 
 export interface ResponseMonitorControl {
@@ -111,6 +114,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   currentSendId = null,
   monitor,
   onOpenHistorySettings,
+  onShareSelection,
 }: ResponsePanelProps) {
   const { t, language } = useLanguage()
   const { showToast } = useToast()
@@ -413,6 +417,8 @@ export const ResponsePanel = memo(function ResponsePanel({
                 onCaptureValue={view.kind === 'current' ? onCaptureValue : undefined}
                 monitor={bodyMonitor}
                 agentSlot={view.kind === 'current' ? 'response' : undefined}
+                // The image describes the current execution; a history entry is another response.
+                onShareSelection={view.kind === 'current' ? onShareSelection : undefined}
                 // Only the current response: switching tabs always comes back to it.
                 viewMemoryKey={view.kind === 'current' && sendsSource ? bodyKey : undefined}
               />

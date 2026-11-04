@@ -18,6 +18,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Ao voltar para uma aba, a resposta continua onde você parou: mesma rolagem, cursor e trechos recolhidos, e a busca (Ctrl+F) segue aberta com o mesmo texto e a mesma ocorrência selecionada.
 - Com um texto selecionado no editor, Ctrl+F já abre a busca procurando por ele.
 - O menu de opções de um monitor de valores tem "Mencionar no chat", como as demais listas.
+- Selecione um trecho da resposta e use "Compartilhar como imagem" no menu do botão direito: a imagem mostra só as linhas escolhidas, com a numeração original, e você decide se inclui nome, URL e status.
 
 ## [0.9.0] - 03/11/2026
 

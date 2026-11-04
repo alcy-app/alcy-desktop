@@ -42,6 +42,18 @@ const cards = (ops: DrawOp[]) => ops.filter((op): op is Extract<DrawOp, { kind: 
 const codeText = (op: DrawOp) => (op.kind === 'code' ? op.spans.map((span) => span.text).join('') : '')
 
 describe('layoutScreenshot', () => {
+  it('numbers excerpt lines from their position in the response and draws their own colors', () => {
+    const body: ScreenshotCodeBlock = {
+      ...codeBlock(['"a": 1', '"b": 2']),
+      firstLineNumber: 98,
+      spans: [[{ text: '"a": 1', tone: 'key' }], [{ text: '"b": 2', tone: 'key' }]],
+    }
+    const layout = layoutScreenshot({ ...content, request: null, response: { kind: 'success', status: null, headers: null, body } }, vertical, measure, labels)
+    const code = layout.ops.filter((op) => op.kind === 'code').map(codeText)
+    expect(code).toEqual(['98', '"a": 1', '99', '"b": 2'])
+    expect(layout.ops.some((op) => op.kind === 'code' && op.spans.some((span) => span.text === '"a": 1' && span.tone === 'key'))).toBe(true)
+  })
+
   it('wraps a long RPC method and keeps gRPC status, trailers and metrics inside compact columns', () => {
     const rpc = `very.long.package.${'Service'.repeat(10)}/LotsOfReplies`
     const layout = layoutScreenshot({ ...content,

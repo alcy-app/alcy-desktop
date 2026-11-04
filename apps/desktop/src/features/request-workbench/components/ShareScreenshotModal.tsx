@@ -4,6 +4,7 @@ import { exportPng } from '../../../bindings/export-png'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { pickExportFile } from '../../../bindings/pick-export-file'
 import { serializeCollections } from '../../../bindings/serialize-collections'
+import type { LanguageContextValue } from '../../../shared/i18n/language-context'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
 import { Checkbox } from '../../../shared/ui/Checkbox'
@@ -21,6 +22,7 @@ import {
   hasSuspectedPasswordInImportMetadata,
 } from '../screenshot/import-metadata'
 import { embedPngText } from '../screenshot/png-text-chunk'
+import { excerptLastLine, type ResponseExcerpt } from '../screenshot/response-excerpt'
 import { buildScreenshotContent, isScreenshotEmpty, type ScreenshotContentText } from '../screenshot/screenshot-content'
 import { layoutScreenshot, type ScreenshotLayoutLabels } from '../screenshot/screenshot-layout'
 import {
@@ -45,8 +47,13 @@ interface ShareScreenshotModalProps {
   environmentVariables: EnvironmentVariableDto[]
   requestName: string
   environmentName: string | null
+  /** Response lines selected to share: the image shows only them, with the chosen context. */
+  excerpt?: ResponseExcerpt | null
   onClose: () => void
 }
+
+/** Fields that still apply to an excerpt: the context around the selected lines. */
+const EXCERPT_FIELDS: ScreenshotField[] = ['header', 'url', 'status']
 
 const pad = (value: number) => String(value).padStart(2, '0')
 
@@ -54,6 +61,10 @@ const pad = (value: number) => String(value).padStart(2, '0')
 function suggestedFileName(requestName: string, date: Date): string {
   const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`
   return `${requestName}-${stamp}`
+}
+
+function lineRangeLabel(t: LanguageContextValue['t'], first: number, last: number): string {
+  return first === last ? t('share.image.excerptLine', { line: first }) : t('share.image.excerptLines', { from: first, to: last })
 }
 
 /** Import metadata generation failed after the image was rendered. */
@@ -68,8 +79,8 @@ function OptionGroup({ label, children }: { label: string; children: ReactNode }
   )
 }
 
-/** Shares endpoint, request and response as a PNG. The preview is the same
- * canvas that is copied or saved. */
+/** Shares endpoint, request and response as a PNG, or only lines selected in
+ * the response (`excerpt`). The preview is the same canvas that is copied or saved. */
 export function ShareScreenshotModal({
   tab,
   execution,
@@ -77,6 +88,7 @@ export function ShareScreenshotModal({
   environmentVariables,
   requestName,
   environmentName,
+  excerpt = null,
   onClose,
 }: ShareScreenshotModalProps) {
   const { t, language } = useLanguage()
@@ -91,6 +103,7 @@ export function ShareScreenshotModal({
   const [busy, setBusy] = useState<'copy' | 'save' | null>(null)
   const [pendingExport, setPendingExport] = useState<'copy' | 'save' | null>(null)
   const hasResponse = execution.status === 'success' || execution.status === 'error'
+  const bodyLabel = tab.protocol === 'grpc' ? t('grpc.messages') : 'Body'
 
   useEffect(() => {
     persistScreenshotOptions(options)
@@ -114,8 +127,9 @@ export function ShareScreenshotModal({
       emptyBody: t('share.image.emptyBody'),
       previewOnly: (shown, total) => t('share.image.previewOnly', { shown, total }),
       file: (path) => t('share.image.file', { path }),
+      excerptLabel: (first, last) => `${bodyLabel}  ·  ${lineRangeLabel(t, first, last)}`,
     }),
-    [t, language, capturedAt],
+    [t, language, capturedAt, bodyLabel],
   )
 
   const labels = useMemo<ScreenshotLayoutLabels>(
@@ -123,24 +137,24 @@ export function ShareScreenshotModal({
       request: t('share.image.request'),
       response: t('share.image.response'),
       headers: tab.protocol === 'grpc' ? t('grpc.metadata') : 'Headers',
-      body: tab.protocol === 'grpc' ? t('grpc.messages') : 'Body',
+      body: bodyLabel,
       trailers: t('grpc.trailers'),
       environment: (name) => t('share.image.environment', { name }),
       capturedAt: (date) => t('share.image.capturedAt', { date }),
       moreLines: (count) => (count === 1 ? t('share.image.moreLine') : t('share.image.moreLines', { count })),
       truncated: t('share.image.truncated'),
     }),
-    [t, tab.protocol],
+    [t, tab.protocol, bodyLabel],
   )
 
   const content = useMemo(
     () =>
       buildScreenshotContent(
-        { tab, execution, inheritedAuthentication, environmentVariables, requestName, environmentName },
+        { tab, execution, inheritedAuthentication, environmentVariables, requestName, environmentName, excerpt },
         options,
         text,
       ),
-    [tab, execution, inheritedAuthentication, environmentVariables, requestName, environmentName, options, text],
+    [tab, execution, inheritedAuthentication, environmentVariables, requestName, environmentName, excerpt, options, text],
   )
   const empty = isScreenshotEmpty(content)
 
@@ -225,7 +239,8 @@ export function ShareScreenshotModal({
   const handleSave = async (clearSuspectedPasswords = false) => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const path = await pickExportFile(suggestedFileName(requestName, capturedAt), 'png')
+    const baseName = excerpt ? `${requestName}-L${excerpt.firstLine}-${excerptLastLine(excerpt)}` : requestName
+    const path = await pickExportFile(suggestedFileName(baseName, capturedAt), 'png')
     if (!path) return
     setBusy('save')
     try {
@@ -264,26 +279,38 @@ export function ShareScreenshotModal({
 
   return (
     <Modal
-      title={t('share.image.title')}
+      title={t(excerpt ? 'share.image.selectionTitle' : 'share.image.title')}
       closeAriaLabel={t('collections.closeModalAria')}
       onClose={onClose}
       className="share-shot-modal"
     >
       <div className="share-shot">
         <div className="share-shot-options">
-          <OptionGroup label={t('share.image.layout')}>
-            <SegmentedControl
-              layout="inline"
-              className="share-shot-segmented"
-              ariaLabel={t('share.image.layout')}
-              value={options.layout}
-              onChange={(layout) => update({ layout })}
-              options={[
-                { value: 'vertical', label: t('share.image.layout.vertical') },
-                { value: 'sideBySide', label: t('share.image.layout.sideBySide') },
-              ]}
-            />
-          </OptionGroup>
+          {excerpt && (
+            <OptionGroup label={t('share.image.selection')}>
+              <p className="share-shot-selection">
+                <span className="share-shot-selection-range">{lineRangeLabel(t, excerpt.firstLine, excerptLastLine(excerpt))}</span>
+                <span className="share-shot-selection-source">
+                  {t(tab.protocol === 'grpc' ? 'share.image.grpcField.responseBody' : 'share.image.field.responseBody')}
+                </span>
+              </p>
+            </OptionGroup>
+          )}
+          {!excerpt && (
+            <OptionGroup label={t('share.image.layout')}>
+              <SegmentedControl
+                layout="inline"
+                className="share-shot-segmented"
+                ariaLabel={t('share.image.layout')}
+                value={options.layout}
+                onChange={(layout) => update({ layout })}
+                options={[
+                  { value: 'vertical', label: t('share.image.layout.vertical') },
+                  { value: 'sideBySide', label: t('share.image.layout.sideBySide') },
+                ]}
+              />
+            </OptionGroup>
+          )}
           <OptionGroup label={t('share.image.theme')}>
             <SegmentedControl
               layout="inline"
@@ -312,8 +339,8 @@ export function ShareScreenshotModal({
             />
           </OptionGroup>
           <fieldset className="share-shot-group share-shot-fields">
-            <legend className="share-shot-group-label">{t('share.image.fields')}</legend>
-            {SCREENSHOT_FIELDS.map((field) => (
+            <legend className="share-shot-group-label">{t(excerpt ? 'share.image.context' : 'share.image.fields')}</legend>
+            {(excerpt ? EXCERPT_FIELDS : SCREENSHOT_FIELDS).map((field) => (
               <label key={field} className="share-shot-check">
                 <Checkbox
                   checked={options.fields[field]}
@@ -326,17 +353,19 @@ export function ShareScreenshotModal({
             ))}
             {!hasResponse && <p className="share-shot-hint">{t('share.image.noResponse')}</p>}
           </fieldset>
-          <div className="share-shot-group">
-            <label className="share-shot-group-label" htmlFor={lineLimitId}>
-              {t('share.image.lineLimit')}
-            </label>
-            <OptionSelect
-              id={lineLimitId}
-              value={options.lineLimit}
-              options={lineLimitOptions}
-              onChange={(lineLimit) => update({ lineLimit })}
-            />
-          </div>
+          {!excerpt && (
+            <div className="share-shot-group">
+              <label className="share-shot-group-label" htmlFor={lineLimitId}>
+                {t('share.image.lineLimit')}
+              </label>
+              <OptionSelect
+                id={lineLimitId}
+                value={options.lineLimit}
+                options={lineLimitOptions}
+                onChange={(lineLimit) => update({ lineLimit })}
+              />
+            </div>
+          )}
           <div className="share-shot-group">
             <label className="share-shot-check">
               <Checkbox checked={options.hideSensitive} onChange={() => update({ hideSensitive: !options.hideSensitive })} />

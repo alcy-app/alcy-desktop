@@ -69,6 +69,30 @@
   font-size: var(--font-size-sm);
 }
 
+/* What the excerpt image shows: the line range and where it came from. */
+.share-shot-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.share-shot-selection-range {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.share-shot-selection-source {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
 .share-shot-preview {
   display: flex;
   flex-direction: column;

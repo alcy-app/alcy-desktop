@@ -12,6 +12,7 @@ import type { ResponseCodeLanguage } from './ResponseCodeView'
 import type { JsonPathSegment } from '../json-value-index'
 import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
 import type { EditorSlot } from '../editor-bridge'
+import type { ResponseExcerpt } from '../screenshot/response-excerpt'
 
 /** Monitor de valores ligado: monitores a aplicar e onde reportar quantos valores reprovaram. */
 export interface ResponseBodyMonitor {
@@ -30,6 +31,8 @@ interface ResponseBodyProps {
   agentSlot?: EditorSlot
   /** Keeps the code view's position and search across remounts (see `ResponseCodeView`). */
   viewMemoryKey?: string
+  /** When present, a selection in the code view can be shared as an image. */
+  onShareSelection?: (excerpt: ResponseExcerpt) => void
 }
 
 const FORMAT_OPTIONS: ResponseBodyMode[] = ['json', 'xml', 'html', 'text']
@@ -71,6 +74,7 @@ function TextBodyView({
   monitor,
   agentSlot,
   viewMemoryKey,
+  onShareSelection,
 }: {
   text: string
   selectedFormat: ResponseBodyMode
@@ -81,6 +85,7 @@ function TextBodyView({
   monitor?: ResponseBodyMonitor | null
   agentSlot?: EditorSlot
   viewMemoryKey?: string
+  onShareSelection?: (excerpt: ResponseExcerpt) => void
 }) {
   if (selectedFormat === 'html' && htmlPreview) return <HtmlPreview body={text} />
   return (
@@ -93,6 +98,7 @@ function TextBodyView({
       onMonitorFailedCount={monitor?.onFailedCount}
       agentSlot={agentSlot}
       viewMemoryKey={viewMemoryKey}
+      onShareSelection={onShareSelection}
     />
   )
 }
@@ -324,6 +330,7 @@ interface WindowedTextBodyProps {
   monitor?: ResponseBodyMonitor | null
   agentSlot?: EditorSlot
   viewMemoryKey?: string
+  onShareSelection?: (excerpt: ResponseExcerpt) => void
 }
 
 function WindowedTextBody({
@@ -337,6 +344,7 @@ function WindowedTextBody({
   monitor,
   agentSlot,
   viewMemoryKey,
+  onShareSelection,
 }: WindowedTextBodyProps) {
   const { t } = useLanguage()
   const { text, nextOffset, isLoading, loadError, isAutoLoading, handleLoadMore, handleLoadAll } = useWindowedBodyText(
@@ -359,6 +367,7 @@ function WindowedTextBody({
         monitor={monitor}
         agentSlot={agentSlot}
         viewMemoryKey={viewMemoryKey}
+        onShareSelection={onShareSelection}
       />
       {!isAutoLoading && nextOffset !== null && (
         <div className="rw-code-block-actions">
@@ -429,7 +438,7 @@ function WindowedImage({ handle, contentType, preview, previewNextOffset }: Wind
   )
 }
 
-export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor, agentSlot, viewMemoryKey }: ResponseBodyProps) {
+export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor, agentSlot, viewMemoryKey, onShareSelection }: ResponseBodyProps) {
   const [selectedFormat, setSelectedFormat] = useState<ResponseBodyMode>(() =>
     bodyEncoding === 'text' ? detectBodyMode(headers, body.kind === 'inline' ? body.body : body.preview) : 'text',
   )
@@ -481,6 +490,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
           monitor={monitor}
           agentSlot={agentSlot}
           viewMemoryKey={viewMemoryKey}
+          onShareSelection={onShareSelection}
         />
       </div>
     )
@@ -497,6 +507,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
         monitor={monitor}
         agentSlot={agentSlot}
         viewMemoryKey={viewMemoryKey}
+        onShareSelection={onShareSelection}
       />
     </div>
   )

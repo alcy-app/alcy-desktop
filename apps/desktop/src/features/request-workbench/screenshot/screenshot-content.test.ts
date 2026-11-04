@@ -73,6 +73,7 @@ const text: ScreenshotContentText = {
   emptyBody: '(vazio)',
   previewOnly: (shown, total) => `prévia ${shown} de ${total}`,
   file: (path) => `arquivo: ${path}`,
+  excerptLabel: (first, last) => `linhas ${first}-${last}`,
 }
 
 const allFields = Object.fromEntries(
@@ -283,6 +284,27 @@ describe('buildScreenshotContent', () => {
         ],
       },
     ])
+  })
+
+  it('shows only the selected excerpt, with its context fields and status', () => {
+    const excerpt = {
+      lines: ['"name": "Ana"'],
+      spans: [[{ text: '"name"', tone: 'key' as const }, { text: ': ', tone: 'plain' as const }, { text: '"Ana"', tone: 'string' as const }]],
+      firstLine: 3,
+      language: 'json' as const,
+    }
+    const content = build(success(restResult()), {}, { excerpt })
+    expect(content.header?.title).toBe('Criar usuário')
+    expect(content.endpoint?.method).toBe('POST')
+    expect(content.request).toBeNull()
+    expect(content.response).toMatchObject({ kind: 'success', status: { statusCode: 201 }, headers: null })
+    expect(responseBody(content)).toMatchObject({ label: 'linhas 3-3', lines: ['"name": "Ana"'], firstLineNumber: 3, spans: excerpt.spans })
+
+    const withoutContext = build(success(restResult()), { fields: { ...allFields, header: false, url: false, status: false } }, { excerpt })
+    expect(withoutContext.header).toBeNull()
+    expect(withoutContext.endpoint).toBeNull()
+    expect(withoutContext.response).toMatchObject({ kind: 'success', status: null })
+    expect(isScreenshotEmpty(withoutContext)).toBe(false)
   })
 
   it('fica vazio com todos os campos desligados', () => {

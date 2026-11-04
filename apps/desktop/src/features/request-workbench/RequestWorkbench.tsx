@@ -81,6 +81,7 @@ import { bodyPreviewText } from './body-state'
 import { ScriptsPanel } from './components/ScriptsPanel'
 import { captureStatement } from './json-value-index'
 import type { JsonPathSegment } from './json-value-index'
+import type { ResponseExcerpt } from './screenshot/response-excerpt'
 import { RestScreen } from './components/RestScreen'
 import { GrpcMessagePanel } from './components/GrpcMessagePanel'
 import { WebSocketMessagePanel } from './components/WebSocketMessagePanel'
@@ -545,7 +546,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const { triggerProps: proxyTooltipProps, tooltip: proxyTooltipElement } = useTooltip(proxyTooltip, { side: 'top' })
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
-  const [screenshotModalOpen, setScreenshotModalOpen] = useState(false)
+  // Open image sharing: of the whole request, or of lines selected in the response (`excerpt`).
+  const [screenshotShare, setScreenshotShare] = useState<{ excerpt: ResponseExcerpt | null } | null>(null)
   const [pendingLoadTestImport, setPendingLoadTestImport] = useState<PendingLoadTestImport | null>(null)
   /** Collection/folder being exported as a webclient (spec 0113). */
   const [webclientExportId, setWebclientExportId] = useState<string | null>(null)
@@ -1006,6 +1008,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     },
     [postResponseScript, setPostResponseScript, showToast, t],
   )
+
+  const handleShareSelection = useCallback((excerpt: ResponseExcerpt) => setScreenshotShare({ excerpt }), [setScreenshotShare])
 
   const handleSaveHar = useCallback(async () => {
     if (harExportingRef.current) return
@@ -2155,7 +2159,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                         )}
                         <ShareMenu
                           onShareAsCode={() => setShareModalOpen(true)}
-                          onShareAsImage={() => setScreenshotModalOpen(true)}
+                          onShareAsImage={() => setScreenshotShare({ excerpt: null })}
                         />
                       </>
                     }
@@ -2425,6 +2429,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       currentSendId={workbench.activeTab.lastSendId}
                       monitor={FEATURE_FLAGS.valueMonitors ? responseMonitor : undefined}
                       onOpenHistorySettings={openGeneralSettings}
+                      onShareSelection={handleShareSelection}
                     />
                   </div>
                 </div>
@@ -2684,7 +2689,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         {!activePseudoTab?.capturesInput && <ImportDropOverlay onImportFromPath={importFromPath} />}
 
         <Suspense fallback={null}>
-        {screenshotModalOpen && (
+        {screenshotShare && (
           <ShareScreenshotModal
             tab={workbench.activeTab}
             execution={workbench.execution}
@@ -2692,7 +2697,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             environmentVariables={effectiveVariables}
             requestName={workbench.activeTab.name}
             environmentName={environments.activeEnvironment?.name ?? null}
-            onClose={() => setScreenshotModalOpen(false)}
+            excerpt={screenshotShare.excerpt}
+            onClose={() => setScreenshotShare(null)}
           />
         )}
 
