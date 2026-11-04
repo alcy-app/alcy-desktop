@@ -40,6 +40,18 @@ function isWordCharacter(value: string | undefined): boolean {
   return value !== undefined && /[\p{L}\p{N}_]/u.test(value)
 }
 
+const MAX_SEARCH_SEED_LENGTH = 1_000
+
+/**
+ * Query for a search started over a selection (Ctrl+F with text selected):
+ * single-line selections up to a sane length, escaped when the search is a
+ * regular expression so it still finds the selected text literally.
+ */
+export function searchSeedFromSelection(selected: string, regularExpression: boolean): string | null {
+  if (!selected || selected.length > MAX_SEARCH_SEED_LENGTH || /[\r\n]/.test(selected)) return null
+  return regularExpression ? escapeRegularExpression(selected) : selected
+}
+
 /** Localiza ocorrências com offsets UTF-16, o mesmo sistema usado pelo CodeMirror. */
 export function findEditorSearchMatches(text: string, query: string, options: EditorSearchOptions): EditorSearchResult {
   if (!query) return { matches: [], invalidRegularExpression: false, limited: false }

@@ -6,7 +6,7 @@ import { IconButton } from '../../../shared/ui/IconButton'
 import { Tooltip } from '../../../shared/ui/Tooltip'
 import { useTooltip } from '../../../shared/ui/use-tooltip'
 import { ChevronDownIcon, CloseIcon, SearchIcon } from '../../../shared/ui/icons'
-import { findEditorSearchMatches, updateEditorSearchHighlights } from '../editor-search'
+import { findEditorSearchMatches, searchSeedFromSelection, updateEditorSearchHighlights } from '../editor-search'
 import type { EditorSearchState } from '../editor-search'
 import type { RequestedSearch } from './use-editor-agent-bridge'
 import './editor-search.css'
@@ -135,10 +135,13 @@ export function EditorSearch({
     update()
   }
 
-  const focusInput = useCallback(() => {
+  // Ctrl+F on an open bar: focused after the render, so a query just taken from the selection is the one selected.
+  const [focusRequest, setFocusRequest] = useState(0)
+  useEffect(() => {
+    if (focusRequest === 0) return
     inputRef.current?.focus()
     inputRef.current?.select()
-  }, [])
+  }, [focusRequest])
 
   const navigate = useCallback((direction: -1 | 1) => {
     const view = viewRef.current
@@ -153,9 +156,17 @@ export function EditorSearch({
     })
   }, [activeIndex, result.matches, viewRef])
 
-  useEffect(() => {
-    if (!isOpen) return
+  /** Searches for the editor's selection, with the selected occurrence as the active match. */
+  const seedFromSelection = useCallback((view: EditorView) => {
+    const selection = view.state.selection.main
+    const seed = searchSeedFromSelection(view.state.sliceDoc(selection.from, selection.to), regularExpression)
+    if (seed === null) return
+    const { matches } = findEditorSearchMatches(text, seed, { matchCase, wholeWord, regularExpression })
+    setQuery(seed)
+    setRequestedIndex(Math.max(0, matches.findIndex((match) => match.from === selection.from)))
+  }, [matchCase, regularExpression, text, wholeWord])
 
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return
       const target = event.target
@@ -168,9 +179,14 @@ export function EditorSearch({
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault()
         event.stopPropagation()
-        focusInput()
+        if (view && editorHasFocus) seedFromSelection(view)
+        // Opening focuses the field by itself once the bar renders.
+        if (isOpen) setFocusRequest((current) => current + 1)
+        else onOpen()
         return
       }
+
+      if (!isOpen) return
 
       // Enter só navega a partir do campo de busca; no editor ele mantém o
       // comportamento padrão (quebrar linha).
@@ -183,7 +199,7 @@ export function EditorSearch({
 
     document.addEventListener('keydown', handleKeyDown, true)
     return () => document.removeEventListener('keydown', handleKeyDown, true)
-  }, [focusInput, isOpen, navigate, viewRef])
+  }, [isOpen, navigate, onOpen, seedFromSelection, viewRef])
 
   const close = () => {
     onClose()
