@@ -11,13 +11,15 @@ interface ResizeHandleProps extends KeyboardSeparatorProps {
   ariaLabel: string
   /** Visual orientation: a vertical bar resizes width, a horizontal one resizes height. */
   orientation: 'horizontal' | 'vertical'
+  /** Extra class, e.g. to place the handle in a grid layout. */
+  className?: string
 }
 
 /** With `onKeyDown` the handle is also focusable and resizes from the keyboard. */
-export function ResizeHandle({ onPointerDown, ariaLabel, orientation, ...separatorProps }: ResizeHandleProps) {
+export function ResizeHandle({ onPointerDown, ariaLabel, orientation, className, ...separatorProps }: ResizeHandleProps) {
   return (
     <div
-      className={`resize-handle resize-handle--${orientation}`}
+      className={`resize-handle resize-handle--${orientation}${className ? ` ${className}` : ''}`}
       role="separator"
       aria-orientation={orientation}
       aria-label={ariaLabel}

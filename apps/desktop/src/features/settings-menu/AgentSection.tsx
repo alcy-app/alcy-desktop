@@ -16,10 +16,11 @@ import { Button } from '../../shared/ui/Button'
 import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Input } from '../../shared/ui/Input'
+import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { AlertIcon, CheckIcon, ChevronDownIcon, LockIcon, PlusIcon, SparkleIcon } from '../../shared/ui/icons'
 import { agentErrorMessage } from '../agent/use-agent-session'
 import { providerInput } from '../agent/use-agent-settings'
-import { useAgentPreferences } from '../agent/use-agent-preferences'
+import { AGENT_DOCKS, useAgentPreferences, type AgentDock } from '../agent/use-agent-preferences'
 import { ModelCombobox } from './ModelCombobox'
 
 /** Same limit as the backend (`MAX_AGENT_PROVIDERS`). */
@@ -71,7 +72,7 @@ type SaveResult = { ok: boolean }
 /** Agent providers (ADR 0064): which one the chat uses and how each connects. Keys stay in the system keyring. */
 export function AgentSection() {
   const { t } = useLanguage()
-  const { chatEnabled, contextOptionsDisabled, setChatEnabled, setContextOptionsDisabled } = useAgentPreferences()
+  const { chatEnabled, contextOptionsDisabled, setChatEnabled, setContextOptionsDisabled, dock, setDock } = useAgentPreferences()
   const [settings, setSettings] = useState<AgentSettingsDto | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -157,6 +158,17 @@ export function AgentSection() {
             <span>{t('settings.agent.disableContextOptions')}</span>
           </label>
           <p className="settings-proxy-hint">{t('settings.agent.disableContextOptionsHint')}</p>
+        </div>
+        <div>
+          <p className="settings-section-label">{t('settings.agent.dockLabel')}</p>
+          <SegmentedControl<AgentDock>
+            ariaLabel={t('settings.agent.dockLabel')}
+            layout="inline"
+            value={dock}
+            onChange={setDock}
+            options={AGENT_DOCKS.map((option) => ({ value: option, label: t(`agent.dock.${option}`) }))}
+          />
+          <p className="settings-proxy-hint">{t('settings.agent.dockHint')}</p>
         </div>
       </section>
       <section className="settings-section settings-agent-intro">

@@ -42,13 +42,14 @@ describe('ordem dos módulos da sidebar', () => {
       'components',
       'environments',
       'monitors',
+      'agent',
     ])
   })
 
   it('usa a ordem padrão quando a preferência está corrompida', () => {
     window.localStorage.setItem(SIDEBAR_MODULE_ORDER_STORAGE_KEY, '{inválido')
 
-    expect(loadSidebarModuleOrder()).toEqual(['components', 'environments', 'monitors', 'history', 'git'])
+    expect(loadSidebarModuleOrder()).toEqual(['components', 'environments', 'monitors', 'history', 'git', 'agent'])
   })
 
   it('persiste e recarrega a ordem', () => {

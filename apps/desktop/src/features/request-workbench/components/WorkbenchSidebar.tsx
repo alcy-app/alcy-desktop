@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { AuthenticationInput } from '../../../bindings/execute-graphql-request'
 import type { ItemChangeKind, StructuredFileChangesDto } from '../../../bindings/gitlab-types'
-import type { FocusEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { FocusEvent, MouseEvent as ReactMouseEvent, ReactNode, RefCallback } from 'react'
 import { EnvironmentsPanel } from '../../environments/EnvironmentsPanel'
 import '../../environments/environments.css'
 import { FlowsPanel } from '../../flows/FlowsPanel'
@@ -11,7 +11,7 @@ import { SettingsMenu, type SettingsCategory } from '../../settings-menu/Setting
 import type { BulkRow } from '../../../shared/bulk-edit'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { EXTENSION_SIDEBAR_MODULES } from '../../../extensions/registry'
-import { CheckIcon, ClockIcon, ComponentsIcon, GitIcon, MonitorIcon, VariablesIcon } from '../../../shared/ui/icons'
+import { CheckIcon, ClockIcon, ComponentsIcon, GitIcon, MonitorIcon, RobotIcon, VariablesIcon } from '../../../shared/ui/icons'
 import { MockServersPanel } from '../../mock-servers/MockServersPanel'
 import '../../mock-servers/mock-servers.css'
 import { MenuItem } from '../../../shared/ui/Menu'
@@ -52,7 +52,7 @@ export type SidebarTab = SidebarModuleId
 
 /** Modules whose panel pins its toolbar over a scrolling body (`.sidebar-panel-layout`).
  * The others, extension modules included, scroll as a whole inside the tab panel. */
-const PINNED_TOOLBAR_MODULES: ReadonlySet<SidebarTab> = new Set<SidebarTab>(['components', 'history', 'git'])
+const PINNED_TOOLBAR_MODULES: ReadonlySet<SidebarTab> = new Set<SidebarTab>(['components', 'history', 'git', 'agent'])
 
 interface EnvironmentsPanelSlice {
   environments: EnvironmentState[]
@@ -180,6 +180,11 @@ interface WorkbenchSidebarProps {
     onPull: () => void
     onResolveConflict: (fileName: string, changes: StructuredFileChangesDto) => void
   }
+  /** The agent chat docked on the left (spec 0143): a module named this, whose panel only holds the
+   * place the workbench moves the chat into, so the chat itself never remounts. */
+  agentModuleLabel?: string | null
+  /** Receives that place while the module is shown, and `null` when it goes away. */
+  agentSlotRef?: RefCallback<HTMLDivElement>
 }
 
 interface SidebarModuleNavigationItem {
@@ -318,6 +323,8 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
   activeTab: controlledActiveTab,
   onActiveTabChange,
   versionControl,
+  agentModuleLabel = null,
+  agentSlotRef,
 }: WorkbenchSidebarProps) {
   const { t, language } = useLanguage()
   const [internalActiveTab, setInternalActiveTab] = useState<SidebarTab>('components')
@@ -348,14 +355,17 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
         { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={19} /> },
         ...(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
         ...EXTENSION_SIDEBAR_MODULES.map((module) => ({ id: module.id, label: module.label[language], icon: module.icon })),
+        ...(agentModuleLabel !== null ? [{ id: 'agent' as const, label: agentModuleLabel, icon: <RobotIcon size={19} /> }] : []),
       ] satisfies SidebarModuleNavigationItem[],
-    [t, language],
+    [t, language, agentModuleLabel],
   )
   const allNavigation = useMemo(
     () => [...availableNavigation].sort((a, b) => moduleOrder.indexOf(a.id) - moduleOrder.indexOf(b.id)),
     [availableNavigation, moduleOrder],
   )
-  const navigation = useMemo(() => allNavigation.filter((item) => !hiddenModules.has(item.id)), [allNavigation, hiddenModules])
+  // The agent module follows where the chat is docked, not the visibility preference.
+  const navigation = useMemo(() => allNavigation.filter((item) => item.id === 'agent' || !hiddenModules.has(item.id)), [allNavigation, hiddenModules])
+  const hideableNavigation = useMemo(() => allNavigation.filter((item) => item.id !== 'agent'), [allNavigation])
   // If preferences hide the default active tab, show the first visible one without setting state during render.
   const visibleActiveTab = navigation.some((item) => item.id === activeTab) ? activeTab : navigation[0].id
 
@@ -517,9 +527,9 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
       {contextMenu && (
         <SidebarModulesContextMenu
           menu={contextMenu}
-          navigation={allNavigation}
+          navigation={hideableNavigation}
           isModuleVisible={(module) => !hiddenModules.has(module)}
-          canHideModule={navigation.length > 1}
+          canHideModule={contextMenu.module !== 'agent' && navigation.length > 1}
           canMoveUp={navigation.findIndex((item) => item.id === contextMenu.module) > 0}
           canMoveDown={(() => {
             const index = navigation.findIndex((item) => item.id === contextMenu.module)
@@ -533,15 +543,18 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
 
       {!collapsed && (
         <aside className="env-sidebar" aria-label={asideLabel}>
-          <header className="workbench-sidebar-header">
-            {visibleActiveTab === 'components' ? (
-              <ComponentKindSelect value={componentKind} onChange={setComponentKind} />
-            ) : (
-              <span key={visibleActiveTab} className="workbench-sidebar-title">
-                {activeNavigation.label}
-              </span>
-            )}
-          </header>
+          {/* The chat brings its own header. */}
+          {visibleActiveTab !== 'agent' && (
+            <header className="workbench-sidebar-header">
+              {visibleActiveTab === 'components' ? (
+                <ComponentKindSelect value={componentKind} onChange={setComponentKind} />
+              ) : (
+                <span key={visibleActiveTab} className="workbench-sidebar-title">
+                  {activeNavigation.label}
+                </span>
+              )}
+            </header>
+          )}
           <div
             className={PINNED_TOOLBAR_MODULES.has(visibleActiveTab) ? 'env-tabpanel env-tabpanel--pinned-toolbar' : 'env-tabpanel'}
             id={`sidebar-panel-${visibleActiveTab}`}
@@ -564,6 +577,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
             {visibleActiveTab === 'monitors' && FEATURE_FLAGS.valueMonitors && <ValueMonitorsPanel {...valueMonitors} />}
             {visibleActiveTab === 'git' && (FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}
             {EXTENSION_SIDEBAR_MODULES.map((module) => visibleActiveTab === module.id && <module.Panel key={module.id} />)}
+            {visibleActiveTab === 'agent' && <div ref={agentSlotRef} className="agent-sidebar-slot" />}
           </div>
         </aside>
       )}

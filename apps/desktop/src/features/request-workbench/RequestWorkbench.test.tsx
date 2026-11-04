@@ -5719,6 +5719,62 @@ describe('RequestWorkbench — painel do agente', () => {
     render()
     expect(await screen.findByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
   })
+
+  it('docks the panel at the side chosen in Settings without remounting it', async () => {
+    featureFlags.agent = true
+    onTestFinished(() => {
+      featureFlags.agent = false
+    })
+    // An unknown stored position falls back to the right.
+    window.localStorage.setItem('alcy:agent:dock', 'top')
+    render(<>
+      <RequestWorkbench workspace={testWorkspace} onWorkspaceChange={() => {}} onExitToStartScreen={() => {}} />
+      <AgentSection />
+    </>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
+    const panel = await screen.findByRole('complementary', { name: 'Agente' })
+    expect(panel.closest('.rw-body')).toHaveClass('rw-body--agent-right')
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Embaixo' }))
+    expect(panel.closest('.rw-body')).toHaveClass('rw-body--agent-bottom')
+    expect(screen.getByRole('separator', { name: 'Redimensionar painel do agente' })).toHaveAttribute('aria-orientation', 'horizontal')
+    expect(screen.getByRole('complementary', { name: 'Agente' })).toBe(panel)
+    expect(window.localStorage.getItem('alcy:agent:dock')).toBe('bottom')
+  })
+
+  it('docked on the left, becomes a sidebar module holding the same chat', async () => {
+    featureFlags.agent = true
+    onTestFinished(() => {
+      featureFlags.agent = false
+    })
+    render(<>
+      <RequestWorkbench workspace={testWorkspace} onWorkspaceChange={() => {}} onExitToStartScreen={() => {}} />
+      <AgentSection />
+    </>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
+    const panel = await screen.findByRole('complementary', { name: 'Agente' })
+    expect(screen.queryByRole('tab', { name: 'Agente' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Esquerda' }))
+    const moduleTab = screen.getByRole('tab', { name: 'Agente' })
+    expect(moduleTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: 'Agente' })).toContainElement(panel)
+    expect(screen.queryByRole('separator', { name: 'Redimensionar painel do agente' })).not.toBeInTheDocument()
+
+    // Showing another module keeps the chat mounted, out of sight.
+    fireEvent.click(screen.getByRole('tab', { name: 'Ambientes' }))
+    expect(panel).toBeInTheDocument()
+    expect(panel.closest('.agent-panel-wrapper')).toHaveAttribute('hidden')
+    expect(screen.getByRole('button', { name: 'Mostrar painel do agente' })).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar painel do agente' }))
+    expect(screen.getByRole('tabpanel', { name: 'Agente' })).toContainElement(panel)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Direita' }))
+    expect(screen.queryByRole('tab', { name: 'Agente' })).not.toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Agente' })).toBe(panel)
+    expect(panel.closest('.agent-panel-wrapper')).not.toHaveAttribute('hidden')
+  })
 })
 
 describe('RequestWorkbench — feature flag do monitor de valores', () => {

@@ -1429,3 +1429,40 @@
   flex: 1;
   border-top: 1px dashed var(--border);
 }
+
+/* The header moves the panel to another side (spec 0143). */
+.agent-panel-header--draggable {
+  cursor: grab;
+}
+
+.agent-panel-header--draggable :is(button, input, [role='dialog']) {
+  cursor: auto;
+}
+
+.agent-dock-drag-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drag-preview);
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.agent-dock-preview {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  pointer-events: none;
+  transition:
+    left var(--duration-fast) var(--ease-out),
+    top var(--duration-fast) var(--ease-out),
+    width var(--duration-fast) var(--ease-out),
+    height var(--duration-fast) var(--ease-out);
+}

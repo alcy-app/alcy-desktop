@@ -31,9 +31,44 @@
 }
 
 .rw-body {
-  display: flex;
+  display: grid;
   flex: 1;
   min-height: 0;
+  /* The agent panel docks right of or below the main area (spec 0143; on the left it is a sidebar
+     module): only the areas move, never the elements, so docking elsewhere does not remount the
+     tabs. Empty tracks (closed panel, collapsed sidebar) size to nothing. */
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas: 'sidebar sidebar-resize main agent-resize agent';
+}
+
+.rw-body--agent-bottom {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'sidebar sidebar-resize main'
+    'sidebar sidebar-resize agent-resize'
+    'sidebar sidebar-resize agent';
+}
+
+.rw-body > .rw-sidebar-wrapper {
+  grid-area: sidebar;
+}
+
+.rw-body > .rw-sidebar-resize {
+  grid-area: sidebar-resize;
+}
+
+.rw-body > .rw-main {
+  grid-area: main;
+}
+
+.rw-body > .rw-agent-resize {
+  grid-area: agent-resize;
+}
+
+.rw-body > .agent-panel-wrapper {
+  grid-area: agent;
 }
 
 .rw-console-wrapper {
@@ -1738,6 +1773,33 @@
   flex-shrink: 0;
   min-width: 0;
   min-height: 0;
+}
+
+/* The element the chat renders into, moved between the wrapper and the sidebar module. */
+.agent-panel-host {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.agent-sidebar-slot {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* In the sidebar the module frame already separates it from the main area. */
+.agent-sidebar-slot .agent-panel {
+  border-left: 0;
+}
+
+/* The panel's border faces the main area. */
+.agent-panel-wrapper--bottom .agent-panel {
+  border-top: 1px solid var(--border);
+  border-left: 0;
 }
 
 /* Closed, the panel stays mounted (its chat keeps going) but takes no space. */

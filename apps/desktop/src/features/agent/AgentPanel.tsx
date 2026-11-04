@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { EmptyState } from '../../shared/ui/EmptyState'
@@ -28,10 +28,12 @@ interface AgentPanelProps {
   settingsOpen: boolean
   onOpenSettings: () => void
   onClose: () => void
+  /** Pressing the header (outside its buttons) starts moving the panel to another side. */
+  onHeaderPointerDown?: (event: ReactPointerEvent<HTMLElement>) => void
 }
 
-/** Chat with the agent, docked to the right of the workbench (ADR 0064). */
-export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClose }: AgentPanelProps) {
+/** Chat with the agent, docked beside or below the main area of the workbench (ADR 0064, spec 0143). */
+export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClose, onHeaderPointerDown }: AgentPanelProps) {
   const { t } = useLanguage()
   const { state, reload, setActiveProvider } = useAgentSettings()
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -101,7 +103,7 @@ export function AgentPanel({ rootPath, host, settingsOpen, onOpenSettings, onClo
 
   return (
     <aside className="agent-panel" aria-label={t('agent.title')}>
-      <header className="agent-panel-header">
+      <header className={`agent-panel-header${onHeaderPointerDown ? ' agent-panel-header--draggable' : ''}`} onPointerDown={onHeaderPointerDown}>
         <h2 className="agent-panel-title" title={session.title ?? undefined}>
           {session.title ?? t('agent.newChat')}
         </h2>

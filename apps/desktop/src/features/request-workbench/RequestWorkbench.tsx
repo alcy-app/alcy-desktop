@@ -1,5 +1,6 @@
 import type { SettingsCategory } from '../settings-menu/SettingsMenu'
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { WorkspaceDto } from '../../bindings/create-workspace'
 import type { ExecuteGraphqlRequestOutput } from '../../bindings/execute-graphql-request'
 import type { ExecuteRestRequestOutput } from '../../bindings/execute-rest-request'
@@ -45,6 +46,10 @@ import { useAgentHost } from './use-agent-host'
 import { AgentResourceBridge } from '../agent/agent-resource-bridge'
 import { useAgentResources } from '../agent/use-agent-resources'
 import { AgentPanel } from '../agent/AgentPanel'
+import { AgentDockOverlay } from '../agent/AgentDockOverlay'
+import { dockPreviewRect, unionRect, useAgentDockDrag, type DockRect } from '../agent/use-agent-dock-drag'
+import { useAgentPanelHost } from '../agent/use-agent-panel-host'
+import type { AgentDock } from '../agent/use-agent-preferences'
 import { useAgentPreferences } from '../agent/use-agent-preferences'
 import { subscribeMentionRequests } from '../agent/agent-mention-bridge'
 import { AuthorizationPanel } from './components/AuthorizationPanel'
@@ -445,29 +450,61 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const [harExporting, setHarExporting] = useState(false)
   const harExportingRef = useRef(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const { chatEnabled, contextOptionsEnabled } = useAgentPreferences()
+  const { chatEnabled, contextOptionsEnabled, dock: agentDock, setDock: setAgentDock } = useAgentPreferences()
   const agentEnabled = FEATURE_FLAGS.agent && chatEnabled
   // The agent panel keeps its place across restarts and workspaces; once shown it
   // stays mounted while hidden, so closing it keeps the chat (and a reply in flight).
-  const [agentOpen, setAgentOpenState] = useState(readAgentOpen)
+  // `agentOpen` is the panel beside or below the main area; docked on the left the chat is a
+  // sidebar module instead, shown while that module is (spec 0143).
+  const [agentOpen, setAgentOpen] = useState(readAgentOpen)
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AGENT_OPEN_STORAGE_KEY, agentOpen ? 'open' : 'closed')
+    } catch {
+      // Storage unavailable; the panel starts closed next time.
+    }
+  }, [agentOpen])
+  const agentInSidebar = agentDock === 'left'
+  const agentShown = agentInSidebar ? !sidebarCollapsed && sidebarTab === 'agent' : agentOpen
   const [agentMounted, setAgentMounted] = useState(agentOpen)
-  const setAgentOpen = useCallback((next: boolean | ((open: boolean) => boolean)) => {
-    setAgentOpenState((current) => {
-      const open = typeof next === 'function' ? next(current) : next
-      try {
-        window.localStorage.setItem(AGENT_OPEN_STORAGE_KEY, open ? 'open' : 'closed')
-      } catch {
-        // Storage unavailable; the panel starts closed next time.
+  if (agentShown && !agentMounted) setAgentMounted(true)
+  // Docking elsewhere keeps the chat on screen if it was.
+  const [seenAgentDock, setSeenAgentDock] = useState<AgentDock>(agentDock)
+  if (seenAgentDock !== agentDock) {
+    setSeenAgentDock(agentDock)
+    const wasShown = seenAgentDock === 'left' ? !sidebarCollapsed && sidebarTab === 'agent' : agentOpen
+    if (agentDock === 'left') {
+      if (wasShown) {
+        setSidebarTab('agent')
+        setSidebarCollapsed(false)
       }
-      return open
-    })
+    } else {
+      if (seenAgentDock === 'left' && sidebarTab === 'agent') setSidebarTab('components')
+      if (wasShown) setAgentOpen(true)
+    }
+  }
+  const agentLayoutRef = useRef({ shown: agentShown, inSidebar: agentInSidebar, sidebarTab })
+  useLayoutEffect(() => {
+    agentLayoutRef.current = { shown: agentShown, inSidebar: agentInSidebar, sidebarTab }
+  })
+  const setAgentShown = useCallback((next: boolean | ((shown: boolean) => boolean)) => {
+    const { shown, inSidebar, sidebarTab: tab } = agentLayoutRef.current
+    const open = typeof next === 'function' ? next(shown) : next
     setAgentMounted(true)
+    if (!inSidebar) {
+      setAgentOpen(open)
+    } else if (open) {
+      setSidebarTab('agent')
+      setSidebarCollapsed(false)
+    } else if (tab === 'agent') {
+      setSidebarCollapsed(true)
+    }
   }, [])
   // "Mention in chat" in an item's menu brings up the chat holding the mention.
   useEffect(() => {
     if (!agentEnabled || !contextOptionsEnabled) return
-    return subscribeMentionRequests(() => setAgentOpen(true))
-  }, [agentEnabled, contextOptionsEnabled, setAgentOpen])
+    return subscribeMentionRequests(() => setAgentShown(true))
+  }, [agentEnabled, contextOptionsEnabled, setAgentShown])
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const { reload: reloadCollections } = collections
   const { reload: reloadEnvironments } = environments
@@ -570,22 +607,61 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     direction: 'reverse',
     storageKey: 'alcy:panel:console',
   })
+  // Beside the main area the panel keeps its width; below it, its own height (spec 0143).
   const agentPanel = useResizablePanel({
     initialSize: 380,
     minSize: 300,
     maxSize: 720,
     axis: 'horizontal',
-    direction: 'reverse',
+    direction: agentDock === 'left' ? 'forward' : 'reverse',
     storageKey: 'alcy:panel:agent',
   })
+  const agentBottomPanel = useResizablePanel({
+    initialSize: 320,
+    minSize: 200,
+    maxSize: 720,
+    axis: 'vertical',
+    direction: 'reverse',
+    storageKey: 'alcy:panel:agent-bottom',
+  })
+  const sidebarWrapperRef = useRef<HTMLDivElement | null>(null)
+  const mainRef = useRef<HTMLElement | null>(null)
+  const [agentWrapper, setAgentWrapper] = useState<HTMLDivElement | null>(null)
+  // Set by the agent sidebar module while it is shown (docked on the left).
+  const [agentSidebarSlot, setAgentSidebarSlot] = useState<HTMLDivElement | null>(null)
+  const agentPanelHost = useAgentPanelHost(agentInSidebar && agentSidebarSlot ? agentSidebarSlot : agentWrapper)
+  // The panel moves around the main area, the sidebar included for the left side.
+  const measureAgentDockRegion = useCallback(
+    () => unionRect([sidebarWrapperRef.current, mainRef.current, agentWrapper].map((element) => element?.getBoundingClientRect())),
+    [agentWrapper],
+  )
+  const agentDockPreviewRect = (dock: AgentDock): DockRect | null => {
+    if (dock === 'left') {
+      // Where the sidebar panel is, or would be once expanded, right of the rail.
+      const sidebar = sidebarWrapperRef.current?.getBoundingClientRect()
+      const rail = sidebarWrapperRef.current?.querySelector('.workbench-rail')?.getBoundingClientRect()
+      if (!sidebar || !rail) return null
+      const width = sidebarCollapsed ? sidebarPanel.size : sidebar.right - rail.right
+      return { left: rail.right, top: sidebar.top, width, height: sidebar.height }
+    }
+    const area = unionRect([mainRef.current, agentInSidebar ? null : agentWrapper].map((element) => element?.getBoundingClientRect()))
+    return area && dockPreviewRect(dock, area, dock === 'bottom' ? agentBottomPanel.size : agentPanel.size)
+  }
+  const agentDockDrag = useAgentDockDrag({
+    measureRegion: measureAgentDockRegion,
+    previewRect: agentDockPreviewRect,
+    onDock: setAgentDock,
+  })
+
   const isResizingAny =
     agentPanel.isResizing ||
+    agentBottomPanel.isResizing ||
     sidebarPanel.isResizing ||
     queryExplorerPanel.isResizing ||
     responsePanel.isResizing ||
     responsePanelRight.isResizing ||
     consolePanel.isResizing
-  const resizeCursor = responsePanel.isResizing || consolePanel.isResizing ? 'row-resize' : 'col-resize'
+  const resizeCursor = responsePanel.isResizing || consolePanel.isResizing || agentBottomPanel.isResizing ? 'row-resize' : 'col-resize'
   const onToggleValueMonitor = useCallback(() => {
     setValueMonitorEnabled((current) => {
       try {
@@ -913,7 +989,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     environments,
     sendActive: () => handleSendRef.current(),
   })
-  const toggleAgentPanel = useCallback(() => setAgentOpen((open) => !open), [setAgentOpen])
+  const toggleAgentPanel = useCallback(() => setAgentShown((shown) => !shown), [setAgentShown])
   const openAgentSettings = useCallback(() => {
     setSettingsCategory('agent')
     setSettingsOpen(true)
@@ -1889,8 +1965,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           </div>
         </TitleBar>
 
-        <div className="rw-body">
-          <div className="rw-sidebar-wrapper" style={{ width: sidebarCollapsed ? 'var(--workbench-rail-width)' : `calc(${sidebarPanel.size}px + var(--workbench-rail-width))` }}>
+        <div className={`rw-body rw-body--agent-${agentDock}`}>
+          <div ref={sidebarWrapperRef} className="rw-sidebar-wrapper" style={{ width: sidebarCollapsed ? 'var(--workbench-rail-width)' : `calc(${sidebarPanel.size}px + var(--workbench-rail-width))` }}>
             <WorkbenchSidebar
               collapsed={sidebarCollapsed}
               onToggleCollapsed={onToggleSidebarCollapsed}
@@ -1905,6 +1981,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
               settingsCategory={settingsCategory}
               activeTab={sidebarTab}
               onActiveTabChange={selectSidebarTab}
+              agentModuleLabel={agentEnabled && agentInSidebar ? t('agent.title') : null}
+              agentSlotRef={setAgentSidebarSlot}
               versionControl={sidebarVersionControl}
               onOpenReleaseNotes={openReleaseNotes}
               onSettingsOpenChange={onSettingsOpenChange}
@@ -1912,13 +1990,14 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           </div>
           {!sidebarCollapsed && (
             <ResizeHandle
+              className="rw-sidebar-resize"
               ariaLabel={t('workbench.resize.sidebar')}
               orientation="vertical"
               onPointerDown={sidebarPanel.startResizing}
             />
           )}
 
-          <main className="rw-main">
+          <main ref={mainRef} className="rw-main">
             <WorkspaceLoadErrors
               areas={[
                 { area: 'collections', message: collections.loadError, retry: collections.reload },
@@ -2397,22 +2476,33 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           </main>
           {agentEnabled && agentMounted && (
             <>
-              {agentOpen && (
+              {agentOpen && !agentInSidebar && (
                 <ResizeHandle
+                  className="rw-agent-resize"
                   ariaLabel={t('workbench.resize.agent')}
-                  orientation="vertical"
-                  onPointerDown={agentPanel.startResizing}
+                  orientation={agentDock === 'bottom' ? 'horizontal' : 'vertical'}
+                  onPointerDown={agentDock === 'bottom' ? agentBottomPanel.startResizing : agentPanel.startResizing}
                 />
               )}
-              <div className="agent-panel-wrapper" style={{ width: agentPanel.size }} hidden={!agentOpen}>
+              {/* Beside or below the main area; also where the chat waits, hidden, while not shown. */}
+              <div
+                ref={setAgentWrapper}
+                className={`agent-panel-wrapper agent-panel-wrapper--${agentDock}`}
+                style={agentDock === 'bottom' ? { height: agentBottomPanel.size } : { width: agentPanel.size }}
+                hidden={!agentOpen || agentInSidebar}
+              />
+              {/* Always rendered here, into one element moved between its places, so docking never remounts the chat. */}
+              {createPortal(
                 <AgentPanel
                   rootPath={workspace.rootPath}
                   host={agentHost}
                   settingsOpen={settingsOpen}
                   onOpenSettings={openAgentSettings}
-                  onClose={() => setAgentOpen(false)}
-                />
-              </div>
+                  onClose={() => setAgentShown(false)}
+                  onHeaderPointerDown={agentDockDrag.startDrag}
+                />,
+                agentPanelHost,
+              )}
             </>
           )}
         </div>
@@ -2526,9 +2616,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                 <IconButton
                   icon={<RobotIcon size={14} />}
                   className="rw-statusbar-agent"
-                  label={agentOpen ? t('agent.hideAria') : t('agent.showAria')}
+                  label={agentShown ? t('agent.hideAria') : t('agent.showAria')}
                   tooltipSide="top"
-                  aria-pressed={agentOpen}
+                  aria-pressed={agentShown}
                   onClick={toggleAgentPanel}
                 />
               </>
@@ -2537,6 +2627,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         </footer>
 
         {isResizingAny && <div className="resize-drag-overlay" style={{ cursor: resizeCursor }} />}
+        <AgentDockOverlay preview={agentDockDrag.preview} />
 
         {newRequestPopover && (
           <NewRequestPopover
