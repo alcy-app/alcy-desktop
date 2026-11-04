@@ -63,6 +63,34 @@ interface TooltipAnchor {
  * altura suficiente acima (token perto do topo da janela). */
 type TooltipPlacement = 'above' | 'below'
 
+/**
+ * Viewport x where the first `index` characters of the input's value end, as
+ * the input draws them (font, padding, horizontal scroll) — measured with an
+ * invisible probe in the input's font. Kept within the input's box. Without
+ * layout (tests) the width is 0 and the result is the text start.
+ */
+function textEndLeft(input: HTMLInputElement, index: number): number {
+  const rect = input.getBoundingClientRect()
+  const style = getComputedStyle(input)
+  const probe = document.createElement('span')
+  probe.textContent = input.value.slice(0, index)
+  Object.assign(probe.style, {
+    position: 'fixed',
+    visibility: 'hidden',
+    whiteSpace: 'pre',
+    fontFamily: style.fontFamily,
+    fontSize: style.fontSize,
+    fontWeight: style.fontWeight,
+    fontStyle: style.fontStyle,
+    letterSpacing: style.letterSpacing,
+  })
+  document.body.appendChild(probe)
+  const width = probe.getBoundingClientRect().width
+  probe.remove()
+  const textStart = rect.left + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0)
+  return Math.min(Math.max(textStart + width - input.scrollLeft, rect.left), rect.right)
+}
+
 function anchorForToken(element: HTMLElement): TooltipAnchor {
   const rect = element.getBoundingClientRect()
   const left = Math.min(rect.left, window.innerWidth - TOOLTIP_MAX_WIDTH_PX - VIEWPORT_MARGIN_PX)
@@ -121,37 +149,51 @@ function useTooltipCard(cardRef: RefObject<HTMLDivElement | null>) {
   return { isOpen: anchor !== null, open, close, holdsFocus, style }
 }
 
+/** How the field tells a token that the pointer entered or left it (see
+ * `setHoveredToken` in `TemplateHighlightedField`). */
+interface TokenHoverHandlers {
+  enter: (element: HTMLElement) => void
+  leave: () => void
+}
+
+type RegisterTokenHover = (index: number, handlers: TokenHoverHandlers) => () => void
+
+/** Editing state of a token in the field: the caret is inside it (`active`)
+ * or the selection covers it (`selected`). */
+interface TokenEditState {
+  active: boolean
+  selected: boolean
+}
+
+function tokenClassName(base: string, state: TokenEditState, hovered: boolean): string {
+  let className = base
+  if (state.selected) className += ' var-token--selected'
+  else if (state.active) className += ' var-token--active'
+  if (hovered) className += ' var-token--hovered'
+  return className
+}
+
 /**
- * O cartão de pré-visualização é renderizado num portal em `document.body`,
- * posicionado em `fixed` a partir da posição do token na viewport — não como
- * filho do campo. Um `::after` preso dentro do overlay seria cortado por
- * qualquer ancestral com `overflow: hidden` (necessário ali para recortar o
- * texto do campo), inclusive perto das bordas da janela.
+ * The preview card is rendered in a portal on `document.body`, positioned
+ * `fixed` from the token's viewport position — not as a child of the field.
+ * An `::after` inside the overlay would be clipped by any ancestor with
+ * `overflow: hidden` (needed there to clip the field's text), including near
+ * the window edges.
  *
- * O cartão é interativo (o valor da variável é editável nele): ele continua
- * aberto enquanto o mouse está sobre o token ou sobre o próprio cartão — com
- * uma pequena tolerância para cruzar o espaço entre os dois — ou enquanto o
- * foco está dentro dele.
+ * The token does not receive pointer events: the `<input>` underneath needs
+ * them to click, drag-select and double-click the variable name. The field
+ * hit-tests the pointer against the tokens and notifies the token through
+ * `registerHover`.
+ *
+ * The card is interactive (the variable value is editable in it): it stays
+ * open while the pointer is over the token or over the card itself — with a
+ * short grace period to cross the gap between them — or while focus is
+ * inside it.
  */
-function VariableToken({
-  segment,
-  variables,
-  masked,
-  doc,
-}: {
-  segment: VariableSegment
-  variables: EnvironmentVariableDto[]
-  masked: boolean
-  doc?: VariableDoc
-}) {
-  const { t } = useLanguage()
-  const editing = useVariableEditing()
-  const cardRef = useRef<HTMLDivElement>(null)
+function useTokenPreview(cardRef: RefObject<HTMLDivElement | null>, index: number, registerHover: RegisterTokenHover) {
   const card = useTooltipCard(cardRef)
   const closeTimerRef = useRef<number | null>(null)
   const cardHoveredRef = useRef(false)
-  const isKnown = variables.some((variable) => variable.name === segment.name)
-  const stateClassName = !isKnown ? 'var-token--unknown' : masked ? 'var-token--masked' : 'var-token--known'
 
   const cancelClose = () => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
@@ -169,36 +211,75 @@ function VariableToken({
 
   useEffect(() => cancelClose, [])
 
-  const handleMouseEnter = (event: MouseEvent<HTMLSpanElement>) => {
+  // No dependency list: the registry always points at the latest render's handlers.
+  useEffect(() =>
+    registerHover(index, {
+      enter: (element) => {
+        cancelClose()
+        card.open(element)
+      },
+      leave: scheduleClose,
+    }),
+  )
+
+  const close = () => {
+    cardHoveredRef.current = false
     cancelClose()
-    card.open(event.currentTarget)
+    card.close()
   }
 
-  const handleCardBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose()
+  const cardEvents = {
+    onMouseEnter: () => {
+      cardHoveredRef.current = true
+      cancelClose()
+    },
+    onMouseLeave: () => {
+      cardHoveredRef.current = false
+      scheduleClose()
+    },
+    onBlur: (event: FocusEvent<HTMLDivElement>) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose()
+    },
   }
+
+  return { isOpen: card.isOpen, style: card.style, cardEvents, close }
+}
+
+function VariableToken({
+  index,
+  segment,
+  variables,
+  masked,
+  doc,
+  editState,
+  registerHover,
+}: {
+  index: number
+  segment: VariableSegment
+  variables: EnvironmentVariableDto[]
+  masked: boolean
+  doc?: VariableDoc
+  editState: TokenEditState
+  registerHover: RegisterTokenHover
+}) {
+  const { t } = useLanguage()
+  const editing = useVariableEditing()
+  const cardRef = useRef<HTMLDivElement>(null)
+  const preview = useTokenPreview(cardRef, index, registerHover)
+  const isKnown = variables.some((variable) => variable.name === segment.name)
+  const stateClassName = !isKnown ? 'var-token--unknown' : masked ? 'var-token--masked' : 'var-token--known'
 
   return (
     <>
-      <span className={`var-token ${stateClassName}`} onMouseEnter={handleMouseEnter} onMouseLeave={scheduleClose}>
-        {segment.raw}
+      <span className={tokenClassName(`var-token ${stateClassName}`, editState, preview.isOpen)} data-token-index={index}>
+        {/* Muted braces so the name stands out; the characters stay identical to the input's, keeping the caret aligned. */}
+        <span className="var-token-brace">{'{{'}</span>
+        {segment.raw.slice(2, -2)}
+        <span className="var-token-brace">{'}}'}</span>
       </span>
-      {card.isOpen &&
+      {preview.isOpen &&
         createPortal(
-          <div
-            ref={cardRef}
-            className="var-tooltip"
-            style={card.style}
-            onMouseEnter={() => {
-              cardHoveredRef.current = true
-              cancelClose()
-            }}
-            onMouseLeave={() => {
-              cardHoveredRef.current = false
-              scheduleClose()
-            }}
-            onBlur={handleCardBlur}
-          >
+          <div ref={cardRef} className="var-tooltip" style={preview.style} {...preview.cardEvents}>
             <VariablePreviewCard
               name={segment.name}
               variables={variables}
@@ -207,11 +288,7 @@ function VariableToken({
               doc={doc}
               onSetValue={editing?.setValue ?? null}
               canCreate={editing?.canCreate ?? false}
-              onRequestClose={() => {
-                cardHoveredRef.current = false
-                cancelClose()
-                card.close()
-              }}
+              onRequestClose={preview.close}
             />
           </div>,
           document.body,
@@ -221,84 +298,44 @@ function VariableToken({
 }
 
 function RouteParamToken({
+  index,
   name,
   raw,
   routeParam,
   onSetValue,
+  editState,
+  registerHover,
 }: {
+  index: number
   name: string
   raw: string
   routeParam?: RouteParamEntry
   onSetValue?: (id: string, value: string) => void
+  editState: TokenEditState
+  registerHover: RegisterTokenHover
 }) {
   const { t } = useLanguage()
   const cardRef = useRef<HTMLDivElement>(null)
-  const card = useTooltipCard(cardRef)
-  const closeTimerRef = useRef<number | null>(null)
-  const cardHoveredRef = useRef(false)
+  const preview = useTokenPreview(cardRef, index, registerHover)
   const inputId = useId()
   const value = routeParam?.value ?? ''
   const canEdit = !!routeParam && !!onSetValue
-
-  const cancelClose = () => {
-    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = null
-  }
-
-  const scheduleClose = () => {
-    cancelClose()
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null
-      if (cardHoveredRef.current || card.holdsFocus()) return
-      card.close()
-    }, PREVIEW_CLOSE_DELAY_MS)
-  }
-
-  useEffect(() => cancelClose, [])
-
-  const handleMouseEnter = (event: MouseEvent<HTMLSpanElement>) => {
-    cancelClose()
-    card.open(event.currentTarget)
-  }
-
-  const close = () => {
-    cardHoveredRef.current = false
-    cancelClose()
-    card.close()
-  }
-
-  const handleCardBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose()
-  }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter' && event.key !== 'Escape') return
     event.preventDefault()
     event.stopPropagation()
-    close()
+    preview.close()
   }
 
   return (
     <>
-      <span className="route-param-token" onMouseEnter={handleMouseEnter} onMouseLeave={scheduleClose}>
+      <span className={tokenClassName('route-param-token', editState, preview.isOpen)} data-token-index={index}>
         {raw}
       </span>
-      {card.isOpen &&
+      {preview.isOpen &&
         createPortal(
-          <div
-            ref={cardRef}
-            className="var-tooltip"
-            style={card.style}
-            onMouseEnter={() => {
-              cardHoveredRef.current = true
-              cancelClose()
-            }}
-            onMouseLeave={() => {
-              cardHoveredRef.current = false
-              scheduleClose()
-            }}
-            onBlur={handleCardBlur}
-          >
+          <div ref={cardRef} className="var-tooltip" style={preview.style} {...preview.cardEvents}>
             <div className="var-preview var-preview--defined">
               <div className="var-preview-header">
                 <span className="var-preview-name">{name}</span>
@@ -337,31 +374,54 @@ function RouteParamToken({
   )
 }
 
+interface FieldSelection {
+  start: number
+  end: number
+}
+
+function editStateFor(selection: FieldSelection | null, tokenStart: number, tokenEnd: number): TokenEditState {
+  if (!selection) return { active: false, selected: false }
+  if (selection.start === selection.end) {
+    return { active: selection.start > tokenStart && selection.start < tokenEnd, selected: false }
+  }
+  return { active: false, selected: selection.start < tokenEnd && selection.end > tokenStart }
+}
+
+interface RenderSegmentsOptions {
+  variables: EnvironmentVariableDto[]
+  masked: boolean
+  variableDocs: Record<string, VariableDoc> | undefined
+  highlightRouteParams: boolean
+  routeParams: RouteParamEntry[] | undefined
+  onUpdateRouteParamValue: ((id: string, value: string) => void) | undefined
+  /** The `<input>` selection while it has focus; `null` when unfocused. */
+  selection: FieldSelection | null
+  registerHover: RegisterTokenHover
+}
+
 /** Em campos mascarados, o texto fora dos templates continua no overlay com
  * os caracteres reais (transparentes, cobertos por pontos via CSS) — assim a
  * largura acompanha a do `<input>` e o caret fica alinhado em qualquer fonte. */
-function renderSegments(
-  value: string,
-  variables: EnvironmentVariableDto[],
-  masked: boolean,
-  variableDocs: Record<string, VariableDoc> | undefined,
-  highlightRouteParams: boolean,
-  routeParams: RouteParamEntry[] | undefined,
-  onUpdateRouteParamValue: ((id: string, value: string) => void) | undefined,
-): ReactNode[] {
+function renderSegments(value: string, options: RenderSegmentsOptions): ReactNode[] {
+  const { variables, masked, variableDocs, highlightRouteParams, routeParams, onUpdateRouteParamValue, selection, registerHover } =
+    options
   const routeRanges = highlightRouteParams ? findRouteParamRanges(value) : []
   const rendered: ReactNode[] = []
   let offset = 0
+  let tokenIndex = 0
 
   parseTemplate(value).forEach((segment, segmentIndex) => {
     if (segment.type === 'variable') {
       rendered.push(
         <VariableToken
           key={'segment-' + segmentIndex}
+          index={tokenIndex++}
           segment={segment}
           variables={variables}
           masked={masked}
           doc={variableDocs?.[segment.name]}
+          editState={editStateFor(selection, offset, offset + segment.raw.length)}
+          registerHover={registerHover}
         />,
       )
       offset += segment.raw.length
@@ -387,10 +447,13 @@ function renderSegments(
       rendered.push(
         <RouteParamToken
           key={'segment-' + segmentIndex + '-route-' + rangeIndex}
+          index={tokenIndex++}
           name={range.name}
           raw={segment.value.slice(start, end)}
           routeParam={routeParam}
           onSetValue={onUpdateRouteParamValue}
+          editState={editStateFor(selection, range.start, range.end)}
+          registerHover={registerHover}
         />,
       )
       cursor = end
@@ -438,9 +501,63 @@ export function TemplateHighlightedField({
   const inputRef = useRef<HTMLInputElement>(null)
   const pendingCursorRef = useRef<number | null>(null)
   const [openQuery, setOpenQuery] = useState<OpenTemplateQuery | null>(null)
-  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null)
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null)
   const [fieldOpen, setFieldOpen] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const [selection, setSelection] = useState<FieldSelection | null>(null)
+  // A Map held in state (not a ref): created once, mutated only from effects and event handlers.
+  const [tokenHover] = useState(() => new Map<number, TokenHoverHandlers>())
+  const hoveredTokenRef = useRef<number | null>(null)
+
+  const registerHover: RegisterTokenHover = (index, handlers) => {
+    tokenHover.set(index, handlers)
+    return () => {
+      if (tokenHover.get(index) === handlers) tokenHover.delete(index)
+    }
+  }
+
+  /** Tokens let the pointer through to the `<input>`; hovering is detected by
+   * hit-testing the pointer against the overlay's tokens (`tokenAt`). */
+  const setHoveredToken = (element: HTMLElement | null) => {
+    const next = element ? Number(element.dataset.tokenIndex) : null
+    const previous = hoveredTokenRef.current
+    if (previous === next) return
+    if (previous !== null) tokenHover.get(previous)?.leave()
+    hoveredTokenRef.current = next
+    if (element && next !== null) tokenHover.get(next)?.enter(element)
+  }
+
+  const tokenAt = (clientX: number, clientY: number): HTMLElement | null => {
+    for (const element of overlayRef.current?.querySelectorAll<HTMLElement>('[data-token-index]') ?? []) {
+      const rect = element.getBoundingClientRect()
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) return element
+    }
+    return null
+  }
+
+  const handleMouseMove = (event: MouseEvent<HTMLInputElement>) => {
+    // While drag-selecting, do not pop preview cards along the way.
+    if (event.buttons !== 0) return
+    setHoveredToken(tokenAt(event.clientX, event.clientY))
+  }
+
+  const syncOverlayScroll = () => {
+    const overlay = overlayRef.current
+    const input = inputRef.current
+    if (!overlay || !input) return
+    overlay.scrollLeft = input.scrollLeft
+  }
+
+  // The input may scroll horizontally without a `scroll` event (caret moved by
+  // typing or by the value changing from outside): keep the overlay aligned.
+  useLayoutEffect(syncOverlayScroll, [value])
+
+  const trackSelection = (input: HTMLInputElement) => {
+    const start = input.selectionStart ?? 0
+    const end = input.selectionEnd ?? start
+    setSelection((current) => (current && current.start === start && current.end === end ? current : { start, end }))
+    syncOverlayScroll()
+  }
 
   const suggestions = useMemo(() => {
     if (!openQuery) return []
@@ -471,7 +588,13 @@ export function TemplateHighlightedField({
     const field = !next && openField && hasFieldSuggestions
     setOpenQuery(next)
     setFieldOpen(field)
-    setAnchorRect(next || field ? input.getBoundingClientRect() : null)
+    if (next || field) {
+      const rect = input.getBoundingClientRect()
+      // The variable list opens under the `{{` being typed; the field's own list, under the field.
+      setAnchor({ left: next ? textEndLeft(input, next.start - 2) : rect.left, bottom: rect.bottom })
+    } else {
+      setAnchor(null)
+    }
     setHighlightedIndex(0)
   }
 
@@ -481,6 +604,8 @@ export function TemplateHighlightedField({
   }
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    // Token indices shift as the value changes; the next pointer move re-detects the hovered one.
+    setHoveredToken(null)
     onChange(event.target.value)
     syncOpenQuery(event.target, true)
   }
@@ -564,10 +689,10 @@ export function TemplateHighlightedField({
     if (masked) event.preventDefault()
   }
 
-  const suggestionsLeft = anchorRect
-    ? Math.min(Math.max(anchorRect.left, VIEWPORT_MARGIN_PX), window.innerWidth - SUGGESTIONS_WIDTH_PX - VIEWPORT_MARGIN_PX)
+  const suggestionsLeft = anchor
+    ? Math.min(Math.max(anchor.left, VIEWPORT_MARGIN_PX), window.innerWidth - SUGGESTIONS_WIDTH_PX - VIEWPORT_MARGIN_PX)
     : 0
-  const suggestionsTop = anchorRect ? anchorRect.bottom + TOOLTIP_GAP_PX : 0
+  const suggestionsTop = anchor ? anchor.bottom + TOOLTIP_GAP_PX : 0
 
   return (
     <div className="var-highlight-wrapper">
@@ -581,7 +706,14 @@ export function TemplateHighlightedField({
         onClick={(event) => syncOpenQuery(event.currentTarget, true)}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}
-        onBlur={closeLists}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHoveredToken(null)}
+        onSelect={(event) => trackSelection(event.currentTarget)}
+        onFocus={(event) => trackSelection(event.currentTarget)}
+        onBlur={() => {
+          setSelection(null)
+          closeLists()
+        }}
         placeholder={placeholder}
         onCopy={blockClipboardWhenMasked}
         onCut={blockClipboardWhenMasked}
@@ -595,12 +727,23 @@ export function TemplateHighlightedField({
       />
       <div ref={overlayRef} className={`var-highlight-overlay ${fieldClassName}`} aria-hidden="true">
         <span className="var-highlight-text">
-          {templates ? renderSegments(value, variables, masked, variableDocs, highlightRouteParams, routeParams, onUpdateRouteParamValue) : value}
+          {templates
+            ? renderSegments(value, {
+                variables,
+                masked,
+                variableDocs,
+                highlightRouteParams,
+                routeParams,
+                onUpdateRouteParamValue,
+                selection,
+                registerHover,
+              })
+            : value}
         </span>
       </div>
 
       {openQuery &&
-        anchorRect &&
+        anchor &&
         createPortal(
           <div
             className="var-suggestions"
@@ -639,7 +782,7 @@ export function TemplateHighlightedField({
 
       {!openQuery &&
         fieldOpen &&
-        anchorRect &&
+        anchor &&
         fieldMatches.length > 0 &&
         createPortal(
           <div

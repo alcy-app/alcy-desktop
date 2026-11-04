@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { act, render as renderUi, fireEvent, screen, waitFor, within } from '../../test-utils'
+import { act, render as renderUi, fireEvent, hoverTemplateToken, screen, unhoverTemplateToken, waitFor, within } from '../../test-utils'
 import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { RequestWorkbench } from './RequestWorkbench'
 import type { ExtensionSidebarModule, PseudoTab } from '../../extensions/types'
@@ -1006,7 +1006,7 @@ describe('RequestWorkbench', () => {
     expect(endpoint).toHaveValue('https://api.test/users/:accountId?expand=true')
     expect(document.querySelector('.route-param-token')).toHaveTextContent(':accountId')
 
-    fireEvent.mouseEnter(document.querySelector('.route-param-token') as Element)
+    hoverTemplateToken(document.querySelector('.route-param-token') as Element)
     await waitFor(() => expect(document.querySelector('.var-tooltip input')).toBeInTheDocument())
     fireEvent.change(document.querySelector('.var-tooltip input') as HTMLInputElement, {
       target: { value: '84' },
@@ -2253,10 +2253,10 @@ describe('RequestWorkbench', () => {
     const unknownToken = document.querySelector('.var-token--unknown')
     expect(unknownToken).toHaveTextContent('{{baseUrl}}')
 
-    fireEvent.mouseEnter(unknownToken as Element)
+    hoverTemplateToken(unknownToken as Element)
     expect(await screen.findByText('Não existe no ambiente ativo nem na coleção.')).toBeInTheDocument()
     expect(document.querySelector('.var-preview--undefined .var-preview-badge')).toHaveTextContent('Indefinida')
-    fireEvent.mouseLeave(unknownToken as Element)
+    unhoverTemplateToken(unknownToken as Element)
 
     fireEvent.click(screen.getByRole('button', { name: 'Adicionar variável' }))
     fireEvent.change(screen.getByPlaceholderText('nome'), { target: { value: 'baseUrl' } })
@@ -2266,7 +2266,7 @@ describe('RequestWorkbench', () => {
     expect(knownToken).toHaveTextContent('{{baseUrl}}')
     expect(document.querySelector('.var-token--unknown')).not.toBeInTheDocument()
 
-    fireEvent.mouseEnter(knownToken as Element)
+    hoverTemplateToken(knownToken as Element)
     expect(document.querySelector('.var-preview--defined .var-preview-name')).toHaveTextContent('baseUrl')
     const previewValue = await screen.findByLabelText('Valor da variável baseUrl')
     expect(previewValue).toHaveValue('https://api.example.com')
@@ -2283,7 +2283,7 @@ describe('RequestWorkbench', () => {
     fireEvent.change(screen.getByLabelText('Endpoint'), { target: { value: '{{host}}/' } })
     openEnvironmentsTab()
 
-    fireEvent.mouseEnter(document.querySelector('.var-token--unknown') as Element)
+    hoverTemplateToken(document.querySelector('.var-token--unknown') as Element)
     fireEvent.click(await screen.findByRole('button', { name: 'Criar no ambiente ativo' }))
     fireEvent.change(screen.getByLabelText('Valor da variável host'), { target: { value: 'https://api.example.com' } })
 
@@ -4508,7 +4508,7 @@ describe('RequestWorkbench', () => {
 
         const knownTokens = [...document.querySelectorAll('.var-token--known')].map((token) => token.textContent)
         expect(knownTokens).toEqual(['{{baseUrl}}', '{{orderId}}'])
-        fireEvent.mouseEnter(document.querySelectorAll('.var-token--known')[1])
+        hoverTemplateToken(document.querySelectorAll('.var-token--known')[1])
         expect(await screen.findByText('Da pasta Pedidos')).toBeInTheDocument()
 
         fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))

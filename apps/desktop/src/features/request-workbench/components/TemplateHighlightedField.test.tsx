@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
-import { fireEvent, render, screen } from '../../../test-utils'
+import { fireEvent, hoverTemplateToken, render, screen } from '../../../test-utils'
 import { installButtonMousedownWorkaround } from '../../../shared/button-mousedown-workaround'
 import type { FieldSuggestion } from '../schema-completions'
 import { TemplateHighlightedField } from './TemplateHighlightedField'
@@ -131,9 +131,86 @@ describe('TemplateHighlightedField', () => {
   it('mostra o valor da variável no tooltip', () => {
     render(<Field initial="{{token}}" />)
     const token = document.querySelector('.var-token--known') as Element
-    fireEvent.mouseEnter(token)
+    hoverTemplateToken(token)
     expect(screen.getByText('abc123')).toHaveClass('var-preview-value')
     expect(document.querySelector('.var-preview-badge')).toHaveTextContent('Definida')
+  })
+
+  it('opens the variable list under the `{{` being typed, not at the start of the field', () => {
+    // jsdom has no layout: the input sits at x=100 and the text before `{{` measures 120px.
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const isInput = this instanceof HTMLInputElement
+      const left = isInput ? 100 : 0
+      const width = isInput ? 500 : this.textContent === 'https://api.test/ ' ? 120 : 0
+      return { left, right: left + width, top: 40, bottom: 60, width, height: 20, x: left, y: 40, toJSON: () => ({}) }
+    })
+
+    try {
+      render(<Field />)
+      const input = screen.getByLabelText('Campo')
+      fireEvent.change(input, { target: { value: 'https://api.test/ {{to' } })
+      const style = getComputedStyle(input)
+      const textStart = 100 + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.paddingLeft) || 0)
+      expect((screen.getByRole('listbox', { name: 'Sugestões de variáveis' }) as HTMLElement).style.left).toBe(`${textStart + 120}px`)
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+
+  describe('editing a variable in the field', () => {
+    it('leaves the pointer to the input and opens the preview by hit-testing the token', () => {
+      render(<Field initial="{{token}}" />)
+      const input = screen.getByLabelText('Campo')
+      const token = document.querySelector('.var-token--known') as Element
+
+      // The pointer moves over the input, not the token: clicks, drags and double-clicks keep reaching the input.
+      hoverTemplateToken(token)
+      expect(screen.getByText('abc123')).toHaveClass('var-preview-value')
+      expect(token).toHaveClass('var-token--hovered')
+      expect(input).toHaveValue('{{token}}')
+    })
+
+    it('does not open previews while drag-selecting across a token', () => {
+      render(<Field initial="{{token}}" />)
+      fireEvent.mouseMove(screen.getByLabelText('Campo'), { clientX: 0, clientY: 0, buttons: 1 })
+      expect(document.querySelector('.var-tooltip')).not.toBeInTheDocument()
+    })
+
+    it('mutes the braces so the name stands out, keeping the text identical to the input', () => {
+      render(<Field initial="a{{ token }}b" />)
+      const token = document.querySelector('.var-token--known') as Element
+      expect(token).toHaveTextContent('{{ token }}')
+      expect([...token.querySelectorAll('.var-token-brace')].map((brace) => brace.textContent)).toEqual(['{{', '}}'])
+      expect(document.querySelector('.var-highlight-text')?.textContent).toBe('a{{ token }}b')
+    })
+
+    it('marks the token holding the caret and the one covered by the selection', () => {
+      render(<Field initial="x {{token}} {{nope}}" />)
+      const input = screen.getByLabelText('Campo') as HTMLInputElement
+      const [known, unknown] = [...document.querySelectorAll('.var-token')]
+      input.focus()
+      // As if a click placed the caret or dragged the selection: React's `onSelect`
+      // reports it on `mouseup` (jsdom fires no `selectionchange` of its own).
+      const select = (start: number, end: number) => {
+        input.setSelectionRange(start, end)
+        fireEvent.mouseUp(input)
+      }
+
+      select(5, 5)
+      expect(known).toHaveClass('var-token--active')
+      expect(unknown).not.toHaveClass('var-token--active')
+
+      // Right after `}}` the caret is no longer editing the variable.
+      select(11, 11)
+      expect(known).not.toHaveClass('var-token--active')
+
+      select(4, 9)
+      expect(known).toHaveClass('var-token--selected')
+      expect(unknown).not.toHaveClass('var-token--selected')
+
+      fireEvent.blur(input)
+      expect(known).not.toHaveClass('var-token--selected')
+    })
   })
 
   it('abre o tooltip abaixo do token quando não cabe acima', () => {
@@ -154,7 +231,7 @@ describe('TemplateHighlightedField', () => {
 
     try {
       render(<Field initial="{{token}}" />)
-      fireEvent.mouseEnter(document.querySelector('.var-token--known') as Element)
+      hoverTemplateToken(document.querySelector('.var-token--known') as Element)
       const tooltip = document.querySelector('.var-tooltip') as HTMLElement
       expect(tooltip.style.top).toBe('30px')
       expect(tooltip.style.bottom).toBe('')
@@ -180,7 +257,7 @@ describe('TemplateHighlightedField', () => {
 
     try {
       render(<Field initial="{{token}}" />)
-      fireEvent.mouseEnter(document.querySelector('.var-token--known') as Element)
+      hoverTemplateToken(document.querySelector('.var-token--known') as Element)
       const tooltip = document.querySelector('.var-tooltip') as HTMLElement
       expect(tooltip.style.bottom).toBe(`${window.innerHeight - 400 + 6}px`)
       expect(tooltip.style.top).toBe('')
@@ -201,7 +278,7 @@ describe('TemplateHighlightedField', () => {
 
     it('não revela o valor da variável no tooltip', () => {
       render(<Field initial="{{token}}" masked />)
-      fireEvent.mouseEnter(document.querySelector('.var-token--masked') as Element)
+      hoverTemplateToken(document.querySelector('.var-token--masked') as Element)
       expect(screen.getByText('Valor oculto neste campo.')).toBeInTheDocument()
       expect(document.querySelector('.var-preview-badge')).toHaveTextContent('Oculta')
       expect(screen.queryByText(/abc123/)).not.toBeInTheDocument()

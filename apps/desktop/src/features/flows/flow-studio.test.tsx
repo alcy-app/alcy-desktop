@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { hoverTemplateToken } from '../../test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LanguageProvider } from '../../shared/i18n/LanguageProvider'
 import { LANGUAGE_STORAGE_KEY } from '../../shared/i18n/translations'
@@ -105,7 +106,7 @@ describe('embedded flow request editor', () => {
     const content = { ...emptyRequestContent('rest'), endpointUrl: '{{baseUrl}}/users', body: { type: 'raw' as const, rawLanguage: 'json' as const, content: '{"id":"{{userId}}"}' } }
     render(<StudioProviders><FlowRequestEditor rootPath="/workspace" content={content} variables={[{ name: 'baseUrl', value: 'https://api.test', sensitive: false }]} targetLabel="Inline request" dirty={false} onChange={vi.fn()} onSave={vi.fn()} onDiscard={vi.fn()} /></StudioProviders>)
     const variable = document.querySelector('.var-token--known')!
-    fireEvent.mouseEnter(variable)
+    hoverTemplateToken(variable)
     fireEvent.click(variable)
     expect(screen.getByText('https://api.test')).toHaveClass('var-preview-value')
     expect(screen.getByLabelText('Endpoint')).toHaveValue('{{baseUrl}}/users')
