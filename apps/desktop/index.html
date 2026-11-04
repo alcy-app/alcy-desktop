@@ -6,9 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Alcy</title>
     <script>
-      // Aplica o tema salvo antes do React montar, evitando flash do tema padrão.
+      // Applies the saved theme (or the system's) before React mounts, avoiding a flash of the default one.
       try {
         var t = window.localStorage.getItem('alcy:theme')
+        if (t === 'system') t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
         t = t === 'dark' ? 'dark' : 'light'
         document.documentElement.dataset.theme = t
         document.documentElement.style.colorScheme = t

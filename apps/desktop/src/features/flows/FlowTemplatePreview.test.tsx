@@ -9,7 +9,7 @@ import { FlowTemplatePreview } from './FlowTemplatePreview'
 
 function preview(language: Language, theme: Theme) {
   return <LanguageContext value={{ language, t: (key) => translate(language, key), setLanguage: () => {} }}>
-    <ThemeContext value={{ theme, setTheme: () => {} }}>
+    <ThemeContext value={{ theme, preference: theme, setPreference: () => {} }}>
       {FLOW_TEMPLATES.map(({ id }) => <FlowTemplatePreview key={id} templateId={id} />)}
     </ThemeContext>
   </LanguageContext>

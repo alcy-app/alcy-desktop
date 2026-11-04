@@ -310,6 +310,7 @@ const ptBR = {
   'settings.resetScale': 'Restaurar 100%',
   'settings.close': 'Fechar',
   'settings.themeLabel': 'Tema',
+  'settings.theme.system': 'Padrão do sistema',
   'settings.theme.light': 'Claro',
   'settings.theme.dark': 'Escuro',
   'settings.languageLabel': 'Idioma',

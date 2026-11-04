@@ -1,9 +1,11 @@
 import { createContext } from 'react'
-import type { Theme } from './theme'
+import type { Theme, ThemePreference } from './theme'
 
 export interface ThemeContextValue {
+  /** The theme on screen: the preference, with `system` resolved. */
   theme: Theme
-  setTheme: (theme: Theme) => void
+  preference: ThemePreference
+  setPreference: (preference: ThemePreference) => void
 }
 
 export const ThemeContext = createContext<ThemeContextValue | null>(null)

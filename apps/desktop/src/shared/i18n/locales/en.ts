@@ -316,6 +316,7 @@ const en: Record<TranslationKey, string> = {
   'settings.resetScale': 'Reset to 100%',
   'settings.close': 'Close',
   'settings.themeLabel': 'Theme',
+  'settings.theme.system': 'System default',
   'settings.theme.light': 'Light',
   'settings.theme.dark': 'Dark',
   'settings.languageLabel': 'Language',

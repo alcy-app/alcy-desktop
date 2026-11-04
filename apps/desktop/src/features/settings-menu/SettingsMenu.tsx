@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { ProxyMode } from '../../bindings/get-proxy-settings'
 import { useProxy } from '../../shared/proxy/use-proxy'
 import { useSecurityPreferences } from '../../shared/security/use-security-preferences'
-import { THEME_PREVIEW, THEMES, type Theme } from '../../shared/appearance/theme'
+import { THEME_PREFERENCES, THEME_PREVIEW, type ThemePreference } from '../../shared/appearance/theme'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
 import { useTheme } from '../../shared/appearance/use-theme'
 import { useUiScale } from '../../shared/appearance/use-ui-scale'
@@ -105,15 +105,15 @@ interface SettingsModalProps {
 function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistoryRetentionChange }: SettingsModalProps) {
   const { language, setLanguage: applyLanguage, t } = useLanguage()
   const { textScale, setTextScale, iconScale, setIconScale } = useUiScale()
-  const { theme, setTheme: applyTheme } = useTheme()
+  const { preference: themePreference, setPreference: applyThemePreference } = useTheme()
   // Interface-only preferences report which one changed, never its value.
   // Scale sliders change on every step and are left out.
   const setLanguage = (value: Language) => {
     applyLanguage(value)
     trackUsage({ name: 'settings_changed', category: 'general', key: 'language' })
   }
-  const setTheme = (value: Parameters<typeof applyTheme>[0]) => {
-    applyTheme(value)
+  const setThemePreference = (value: ThemePreference) => {
+    applyThemePreference(value)
     trackUsage({ name: 'settings_changed', category: 'appearance', key: 'theme' })
   }
   const [category, setCategory] = useState<SettingsCategory>(isCategoryDisabled(initialCategory) ? 'general' : initialCategory)
@@ -181,8 +181,8 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
                 <p className="settings-section-label">{t('settings.themeLabel')}</p>
               </div>
               <div className="settings-theme-options" role="radiogroup" aria-label={t('settings.themeLabel')}>
-                {THEMES.map((option) => (
-                  <ThemeOption key={option} theme={option} label={t(`settings.theme.${option}`)} active={option === theme} onSelect={setTheme} />
+                {THEME_PREFERENCES.map((option) => (
+                  <ThemeOption key={option} theme={option} label={t(`settings.theme.${option}`)} active={option === themePreference} onSelect={setThemePreference} />
                 ))}
               </div>
             </section>
@@ -411,10 +411,10 @@ function SecuritySection() {
 }
 
 interface ThemeOptionProps {
-  theme: Theme
+  theme: ThemePreference
   label: string
   active: boolean
-  onSelect: (theme: Theme) => void
+  onSelect: (theme: ThemePreference) => void
 }
 
 function ThemeOption({ theme, label, active, onSelect }: ThemeOptionProps) {

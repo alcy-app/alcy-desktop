@@ -244,6 +244,7 @@ describe('SettingsMenu — categorias', () => {
     expect(await screen.findByTestId('general-settings')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Aparência' }))
     expect(screen.getByRole('radio', { name: 'Claro' })).toBeVisible()
+    expect(screen.getByRole('radio', { name: 'Padrão do sistema' })).toBeVisible()
     expect(screen.queryByRole('radio', { name: 'Sistema' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Rede' }))
     await waitFor(() => expect(getProxySettings).toHaveBeenCalled())
