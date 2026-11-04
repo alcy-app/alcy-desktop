@@ -127,6 +127,39 @@ describe('ConsolePanel', () => {
     expect(screen.getByText('https://api.test/users')).toBeInTheDocument()
   })
 
+  describe('request body', () => {
+    const detail = (requestBody: string): NonNullable<ConsoleEntry['detail']> => ({
+      method: 'post',
+      requestBody,
+      durationMs: 10,
+      requestHeaders: [{ name: 'content-type', value: 'application/json' }],
+      cookies: [],
+      connection: { remoteAddress: null, httpVersion: 'HTTP/1.1', tlsCertificatePresent: false, certificateVerificationDisabled: false },
+      finalUrl: null,
+      waitingMs: 5,
+      responseHeaders: [],
+      body: { kind: 'inline', body: '{}' },
+      bodyEncoding: 'text',
+    })
+
+    const requestBodySection = () =>
+      screen.getByText('Request Body', { selector: 'summary' }).closest('details') as HTMLElement
+
+    it('shows the body sent with the request, next to its headers', () => {
+      renderConsole([entry({ outcome: 'success', errorKind: null, statusCode: 201, detail: detail('{"name":"Ana"}') })])
+      fireEvent.click(screen.getByRole('button', { name: 'Ver detalhes da requisição' }))
+
+      expect(requestBodySection()).toHaveTextContent('Ana')
+    })
+
+    it('says so when the request had no body', () => {
+      renderConsole([entry({ outcome: 'success', errorKind: null, statusCode: 200, detail: detail('') })])
+      fireEvent.click(screen.getByRole('button', { name: 'Ver detalhes da requisição' }))
+
+      expect(within(requestBodySection()).getByText('Nenhum corpo enviado com a requisição.')).toBeInTheDocument()
+    })
+  })
+
   it('mostra a falha de script como evento de erro', () => {
     renderConsole([entry({ kind: 'script', outcome: 'error', errorKind: null, scriptMessage: 'boom' })])
 

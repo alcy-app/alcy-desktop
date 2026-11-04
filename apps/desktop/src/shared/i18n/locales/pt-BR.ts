@@ -2256,6 +2256,8 @@ const ptBR = {
   'devConsole.networkSectionLabel': 'Network',
   'devConsole.scriptBadge': 'Script',
   'devConsole.requestHeadersSectionLabel': 'Request Headers',
+  'devConsole.requestBodySectionLabel': 'Request Body',
+  'devConsole.noRequestBody': 'Nenhum corpo enviado com a requisição.',
   'devConsole.cookiesSectionLabel': 'Cookies',
   'devConsole.responseHeadersSectionLabel': 'Response Headers',
   'devConsole.responseBodySectionLabel': 'Response Body',

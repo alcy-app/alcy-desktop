@@ -38,6 +38,15 @@ export function ConsoleEntryDetailView({ endpointUrl, statusCode, detail }: Cons
         />
       </details>
       <details className="console-entry-section">
+        <summary>{t('devConsole.requestBodySectionLabel')}</summary>
+        {detail.requestBody === '' ? (
+          <p className="rw-status-message">{t('devConsole.noRequestBody')}</p>
+        ) : (
+          // Same viewer as the response body; the sent `Content-Type` picks the formatting (JSON, XML…).
+          <ResponseBody body={{ kind: 'inline', body: detail.requestBody }} bodyEncoding="text" headers={detail.requestHeaders} />
+        )}
+      </details>
+      <details className="console-entry-section">
         <summary>{t('devConsole.cookiesSectionLabel')}</summary>
         <CookiesList cookies={detail.cookies} />
       </details>

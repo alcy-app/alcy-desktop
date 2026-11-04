@@ -2262,6 +2262,8 @@ const en: Record<TranslationKey, string> = {
   'devConsole.networkSectionLabel': 'Network',
   'devConsole.scriptBadge': 'Script',
   'devConsole.requestHeadersSectionLabel': 'Request Headers',
+  'devConsole.requestBodySectionLabel': 'Request Body',
+  'devConsole.noRequestBody': 'No body sent with the request.',
   'devConsole.cookiesSectionLabel': 'Cookies',
   'devConsole.responseHeadersSectionLabel': 'Response Headers',
   'devConsole.responseBodySectionLabel': 'Response Body',
