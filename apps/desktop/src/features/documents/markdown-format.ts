@@ -99,10 +99,81 @@ export function insertBlock(text: string, start: number, end: number, block: str
   return { text: before + lead + block + trail + after, selectionStart: offset + select[0], selectionEnd: offset + select[1] }
 }
 
+export interface ImagePlacement {
+  /** Percent of the text column. */
+  width?: number
+  align?: 'left' | 'center' | 'right'
+}
+
 /** Markdown reference for an attached image; brackets and line breaks would end the alt text early. */
-export function imageReference(assetId: string, caption: string): string {
+export function imageReference(assetId: string, caption: string, placement: ImagePlacement = {}): string {
   const alt = caption.replace(/[[\]\\]/g, '').replace(/\s+/g, ' ').trim()
-  return `![${alt}](assets/${assetId}.png)`
+  const attributes = [placement.width ? `width=${placement.width}%` : '', placement.align ? `align=${placement.align}` : ''].filter(Boolean).join(' ')
+  return `![${alt}](assets/${assetId}.png)${attributes ? `{${attributes}}` : ''}`
+}
+
+export type DocumentInsert = 'note' | 'tip' | 'warning' | 'danger' | 'columns2' | 'columns3' | 'center' | 'pagebreak' | 'toc' | 'tableCaption'
+
+/** Words the inserted blocks start with, so they can be typed over. */
+export interface InsertPlaceholders {
+  title: string
+  text: string
+  column: string
+  caption: string
+}
+
+/** Wraps the selection (or a placeholder) in a `:::name` container; selects its title or content. */
+function insertContainer(text: string, start: number, end: number, opening: string, body: string, select: 'title' | 'body', title = ''): TextEdit {
+  const head = `:::${opening}${title ? ` ${title}` : ''}`
+  const block = `${head}\n${body}\n:::`
+  const range: [number, number] = select === 'title' && title ? [head.length - title.length, head.length] : [head.length + 1, head.length + 1 + body.length]
+  return insertBlock(text, start, end, block, range)
+}
+
+/** Adds a `Table:` caption line right after the table around the cursor. */
+function insertTableCaption(text: string, start: number, caption: string): TextEdit {
+  const lines = text.split('\n')
+  let offset = 0
+  let line = 0
+  while (line < lines.length - 1 && offset + lines[line].length < start) {
+    offset += lines[line].length + 1
+    line++
+  }
+  const isRow = (value: string | undefined) => value !== undefined && /^\s*\|.*\|\s*$/.test(value)
+  if (!isRow(lines[line])) return insertBlock(text, start, start, `Table: ${caption}`, [7, 7 + caption.length])
+  while (isRow(lines[line + 1])) {
+    offset += lines[line].length + 1
+    line++
+  }
+  const at = offset + lines[line].length
+  const inserted = `\nTable: ${caption}`
+  return { text: text.slice(0, at) + inserted + text.slice(at), selectionStart: at + 8, selectionEnd: at + 8 + caption.length }
+}
+
+export function applyDocumentInsert(text: string, start: number, end: number, insert: DocumentInsert, placeholders: InsertPlaceholders): TextEdit {
+  const selected = text.slice(start, end).replace(/\n+$/, '')
+  switch (insert) {
+    case 'note':
+    case 'tip':
+    case 'warning':
+    case 'danger':
+      return insertContainer(text, start, end, insert, selected || placeholders.text, selected ? 'title' : 'body', placeholders.title)
+    case 'columns2':
+    case 'columns3': {
+      const count = insert === 'columns2' ? 2 : 3
+      const first = selected || `${placeholders.column} 1`
+      const rest = Array.from({ length: count - 1 }, (_, index) => `${placeholders.column} ${index + 2}`)
+      return insertContainer(text, start, end, 'columns', [first, ...rest].join('\n+++\n'), 'body')
+    }
+    case 'center':
+      return insertContainer(text, start, end, 'center', selected || placeholders.text, 'body')
+    case 'pagebreak':
+      return insertBlock(text, start, end, '\\pagebreak')
+    case 'toc':
+      return insertBlock(text, start, end, '[[toc]]')
+    case 'tableCaption':
+      return insertTableCaption(text, start, placeholders.caption)
+  }
 }
 
 export function applyMarkdownFormat(text: string, start: number, end: number, format: MarkdownFormat, placeholders: FormatPlaceholders): TextEdit {

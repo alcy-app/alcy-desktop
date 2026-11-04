@@ -16,7 +16,7 @@ pub(super) const TOOLS: &[ToolSpec] = &[
     tool!(
         "get_documentation_guide",
         Read,
-        "How to create and revise workspace documentation from selected conversations and request executions, with code, local images and PDF/Markdown export. Read before documenting.",
+        "How to write professional workspace documentation: workflow, the document dialect (metadata and cover, callouts, columns, page breaks, table of contents, image size and alignment, captions), writing standard and recommended structures. Read before creating or revising a document.",
         || object(json!({}), &[])
     ),
     tool!(
@@ -35,6 +35,12 @@ pub(super) const TOOLS: &[ToolSpec] = &[
         )
     ),
     tool!(
+        "get_document_outline",
+        Read,
+        "Read a document's metadata (cover, toc, numbering, theme…) and its headings with levels and automatic numbers, without the text. Use it to plan section edits.",
+        || target("documentId", json!({}))
+    ),
+    tool!(
         "create_document",
         SideEffect,
         "Create and open an empty document. The current chat is its initial source; the user can select other conversations and request executions in Documents. Returns documentId and revision.",
@@ -49,9 +55,16 @@ pub(super) const TOOLS: &[ToolSpec] = &[
     tool!(
         "update_document",
         SideEffect,
-        "Revise a document at expectedRevision. append adds Markdown; replaceText with replacement changes one exact, unique passage. title renames it. Choose one content operation. Unrelated content stays unchanged. Code uses language-tagged fences; images use existing assets/<id>.png references.",
+        "Revise a document at expectedRevision with one content operation: append adds Markdown at the end; replaceText with replacement changes one exact, unique passage; section with sectionEdit and content edits the section under that unique heading (replace swaps the heading and its subsections, so content includes the heading; insertBefore, insertAfter and appendToSection add content around it). metadata sets cover and export options, alone or with the operation; null removes a key. title renames it. Unrelated content stays unchanged. Follow get_documentation_guide for the dialect.",
         || object(
-            json!({"documentId":text(),"expectedRevision":{"type":"integer","minimum":1},"title":text(),"append":{"type":"string","maxLength":32768},"replaceText":{"type":"string","maxLength":32768},"replacement":{"type":"string","maxLength":32768}}),
+            json!({"documentId":text(),"expectedRevision":{"type":"integer","minimum":1},"title":text(),"append":{"type":"string","maxLength":32768},"replaceText":{"type":"string","maxLength":32768},"replacement":{"type":"string","maxLength":32768},
+                "section":{"type":"string","maxLength":240,"description":"Exact heading text of the section, as get_document_outline lists it."},
+                "sectionEdit":{"type":"string","enum":["replace","insertBefore","insertAfter","appendToSection"]},
+                "content":{"type":"string","maxLength":32768},
+                "metadata":{"type":"object","additionalProperties":false,"properties":{
+                    "subtitle":{"type":["string","null"]},"author":{"type":["string","null"]},"version":{"type":["string","null"]},"date":{"type":["string","null"]},"status":{"type":["string","null"]},
+                    "theme":{"type":["string","null"]},"lang":{"type":["string","null"]},
+                    "cover":{"type":["string","null"],"enum":["true","false",null]},"toc":{"type":["string","null"],"enum":["true","false",null]},"numbering":{"type":["string","null"],"enum":["true","false",null]}}}}),
             &["documentId", "expectedRevision"]
         )
     ),

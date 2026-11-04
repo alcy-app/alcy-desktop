@@ -11,15 +11,15 @@ import { MenuItem, MenuSeparator, OptionsMenu } from '../../shared/ui/Menu'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { useToast } from '../../shared/ui/use-toast'
-import { CloseIcon, ColumnsIcon, DocumentIcon, DownloadIcon, EllipsisIcon, EyeIcon, ImageIcon, LinkIcon, LockIcon, PencilIcon, RefreshIcon, SaveIcon, TrashIcon } from '../../shared/ui/icons'
+import { CloseIcon, ColumnsIcon, DocumentIcon, DownloadIcon, EllipsisIcon, EyeIcon, GearIcon, ImageIcon, LinkIcon, LockIcon, PencilIcon, RefreshIcon, SaveIcon, TrashIcon } from '../../shared/ui/icons'
 import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
-import { MarkdownView } from '../notifications/MarkdownView'
 import { DocumentFormatBar } from './DocumentFormatBar'
 import { FORMAT_SHORTCUTS } from './format-actions'
-import { DocumentImage } from './DocumentImage'
+import { DocumentPreview } from './DocumentPreview'
+import { setFrontMatter, type MetadataKey } from './document-dialect'
 import { DocumentInspector, type EditorTask, type InspectorTab } from './DocumentInspector'
 import { countWords, formatRelativeTime } from './document-format'
-import { applyMarkdownFormat, imageReference, insertBlock, type MarkdownFormat, type TextEdit } from './markdown-format'
+import { applyDocumentInsert, applyMarkdownFormat, imageReference, insertBlock, type DocumentInsert, type ImagePlacement, type MarkdownFormat, type TextEdit } from './markdown-format'
 import type { DocumentActions, OpenDocument } from './use-documents'
 import './documents.css'
 
@@ -85,11 +85,19 @@ export function DocumentEditor({ document: doc, actions }: { document: OpenDocum
       text: t('documents.format.placeholder'), column: t('documents.format.column'), cell: t('documents.format.cell'),
     }))
   }
-  const insertImage = (assetId: string, caption: string) => {
+  const insert = (kind: DocumentInsert) => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    applyEdit(applyDocumentInsert(doc.markdown, textarea.selectionStart, textarea.selectionEnd, kind, {
+      title: t('documents.insert.titlePlaceholder'), text: t('documents.format.placeholder'), column: t('documents.insert.column'), caption: t('documents.insert.captionPlaceholder'),
+    }))
+  }
+  const insertImage = (assetId: string, caption: string, placement: ImagePlacement) => {
     const textarea = textareaRef.current
     const end = textarea ? textarea.selectionEnd : doc.markdown.length
-    applyEdit(insertBlock(doc.markdown, textarea ? textarea.selectionStart : end, end, imageReference(assetId, caption)))
+    applyEdit(insertBlock(doc.markdown, textarea ? textarea.selectionStart : end, end, imageReference(assetId, caption, placement)))
   }
+  const changeMetadata = (patch: Partial<Record<MetadataKey, string | null>>) => actions.edit(id, { markdown: setFrontMatter(doc.markdown, patch) })
   const onEditorKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
       event.preventDefault(); event.stopPropagation(); save()
@@ -148,19 +156,22 @@ export function DocumentEditor({ document: doc, actions }: { document: OpenDocum
       </div>
     </header>
     <div className="document-toolbar">
-      <DocumentFormatBar disabled={view === 'preview'} onFormat={format} />
+      <DocumentFormatBar disabled={view === 'preview'} onFormat={format} onInsert={insert} />
       <div className="document-toolbar-end">
         <SegmentedControl<View> layout="inline" size="sm" ariaLabel={t('documents.view')} value={view} onChange={setView} options={[
-          { value: 'edit', label: <><PencilIcon size={12} /><span className="document-view-label">{t('documents.edit')}</span></> },
-          { value: 'split', label: <><ColumnsIcon size={12} /><span className="document-view-label">{t('documents.split')}</span></> },
-          { value: 'preview', label: <><EyeIcon size={12} /><span className="document-view-label">{t('documents.preview')}</span></> },
+          { value: 'edit', label: <span className="document-view-option" title={t('documents.edit')}><PencilIcon size={12} /><span className="document-view-label">{t('documents.edit')}</span></span> },
+          { value: 'split', label: <span className="document-view-option" title={t('documents.split')}><ColumnsIcon size={12} /><span className="document-view-label">{t('documents.split')}</span></span> },
+          { value: 'preview', label: <span className="document-view-option" title={t('documents.preview')}><EyeIcon size={12} /><span className="document-view-label">{t('documents.preview')}</span></span> },
         ]} />
         <span className="document-toolbar-separator" aria-hidden="true" />
-        <Button variant="ghost" className="document-panel-toggle" aria-pressed={inspector === 'sources'} onClick={() => toggleInspector('sources')}>
+        <Button variant="ghost" className="document-panel-toggle" title={t('documents.sources')} aria-pressed={inspector === 'sources'} onClick={() => toggleInspector('sources')}>
           <LinkIcon size={13} /><span className="document-panel-toggle-label">{t('documents.sources')}</span><span className="document-count">{doc.saved.sources.length}</span>
         </Button>
-        <Button variant="ghost" className="document-panel-toggle" aria-pressed={inspector === 'images'} onClick={() => toggleInspector('images')}>
+        <Button variant="ghost" className="document-panel-toggle" title={t('documents.imagesTab')} aria-pressed={inspector === 'images'} onClick={() => toggleInspector('images')}>
           <ImageIcon size={13} /><span className="document-panel-toggle-label">{t('documents.imagesTab')}</span><span className="document-count">{doc.saved.assets.length}</span>
+        </Button>
+        <Button variant="ghost" className="document-panel-toggle" title={t('documents.properties')} aria-pressed={inspector === 'properties'} onClick={() => toggleInspector('properties')}>
+          <GearIcon size={13} /><span className="document-panel-toggle-label">{t('documents.properties')}</span>
         </Button>
       </div>
     </div>
@@ -175,16 +186,12 @@ export function DocumentEditor({ document: doc, actions }: { document: OpenDocum
         {view !== 'edit' && <div className="document-preview-pane">
           {view === 'split' && <div className="document-pane-heading">{t('documents.preview')}</div>}
           <div className="document-preview" aria-label={t('documents.preview')}>
-            <article className="document-page">
-              {doc.markdown.trim()
-                ? <MarkdownView source={doc.markdown} renderImage={(assetId, caption) => <DocumentImage key={assetId} rootPath={actions.rootPath} documentId={id} assetId={assetId} caption={caption} />} />
-                : <p className="document-preview-empty">{t('documents.previewEmpty')}</p>}
-            </article>
+            <DocumentPreview title={doc.title} markdown={doc.markdown} rootPath={actions.rootPath} documentId={id} themes={actions.themes} />
           </div>
         </div>}
       </div>
       {inspector && <DocumentInspector document={doc} actions={actions} tab={inspector} busy={busy} onTabChange={setInspector} onClose={() => setInspector(null)}
-        run={run} onError={reportError} onInsertImage={insertImage} />}
+        run={run} onError={reportError} onInsertImage={insertImage} themes={actions.themes} onMetadataChange={changeMetadata} />}
     </div>
     <footer className="document-statusbar">
       <span className="document-statusbar-item"><LockIcon size={11} />{t('documents.local')}</span>

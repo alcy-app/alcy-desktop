@@ -57,6 +57,7 @@ pub async fn documentation(
     paths: State<'_, AgentPaths>,
     runs: State<'_, AgentRuns>,
     local_secrets: State<'_, alcy_storage::LocalSecrets>,
+    themes: State<'_, alcy_app::DocumentThemes>,
 ) -> DocumentResult<Value> {
     let live = if matches!(
         input.operation.as_str(),
@@ -131,12 +132,21 @@ pub async fn documentation(
     let gate = state.gate.clone();
     let sessions = paths.sessions.clone();
     let secret_store = local_secrets.inner().clone();
+    let themes = themes.inner().clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _guard = gate.lock().map_err(fail)?;
         if cancellation.load(Ordering::Relaxed) {
             return Err(DocumentationError::Cancelled);
         }
-        execute(input, sessions, live, uploaded, &cancellation, secret_store)
+        execute(
+            input,
+            sessions,
+            live,
+            uploaded,
+            &cancellation,
+            secret_store,
+            &themes,
+        )
     })
     .await
     .map_err(fail)?;
@@ -220,11 +230,12 @@ fn execute(
     uploaded: Option<Vec<u8>>,
     cancelled: &AtomicBool,
     secret_store: alcy_storage::LocalSecrets,
+    themes: &alcy_app::DocumentThemes,
 ) -> DocumentResult<Value> {
     let store = DocumentationStore::new(PathBuf::from(&input.root_path));
     let needs_redaction = !matches!(
         input.operation.as_str(),
-        "get" | "list" | "asset" | "delete" | "guide"
+        "get" | "list" | "asset" | "delete" | "guide" | "themes" | "outline"
     );
     let redaction = if needs_redaction {
         let loaded =
@@ -248,7 +259,7 @@ fn execute(
         live,
         redaction,
     };
-    alcy_app::execute_document_operation(&store, &sources, input, uploaded, cancelled)
+    alcy_app::execute_document_operation(&store, &sources, themes, input, uploaded, cancelled)
 }
 
 fn source_text(

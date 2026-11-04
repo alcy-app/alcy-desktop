@@ -44,6 +44,9 @@ pub struct DocumentationInput {
     pub bytes: Vec<u8>,
     #[serde(default)]
     pub final_chunk: bool,
+    /// Interface language, for export labels when the document sets no `lang`.
+    #[serde(default)]
+    pub language: String,
 }
 
 pub trait DocumentationSources {
@@ -93,6 +96,7 @@ pub trait DocumentationWorkspace: DocumentationRepository {
         doc: &DocumentationRecord,
         path: &str,
         format: &str,
+        options: &crate::DocumentExportOptions,
         cancelled: &AtomicBool,
     ) -> DocumentResult<()>;
 }
@@ -112,6 +116,7 @@ fn metadata(mut doc: DocumentationRecord) -> DocumentResult<Value> {
 pub fn execute_document_operation(
     store: &impl DocumentationWorkspace,
     sources: &impl DocumentationSources,
+    themes: &crate::DocumentThemes,
     mut input: DocumentationInput,
     uploaded: Option<Vec<u8>>,
     cancelled: &AtomicBool,
@@ -123,15 +128,37 @@ pub fn execute_document_operation(
         &mut input.edit.markdown,
         &mut input.edit.append,
         &mut input.edit.replacement,
+        &mut input.edit.content,
     ]
     .into_iter()
     .flatten()
     {
         *text = sources.redact_text(text);
     }
+    for value in input
+        .edit
+        .metadata
+        .iter_mut()
+        .flat_map(|m| m.values_mut())
+        .flatten()
+    {
+        *value = sources.redact_text(value);
+    }
     let id = &input.document_id;
     match input.operation.as_str() {
         "guide" => Ok(json!({"guide":crate::DOCUMENTATION_GUIDE})),
+        "themes" => Ok(json!({"themes": themes.summaries()})),
+        "outline" => {
+            let doc = store.load(id)?;
+            let model = crate::parse_document(&doc.markdown);
+            let headings = crate::document_outline(&model);
+            Ok(json!({
+                "documentId": doc.id, "title": doc.title, "revision": doc.revision,
+                "metadata": model.meta, "headings": headings.iter().take(300).collect::<Vec<_>>(),
+                "truncated": headings.len() > 300, "markdownBytes": doc.markdown.len(),
+                "sourceCount": doc.sources.len(), "assetCount": doc.assets.len(),
+            }))
+        }
         "list" => {
             let query = input.query.to_lowercase();
             let docs = store
@@ -333,7 +360,13 @@ pub fn execute_document_operation(
             let mut doc = store.load(id)?;
             check_document_revision(&doc, input.revision)?;
             doc.markdown = sources.redact_text(&doc.markdown);
-            store.export_document(&doc, &input.path, &input.format, cancelled)?;
+            let meta = crate::parse_document(&doc.markdown).meta;
+            let language = meta.lang.as_deref().unwrap_or(&input.language);
+            let options = crate::DocumentExportOptions {
+                theme: themes.resolve(meta.theme.as_deref()),
+                labels: crate::DocumentLabels::for_language(language),
+            };
+            store.export_document(&doc, &input.path, &input.format, &options, cancelled)?;
             Ok(json!({"exported":true}))
         }
         _ => Err(document_invalid("Unknown documentation operation.")),

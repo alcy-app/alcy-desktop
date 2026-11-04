@@ -11,6 +11,8 @@ export interface DocumentPage { text: string; nextOffset: number | null; totalBy
 export interface DocumentRead { document: DocumentationRecord; page: DocumentPage }
 export interface DocumentList { documents: DocumentationRecord[]; nextOffset: number | null }
 export interface DocumentSourceList { sources: DocumentSource[]; nextOffset: number | null }
+/** A PDF export theme; the first one is the default. */
+export interface DocumentThemeSummary { id: string; name: string; accent: string }
 export interface DocumentationError { kind: 'invalid' | 'notFound' | 'conflict' | 'cancelled' | 'storage'; message?: string }
 
 export async function documentCall<T>(rootPath: string, operation: string, input: Record<string, unknown> = {}): Promise<T> {
@@ -82,4 +84,7 @@ export async function pickDocumentImage(): Promise<string | null> {
 }
 export async function pickDocumentExport(title: string, format: 'pdf' | 'md'): Promise<string | null> {
   return save({ defaultPath: `${title.replace(/[<>:"/\\|?*]/g, '_')}.${format}`, filters: [{ name: format.toUpperCase(), extensions: [format] }] })
+}
+export async function listDocumentThemes(rootPath: string): Promise<DocumentThemeSummary[]> {
+  return (await documentCall<{ themes?: DocumentThemeSummary[] }>(rootPath, 'themes')).themes ?? []
 }

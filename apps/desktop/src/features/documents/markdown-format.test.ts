@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { countWords, formatRelativeTime } from './document-format'
-import { applyMarkdownFormat, imageReference, insertBlock, toggleLinePrefix, wrapSelection } from './markdown-format'
+import { applyDocumentInsert, applyMarkdownFormat, imageReference, insertBlock, toggleLinePrefix, wrapSelection } from './markdown-format'
 
 const placeholders = { text: 'text', column: 'Column', cell: 'Value' }
 const selected = (edit: { text: string; selectionStart: number; selectionEnd: number }) => edit.text.slice(edit.selectionStart, edit.selectionEnd)
@@ -64,8 +64,33 @@ describe('markdown format helpers', () => {
     expect(selected(table)).toBe('Column')
   })
 
-  it('builds image references with a safe caption', () => {
+  it('builds image references with a safe caption and placement', () => {
     expect(imageReference('a'.repeat(64), 'Login [ok]\nresponse')).toBe(`![Login ok response](assets/${'a'.repeat(64)}.png)`)
+    expect(imageReference('b'.repeat(64), 'Chart', { width: 50, align: 'right' })).toBe(`![Chart](assets/${'b'.repeat(64)}.png){width=50% align=right}`)
+  })
+})
+
+describe('document inserts', () => {
+  const words = { title: 'Title', text: 'text', column: 'Column', caption: 'Caption' }
+
+  it('wraps a selection in a callout and selects its title', () => {
+    const edit = applyDocumentInsert('Intro\nKeep it short.', 6, 20, 'warning', words)
+    expect(edit.text).toBe('Intro\n\n:::warning Title\nKeep it short.\n:::\n')
+    expect(selected(edit)).toBe('Title')
+  })
+
+  it('inserts columns, page breaks and a placed table of contents', () => {
+    const columns = applyDocumentInsert('', 0, 0, 'columns3', words)
+    expect(columns.text).toBe(':::columns\nColumn 1\n+++\nColumn 2\n+++\nColumn 3\n:::\n')
+    expect(applyDocumentInsert('a', 1, 1, 'pagebreak', words).text).toBe('a\n\n\\pagebreak\n')
+    expect(applyDocumentInsert('a', 1, 1, 'toc', words).text).toBe('a\n\n[[toc]]\n')
+  })
+
+  it('places a table caption right after the table around the cursor', () => {
+    const table = '| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter'
+    const edit = applyDocumentInsert(table, 2, 2, 'tableCaption', words)
+    expect(edit.text).toBe('| A | B |\n|---|---|\n| 1 | 2 |\nTable: Caption\n\nAfter')
+    expect(selected(edit)).toBe('Caption')
   })
 })
 

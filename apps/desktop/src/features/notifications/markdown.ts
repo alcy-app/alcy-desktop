@@ -8,7 +8,7 @@
  */
 
 export type MarkdownInline =
-  | { type: 'image'; assetId: string; caption: string }
+  | { type: 'image'; assetId: string; caption: string; /** Fraction of the text column, 0.1–1. */ width?: number; align?: 'left' | 'center' | 'right' }
   | { type: 'text'; text: string }
   | { type: 'code'; text: string }
   | { type: 'strong'; children: MarkdownInline[] }
@@ -40,6 +40,8 @@ const SAFE_URL = /^https?:\/\/[^\s<>]+$/i
 const REFERENCE_URL = /^alcy:\/\/([a-z]+)\/([^\s/<>()]+)$/
 const BARE_URL = /https?:\/\/[^\s<>]+/gi
 const ESCAPABLE = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/
+/** `{width=50% align=center}` right after a document image. */
+const IMAGE_ATTRIBUTES = /^\{((?:\s*(?:width=\d{1,3}%?|align=(?:left|center|right)))+)\s*\}/
 
 interface ListMarker {
   indent: number
@@ -404,7 +406,16 @@ function parseLink(text: string, index: number): { nodes: MarkdownInline[]; end:
   const url = target[1]
   const children = image ? [{ type: 'text' as const, text: label || url }] : parseInline(label, false)
   const end = close + 1 + target[0].length
-  if (image && /^assets\/[a-f0-9]{64}\.png$/.test(url)) return { nodes: [{ type: 'image', assetId: url.slice(7, -4), caption: label }], end }
+  if (image && /^assets\/[a-f0-9]{64}\.png$/.test(url)) {
+    const node: Extract<MarkdownInline, { type: 'image' }> = { type: 'image', assetId: url.slice(7, -4), caption: label }
+    const attributes = IMAGE_ATTRIBUTES.exec(text.slice(end))
+    if (!attributes) return { nodes: [node], end }
+    for (const [, key, value] of attributes[1].matchAll(/(width|align)=(\S+)/g)) {
+      if (key === 'width') node.width = Math.min(1, Math.max(0.1, Number.parseInt(value, 10) / 100))
+      else node.align = value as 'left' | 'center' | 'right'
+    }
+    return { nodes: [node], end: end + attributes[0].length }
+  }
   const reference = image ? null : REFERENCE_URL.exec(url)
   if (reference) return { nodes: [{ type: 'reference', kind: reference[1], id: reference[2], children }], end }
   // Without an http(s) scheme (relative path, mailto:, javascript:…) only the text shows.

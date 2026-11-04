@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { cancelDocumentJob, documentCall, pickDocumentExport, pickDocumentImage, readDocument, saveDocumentContent, uploadDocumentImage, type DocumentationRecord, type DocumentList, type DocumentRead, type DocumentSource } from '../../bindings/documentation'
+import { cancelDocumentJob, documentCall, listDocumentThemes, pickDocumentExport, pickDocumentImage, readDocument, saveDocumentContent, uploadDocumentImage, type DocumentationRecord, type DocumentList, type DocumentRead, type DocumentSource, type DocumentThemeSummary } from '../../bindings/documentation'
 import type { PseudoTab } from '../../extensions/types'
 import { useLanguage } from '../../shared/i18n/use-language'
 import type { WorkbenchAgentHost } from '../agent/agent-host'
@@ -15,12 +15,18 @@ export interface OpenDocument {
   justCreated?: boolean
 }
 export function useDocuments(rootPath: string) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const [documents, setDocuments] = useState<DocumentationRecord[]>([])
   const [opened, setOpened] = useState<OpenDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [job, setJob] = useState<string | null>(null)
+  const [themes, setThemes] = useState<DocumentThemeSummary[]>([])
+  useEffect(() => {
+    let cancelled = false
+    void listDocumentThemes(rootPath).then((value) => { if (!cancelled) setThemes(value) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [rootPath])
   const activeJob = useRef<string | null>(null)
   const cancelEpoch = useRef(0)
   const cancelExport = useCallback(() => { cancelEpoch.current += 1; if (activeJob.current) void cancelDocumentJob(activeJob.current) }, [])
@@ -126,9 +132,9 @@ export function useDocuments(rootPath: string) {
     const path = await pickDocumentExport(doc.title, format)
     if (!path || cancelEpoch.current !== epoch) return { cancelled: true }
     const jobId = crypto.randomUUID(); activeJob.current = jobId; setJob(jobId)
-    try { return await documentCall(rootPath, 'export', { documentId: id, revision: doc.revision, path, format, jobId }) }
+    try { return await documentCall(rootPath, 'export', { documentId: id, revision: doc.revision, path, format, jobId, language }) }
     finally { activeJob.current = null; setJob(null) }
-  }, [rootPath, ensureClean, t])
+  }, [rootPath, ensureClean, t, language])
   const captureImage = useCallback(async (id: string, revision: number, caption: string, input: Parameters<typeof captureDocumentRequest>[2], host: WorkbenchAgentHost | null = null) => {
     const epoch = cancelEpoch.current
     ensureClean(id)
@@ -161,11 +167,16 @@ export function useDocuments(rootPath: string) {
             value = { ...read, document: { ...read.document, sources: read.document.sources.slice(sourceOffset, sourceOffset + 3), assets: read.document.assets.slice(assetOffset, assetOffset + 3) }, nextSourceOffset: sourceOffset + 3 < read.document.sources.length ? sourceOffset + 3 : null, nextAssetOffset: assetOffset + 3 < read.document.assets.length ? assetOffset + 3 : null }
             break
           }
+          case 'get_document_outline': {
+            ensureClean(id)
+            value = await documentCall(rootPath, 'outline', { documentId: id })
+            break
+          }
           case 'create_document': value = await create(String(input.title ?? '')); break
           case 'open_document': value = { opened: await open(id) }; break
           case 'update_document': {
             ensureClean(id)
-            const patch = redactResource({ title: input.title, append: input.append, replaceText: input.replaceText, replacement: input.replacement }, secrets) as Record<string, unknown>
+            const patch = redactResource({ title: input.title, append: input.append, replaceText: input.replaceText, replacement: input.replacement, section: input.section, sectionEdit: input.sectionEdit, content: input.content, metadata: input.metadata }, secrets) as Record<string, unknown>
             value = await documentCall(rootPath, 'update', { documentId: id, revision, edit: patch }); await reload(id); break
           }
           case 'delete_document': await remove(id, Number(revision)); value = { deleted: true }; break
@@ -191,7 +202,7 @@ export function useDocuments(rootPath: string) {
     const fresh = await readDocument(rootPath, id)
     changeOpened((docs) => docs.map((d) => d.saved.id === id ? { ...d, saved: fresh, title: fresh.title, markdown: fresh.markdown, dirty: false } : d))
   }, [rootPath, changeOpened])
-  const actions = useMemo(() => ({ rootPath, edit, save, remove, selectSources, importImage, exportFile, describeError, reload, discard, job, cancelExport, captureImage }), [rootPath, edit, save, remove, selectSources, importImage, exportFile, describeError, reload, discard, job, cancelExport, captureImage])
+  const actions = useMemo(() => ({ rootPath, edit, save, remove, selectSources, importImage, exportFile, describeError, reload, discard, job, cancelExport, captureImage, themes }), [rootPath, edit, save, remove, selectSources, importImage, exportFile, describeError, reload, discard, job, cancelExport, captureImage, themes])
   const tabs = useMemo<PseudoTab[]>(() => opened.map((doc) => ({
     id: `document:${doc.saved.id}`, label: doc.title, dirty: doc.dirty, active: doc.active, capturesInput: true,
     activate: () => changeOpened((docs) => docs.map((d) => ({ ...d, active: d.saved.id === doc.saved.id }))),
@@ -203,4 +214,4 @@ export function useDocuments(rootPath: string) {
   return useMemo(() => ({ documents, opened, tabs, agent, create, open, rename, remove, exportFile, refresh, loading, error, describeError, job, cancelJob }), [documents, opened, tabs, agent, create, open, rename, remove, exportFile, refresh, loading, error, describeError, job, cancelJob])
 }
 export type DocumentsManager = ReturnType<typeof useDocuments>
-export type DocumentActions = { captureImage: (id: string, revision: number, caption: string, input: Parameters<typeof captureDocumentRequest>[2], host?: WorkbenchAgentHost | null) => Promise<DocumentationRecord>; job: string | null; cancelExport: () => void; discard: (id: string) => Promise<void>; rootPath: string; edit: (id: string, patch: { title?: string; markdown?: string }) => void; save: (id: string) => Promise<void>; remove: (id: string, revision: number) => Promise<void>; selectSources: (id: string, revision: number, sources: DocumentSource[]) => Promise<void>; importImage: (id: string, revision: number, caption: string) => Promise<void>; exportFile: (id: string, format: 'pdf' | 'md') => Promise<unknown>; describeError: (error: unknown) => string; reload: (id: string, activate?: boolean) => Promise<DocumentationRecord> }
+export type DocumentActions = { themes: DocumentThemeSummary[]; captureImage: (id: string, revision: number, caption: string, input: Parameters<typeof captureDocumentRequest>[2], host?: WorkbenchAgentHost | null) => Promise<DocumentationRecord>; job: string | null; cancelExport: () => void; discard: (id: string) => Promise<void>; rootPath: string; edit: (id: string, patch: { title?: string; markdown?: string }) => void; save: (id: string) => Promise<void>; remove: (id: string, revision: number) => Promise<void>; selectSources: (id: string, revision: number, sources: DocumentSource[]) => Promise<void>; importImage: (id: string, revision: number, caption: string) => Promise<void>; exportFile: (id: string, format: 'pdf' | 'md') => Promise<unknown>; describeError: (error: unknown) => string; reload: (id: string, activate?: boolean) => Promise<DocumentationRecord> }

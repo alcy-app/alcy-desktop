@@ -537,6 +537,7 @@ impl alcy_app::DocumentationWorkspace for DocumentationStore {
         doc: &DocumentationRecord,
         path: &str,
         format: &str,
+        options: &alcy_app::DocumentExportOptions,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> DocumentResult<()> {
         if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
@@ -544,7 +545,7 @@ impl alcy_app::DocumentationWorkspace for DocumentationStore {
         }
         match format {
             "md" => self.export_markdown_cancellable(doc, Path::new(path), cancelled),
-            "pdf" => crate::export_document_pdf(self, doc, Path::new(path), cancelled),
+            "pdf" => crate::export_document_pdf(self, doc, Path::new(path), options, cancelled),
             _ => Err(document_invalid("Choose md or pdf.")),
         }
     }
@@ -669,11 +670,19 @@ mod tests {
             alcy_app::execute_document_operation(
                 &store,
                 &sources,
+                &alcy_app::DocumentThemes::default(),
                 input,
                 None,
                 &std::sync::atomic::AtomicBool::new(false),
             )
         };
+        let outline =
+            call(serde_json::json!({"rootPath":"unused","operation":"outline","documentId":"one"}))
+                .unwrap();
+        assert_eq!(outline["headings"], serde_json::json!([]));
+        assert_eq!(outline["metadata"]["cover"], false);
+        let themes = call(serde_json::json!({"rootPath":"unused","operation":"themes"})).unwrap();
+        assert_eq!(themes["themes"][0]["id"], "default");
         let read = serde_json::json!({"rootPath":"unused","operation":"readSource","documentId":"one","sourceKind":"chat","sourceId":"chat-one"});
         assert!(matches!(
             call(read.clone()),
@@ -748,6 +757,10 @@ mod tests {
             &store,
             &doc,
             &pdf,
+            &alcy_app::DocumentExportOptions {
+                theme: alcy_app::DocumentThemes::default().resolve(None),
+                labels: alcy_app::DocumentLabels::for_language("en"),
+            },
             &std::sync::atomic::AtomicBool::new(false),
         )
         .unwrap();

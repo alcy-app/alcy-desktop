@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { documentCall, type DocumentSource, type DocumentSourceList } from '../../bindings/documentation'
+import { documentCall, type DocumentSource, type DocumentSourceList, type DocumentThemeSummary } from '../../bindings/documentation'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { Checkbox } from '../../shared/ui/Checkbox'
@@ -7,13 +7,16 @@ import { Field } from '../../shared/ui/Field'
 import { IconButton } from '../../shared/ui/IconButton'
 import { Input } from '../../shared/ui/Input'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
+import { Select } from '../../shared/ui/Select'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { AlertIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, ImageIcon, ImportIcon, PlusIcon, RobotIcon, SearchIcon, SendIcon } from '../../shared/ui/icons'
 import { DocumentImage } from './DocumentImage'
 import { formatDateTime } from './document-format'
+import { parseMeta, splitFrontMatter, type MetadataKey } from './document-dialect'
+import type { ImagePlacement } from './markdown-format'
 import type { DocumentActions, OpenDocument } from './use-documents'
 
-export type InspectorTab = 'sources' | 'images'
+export type InspectorTab = 'sources' | 'images' | 'properties'
 export type EditorTask = 'save' | 'export' | 'sources' | 'image' | 'discard' | 'delete'
 
 interface DocumentInspectorProps {
@@ -25,7 +28,9 @@ interface DocumentInspectorProps {
   onClose: () => void
   run: (task: EditorTask, work: () => Promise<unknown>) => Promise<boolean>
   onError: (message: string) => void
-  onInsertImage: (assetId: string, caption: string) => void
+  onInsertImage: (assetId: string, caption: string, placement: ImagePlacement) => void
+  themes: DocumentThemeSummary[]
+  onMetadataChange: (patch: Partial<Record<MetadataKey, string | null>>) => void
 }
 
 const PAGE = 25
@@ -36,21 +41,22 @@ function SourceKindIcon({ kind }: { kind: DocumentSource['kind'] }) {
 }
 
 /** Side panel with the evidence a document draws on: selected sources and attached images. */
-export function DocumentInspector({ document: doc, actions, tab, busy, onTabChange, onClose, run, onError, onInsertImage }: DocumentInspectorProps) {
+export function DocumentInspector({ document: doc, actions, tab, busy, onTabChange, onClose, run, onError, onInsertImage, themes, onMetadataChange }: DocumentInspectorProps) {
   const { t } = useLanguage()
   return <aside className="document-inspector" aria-label={t('documents.inspector.label')}>
     <header className="document-inspector-header">
       <SegmentedControl<InspectorTab> layout="inline" size="sm" ariaLabel={t('documents.inspector.label')} value={tab} onChange={onTabChange} options={[
         { value: 'sources', label: t('documents.sources'), trailing: <span className="document-count">{doc.saved.sources.length}</span> },
         { value: 'images', label: t('documents.imagesTab'), trailing: <span className="document-count">{doc.saved.assets.length}</span> },
+        { value: 'properties', label: t('documents.properties') },
       ]} />
       <IconButton icon={<CloseIcon size={13} />} label={t('documents.inspector.close')} onClick={onClose} />
     </header>
-    {doc.dirty && <p className="document-inspector-locked" role="note"><AlertIcon size={13} />{t('documents.inspector.locked')}</p>}
+    {doc.dirty && tab !== 'properties' && <p className="document-inspector-locked" role="note"><AlertIcon size={13} />{t('documents.inspector.locked')}</p>}
     <div className="document-inspector-body">
-      {tab === 'sources'
-        ? <SourcesSection document={doc} actions={actions} busy={busy} run={run} onError={onError} />
-        : <ImagesSection document={doc} actions={actions} busy={busy} run={run} onInsertImage={onInsertImage} />}
+      {tab === 'sources' && <SourcesSection document={doc} actions={actions} busy={busy} run={run} onError={onError} />}
+      {tab === 'images' && <ImagesSection document={doc} actions={actions} busy={busy} run={run} onInsertImage={onInsertImage} />}
+      {tab === 'properties' && <PropertiesSection markdown={doc.markdown} themes={themes} onChange={onMetadataChange} />}
     </div>
   </aside>
 }
@@ -121,6 +127,8 @@ function SourcesSection({ document: doc, actions, busy, run, onError }: Pick<Doc
 function ImagesSection({ document: doc, actions, busy, run, onInsertImage }: Pick<DocumentInspectorProps, 'document' | 'actions' | 'busy' | 'run' | 'onInsertImage'>) {
   const { t } = useLanguage()
   const [caption, setCaption] = useState('')
+  const [width, setWidth] = useState('')
+  const [align, setAlign] = useState<'left' | 'center' | 'right'>('center')
   const locked = busy || doc.dirty
   const ready = !locked && caption.trim() !== ''
   const requests = doc.saved.sources.filter((s) => s.kind === 'request')
@@ -145,13 +153,84 @@ function ImagesSection({ document: doc, actions, busy, run, onInsertImage }: Pic
     </section>
     <section className="document-inspector-section" aria-label={t('documents.attachedImages')}>
       <h3 className="document-inspector-heading">{t('documents.attachedImages')}</h3>
+      {doc.saved.assets.length > 0 && <div className="document-placement">
+        <Field label={t('documents.imageWidth')}>
+          {(id) => <Select id={id} value={width} onChange={(e) => setWidth(e.target.value)}>
+            <option value="">{t('documents.imageWidthAuto')}</option>
+            {[25, 50, 75, 100].map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+          </Select>}
+        </Field>
+        <div className="document-placement-align">
+          <span className="document-inspector-subheading">{t('documents.imageAlign')}</span>
+          <SegmentedControl<'left' | 'center' | 'right'> layout="inline" size="sm" ariaLabel={t('documents.imageAlign')} value={align} onChange={setAlign} options={[
+            { value: 'left', label: t('documents.alignLeft') }, { value: 'center', label: t('documents.alignCenter') }, { value: 'right', label: t('documents.alignRight') },
+          ]} />
+        </div>
+      </div>}
       {doc.saved.assets.length === 0
         ? <p className="document-inspector-empty"><ImageIcon size={13} />{t('documents.noImages')}</p>
         : <ul className="document-asset-list">{doc.saved.assets.map((asset) => <li key={asset.id} className="document-asset">
           <DocumentImage variant="thumbnail" rootPath={actions.rootPath} documentId={doc.saved.id} assetId={asset.id} caption={asset.caption} />
           <span className="document-asset-caption" title={asset.caption}>{asset.caption}</span>
-          <IconButton icon={<PlusIcon size={13} />} label={t('documents.insertImage', { caption: asset.caption })} onClick={() => onInsertImage(asset.id, asset.caption)} />
+          <IconButton icon={<PlusIcon size={13} />} label={t('documents.insertImage', { caption: asset.caption })} onClick={() => onInsertImage(asset.id, asset.caption, { width: width ? Number(width) : undefined, align: align === 'center' ? undefined : align })} />
         </li>)}</ul>}
+    </section>
+  </>
+}
+
+/** Keeps what the user types (spaces included) while the metadata stores the trimmed value. */
+function MetadataInput({ id, value, placeholder, onCommit }: { id: string; value?: string; placeholder?: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value ?? '')
+  const [seen, setSeen] = useState(value)
+  if (value !== seen) {
+    setSeen(value)
+    if ((value ?? '') !== draft.trim()) setDraft(value ?? '')
+  }
+  return <Input id={id} value={draft} maxLength={200} placeholder={placeholder} onChange={(e) => { setDraft(e.target.value); onCommit(e.target.value) }} />
+}
+
+function PropertiesSection({ markdown, themes, onChange }: { markdown: string; themes: DocumentThemeSummary[]; onChange: DocumentInspectorProps['onMetadataChange'] }) {
+  const { t } = useLanguage()
+  const meta = parseMeta(splitFrontMatter(markdown)?.pairs ?? [])
+  const text = (key: 'subtitle' | 'author' | 'version' | 'date' | 'status', label: string, placeholder?: string) => <Field label={label}>
+    {(id) => <MetadataInput id={id} value={meta[key]} placeholder={placeholder} onCommit={(value) => onChange({ [key]: value || null })} />}
+  </Field>
+  const toggle = (key: 'cover' | 'toc' | 'numbering', label: string, hint: string) => <label className="document-toggle">
+    <Checkbox checked={meta[key]} onChange={(e) => onChange({ [key]: e.target.checked ? 'true' : null })} />
+    <span><span className="document-toggle-label">{label}</span><span className="document-toggle-hint">{hint}</span></span>
+  </label>
+  return <>
+    <p className="document-inspector-help">{t('documents.propertiesHelp')}</p>
+    <section className="document-inspector-section" aria-label={t('documents.propertiesCover')}>
+      <h3 className="document-inspector-heading">{t('documents.propertiesCover')}</h3>
+      {text('subtitle', t('documents.meta.subtitle'), t('documents.meta.subtitlePlaceholder'))}
+      {text('author', t('documents.meta.author'))}
+      <div className="document-field-row">
+        {text('version', t('documents.meta.version'), '1.0')}
+        {text('date', t('documents.meta.date'), new Date().toISOString().slice(0, 10))}
+      </div>
+      {text('status', t('documents.meta.status'), t('documents.meta.statusPlaceholder'))}
+    </section>
+    <section className="document-inspector-section" aria-label={t('documents.propertiesLayout')}>
+      <h3 className="document-inspector-heading">{t('documents.propertiesLayout')}</h3>
+      {toggle('cover', t('documents.meta.cover'), t('documents.meta.coverHint'))}
+      {toggle('toc', t('documents.meta.toc'), t('documents.meta.tocHint'))}
+      {toggle('numbering', t('documents.meta.numbering'), t('documents.meta.numberingHint'))}
+    </section>
+    <section className="document-inspector-section" aria-label={t('documents.propertiesExport')}>
+      <h3 className="document-inspector-heading">{t('documents.propertiesExport')}</h3>
+      {themes.length > 1 && <Field label={t('documents.meta.theme')}>
+        {(id) => <Select id={id} value={themes.some((theme) => theme.id === meta.theme) ? meta.theme : themes[0].id} onChange={(e) => onChange({ theme: e.target.value === themes[0].id ? null : e.target.value })}>
+          {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+        </Select>}
+      </Field>}
+      <Field label={t('documents.meta.lang')} hint={t('documents.meta.langHint')}>
+        {(id) => <Select id={id} value={meta.lang ?? ''} onChange={(e) => onChange({ lang: e.target.value || null })}>
+          <option value="">{t('documents.meta.langAuto')}</option>
+          <option value="pt-BR">Português (Brasil)</option>
+          <option value="en">English</option>
+        </Select>}
+      </Field>
     </section>
   </>
 }

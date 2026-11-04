@@ -3,7 +3,7 @@ import { documentImageUrl } from '../../bindings/documentation'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { ImageIcon } from '../../shared/ui/icons'
 
-/** Loads an attached image natively in chunks and shows it as an object URL. */
+/** Loads an attached image natively in chunks and shows it as an object URL; captions belong to the caller. */
 export function DocumentImage({ rootPath, documentId, assetId, caption, variant = 'figure' }: { rootPath: string; documentId: string; assetId: string; caption: string; variant?: 'figure' | 'thumbnail' }) {
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
@@ -22,5 +22,5 @@ export function DocumentImage({ rootPath, documentId, assetId, caption, variant 
     ? <img src={url} alt={caption} />
     : <span className="document-image-placeholder" role={failed ? undefined : 'status'}><ImageIcon size={variant === 'thumbnail' ? 16 : 20} />{variant === 'figure' && t(failed ? 'documents.imageFailed' : 'documents.loading')}</span>
   if (variant === 'thumbnail') return <span className="document-thumbnail" title={failed ? t('documents.imageFailed') : undefined}>{body}</span>
-  return <span className="document-image">{body}<span className="document-caption">{caption}</span></span>
+  return <span className="document-image">{body}</span>
 }

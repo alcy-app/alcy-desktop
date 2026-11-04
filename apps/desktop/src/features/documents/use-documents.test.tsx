@@ -2,12 +2,12 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LanguageProvider } from '../../shared/i18n/LanguageProvider'
-import { documentCall, pickDocumentImage, readDocument, saveDocumentContent, type DocumentationRecord } from '../../bindings/documentation'
+import { documentCall, listDocumentThemes, pickDocumentImage, readDocument, saveDocumentContent, type DocumentationRecord } from '../../bindings/documentation'
 import type { WorkbenchAgentHost } from '../agent/agent-host'
 import { forgetRememberedSessions } from '../agent/agent-session-memory'
 import { useDocuments, type DocumentActions, type OpenDocument } from './use-documents'
 
-vi.mock('../../bindings/documentation', () => ({ documentCall: vi.fn(), readDocument: vi.fn(), saveDocumentContent: vi.fn(), cancelDocumentJob: vi.fn(), pickDocumentExport: vi.fn(), pickDocumentImage: vi.fn(), uploadDocumentImage: vi.fn() }))
+vi.mock('../../bindings/documentation', () => ({ documentCall: vi.fn(), listDocumentThemes: vi.fn(), readDocument: vi.fn(), saveDocumentContent: vi.fn(), cancelDocumentJob: vi.fn(), pickDocumentExport: vi.fn(), pickDocumentImage: vi.fn(), uploadDocumentImage: vi.fn() }))
 const doc: DocumentationRecord = { version: 1, id: 'one', title: 'Investigation', revision: 1, createdAtMs: 1, updatedAtMs: 1, sources: [], assets: [], markdown: '# Original\n' }
 function wrapper({ children }: { children: ReactNode }) { return <LanguageProvider>{children}</LanguageProvider> }
 const host = { environments: () => [], collections: () => [], tabs: () => [] } as unknown as WorkbenchAgentHost
@@ -16,6 +16,7 @@ beforeEach(() => {
   vi.resetAllMocks(); forgetRememberedSessions()
   vi.mocked(documentCall).mockResolvedValue({ documents: [doc], nextOffset: null })
   vi.mocked(readDocument).mockResolvedValue({ ...doc })
+  vi.mocked(listDocumentThemes).mockResolvedValue([])
 })
 
 describe('workspace documents', () => {

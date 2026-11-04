@@ -344,10 +344,24 @@ Credentials and sensitive environment values are masked before source text reach
 the model or retained evidence. Supplied images remain local, with user captions;
 this feature does not send images to providers or interpret their contents.
 
+Documents use a Markdown dialect (ADR 0069): a leading `key: value` metadata
+block (cover, table of contents, heading numbering, theme, language), `:::`
+callout, column and alignment containers, `\pagebreak` and `[[toc]]` lines, image
+size and alignment attributes and table captions. `alcy-app` parses it into a
+typed model (blocks, styled inline runs, numbering) for the PDF and the agent
+outline; the frontend has its own parser for the live preview, so the text never
+crosses IPC per keystroke. The agent edits by section (unique heading) and
+metadata as well as by exact passage.
+
 Markdown export writes relative image references and a sibling asset directory.
-PDF export uses `printpdf` with embedded DejaVu fonts and the Markdown subset
-parsed by `pulldown-cmark`; text stays selectable. Tall captures continue across
-pages at a readable width. PDF images have a 256 MiB aggregate decoded budget.
+PDF export uses `printpdf` with embedded DejaVu fonts (regular, bold, mono; italic
+is slanted unless the theme brings one) and lays out the model natively: themed
+headings, cover, a two-pass table of contents with page links, bookmarks,
+running header and footer, callouts, columns, tables with repeated headers,
+code blocks split across pages and sized images; text stays selectable. Tall
+captures shrink to a page or continue across pages at a readable width. PDF
+images have a 256 MiB aggregate decoded budget. Themes come from the
+`DocumentThemes` registry (see Extensions).
 Export runs locally, supports
 cancellation and publishes the destination only after rendering succeeds. Images
 resolve only through document asset identifiers; remote images, arbitrary file
@@ -679,6 +693,7 @@ A downstream build adds features without editing shared files:
 - Frontend: add a folder with an `index.ts` under `apps/desktop/src/extensions/` that default-exports an `AppExtension` (`extensions/types.ts`). It can wrap the app, add sidebar modules and add workbench tabs, and translates its own text.
   Its Tauri calls go in its own `bindings/` folder, and its test doubles in its own `test-setup.ts`, loaded by `src/test-setup.ts`.
 - Usage events: an extension's setup can register a `UsageEventSink` with `app.state::<alcy_app::UsageHub>().register_sink(...)`; only the first registration counts.
+- Document themes: an extension's setup can add PDF export themes (colors, fonts, logo, header and footer text) with `app.state::<alcy_app::DocumentThemes>().register(...)`. Documents pick one with the `theme:` metadata key; the editor offers the choice once more than one theme exists.
 - Build: extra Tauri configs merged with `tauri build --config` go in `src-tauri/config/`, which is protected like `tauri.conf.json`.
 
 This repository ships the loader and no extension.

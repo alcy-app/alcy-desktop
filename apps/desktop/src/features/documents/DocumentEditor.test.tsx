@@ -15,7 +15,7 @@ const saved: DocumentationRecord = { version: 1, id: 'doc', title: 'Notes', mark
 function Harness({ overrides = {} }: { overrides?: Partial<DocumentActions> }) {
   const [doc, setDoc] = useState<OpenDocument>({ saved, title: saved.title, markdown: saved.markdown, dirty: false, active: true })
   const actions: DocumentActions = {
-    rootPath: '/test', job: null, cancelExport: vi.fn(), describeError: String,
+    rootPath: '/test', job: null, cancelExport: vi.fn(), describeError: String, themes: [],
     edit: (_, patch) => setDoc((value) => ({ ...value, ...patch, dirty: true })),
     save: vi.fn(), remove: vi.fn(), selectSources: vi.fn(), importImage: vi.fn(), exportFile: vi.fn(), discard: vi.fn(),
     reload: async () => saved, captureImage: async () => saved,
@@ -77,6 +77,23 @@ describe('document editor', () => {
     textarea().setSelectionRange(10, 10)
     fireEvent.click(within(panel).getByRole('button', { name: /Login response/ }))
     await waitFor(() => expect(textarea()).toHaveValue(`# Original\n\n![Login response](assets/${asset}.png)\n`))
+  })
+
+  it('inserts a callout around the selection from the Insert menu', () => {
+    render(<Harness />)
+    textarea().setSelectionRange(2, 10)
+    fireEvent.click(screen.getByRole('button', { name: /^(Insert|Inserir)$/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^(Note|Nota)$/ }))
+    expect(textarea().value).toMatch(/^# \n\n:::note (Title|Título)\nOriginal\n:::\n$/)
+  })
+
+  it('edits cover metadata from the properties panel', () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: /^(Properties|Propriedades)/ }))
+    const panel = screen.getByRole('complementary')
+    fireEvent.change(within(panel).getByRole('textbox', { name: /^(Author|Autor)$/ }), { target: { value: 'Ana Lima' } })
+    fireEvent.click(within(panel).getByRole('checkbox', { name: /(Cover page|Página de capa)/ }))
+    expect(textarea()).toHaveValue('---\nauthor: Ana Lima\ncover: true\n---\n\n# Original')
   })
 
   it('confirms before deleting the document', () => {

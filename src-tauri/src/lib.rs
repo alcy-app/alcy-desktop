@@ -248,6 +248,7 @@ pub fn run_with(extensions: Vec<Extension>) {
 
     tauri::Builder::default()
         .manage(usage.clone())
+        .manage(alcy_app::DocumentThemes::default())
         .manage(ExecutionRegistry::default())
         .manage(GrpcSchemaCache::default())
         .manage(GrpcCalls::default())
