@@ -14,6 +14,7 @@ import { useCappedList } from '../../shared/ui/use-capped-list'
 import { ResizeHandle } from '../../shared/ResizeHandle'
 import { AlertIcon, ChevronDownIcon, PlusIcon, TrashIcon } from '../../shared/ui/icons'
 import '../../shared/ui/menu.css'
+import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 import { RuleEditor } from './RuleEditor'
 import { RULE_GROUPS, describeRule, hasParameters, ruleName, type RuleKindName } from './rule-catalog'
 import { TokenInput } from './TokenInput'
@@ -187,6 +188,7 @@ export function ValueMonitorsPanel({
                       setMenuOpenId(null)
                     }}
                   />
+                  <MentionInChatMenuItem item={{ kind: 'monitor', id: monitor.id, label }} onDone={() => setMenuOpenId(null)} />
                   <MenuItem
                     label={t('common.remove')}
                     shortcutAction="deleteItem"

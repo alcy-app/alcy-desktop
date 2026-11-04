@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ValueMonitorDto } from '../../bindings/list-value-monitors'
 import { fireEvent, render, screen } from '../../test-utils'
+import { takeMentionRequests } from '../agent/agent-mention-bridge'
 import { ValueMonitorsPanel, type ValueMonitorsPanelProps } from './ValueMonitorsPanel'
 
 const monitor: ValueMonitorDto = {
@@ -34,12 +35,12 @@ function renderPanel(overrides: Partial<ValueMonitorsPanelProps> = {}) {
 }
 
 describe('ValueMonitorsPanel', () => {
-  it('mostra um estado vazio curto sem monitores', () => {
+  it('shows a short empty state without monitors', () => {
     renderPanel({ monitors: [] })
     expect(screen.getByText('Nenhum monitor ainda. Crie um para validar campos das respostas.')).toBeInTheDocument()
   })
 
-  it('lista o monitor com resumo e mostra as regras como frases legíveis', () => {
+  it('lists the monitor with a summary and shows the rules as readable sentences', () => {
     renderPanel()
     expect(screen.getByText('1 campo · 2 regras')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Entre 1 e 10 caracteres' })).toBeInTheDocument()
@@ -47,15 +48,15 @@ describe('ValueMonitorsPanel', () => {
     expect(screen.getByText('nome')).toBeInTheDocument()
   })
 
-  it('liga e desliga o monitor pelo switch', () => {
+  it('turns the monitor on and off with the switch', () => {
     const props = renderPanel()
     fireEvent.click(screen.getByRole('switch', { name: 'Monitor "Nome curto" ativo' }))
     expect(props.onSetMonitorEnabled).toHaveBeenCalledWith('m1', false)
   })
 
-  it('renomeia o monitor pelo menu de opções', () => {
+  it('renames the monitor from the options menu', () => {
     const props = renderPanel()
-    // O nome no detalhe é só leitura: renomear passa pelo menu.
+    // The name in the detail is read-only: renaming goes through the menu.
     expect(screen.queryByRole('textbox', { name: 'Nome do monitor' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Nome curto' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Renomear' }))
@@ -64,7 +65,7 @@ describe('ValueMonitorsPanel', () => {
     expect(props.onRenameMonitor).toHaveBeenCalledWith('m1', 'Outro nome')
   })
 
-  it('abre o menu de opções com o botão direito na linha', () => {
+  it('opens the options menu with a right click on the row', () => {
     renderPanel()
     fireEvent.contextMenu(screen.getByText('1 campo · 2 regras'))
     expect(screen.getByRole('menu', { name: 'Mais opções de Nome curto' })).toBeInTheDocument()
@@ -75,14 +76,24 @@ describe('ValueMonitorsPanel', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
-  it('renomeia com F2 e pede confirmação para remover com Delete na linha', () => {
+  it('mentions the monitor in the agent chat from the options menu', () => {
+    takeMentionRequests()
+    renderPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Nome curto' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mencionar no chat' }))
+
+    expect(takeMentionRequests()).toEqual([{ kind: 'monitor', id: 'm1', label: 'Nome curto' }])
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('renames with F2 and asks for confirmation to remove with Delete on the row', () => {
     const props = renderPanel()
     const row = screen.getByRole('button', { name: /^Nome curto/ })
     fireEvent.keyDown(row, { key: 'F2' })
     fireEvent.change(screen.getByRole('textbox', { name: 'Nome do monitor' }), { target: { value: 'Outro' } })
     expect(props.onRenameMonitor).toHaveBeenCalledWith('m1', 'Outro')
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Nome do monitor' }), { key: 'Enter' })
-    // O foco volta à linha, para seguir usando os atalhos.
+    // Focus returns to the row, to keep using the shortcuts.
     expect(screen.getByRole('button', { name: /^Nome curto/ })).toHaveFocus()
 
     fireEvent.keyDown(screen.getByRole('button', { name: /^Nome curto/ }), { key: 'Delete' })
@@ -90,7 +101,7 @@ describe('ValueMonitorsPanel', () => {
     expect(props.onRemoveMonitor).toHaveBeenCalledWith('m1')
   })
 
-  it('remove o monitor pelo menu de opções após confirmar', () => {
+  it('removes the monitor from the options menu after confirming', () => {
     const props = renderPanel()
     fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Nome curto' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remover' }))
@@ -98,7 +109,7 @@ describe('ValueMonitorsPanel', () => {
     expect(props.onRemoveMonitor).toHaveBeenCalledWith('m1')
   })
 
-  it('adiciona um campo ao confirmar com Enter', () => {
+  it('adds a field when confirming with Enter', () => {
     const props = renderPanel()
     const input = screen.getByRole('textbox', { name: 'Adicionar campo monitorado' })
     fireEvent.change(input, { target: { value: 'usuario.email' } })
@@ -106,7 +117,7 @@ describe('ValueMonitorsPanel', () => {
     expect(props.onAddField).toHaveBeenCalledWith('m1', 'usuario.email')
   })
 
-  it('abre a edição de uma regra ao clicar nela', () => {
+  it('opens a rule for editing when clicked', () => {
     const props = renderPanel()
     fireEvent.click(screen.getByRole('button', { name: 'Entre 1 e 10 caracteres' }))
     const max = screen.getByLabelText('Máximo')
@@ -114,14 +125,14 @@ describe('ValueMonitorsPanel', () => {
     expect(props.onUpdateRule).toHaveBeenCalledWith('m1', 'r1', expect.objectContaining({ kind: 'lengthRange', min: 1, max: 20 }))
   })
 
-  it('adiciona uma regra pelo menu agrupado', () => {
+  it('adds a rule from the grouped menu', () => {
     const props = renderPanel()
     fireEvent.click(screen.getByRole('button', { name: /Adicionar regra/ }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Expressão regular' }))
     expect(props.onAddRule).toHaveBeenCalledWith('m1', 'regex')
   })
 
-  it('mostra o erro de validação logo abaixo da regra apontada', () => {
+  it('shows the validation error right below the rule it points at', () => {
     renderPanel({ error: { kind: 'invalid', message: "expressão regular inválida: '('", monitorId: 'm1', ruleId: 'r1' } })
     expect(screen.getByRole('alert')).toHaveTextContent("expressão regular inválida: '('")
   })
