@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FocusEvent } from 'react'
 import { Compartment, EditorState } from '@codemirror/state'
+import type { StateEffect } from '@codemirror/state'
 import { EditorView, drawSelection, gutters, highlightActiveLine, highlightActiveLineGutter, keymap } from '@codemirror/view'
-import { foldGutter, foldKeymap, foldedRanges, syntaxHighlighting, unfoldEffect } from '@codemirror/language'
+import { foldEffect, foldGutter, foldKeymap, foldedRanges, syntaxHighlighting, unfoldEffect } from '@codemirror/language'
 import { standardKeymap } from '@codemirror/commands'
 import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
 import { useLanguage } from '../../../shared/i18n/use-language'
@@ -17,6 +18,9 @@ import {
 } from '../codemirror-shared'
 import type { CodeLanguage } from '../codemirror-shared'
 import { editorSearchHighlightExtension } from '../editor-search'
+import type { EditorSearchRange, EditorSearchState } from '../editor-search'
+import { recallResponseView, rememberResponseView } from '../response-view-memory'
+import type { ResponseViewMemory } from '../response-view-memory'
 import { WORKER_FORMAT_THRESHOLD_BYTES, createFormatChannel, formatOffMainThread } from '../format-off-main-thread'
 import { formatResponseText } from '../response-text-format'
 import { accessorFor, type JsonPathSegment } from '../json-value-index'
@@ -54,6 +58,12 @@ interface ResponseCodeViewProps {
   onMonitorFailedCount?: (count: number | null) => void
   /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
   agentSlot?: EditorSlot
+  /**
+   * Identifies the displayed response (tab and send). With it, scroll,
+   * cursor, folds and search survive the view unmounting on a tab switch and
+   * come back when the same response mounts again; read only at mount.
+   */
+  viewMemoryKey?: string
 }
 
 interface ResponseContextMenuState {
@@ -159,6 +169,25 @@ function useFormattedText(text: string, language: ResponseCodeLanguage, partial:
   }, [offload, asyncResult, language, text, partial, immediate])
 }
 
+const CLOSED_SEARCH: EditorSearchState = { isOpen: false, query: '', matchCase: false, wholeWord: false, regularExpression: false, activeIndex: 0 }
+
+/** Puts the view back where `memory` was taken; only on the same document, which positions refer to. */
+function restoreViewMemory(view: EditorView, memory: ResponseViewMemory): boolean {
+  if (view.state.doc.length !== memory.docLength) return false
+  const effects: StateEffect<unknown>[] = memory.folds.map((range) => foldEffect.of(range))
+  if (memory.scroll) effects.push(memory.scroll)
+  view.dispatch({ selection: memory.selection, effects })
+  return true
+}
+
+function foldedRangesOf(state: EditorState): EditorSearchRange[] {
+  const folds: EditorSearchRange[] = []
+  foldedRanges(state).between(0, state.doc.length, (from, to) => {
+    folds.push({ from, to })
+  })
+  return folds
+}
+
 /** Tamanho do trecho inicial que `a` e `b` têm em comum. */
 function commonPrefixLength(a: string, b: string): number {
   const max = Math.min(a.length, b.length)
@@ -174,7 +203,16 @@ function commonPrefixLength(a: string, b: string): number {
  * (substitui o tokenizer manual + `<span>` por token e a degradação por
  * limiar de tamanho).
  */
-export function ResponseCodeView({ text, language, partial = false, onCaptureValue, monitors = null, onMonitorFailedCount, agentSlot }: ResponseCodeViewProps) {
+export function ResponseCodeView({
+  text,
+  language,
+  partial = false,
+  onCaptureValue,
+  monitors = null,
+  onMonitorFailedCount,
+  agentSlot,
+  viewMemoryKey,
+}: ResponseCodeViewProps) {
   const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
@@ -182,7 +220,21 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
   const languageCompartmentRef = useRef<Compartment | null>(null)
   const ariaLabelCompartmentRef = useRef<Compartment | null>(null)
   const [contextMenu, setContextMenu] = useState<ResponseContextMenuState | null>(null)
-  const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
+  const [memoryKey] = useState(viewMemoryKey)
+  const [memory] = useState(() => (memoryKey === undefined ? null : recallResponseView(memoryKey)))
+  // Not applied yet: the document it refers to may still be loading or formatting.
+  const pendingMemoryRef = useRef(memory)
+  // Updated on scroll, while the view is laid out: once unmounting or hidden, its scrollTop reads 0.
+  const scrollSnapshotRef = useRef<StateEffect<unknown> | null>(memory?.scroll ?? null)
+  const searchStateRef = useRef<EditorSearchState>(memory?.search ?? CLOSED_SEARCH)
+  const rememberSearchState = useCallback((state: EditorSearchState) => {
+    searchStateRef.current = state
+  }, [])
+  const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch(memory?.search.isOpen ?? false)
+  const mountedLanguageRef = useRef(language)
+  const dropPendingMemory = () => {
+    pendingMemoryRef.current = null
+  }
   const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
   const formatted = useFormattedText(text, language, partial)
   // Em JSON, valores ganham destaque ao passar o mouse e podem ser copiados
@@ -204,7 +256,9 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
     onMonitorFailedCountRef.current = onMonitorFailedCount
   }, [language, onCaptureValue, monitors, t, onMonitorFailedCount])
 
-  useEffect(() => {
+  // Layout effect: the view exists before the children's effects run, so a
+  // search restored open can highlight its matches on mount.
+  useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
 
@@ -231,6 +285,15 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
         keymap.of([{ key: 'Mod-f', run: openSearch }, ...foldKeymap, ...standardKeymap]),
         languageCompartment.of(languageExtensionFor(language)),
         ariaLabelCompartment.of(EditorView.contentAttributes.of({ 'aria-label': t('response.bodyEditorLabel') })),
+        EditorView.domEventObservers({
+          scroll(_event, editor) {
+            if (!pendingMemoryRef.current) scrollSnapshotRef.current = editor.scrollSnapshot()
+          },
+          // Navigating before the remembered document is back: where the user goes now wins.
+          wheel: dropPendingMemory,
+          pointerdown: dropPendingMemory,
+          keydown: dropPendingMemory,
+        }),
         EditorView.domEventHandlers({
           contextmenu(event, editor) {
             event.preventDefault()
@@ -264,8 +327,20 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
       parent: container,
     })
     viewRef.current = view
+    if (pendingMemoryRef.current && restoreViewMemory(view, pendingMemoryRef.current)) pendingMemoryRef.current = null
 
     return () => {
+      if (memoryKey !== undefined) {
+        const search = searchStateRef.current
+        const pending = pendingMemoryRef.current
+        const { anchor, head } = view.state.selection.main
+        const latest: ResponseViewMemory = pending
+          ? { ...pending, search }
+          : { docLength: view.state.doc.length, scroll: scrollSnapshotRef.current, selection: { anchor, head }, folds: foldedRangesOf(view.state), search }
+        rememberResponseView(memoryKey, latest)
+        // A view created again by this same component (StrictMode) starts where this one was.
+        pendingMemoryRef.current = latest
+      }
       view.destroy()
       viewRef.current = null
       languageCompartmentRef.current = null
@@ -284,6 +359,7 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
     // rolagem, a seleção e o realce do que já estava na tela.
     const from = commonPrefixLength(current, formatted)
     view.dispatch({ changes: { from, to: current.length, insert: formatted.slice(from) } })
+    if (pendingMemoryRef.current && restoreViewMemory(view, pendingMemoryRef.current)) pendingMemoryRef.current = null
   }, [formatted])
 
   // Depois da sincronização do documento acima: as faixas valem para `formatted`.
@@ -301,6 +377,8 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
     const view = viewRef.current
     const languageCompartment = languageCompartmentRef.current
     if (!view || !languageCompartment) return
+    // Another format is another document: the remembered positions no longer apply.
+    if (language !== mountedLanguageRef.current) pendingMemoryRef.current = null
     view.dispatch({ effects: languageCompartment.reconfigure(languageExtensionFor(language)) })
   }, [language])
 
@@ -383,6 +461,8 @@ export function ResponseCodeView({ text, language, partial = false, onCaptureVal
           onOpen={openSearch}
           onClose={closeSearch}
           placement="response"
+          initialState={memory?.search}
+          onStateChange={rememberSearchState}
         />
         {findings && <MonitorNavigator findings={findings} onReveal={revealHighlight} />}
       </div>

@@ -157,6 +157,8 @@ export const ResponsePanel = memo(function ResponsePanel({
   const formatTime = useCallback((send: RequestSendDto) => timeFormatter.format(new Date(send.executedAtMs)), [timeFormatter])
 
   const success = displayed?.status === 'success' ? displayed : null
+  // The body view's identity: its formatting, loaded text and (current view) position belong to it.
+  const bodyKey = success ? `${viewKey}\n${view.kind}\n${success.result.body.kind === 'windowed' ? success.result.body.handle : ''}` : ''
   // Keep tabs visible for history entries without a stored response body.
   const notStored = success?.responseNotStored === true
   // Without the body, GraphQL errors are unknown.
@@ -404,13 +406,15 @@ export const ResponsePanel = memo(function ResponsePanel({
               <ResponseBody
                 // Formatting and loaded text belong to the displayed response; another
                 // tab or send starts fresh.
-                key={`${viewKey}\n${view.kind}\n${success.result.body.kind === 'windowed' ? success.result.body.handle : ''}`}
+                key={bodyKey}
                 body={success.result.body}
                 bodyEncoding={http ? http.bodyEncoding : 'text'}
                 headers={http ? http.headers : GRPC_BODY_HEADERS}
                 onCaptureValue={view.kind === 'current' ? onCaptureValue : undefined}
                 monitor={bodyMonitor}
                 agentSlot={view.kind === 'current' ? 'response' : undefined}
+                // Only the current response: switching tabs always comes back to it.
+                viewMemoryKey={view.kind === 'current' && sendsSource ? bodyKey : undefined}
               />
             )}
           </div>

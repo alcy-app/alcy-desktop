@@ -7,6 +7,7 @@ import { Tooltip } from '../../../shared/ui/Tooltip'
 import { useTooltip } from '../../../shared/ui/use-tooltip'
 import { ChevronDownIcon, CloseIcon, SearchIcon } from '../../../shared/ui/icons'
 import { findEditorSearchMatches, updateEditorSearchHighlights } from '../editor-search'
+import type { EditorSearchState } from '../editor-search'
 import type { RequestedSearch } from './use-editor-agent-bridge'
 import './editor-search.css'
 
@@ -46,16 +47,32 @@ interface EditorSearchProps {
   placement?: 'request' | 'response'
   /** Search started from outside (the agent): fills the query and scrolls to the first match without taking focus. */
   requestedSearch?: RequestedSearch | null
+  /** Query, options and active match to start from (a view coming back to its tab); read only at mount. */
+  initialState?: EditorSearchState | null
+  /** Reports the search state as it changes, so the view can keep it past an unmount. */
+  onStateChange?: (state: EditorSearchState) => void
 }
 
-export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement = 'request', requestedSearch = null }: EditorSearchProps) {
+export function EditorSearch({
+  text,
+  viewRef,
+  isOpen,
+  onOpen,
+  onClose,
+  placement = 'request',
+  requestedSearch = null,
+  initialState = null,
+  onStateChange,
+}: EditorSearchProps) {
   const { t } = useLanguage()
   const inputRef = useRef<HTMLInputElement | null>(null)
-  const [query, setQuery] = useState('')
-  const [matchCase, setMatchCase] = useState(false)
-  const [wholeWord, setWholeWord] = useState(false)
-  const [regularExpression, setRegularExpression] = useState(false)
-  const [requestedIndex, setRequestedIndex] = useState(0)
+  const [query, setQuery] = useState(initialState?.query ?? '')
+  const [matchCase, setMatchCase] = useState(initialState?.matchCase ?? false)
+  const [wholeWord, setWholeWord] = useState(initialState?.wholeWord ?? false)
+  const [regularExpression, setRegularExpression] = useState(initialState?.regularExpression ?? false)
+  const [requestedIndex, setRequestedIndex] = useState(initialState?.activeIndex ?? 0)
+  // Mounting already open (restored state) keeps focus where it is; only opening the bar takes it.
+  const wasOpenRef = useRef(isOpen)
   const [appliedNonce, setAppliedNonce] = useState<number | null>(null)
   // Last outside request already scrolled to; differs from appliedNonce while one is pending.
   const revealedNonceRef = useRef<number | null>(null)
@@ -76,7 +93,9 @@ export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement
   const activeIndex = result.matches.length === 0 ? -1 : ((requestedIndex % result.matches.length) + result.matches.length) % result.matches.length
 
   useEffect(() => {
-    if (!isOpen || appliedNonce !== revealedNonceRef.current) return
+    const opened = isOpen && !wasOpenRef.current
+    wasOpenRef.current = isOpen
+    if (!opened || appliedNonce !== revealedNonceRef.current) return
     inputRef.current?.focus()
     inputRef.current?.select()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focus only when the bar opens; an outside request opens it without focus.
@@ -97,6 +116,11 @@ export function EditorSearch({ text, viewRef, isOpen, onOpen, onClose, placement
       if (first) view.dispatch({ effects: EditorView.scrollIntoView(first.from, { y: 'center' }) })
     }
   }, [activeIndex, appliedNonce, isOpen, result.matches, viewRef])
+
+  useEffect(() => {
+    // The requested index, not the resolved one: with no matches yet (body still formatting) it is kept as it was.
+    onStateChange?.({ isOpen, query, matchCase, wholeWord, regularExpression, activeIndex: requestedIndex })
+  }, [isOpen, matchCase, onStateChange, query, regularExpression, requestedIndex, wholeWord])
 
   useEffect(
     () => () => {

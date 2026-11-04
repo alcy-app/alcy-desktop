@@ -11,6 +11,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
 
+### Changed
+
+- Ao voltar para uma aba, a resposta continua onde você parou: mesma rolagem, cursor e trechos recolhidos, e a busca (Ctrl+F) segue aberta com o mesmo texto e a mesma ocorrência selecionada.
+
 ## [0.9.0] - 03/11/2026
 
 ### Added

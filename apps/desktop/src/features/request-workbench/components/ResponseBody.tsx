@@ -28,6 +28,8 @@ interface ResponseBodyProps {
   monitor?: ResponseBodyMonitor | null
   /** Editor slot for the agent (ADR 0064); only the workbench response sets it. */
   agentSlot?: EditorSlot
+  /** Keeps the code view's position and search across remounts (see `ResponseCodeView`). */
+  viewMemoryKey?: string
 }
 
 const FORMAT_OPTIONS: ResponseBodyMode[] = ['json', 'xml', 'html', 'text']
@@ -68,6 +70,7 @@ function TextBodyView({
   onCaptureValue,
   monitor,
   agentSlot,
+  viewMemoryKey,
 }: {
   text: string
   selectedFormat: ResponseBodyMode
@@ -77,6 +80,7 @@ function TextBodyView({
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
   agentSlot?: EditorSlot
+  viewMemoryKey?: string
 }) {
   if (selectedFormat === 'html' && htmlPreview) return <HtmlPreview body={text} />
   return (
@@ -88,6 +92,7 @@ function TextBodyView({
       monitors={monitor?.monitors ?? null}
       onMonitorFailedCount={monitor?.onFailedCount}
       agentSlot={agentSlot}
+      viewMemoryKey={viewMemoryKey}
     />
   )
 }
@@ -318,6 +323,7 @@ interface WindowedTextBodyProps {
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
   agentSlot?: EditorSlot
+  viewMemoryKey?: string
 }
 
 function WindowedTextBody({
@@ -330,6 +336,7 @@ function WindowedTextBody({
   onCaptureValue,
   monitor,
   agentSlot,
+  viewMemoryKey,
 }: WindowedTextBodyProps) {
   const { t } = useLanguage()
   const { text, nextOffset, isLoading, loadError, isAutoLoading, handleLoadMore, handleLoadAll } = useWindowedBodyText(
@@ -351,6 +358,7 @@ function WindowedTextBody({
         onCaptureValue={onCaptureValue}
         monitor={monitor}
         agentSlot={agentSlot}
+        viewMemoryKey={viewMemoryKey}
       />
       {!isAutoLoading && nextOffset !== null && (
         <div className="rw-code-block-actions">
@@ -421,7 +429,7 @@ function WindowedImage({ handle, contentType, preview, previewNextOffset }: Wind
   )
 }
 
-export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor, agentSlot }: ResponseBodyProps) {
+export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor, agentSlot, viewMemoryKey }: ResponseBodyProps) {
   const [selectedFormat, setSelectedFormat] = useState<ResponseBodyMode>(() =>
     bodyEncoding === 'text' ? detectBodyMode(headers, body.kind === 'inline' ? body.body : body.preview) : 'text',
   )
@@ -472,6 +480,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
           onCaptureValue={onCaptureValue}
           monitor={monitor}
           agentSlot={agentSlot}
+          viewMemoryKey={viewMemoryKey}
         />
       </div>
     )
@@ -487,6 +496,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
         onCaptureValue={onCaptureValue}
         monitor={monitor}
         agentSlot={agentSlot}
+        viewMemoryKey={viewMemoryKey}
       />
     </div>
   )

@@ -14,6 +14,16 @@ export interface EditorSearchOptions {
   regularExpression: boolean
 }
 
+/** What the search bar shows; a view that remounts can start from it again. */
+export interface EditorSearchState {
+  isOpen: boolean
+  query: string
+  matchCase: boolean
+  wholeWord: boolean
+  regularExpression: boolean
+  activeIndex: number
+}
+
 export interface EditorSearchResult {
   matches: EditorSearchRange[]
   invalidRegularExpression: boolean
