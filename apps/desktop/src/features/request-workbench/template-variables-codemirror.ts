@@ -58,20 +58,73 @@ export function variableRangesFor(doc: string, variables: EnvironmentVariableDto
 
 export const variableTokenClassName = (known: boolean) => `var-token ${known ? 'var-token--known' : 'var-token--unknown'}`
 
+/** Token ranges, rescanned only when the text or the variables change — not on
+ * every selection change, which only restyles them. */
+const variableRangesField = StateField.define<VariableRange[]>({
+  create: (state) => variableRangesFor(state.doc.toString(), state.field(variablesField)),
+  update: (value, tr) =>
+    tr.docChanged || tr.effects.some((effect) => effect.is(setEnvironmentVariables))
+      ? variableRangesFor(tr.state.doc.toString(), tr.state.field(variablesField))
+      : value,
+})
+
+/** Same states as the single-line fields: `active` with the cursor inside the
+ * token, `selected` when the selection covers it. The editor draws the
+ * selection behind the text, so a selected token drops its fill — otherwise
+ * the chip hides the selection. */
+function tokenStateClassName(state: EditorState, range: VariableRange): string {
+  let active = false
+  for (const selection of state.selection.ranges) {
+    if (!selection.empty && selection.from < range.to && selection.to > range.from) return ' var-token--selected'
+    if (selection.empty && selection.head > range.from && selection.head < range.to) active = true
+  }
+  return active ? ' var-token--active' : ''
+}
+
+const braceMark = Decoration.mark({ class: 'var-token-brace' })
+
 function buildVariableDecorations(state: EditorState): DecorationSet {
-  const ranges = variableRangesFor(state.doc.toString(), state.field(variablesField))
-  return Decoration.set(ranges.map((range) => Decoration.mark({ class: variableTokenClassName(range.known) }).range(range.from, range.to)))
+  return Decoration.set(
+    state.field(variableRangesField).flatMap((range) => [
+      Decoration.mark({ class: variableTokenClassName(range.known) + tokenStateClassName(state, range) }).range(range.from, range.to),
+      // Muted braces so the name stands out, as in the single-line fields.
+      braceMark.range(range.from, range.from + 2),
+      braceMark.range(range.to - 2, range.to),
+    ]),
+    true,
+  )
 }
 
 const variableDecorationsField = StateField.define<DecorationSet>({
   create: buildVariableDecorations,
   update: (value, tr) => {
-    if (tr.docChanged || tr.effects.some((effect) => effect.is(setEnvironmentVariables))) {
+    if (tr.docChanged || tr.selection || tr.effects.some((effect) => effect.is(setEnvironmentVariables))) {
       return buildVariableDecorations(tr.state)
     }
     return value
   },
   provide: (field) => EditorView.decorations.from(field),
+})
+
+/** `{{variable}}` chips (known/undefined, cursor and selection states, muted
+ * braces) for an editor that also has `variablesField`. */
+export const variableTokenDecorations: Extension = [variableRangesField, variableDecorationsField]
+
+/** Editors with a mouse button held down (drag-selecting): no preview card pops
+ * up when the pointer rests over a token mid-drag. */
+const pointerDown = new WeakMap<EditorView, boolean>()
+
+const trackPointerButtons = EditorView.domEventHandlers({
+  mousedown: (_event, view) => {
+    pointerDown.set(view, true)
+  },
+  // `buttons` comes back to 0 on the first move after a release, even one outside the editor.
+  mousemove: (event, view) => {
+    pointerDown.set(view, event.buttons !== 0)
+  },
+  mouseup: (_event, view) => {
+    pointerDown.set(view, false)
+  },
 })
 
 export type GetVariableEditing = () => VariableEditing | null
@@ -86,9 +139,11 @@ const noVariableEditing: GetVariableEditing = () => null
  * reconfigurar a extensão via `Compartment`.
  */
 export function variableHoverTooltip(getTranslate: () => Translate, getEditing: GetVariableEditing = noVariableEditing) {
-  return hoverTooltip((view, pos) => {
+  const tooltip = hoverTooltip((view, pos) => {
+    if (pointerDown.get(view)) return null
     const variables = view.state.field(variablesField)
-    const match = variableRangesFor(view.state.doc.toString(), variables).find((range) => pos >= range.from && pos <= range.to)
+    const ranges = view.state.field(variableRangesField, false) ?? variableRangesFor(view.state.doc.toString(), variables)
+    const match = ranges.find((range) => pos >= range.from && pos <= range.to)
     if (!match) return null
 
     return {
@@ -121,6 +176,7 @@ export function variableHoverTooltip(getTranslate: () => Translate, getEditing: 
       },
     }
   })
+  return [trackPointerButtons, tooltip]
 }
 
 /**
@@ -167,7 +223,7 @@ export function environmentVariablesExtension(getTranslate: () => Translate, get
   const completionLanguageData = [{ autocomplete: completionSource }]
   return [
     variablesField,
-    variableDecorationsField,
+    variableTokenDecorations,
     variableHoverTooltip(getTranslate, getEditing),
     autocompletion({ icons: false }),
     EditorState.languageData.of(() => completionLanguageData),

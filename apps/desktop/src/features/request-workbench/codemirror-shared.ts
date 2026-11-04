@@ -192,5 +192,8 @@ export const completionTheme = EditorView.theme({
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-sans)',
     padding: '4px 8px',
+    // CodeMirror caps the box at 400px but only wraps at spaces: a long
+    // variable name (`name = value`) would run past the border.
+    overflowWrap: 'anywhere',
   },
 })

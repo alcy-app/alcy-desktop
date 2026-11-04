@@ -123,4 +123,38 @@ describe('environmentVariablesExtension', () => {
     expect(view.dom.querySelector('.var-token--unknown')).toHaveTextContent('{{missing}}')
     view.destroy()
   })
+
+  it('mutes the braces inside the token, keeping the token in one piece', () => {
+    const view = new EditorView({ doc: '{"a": "{{token}}"}', extensions: [json(), environmentVariablesExtension(() => t)] })
+    view.dispatch({ effects: setEnvironmentVariables.of(VARIABLES) })
+
+    const token = view.dom.querySelector('.var-token--known') as HTMLElement
+    expect(token).toHaveTextContent('{{token}}')
+    expect([...token.querySelectorAll('.var-token-brace')].map((brace) => brace.textContent)).toEqual(['{{', '}}'])
+    view.destroy()
+  })
+
+  it('marks the token holding the cursor and the one covered by the selection', () => {
+    // `{{token}}` spans 7..16, `{{missing}}` 24..35.
+    const view = new EditorView({
+      doc: '{"a": "{{token}}", "b": "{{missing}}"}',
+      extensions: [json(), environmentVariablesExtension(() => t)],
+    })
+    view.dispatch({ effects: setEnvironmentVariables.of(VARIABLES) })
+    const known = () => view.dom.querySelector('.var-token--known') as HTMLElement
+    const unknown = () => view.dom.querySelector('.var-token--unknown') as HTMLElement
+
+    view.dispatch({ selection: { anchor: 10 } })
+    expect(known()).toHaveClass('var-token--active')
+    expect(unknown()).not.toHaveClass('var-token--active')
+
+    // Right after `}}` the cursor is no longer editing the variable.
+    view.dispatch({ selection: { anchor: 16 } })
+    expect(known()).not.toHaveClass('var-token--active')
+
+    view.dispatch({ selection: { anchor: 3, head: 12 } })
+    expect(known()).toHaveClass('var-token--selected')
+    expect(unknown()).not.toHaveClass('var-token--selected')
+    view.destroy()
+  })
 })

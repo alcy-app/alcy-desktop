@@ -10,7 +10,7 @@ import {
   type GetVariableEditing,
   variableHoverTooltip,
   variableRangesFor,
-  variableTokenClassName,
+  variableTokenDecorations,
   variablesField,
 } from './template-variables-codemirror'
 
@@ -26,11 +26,10 @@ const GQL_TOKEN_CLASS_NAME: Partial<Record<GraphqlTokenType, string>> = {
 export const setQueryVariables = setEnvironmentVariables
 
 /**
- * Mesma prioridade visual do overlay anterior (`TemplateHighlightedField`):
- * um token `{{variável}}` sempre ganha a cor de variável, mesmo quando cai
- * dentro de um token GraphQL colorido (tipicamente uma string) — por isso a
- * marcação de sintaxe é recortada ao redor dos intervalos de variável antes
- * de gerar as decorações, em vez de deixá-las se sobrepor.
+ * Syntax marks only. A `{{variable}}` token always gets the variable color,
+ * even inside a colored GraphQL token (typically a string), so the syntax
+ * marks are clipped around variable ranges instead of overlapping them; the
+ * variable chips themselves come from `variableTokenDecorations`.
  */
 function buildDecorations(doc: string, variables: EnvironmentVariableDto[]): DecorationSet {
   const variableRanges = variableRangesFor(doc, variables)
@@ -53,10 +52,6 @@ function buildDecorations(doc: string, variables: EnvironmentVariableDto[]): Dec
     tokenStart = tokenEnd
   }
 
-  for (const variable of variableRanges) {
-    marks.push({ from: variable.from, to: variable.to, className: variableTokenClassName(variable.known) })
-  }
-
   return Decoration.set(
     marks.map((mark) => Decoration.mark({ class: mark.className }).range(mark.from, mark.to)),
     true,
@@ -76,5 +71,5 @@ const decorationsField = StateField.define<DecorationSet>({
 
 /** Destaque de sintaxe GraphQL + templates `{{variável}}` (com tooltip ao passar o mouse) para o editor de query, sobre CodeMirror 6. */
 export function graphqlQueryHighlight(getTranslate: () => Translate, getEditing?: GetVariableEditing) {
-  return [variablesField, decorationsField, variableHoverTooltip(getTranslate, getEditing)]
+  return [variablesField, variableTokenDecorations, decorationsField, variableHoverTooltip(getTranslate, getEditing)]
 }

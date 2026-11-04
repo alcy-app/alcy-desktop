@@ -19,6 +19,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Com um texto selecionado no editor, Ctrl+F já abre a busca procurando por ele.
 - O menu de opções de um monitor de valores tem "Mencionar no chat", como as demais listas.
 - Selecione um trecho da resposta e use "Compartilhar como imagem" no menu do botão direito: a imagem mostra só as linhas escolhidas, com a numeração original, e você decide se inclui nome, URL e status.
+- Variáveis `{{nome}}` ficam mais fáceis de ler, selecionar e editar na URL, nos parâmetros e no body: a variável em edição ou selecionada fica destacada, e a pré-visualização não abre mais no meio de uma seleção.
+- Na URL, a lista de sugestões de variáveis abre logo abaixo do `{{` digitado.
+
+### Fixed
+
+- Nomes longos de variável não ultrapassam mais a caixa de descrição das sugestões no body.
 
 ## [0.9.0] - 03/11/2026
 
