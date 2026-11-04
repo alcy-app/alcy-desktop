@@ -60,6 +60,7 @@ impl AgentPaths {
 /// and the chats busy with a turn.
 #[derive(Default)]
 pub struct AgentRuns {
+    pub(crate) document_transcripts: Mutex<HashMap<String, (String, Vec<alcy_app::AgentMessage>)>>,
     cancellations: Mutex<HashMap<String, watch::Sender<bool>>>,
     pending_tools: Mutex<HashMap<String, oneshot::Sender<ToolOutcome>>>,
     busy_sessions: Mutex<HashSet<String>>,
@@ -89,6 +90,7 @@ impl Drop for RunGuard<'_> {
     fn drop(&mut self) {
         lock(&self.runs.cancellations).remove(&self.run_id);
         lock(&self.runs.busy_sessions).remove(&self.session_id);
+        lock(&self.runs.document_transcripts).remove(&self.session_id);
         let prefix = format!("{}:", self.run_id);
         lock(&self.runs.pending_tools).retain(|wait_id, _| !wait_id.starts_with(&prefix));
     }
@@ -681,6 +683,8 @@ impl AgentTurnSink for ChannelSink<'_> {
 /// `submit_agent_tool_result`. Approval and masking happen on that side, so
 /// they hold for whichever agent calls the bridge (ADR 0064).
 struct UiToolBridge<'a> {
+    session_id: &'a str,
+    root_path: &'a str,
     channel: &'a Channel<AgentEventDto>,
     runs: &'a AgentRuns,
     run_id: &'a str,
@@ -698,6 +702,12 @@ impl Drop for PendingToolGuard<'_> {
 }
 
 impl AgentToolHost for UiToolBridge<'_> {
+    fn publish_transcript(&self, messages: &[alcy_app::AgentMessage]) {
+        lock(&self.runs.document_transcripts).insert(
+            self.session_id.into(),
+            (self.root_path.into(), messages.to_vec()),
+        );
+    }
     fn call(&self, call: &ToolCall<'_>) -> impl Future<Output = ToolOutcome> + Send {
         let wait_id = format!("{}:{}", self.run_id, self.runs.next_id());
         let (sender, receiver) = oneshot::channel();
@@ -982,6 +992,8 @@ async fn run_turn(
         }
     };
     let tool_host = UiToolBridge {
+        session_id: &session.id,
+        root_path: &root_path,
         channel,
         runs,
         run_id: &input.run_id,

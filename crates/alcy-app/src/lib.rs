@@ -1,7 +1,13 @@
 //! Application use cases and ports for Alcy.
 
 mod agent;
+mod documentation;
+mod documentation_workspace;
+pub use documentation_workspace::*;
+mod documentation_markdown;
 pub use agent::*;
+pub use documentation::*;
+pub use documentation_markdown::*;
 mod compare_responses;
 mod credential_store;
 mod evaluate_condition;

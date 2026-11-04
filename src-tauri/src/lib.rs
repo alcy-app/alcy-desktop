@@ -37,6 +37,7 @@ use commands::custom_ca_certificates::{
     add_custom_ca_certificate, apply_saved_custom_ca_certificates, list_custom_ca_certificates,
     remove_custom_ca_certificate,
 };
+use commands::documentation::{DocumentationState, cancel_documentation_job, documentation};
 use commands::environments::{list_environments, save_environments};
 use commands::execute_collection_run::{
     CollectionRunOutputs, cancel_collection_run, execute_collection_run, get_collection_run_output,
@@ -336,6 +337,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 settings: app_data_dir.join("agent-settings.json"),
                 sessions: app_data_dir.join("agent-sessions"),
             });
+            app.manage(DocumentationState::default());
             app.manage(UpdateSettingsStore::new(
                 app_data_dir.join("update-settings.json"),
             ));
@@ -551,6 +553,8 @@ pub fn run_with(extensions: Vec<Extension>) {
                 export_collections,
                 export_har,
                 export_png,
+                documentation,
+                cancel_documentation_job,
                 preview_webclient_export,
                 export_webclient,
                 import_collections,

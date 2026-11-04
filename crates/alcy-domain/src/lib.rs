@@ -7,6 +7,8 @@ mod body_payload;
 mod collection;
 mod collection_run;
 mod document;
+mod documentation;
+pub use documentation::*;
 mod endpoint;
 mod environment;
 mod execution_error;

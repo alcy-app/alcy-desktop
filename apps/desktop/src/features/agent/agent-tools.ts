@@ -1,3 +1,4 @@
+import { isDocumentTool } from '../documents/document-agent-tools'
 import type { AuthenticationInput, HeaderInput } from '../../bindings/execute-graphql-request'
 import type { HttpMethodInput, RawBodyLanguage, RestBodyInput } from '../../bindings/execute-rest-request'
 import { emptyRequestContent, findNode, findRequest, websocketOf, type RequestContent, type TreeNode } from '../request-workbench/collection-tree'
@@ -583,6 +584,7 @@ async function run(name: string, input: Input, host: WorkbenchAgentHost, default
 
 /** Runs a tool on the workbench. Approval of side effects happens before this is called. */
 export async function runAgentTool(name: string, input: Input, host: WorkbenchAgentHost, defaultRequestName: string): Promise<AgentToolOutcome> {
+  if (isDocumentTool(name)) return host.documents?.call(name, input, host) ?? failure('Documents are unavailable.')
   const secrets = () => resourceSecrets([host.environments(), host.collections(), host.tabs().map((tab) => tab.content)])
   try {
     const outcome = await run(name, input, host, defaultRequestName)

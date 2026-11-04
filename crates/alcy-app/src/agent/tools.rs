@@ -209,6 +209,14 @@ pub fn agent_tool_catalog() -> Vec<ToolDefinition> {
 
 /// Where each kind of id comes from, so no model has to guess it.
 const ID_SOURCES: &[(&str, &str)] = &[
+    (
+        "documentId",
+        "Document id from list_documents or create_document.",
+    ),
+    (
+        "sourceId",
+        "Selected conversation or request execution id from get_document sources.",
+    ),
     ("flowId", "Flow id from list_flows."),
     ("nodeId", "Node id from get_flow."),
     ("folderId", "Folder id from list_flows (flow folders)."),
@@ -586,6 +594,11 @@ mod tests {
             "send_websocket_message",
             "close_websocket",
             "import_from_text",
+            "create_document",
+            "update_document",
+            "delete_document",
+            "add_document_image",
+            "export_document",
         ] {
             assert_eq!(
                 agent_tool_class(name),

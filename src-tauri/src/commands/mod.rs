@@ -9,6 +9,7 @@ pub mod collection_run_step;
 pub mod collections;
 pub mod cookie_jar;
 pub mod custom_ca_certificates;
+pub mod documentation;
 pub mod environments;
 pub mod execute_collection_run;
 pub mod execute_flow;

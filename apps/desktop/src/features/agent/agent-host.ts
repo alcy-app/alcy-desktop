@@ -5,6 +5,7 @@ import type { AgentResourceHost } from './use-agent-resources'
 import type { GrpcStreamState } from '../request-workbench/grpc-stream'
 import type { WebSocketStreamState } from '../request-workbench/websocket-stream'
 import type { ImportWarningDto } from '../../bindings/import-collections'
+import type { AgentDocumentHost } from '../documents/document-agent-tools'
 
 /** A request tab as the agent tools see it. */
 export interface AgentHostTab {
@@ -52,6 +53,7 @@ export interface AgentTextImportResult {
  * state, and actions resolve once the interface reflects them.
  */
 export interface WorkbenchAgentHost {
+  documents?: AgentDocumentHost
   resources?: AgentResourceHost
   tabs(): AgentHostTab[]
   activeTabId(): string | null

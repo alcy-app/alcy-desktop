@@ -2,7 +2,7 @@ import type { WorkbenchAgentHost } from './agent-host'
 import { savedRequests } from './agent-context'
 
 /** Workspace items the agent can link in its replies as `[name](alcy://<kind>/<id>)`. */
-export const AGENT_REFERENCE_KINDS = ['request', 'flow', 'mock', 'tab'] as const
+export const AGENT_REFERENCE_KINDS = ['request', 'flow', 'mock', 'tab', 'document'] as const
 export type AgentReferenceKind = (typeof AGENT_REFERENCE_KINDS)[number]
 
 export function isAgentReferenceKind(kind: string): kind is AgentReferenceKind {
@@ -13,6 +13,7 @@ export function isAgentReferenceKind(kind: string): kind is AgentReferenceKind {
 export async function openAgentReference(host: WorkbenchAgentHost, kind: AgentReferenceKind, id: string): Promise<boolean> {
   try {
     switch (kind) {
+      case 'document': return await host.documents?.open(id) ?? false
       case 'request':
         return (await host.openRequest(id)) !== null
       case 'tab':

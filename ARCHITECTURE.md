@@ -313,6 +313,47 @@ exactly SharePoint's permission on that library. Opening one creates the
 local copy, links it and pulls, or reuses a recent copy linked to the same
 folder.
 
+### Workspace documentation
+
+Documents are local workspace resources under `alcy-documents/<id>/`. React owns
+Markdown drafts, preview, source selection and editor tabs. Domain rules bound
+content and enforce exact edits; `alcy-app` orchestrates revision checks, source
+access and export through repository, source and asset ports. Tauri adapts the
+ports and runs native work on blocking workers. `alcy-storage` persists versioned
+metadata, immutable Markdown revisions and local PNG assets, and renders PDFs.
+An atomic metadata replacement publishes a complete content revision. A changed
+revision or an unsaved user draft prevents an agent write from replacing edits.
+
+The agent uses the existing tool catalog and approvals. A new document starts
+with the active conversation; other conversations and individual request executions
+are selected in the document editor. Source reads include the complete saved
+transcript before compaction and a scoped in-memory snapshot of an active turn.
+Only selected sources are readable. Read pages are retained as redacted evidence;
+if history is removed, cached pages explicitly identify that fallback. Selection
+does not copy whole conversations into the workspace. Documents update on request,
+without background model calls or automatic request execution.
+
+Text pages are limited to 4 KiB, allowing JSON escaping within the existing 32 KiB
+tool-result budget. Source and asset references are paged separately for the model.
+The editor assembles bounded pages up to a 1 MiB document limit; saving stages
+chunks natively and commits once, preserving concurrent edits. Generated images
+reuse the request screenshot renderer without importable collection metadata.
+Image uploads and reads are chunked. Native import accepts PNG/JPEG only, checks
+allocation and dimensions, and rewrites PNG pixels to discard ancillary metadata.
+Credentials and sensitive environment values are masked before source text reaches
+the model or retained evidence. Supplied images remain local, with user captions;
+this feature does not send images to providers or interpret their contents.
+
+Markdown export writes relative image references and a sibling asset directory.
+PDF export uses `printpdf` with embedded DejaVu fonts and the Markdown subset
+parsed by `pulldown-cmark`; text stays selectable. Tall captures continue across
+pages at a readable width. PDF images have a 256 MiB aggregate decoded budget.
+Export runs locally, supports
+cancellation and publishes the destination only after rendering succeeds. Images
+resolve only through document asset identifiers; remote images, arbitrary file
+references and raw HTML execution are unavailable. Documentation has its own v1
+format and does not change chat/history formats or the internal sync allowlist.
+
 ### Agent
 
 React stores the machine-local chat visibility and context-menu preferences in

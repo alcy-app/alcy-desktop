@@ -3,7 +3,7 @@ import type { TreeNode } from '../request-workbench/collection-tree'
 import type { EditorSelection, EditorSlot } from '../request-workbench/editor-bridge'
 import type { AgentHostEnvironment, AgentHostTab, WorkbenchAgentHost } from './agent-host'
 
-export type AgentContextKind = 'tab' | 'request' | 'collection' | 'folder' | 'environment' | 'response' | 'field' | 'selection' | 'flow' | 'monitor' | 'runner' | 'mock' | 'quote'
+export type AgentContextKind = 'tab' | 'request' | 'collection' | 'folder' | 'environment' | 'response' | 'field' | 'selection' | 'flow' | 'monitor' | 'runner' | 'mock' | 'quote' | 'document'
 
 export interface AgentContextOption extends AgentContextInput {
   kind: AgentContextKind
@@ -69,7 +69,8 @@ export function agentContextOptions(host: WorkbenchAgentHost, query: string): Ag
   const resourceOptions = (host.resources?.context() ?? [])
     .filter((option) => matches(query, option.label, option.summary))
     .filter((option, index, all) => all.slice(0, index).filter((previous) => previous.kind === option.kind).length < MAX_OPTIONS_PER_KIND) as AgentContextOption[]
-  return [...responseOptions, ...tabOptions, ...requestOptions, ...environmentOptions, ...resourceOptions]
+  const documentOptions = (host.documents?.context() ?? []).filter((option) => matches(query, option.label)).slice(0, MAX_OPTIONS_PER_KIND) as AgentContextOption[]
+  return [...responseOptions, ...tabOptions, ...requestOptions, ...environmentOptions, ...resourceOptions, ...documentOptions]
 }
 
 /** How the agent reads each kind of item when the workbench has nothing more to say about it. */

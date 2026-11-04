@@ -11,8 +11,10 @@ import type { useOpenTabs } from './use-open-tabs'
 import { contentOf, isTabDirty, type useWorkbenchState } from './use-workbench-state'
 import type { RequestTabId, WorkbenchTab } from './request-workbench.types'
 import type { AgentResourceHost } from '../agent/use-agent-resources'
+import type { AgentDocumentHost } from '../documents/document-agent-tools'
 
 interface AgentHostSources {
+  documents?: AgentDocumentHost
   workspaceRootPath: string
   resources?: AgentResourceHost
   flows?: ReturnType<typeof useFlowsState>
@@ -118,6 +120,7 @@ export function useAgentHost(sources: AgentHostSources): WorkbenchAgentHost {
     }
 
     const host: WorkbenchAgentHost = {
+      get documents() { return latest.current.documents },
       get resources() { return latest.current.resources },
       tabs: () => latest.current.workbench.tabs.map(toHostTab),
       activeTabId: () => latest.current.openTabs.activeOpenTab?.id ?? latest.current.workbench.activeTabId,

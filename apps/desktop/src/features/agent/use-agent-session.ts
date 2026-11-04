@@ -289,6 +289,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
     if (runId === null) return
     declinePendingApprovals()
     hostRef.current.resources?.cancelReads?.()
+    hostRef.current.documents?.cancel()
     void cancelAgentTurn(runId)
   }, [declinePendingApprovals])
 
@@ -405,6 +406,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
       const runId = runIdRef.current
       for (const resolve of approvalsRef.current.values()) resolve(false)
       hostRef.current.resources?.cancelReads?.()
+      hostRef.current.documents?.cancel()
       if (runId !== null) void cancelAgentTurn(runId)
     },
     [rootPath],

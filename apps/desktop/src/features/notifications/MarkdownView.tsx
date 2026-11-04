@@ -4,6 +4,7 @@ import { useOpenExternalLink } from './use-open-external-link'
 import './markdown-view.css'
 
 interface MarkdownViewProps {
+  renderImage?: (assetId: string, caption: string) => ReactNode
   source: string
   /** Offset headings to fit below the containing page title. */
   headingOffset?: number
@@ -15,13 +16,14 @@ interface MarkdownViewProps {
 }
 
 /** Render the supported Markdown subset as React elements without raw HTML. */
-export function MarkdownView({ source, headingOffset = 0, renderCodeBlock, renderReference, resolveReference }: MarkdownViewProps) {
+export function MarkdownView({ source, headingOffset = 0, renderCodeBlock, renderReference, resolveReference, renderImage }: MarkdownViewProps) {
   const blocks = useMemo(() => parseMarkdown(source), [source])
   const openLink = useOpenExternalLink()
 
   const renderInlines = (nodes: MarkdownInline[]): ReactNode[] =>
     nodes.map((node, index) => {
       switch (node.type) {
+        case 'image': return <span key={index}>{renderImage?.(node.assetId, node.caption) ?? node.caption}</span>
         case 'text':
           return node.text
         case 'code': {

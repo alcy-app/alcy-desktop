@@ -2042,7 +2042,8 @@ describe('RequestWorkbench', () => {
   })
 
   it('Ctrl+Shift+N cria uma collection já em modo de renomear', async () => {
-    render()
+    // Finish the initial workspace loads before issuing a creation shortcut.
+    await act(async () => { render() })
     await screen.findByLabelText('Ambiente')
 
     fireEvent.keyDown(document.body, { key: 'N', ctrlKey: true, shiftKey: true })

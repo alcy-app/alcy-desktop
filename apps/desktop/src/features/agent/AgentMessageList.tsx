@@ -44,7 +44,8 @@ interface AgentMessageListProps {
 
 const EXCERPT_LABEL_CHARS = 32
 
-const REFERENCE_ICONS = { request: GlobeIcon, flow: FlowIcon, mock: MockServerIcon, tab: PanelRightIcon }
+const REFERENCE_ICONS = {
+  document: PanelRightIcon, request: GlobeIcon, flow: FlowIcon, mock: MockServerIcon, tab: PanelRightIcon }
 
 type ToolItem = Extract<AgentChatItem, { kind: 'tool' }>
 type Row = { kind: 'item'; item: AgentChatItem } | { kind: 'tools'; id: string; tools: ToolItem[] }

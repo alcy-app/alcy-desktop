@@ -8,6 +8,7 @@
  */
 
 export type MarkdownInline =
+  | { type: 'image'; assetId: string; caption: string }
   | { type: 'text'; text: string }
   | { type: 'code'; text: string }
   | { type: 'strong'; children: MarkdownInline[] }
@@ -403,6 +404,7 @@ function parseLink(text: string, index: number): { nodes: MarkdownInline[]; end:
   const url = target[1]
   const children = image ? [{ type: 'text' as const, text: label || url }] : parseInline(label, false)
   const end = close + 1 + target[0].length
+  if (image && /^assets\/[a-f0-9]{64}\.png$/.test(url)) return { nodes: [{ type: 'image', assetId: url.slice(7, -4), caption: label }], end }
   const reference = image ? null : REFERENCE_URL.exec(url)
   if (reference) return { nodes: [{ type: 'reference', kind: reference[1], id: reference[2], children }], end }
   // Without an http(s) scheme (relative path, mailto:, javascript:…) only the text shows.

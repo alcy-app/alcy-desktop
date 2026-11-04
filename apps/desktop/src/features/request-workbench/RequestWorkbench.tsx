@@ -1,3 +1,5 @@
+import { useDocuments } from '../documents/use-documents'
+import { DocumentsPanel } from '../documents/DocumentsPanel'
 import type { SettingsCategory } from '../settings-menu/SettingsMenu'
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -420,6 +422,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const conflictTab = usePseudoTab<ConflictResolutionTarget>()
   const { open: openVersionReview, deactivate: deactivateVersionReview } = versionReviewTab
   const { open: openConflict, deactivate: deactivateConflict } = conflictTab
+  const documentManager = useDocuments(workspace.rootPath)
+  const documentsPanel = useMemo(() => <DocumentsPanel manager={documentManager} />, [documentManager])
   const extensionTabs = useExtensionWorkbenchTabs()
   // Last inline request saved by a tab, delivered to the mounted flow canvas (FlowCanvas.externalInlineRequest).
   const [savedInlineRequest, setSavedInlineRequest] = useState<
@@ -983,6 +987,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const agentHost = useAgentHost({
     workspaceRootPath: workspace.rootPath,
+    documents: documentManager.agent,
     flows,
     resources: agentResources,
     workbench,
@@ -1771,15 +1776,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         }]
       : []),
     ...extensionTabs,
+    ...documentManager.tabs,
   ]
   const activePseudoTab = pseudoTabs.findLast((tab) => tab.active)
   const pseudoTabById = (id: string) => pseudoTabs.find((tab) => tab.id === id)
 
   // Extension tabs step back when the open request/flow tab changes or a
   // version tab comes to the front; they stay open in the bar.
-  const extensionTabsRef = useRef(extensionTabs)
+  const extensionTabsRef = useRef([...extensionTabs, ...documentManager.tabs])
   useEffect(() => {
-    extensionTabsRef.current = extensionTabs
+    extensionTabsRef.current = [...extensionTabs, ...documentManager.tabs]
   })
   const activeOpenTabId = openTabs.activeOpenTab?.id ?? null
   const versionTabActive = versionReviewTab.active || conflictTab.active
@@ -1973,6 +1979,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           <div ref={sidebarWrapperRef} className="rw-sidebar-wrapper" style={{ width: sidebarCollapsed ? 'var(--workbench-rail-width)' : `calc(${sidebarPanel.size}px + var(--workbench-rail-width))` }}>
             <WorkbenchSidebar
               collapsed={sidebarCollapsed}
+              documentsPanel={documentsPanel}
               onToggleCollapsed={onToggleSidebarCollapsed}
               environments={environmentsSlice}
               collections={collectionsSlice}

@@ -47,6 +47,8 @@ impl ToolOutcome {
 /// Port that runs a tool where the state it touches lives (the workbench,
 /// in the UI). Asking the user for approval is part of running it.
 pub trait AgentToolHost: Sync {
+    /// Makes the current, uncompressed transcript available to selected document sources.
+    fn publish_transcript(&self, _messages: &[AgentMessage]) {}
     fn call(&self, call: &ToolCall<'_>) -> impl Future<Output = ToolOutcome> + Send;
 }
 
@@ -187,6 +189,7 @@ where
         }
 
         let mut results = Vec::with_capacity(calls.len());
+        host.publish_transcript(&conversation.messages);
         let mut cancelled = false;
         for (id, name, input) in &calls {
             let outcome = if cancelled {

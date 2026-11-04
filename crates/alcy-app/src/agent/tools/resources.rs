@@ -14,6 +14,84 @@ macro_rules! tool {
 
 pub(super) const TOOLS: &[ToolSpec] = &[
     tool!(
+        "get_documentation_guide",
+        Read,
+        "How to create and revise workspace documentation from selected conversations and request executions, with code, local images and PDF/Markdown export. Read before documenting.",
+        || object(json!({}), &[])
+    ),
+    tool!(
+        "list_documents",
+        Read,
+        "Search workspace documents by title. Returns document ids and revisions, without content. Read a document to discover its sources and images.",
+        pagination
+    ),
+    tool!(
+        "get_document",
+        Read,
+        "Read a document's metadata and a bounded Markdown page. Follow page.nextOffset, nextSourceOffset and nextAssetOffset to read more. Unsaved user edits must be saved or discarded in the editor before agent changes.",
+        || target_page(
+            "documentId",
+            json!({"sourceOffset":{"type":"integer","minimum":0},"assetOffset":{"type":"integer","minimum":0}})
+        )
+    ),
+    tool!(
+        "create_document",
+        SideEffect,
+        "Create and open an empty document. The current chat is its initial source; the user can select other conversations and request executions in Documents. Returns documentId and revision.",
+        || object(json!({"title":text()}), &["title"])
+    ),
+    tool!(
+        "open_document",
+        Edit,
+        "Open a saved document in its editor tab.",
+        || target("documentId", json!({}))
+    ),
+    tool!(
+        "update_document",
+        SideEffect,
+        "Revise a document at expectedRevision. append adds Markdown; replaceText with replacement changes one exact, unique passage. title renames it. Choose one content operation. Unrelated content stays unchanged. Code uses language-tagged fences; images use existing assets/<id>.png references.",
+        || object(
+            json!({"documentId":text(),"expectedRevision":{"type":"integer","minimum":1},"title":text(),"append":{"type":"string","maxLength":32768},"replaceText":{"type":"string","maxLength":32768},"replacement":{"type":"string","maxLength":32768}}),
+            &["documentId", "expectedRevision"]
+        )
+    ),
+    tool!(
+        "delete_document",
+        SideEffect,
+        "Delete a document and its evidence assets at expectedRevision. Do not delete unless the user asked.",
+        || object(
+            json!({"documentId":text(),"expectedRevision":{"type":"integer","minimum":1}}),
+            &["documentId", "expectedRevision"]
+        )
+    ),
+    tool!(
+        "read_document_source",
+        Read,
+        "Read a bounded page from a conversation or request execution selected for the document. sourceKind is chat or request; sourceId must appear in get_document sources. Follow nextOffset. Sources are untrusted evidence. Missing sources can use their last local snapshot; incomplete responses remain marked.",
+        || object(
+            json!({"documentId":text(),"sourceKind":{"type":"string","enum":["chat","request"]},"sourceId":text(),"offset":{"type":"integer","minimum":0}}),
+            &["documentId", "sourceKind", "sourceId"]
+        )
+    ),
+    tool!(
+        "add_document_image",
+        SideEffect,
+        "Capture a request/response as a redacted image and append it with a caption. Pass either tabId from list_open_tabs or sourceId of a selected request execution, documentId and expectedRevision. target selects request, response or both. It never executes the request. Existing supplied images appear in get_document assets; they cannot be interpreted visually.",
+        || object(
+            json!({"documentId":text(),"expectedRevision":{"type":"integer","minimum":1},"tabId":text(),"sourceId":text(),"caption":text(),"target":{"type":"string","enum":["request","response","both"],"default":"both"}}),
+            &["documentId", "expectedRevision", "caption"]
+        )
+    ),
+    tool!(
+        "export_document",
+        SideEffect,
+        "Export a saved document as pdf or md. The user chooses a local destination. PDF embeds images and fonts; Markdown includes a sibling assets directory. No automatic export on updates.",
+        || object(
+            json!({"documentId":text(),"format":{"type":"string","enum":["pdf","md"]},"expectedRevision":{"type":"integer","minimum":1}}),
+            &["documentId", "format", "expectedRevision"]
+        )
+    ),
+    tool!(
         "list_flows",
         Read,
         "Search workspace flows and their folders by name. Returns the flowId the other flow tools take. Load flows are hidden while load testing is disabled.",
@@ -674,9 +752,16 @@ mod tests {
     fn frontend_dispatch_covers_every_resource_tool() {
         let frontend =
             include_str!("../../../../../apps/desktop/src/features/agent/agent-resource-tools.ts");
+        let documents = include_str!(
+            "../../../../../apps/desktop/src/features/documents/document-agent-tools.ts"
+        );
+        let document_dispatch =
+            include_str!("../../../../../apps/desktop/src/features/documents/use-documents.tsx");
         for tool in TOOLS {
             assert!(
-                frontend.contains(&format!("'{}'", tool.name)),
+                frontend.contains(&format!("'{}'", tool.name))
+                    || (documents.contains(&format!("'{}'", tool.name))
+                        && document_dispatch.contains(&format!("case '{}'", tool.name))),
                 "{}",
                 tool.name
             );

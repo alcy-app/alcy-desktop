@@ -1,8 +1,10 @@
 import type { TranslationKey } from '../../shared/i18n/translations'
 import type { useLanguage } from '../../shared/i18n/use-language'
 import { RESOURCE_TOOL_NAMES } from './agent-resource-tools'
+import { DOCUMENT_TOOL_NAMES } from '../documents/document-agent-tools'
 
 const KNOWN_TOOLS = new Set([
+  ...DOCUMENT_TOOL_NAMES,
   ...RESOURCE_TOOL_NAMES,
   'list_open_tabs',
   'get_request',
