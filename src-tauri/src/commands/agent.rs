@@ -10,10 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alcy_agent::AgentHttpClient;
 use alcy_app::{
-    AgentCompactionOutcome, AgentConversation, AgentLanguage, AgentRole, AgentToolHost,
-    AgentTurnRequest, AgentTurnSink, ChatModelError, ContentBlock, ContextReference,
+    AgentCompactionOutcome, AgentConversation, AgentFeatures, AgentLanguage, AgentRole,
+    AgentToolHost, AgentTurnRequest, AgentTurnSink, ChatModelError, ContentBlock, ContextReference,
     CredentialStore, DEFAULT_MAX_OUTPUT_TOKENS, MAX_CONTEXT_REFERENCES, ToolCall, ToolClass,
-    ToolOutcome, TurnStop, agent_system_prompt, agent_tool_catalog, compact_agent_conversation,
+    ToolOutcome, TurnStop, agent_system_prompt, agent_tool_catalog_for, compact_agent_conversation,
     compose_user_message, generate_session_title, last_user_text_index, remove_last_user_text,
     run_agent_turn,
 };
@@ -219,6 +219,13 @@ pub struct StartAgentTurnInput {
     /// (retry of a failed turn, or an edit of the last message).
     #[serde(default)]
     pub replace_last_turn: bool,
+    /// Off when the interface hides workspace documents: their tools and guidance are left out.
+    #[serde(default = "enabled")]
+    pub documents_enabled: bool,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -968,8 +975,11 @@ async fn run_turn(
         AgentLanguageDto::PortugueseBrazil => AgentLanguage::PortugueseBrazil,
         AgentLanguageDto::English => AgentLanguage::English,
     };
-    let system_prompt = agent_system_prompt(language);
-    let tools = agent_tool_catalog();
+    let features = AgentFeatures {
+        documents: input.documents_enabled,
+    };
+    let system_prompt = agent_system_prompt(language, features);
+    let tools = agent_tool_catalog_for(features);
     // A new chat gets a title from the model, alongside the reply so the turn
     // does not wait for it; until then (or if it fails) the first line stays.
     let title = async {

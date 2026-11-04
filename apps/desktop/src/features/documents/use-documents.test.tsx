@@ -20,6 +20,14 @@ beforeEach(() => {
 })
 
 describe('workspace documents', () => {
+  it('loads nothing while the documents feature is off', async () => {
+    const { result } = renderHook(() => useDocuments('/workspace', false), { wrapper })
+    await act(async () => {})
+    expect(result.current.loading).toBe(false)
+    expect(documentCall).not.toHaveBeenCalled()
+    expect(listDocumentThemes).not.toHaveBeenCalled()
+  })
+
   it('does not import an image when the operation was cancelled while choosing a file', async () => {
     const { result } = renderHook(() => useDocuments('/workspace'), { wrapper })
     await waitFor(() => expect(result.current.loading).toBe(false))

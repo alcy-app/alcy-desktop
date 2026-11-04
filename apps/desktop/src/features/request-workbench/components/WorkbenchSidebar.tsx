@@ -354,7 +354,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
         { id: 'components', label: t('components.tabLabel'), icon: <ComponentsIcon size={19} /> },
         { id: 'environments', label: t('environments.ariaLabel'), icon: <VariablesIcon size={19} /> },
         ...(FEATURE_FLAGS.valueMonitors ? [{ id: 'monitors' as const, label: t('monitors.title'), icon: <MonitorIcon size={19} /> }] : []),
-        { id: 'documents', label: t('documents.label'), icon: <DocumentIcon size={19} /> },
+        ...(FEATURE_FLAGS.documents ? [{ id: 'documents' as const, label: t('documents.label'), icon: <DocumentIcon size={19} /> }] : []),
         { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={19} /> },
         ...(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
         ...EXTENSION_SIDEBAR_MODULES.map((module) => ({ id: module.id, label: module.label[language], icon: module.icon })),
@@ -576,7 +576,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
                 onRefresh={history.onRefresh}
               />
             )}
-            {visibleActiveTab === 'documents' && documentsPanel}
+            {visibleActiveTab === 'documents' && FEATURE_FLAGS.documents && documentsPanel}
             {visibleActiveTab === 'environments' && <EnvironmentsPanel {...environments} />}
             {visibleActiveTab === 'monitors' && FEATURE_FLAGS.valueMonitors && <ValueMonitorsPanel {...valueMonitors} />}
             {visibleActiveTab === 'git' && (FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}

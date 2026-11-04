@@ -36,6 +36,8 @@ export interface StartAgentTurnInput {
   language: 'pt-BR' | 'en'
   /** The text replaces the user's last message and what came after it (retry or edit). */
   replaceLastTurn?: boolean
+  /** Off leaves the document tools and guidance out of the turn. */
+  documentsEnabled?: boolean
 }
 
 export interface AgentTurnResultDto {

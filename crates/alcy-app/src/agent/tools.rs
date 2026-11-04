@@ -194,6 +194,47 @@ Pass environmentId from list_environments (its name also works); without it the 
     },
 ];
 
+/// Optional features the interface can turn off for a turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentFeatures {
+    /// Workspace documents: their tools and the documentation guidance.
+    pub documents: bool,
+}
+
+impl Default for AgentFeatures {
+    fn default() -> Self {
+        Self { documents: true }
+    }
+}
+
+/// The tools behind workspace documents (spec 0144), hidden when documents are off.
+pub const DOCUMENT_TOOLS: [&str; 11] = [
+    "get_documentation_guide",
+    "list_documents",
+    "get_document",
+    "get_document_outline",
+    "create_document",
+    "update_document",
+    "delete_document",
+    "open_document",
+    "read_document_source",
+    "add_document_image",
+    "export_document",
+];
+
+pub fn is_document_tool(name: &str) -> bool {
+    DOCUMENT_TOOLS.contains(&name)
+}
+
+/// The catalog without the tools of the features that are off.
+pub fn agent_tool_catalog_for(features: AgentFeatures) -> Vec<ToolDefinition> {
+    let mut tools = agent_tool_catalog();
+    if !features.documents {
+        tools.retain(|tool| !is_document_tool(&tool.name));
+    }
+    tools
+}
+
 /// Definitions sent to the model, in a stable order.
 pub fn agent_tool_catalog() -> Vec<ToolDefinition> {
     TOOLS
@@ -606,6 +647,29 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn document_tools_match_the_frontend_list_and_drop_out_when_documents_are_off() {
+        let frontend =
+            include_str!("../../../../apps/desktop/src/features/documents/document-agent-tools.ts");
+        for name in DOCUMENT_TOOLS {
+            assert!(frontend.contains(&format!("'{name}'")), "{name}");
+            assert!(
+                agent_tool_catalog().iter().any(|tool| tool.name == name),
+                "{name}"
+            );
+        }
+        let without = agent_tool_catalog_for(AgentFeatures { documents: false });
+        assert!(without.iter().all(|tool| !is_document_tool(&tool.name)));
+        assert_eq!(
+            without.len(),
+            agent_tool_catalog().len() - DOCUMENT_TOOLS.len()
+        );
+        assert_eq!(
+            agent_tool_catalog_for(AgentFeatures::default()).len(),
+            agent_tool_catalog().len()
+        );
     }
 
     #[test]

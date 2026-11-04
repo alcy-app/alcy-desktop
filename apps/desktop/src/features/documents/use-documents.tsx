@@ -14,19 +14,21 @@ export interface OpenDocument {
   /** Created from the panel and not edited yet: the editor focuses the title. */
   justCreated?: boolean
 }
-export function useDocuments(rootPath: string) {
+/** With `enabled` off nothing loads: the module is hidden by its feature flag. */
+export function useDocuments(rootPath: string, enabled = true) {
   const { t, language } = useLanguage()
   const [documents, setDocuments] = useState<DocumentationRecord[]>([])
   const [opened, setOpened] = useState<OpenDocument[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
   const [job, setJob] = useState<string | null>(null)
   const [themes, setThemes] = useState<DocumentThemeSummary[]>([])
   useEffect(() => {
+    if (!enabled) return
     let cancelled = false
     void listDocumentThemes(rootPath).then((value) => { if (!cancelled) setThemes(value) }).catch(() => {})
     return () => { cancelled = true }
-  }, [rootPath])
+  }, [rootPath, enabled])
   const activeJob = useRef<string | null>(null)
   const cancelEpoch = useRef(0)
   const cancelExport = useCallback(() => { cancelEpoch.current += 1; if (activeJob.current) void cancelDocumentJob(activeJob.current) }, [])
@@ -50,10 +52,11 @@ export function useDocuments(rootPath: string) {
     if (current.current.rootPath === rootPath) setDocuments(docs)
   }, [rootPath])
   useEffect(() => {
+    if (!enabled) return
     let cancelled = false
     void refresh().catch((e: unknown) => { if (!cancelled) setError(describeError(e)) }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [refresh, describeError])
+  }, [refresh, describeError, enabled])
   const ensureClean = useCallback((id: string) => {
     if (current.current.opened.find((d) => d.saved.id === id)?.dirty) throw new Error(current.current.t('documents.saveFirst'))
   }, [])

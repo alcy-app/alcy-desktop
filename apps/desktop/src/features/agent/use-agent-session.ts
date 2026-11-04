@@ -1,4 +1,5 @@
 import { notifyWhenUnfocused } from '../../bindings/system-notification'
+import { FEATURE_FLAGS } from '../../shared/feature-flags'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentCommandError } from '../../bindings/agent-settings'
 import { loadAgentSession, type AgentSessionViewDto } from '../../bindings/agent-sessions'
@@ -218,7 +219,7 @@ export function useAgentSession({ rootPath, host, providerId, model, defaultRequ
         return [...(last >= 0 ? current.slice(0, last) : current), { kind: 'user', id: userId, text: trimmed, context, atMs: Date.now(), sent: false }]
       })
       const result = await startAgentTurn(
-        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, replaceLastTurn },
+        { runId, rootPath, sessionId, providerId, model, text: trimmed, context, language, replaceLastTurn, documentsEnabled: FEATURE_FLAGS.documents },
         (event) => {
           // The message is in the transcript once its turn starts.
           if (event.type === 'sessionStarted') setItems((current) => current.map((item) => (item.id === userId && item.kind === 'user' ? { ...item, sent: true } : item)))

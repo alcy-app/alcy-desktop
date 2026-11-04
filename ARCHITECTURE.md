@@ -315,7 +315,10 @@ folder.
 
 ### Workspace documentation
 
-Documents are local workspace resources under `alcy-documents/<id>/`. React owns
+Documents sit behind the `documents` feature flag: off, the module loads nothing
+and each agent turn leaves out the document tools and guidance (the turn input
+carries `documentsEnabled`). Documents are local workspace resources under
+`alcy-documents/<id>/`. React owns
 Markdown drafts, preview, source selection and editor tabs. Domain rules bound
 content and enforce exact edits; `alcy-app` orchestrates revision checks, source
 access and export through repository, source and asset ports. Tauri adapts the

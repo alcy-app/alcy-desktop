@@ -422,8 +422,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const conflictTab = usePseudoTab<ConflictResolutionTarget>()
   const { open: openVersionReview, deactivate: deactivateVersionReview } = versionReviewTab
   const { open: openConflict, deactivate: deactivateConflict } = conflictTab
-  const documentManager = useDocuments(workspace.rootPath)
-  const documentsPanel = useMemo(() => <DocumentsPanel manager={documentManager} />, [documentManager])
+  const documentManager = useDocuments(workspace.rootPath, FEATURE_FLAGS.documents)
+  const documentsPanel = useMemo(() => FEATURE_FLAGS.documents ? <DocumentsPanel manager={documentManager} /> : undefined, [documentManager])
   const extensionTabs = useExtensionWorkbenchTabs()
   // Last inline request saved by a tab, delivered to the mounted flow canvas (FlowCanvas.externalInlineRequest).
   const [savedInlineRequest, setSavedInlineRequest] = useState<
@@ -987,7 +987,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const agentHost = useAgentHost({
     workspaceRootPath: workspace.rootPath,
-    documents: documentManager.agent,
+    documents: FEATURE_FLAGS.documents ? documentManager.agent : undefined,
     flows,
     resources: agentResources,
     workbench,

@@ -29,4 +29,7 @@ pub use run_turn::{
     TurnStop, compact_agent_conversation, run_agent_turn,
 };
 pub use session_title::{MAX_SESSION_TITLE_CHARS, generate_session_title};
-pub use tools::{ToolClass, agent_tool_catalog, agent_tool_class};
+pub use tools::{
+    AgentFeatures, DOCUMENT_TOOLS, ToolClass, agent_tool_catalog, agent_tool_catalog_for,
+    agent_tool_class, is_document_tool,
+};

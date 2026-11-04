@@ -7,6 +7,10 @@ describe('FEATURE_FLAGS', () => {
     expect(FEATURE_FLAGS.onedrive).toBe(false)
   })
 
+  it('keeps workspace documents behind their flag, off in this build', () => {
+    expect(FEATURE_FLAGS.documents).toBe(false)
+  })
+
   it('keeps usage events on: they stay inert without an extension sink', () => {
     expect(FEATURE_FLAGS.usageEvents).toBe(true)
   })

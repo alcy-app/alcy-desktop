@@ -2,7 +2,7 @@
  * Enable or disable complete interface features without removing their code.
  * Disabling a flag hides the feature and prevents automatic execution.
  */
-export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent' | 'usageEvents', boolean>> = {
+export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent' | 'usageEvents' | 'documents', boolean>> = {
   /** Check for, download and install application updates. */
   updates: true,
   /**
@@ -46,4 +46,11 @@ export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitla
    * nothing is recorded or sent. Off disables usage events in every build.
    */
   usageEvents: true,
+  /**
+   * Workspace documents (specs 0144 and 0145): the Documents sidebar module,
+   * its editor tabs and PDF/Markdown export, and the agent's document tools
+   * and documentation guidance. Off: nothing is loaded and the chat cannot
+   * create or edit documents.
+   */
+  documents: false,
 }
