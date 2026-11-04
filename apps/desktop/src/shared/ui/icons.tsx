@@ -671,3 +671,132 @@ export function FolderOpenIcon(props: IconProps) {
     </svg>
   )
 }
+
+/** Page with a folded corner and text lines. */
+export function DocumentIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M9.5 1.75H4.25a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V5z" />
+      <path d="M9.5 1.75V5h3.25" />
+      <path d="M5.5 8h5M5.5 10.5h5M5.5 5.5h2" />
+    </svg>
+  )
+}
+
+export function BoldIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)} strokeWidth={1.8}>
+      <path d="M4.5 2.75h4.25a2.6 2.6 0 0 1 0 5.2H4.5zM4.5 7.95h4.9a2.65 2.65 0 0 1 0 5.3H4.5z" />
+    </svg>
+  )
+}
+
+export function ItalicIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M6.5 2.75h6M3.5 13.25h6M9.75 2.75l-3.5 10.5" />
+    </svg>
+  )
+}
+
+export function StrikethroughIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M2.5 8h11" />
+      <path d="M11.2 4.3C10.6 3.3 9.5 2.75 8 2.75c-1.9 0-3.2 1-3.2 2.4 0 .9.5 1.5 1.3 2" />
+      <path d="M5 11.6c.6 1 1.7 1.65 3.2 1.65 2 0 3.3-1 3.3-2.5 0-.5-.15-.95-.45-1.35" />
+    </svg>
+  )
+}
+
+export function HeadingIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M3.5 2.75v10.5M12.5 2.75v10.5M3.5 8h9" />
+    </svg>
+  )
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M6 4h7.5M6 8h7.5M6 12h7.5" />
+      <path d="M2.75 4h.01M2.75 8h.01M2.75 12h.01" strokeWidth={2.2} />
+    </svg>
+  )
+}
+
+export function ListOrderedIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M6.5 4h7M6.5 8h7M6.5 12h7" />
+      <path d="M2.5 2.75h1v3M2.4 5.75h2.2M2.4 9.5a1 1 0 0 1 1.9.3c0 .7-1.9 1.4-1.9 2.45h2" strokeWidth={1.2} />
+    </svg>
+  )
+}
+
+export function QuoteIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M3 3v10" />
+      <path d="M6.5 5h6.5M6.5 8h6.5M6.5 11h4" />
+    </svg>
+  )
+}
+
+export function CodeIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />
+    </svg>
+  )
+}
+
+export function LinkIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M6.75 9.25a2.8 2.8 0 0 0 4 0l2-2a2.83 2.83 0 0 0-4-4l-.6.6" />
+      <path d="M9.25 6.75a2.8 2.8 0 0 0-4 0l-2 2a2.83 2.83 0 0 0 4 4l.6-.6" />
+    </svg>
+  )
+}
+
+export function TableIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="2" y="3" width="12" height="10" rx="1.25" />
+      <path d="M2 6.5h12M2 9.75h12M6.5 6.5V13" />
+    </svg>
+  )
+}
+
+/** Horizontal rule between two text blocks. */
+export function DividerIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M2 8h12" />
+      <path d="M4 4.25h8M4 11.75h8" opacity={0.45} />
+    </svg>
+  )
+}
+
+export function ImageIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="2" y="2.75" width="12" height="10.5" rx="1.5" />
+      <circle cx="5.75" cy="6.25" r="1.1" />
+      <path d="m2.5 12 3.6-3.6a1 1 0 0 1 1.4 0L13.5 13" />
+      <path d="m9.5 10 1.1-1.1a1 1 0 0 1 1.4 0l2 2" />
+    </svg>
+  )
+}
+
+/** Two side-by-side panes. */
+export function ColumnsIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="2" y="2.75" width="12" height="10.5" rx="1.5" />
+      <path d="M8 2.75v10.5" />
+    </svg>
+  )
+}

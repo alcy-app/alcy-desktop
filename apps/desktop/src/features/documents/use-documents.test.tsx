@@ -64,6 +64,33 @@ describe('workspace documents', () => {
     expect(result.current.tabs[0].dirty).toBe(true)
   })
 
+  it('renames a clean document by saving its current content with the new title', async () => {
+    const { result } = renderHook(() => useDocuments('/workspace'), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    vi.mocked(saveDocumentContent).mockResolvedValue({ ...doc, title: 'Renamed', revision: 2 })
+    await act(() => result.current.rename('one', '  Renamed '))
+    expect(saveDocumentContent).toHaveBeenCalledWith('/workspace', 'one', 1, 'Renamed', doc.markdown)
+  })
+
+  it('renames an open document with unsaved edits only in its draft', async () => {
+    const { result } = renderHook(() => useDocuments('/workspace'), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    await act(() => result.current.open('one'))
+    act(() => editor(result.current.tabs[0].content).actions.edit('one', { markdown: 'draft' }))
+    await act(() => result.current.rename('one', 'Draft title'))
+    expect(saveDocumentContent).not.toHaveBeenCalled()
+    expect(editor(result.current.tabs[0].content).document).toMatchObject({ title: 'Draft title', markdown: 'draft', dirty: true })
+  })
+
+  it('marks documents created from the panel so the editor focuses the title', async () => {
+    const { result } = renderHook(() => useDocuments('/workspace'), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    vi.mocked(documentCall).mockImplementation(async (_root, operation) => operation === 'list' ? { documents: [doc], nextOffset: null } : doc)
+    vi.spyOn(crypto, 'randomUUID').mockReturnValueOnce('one' as ReturnType<typeof crypto.randomUUID>)
+    await act(async () => { await result.current.create('Untitled document', true) })
+    expect(result.current.opened.find((d) => d.active)?.justCreated).toBe(true)
+  })
+
   it('returns complete source pages without generic tool-string truncation', async () => {
     const { result } = renderHook(() => useDocuments('/workspace'), { wrapper })
     await waitFor(() => expect(result.current.loading).toBe(false))

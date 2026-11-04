@@ -9,7 +9,11 @@ import type { AgentDocumentHost } from './document-agent-tools'
 import { captureDocumentRequest } from './document-screenshot'
 import { DocumentEditor } from './DocumentEditor'
 
-export interface OpenDocument { saved: DocumentationRecord; title: string; markdown: string; dirty: boolean; active: boolean }
+export interface OpenDocument {
+  saved: DocumentationRecord; title: string; markdown: string; dirty: boolean; active: boolean
+  /** Created from the panel and not edited yet: the editor focuses the title. */
+  justCreated?: boolean
+}
 export function useDocuments(rootPath: string) {
   const { t } = useLanguage()
   const [documents, setDocuments] = useState<DocumentationRecord[]>([])
@@ -64,23 +68,36 @@ export function useDocuments(rootPath: string) {
     else await reload(id, true)
     return true
   }, [reload, changeOpened])
-  const create = useCallback(async (title: string) => {
+  const create = useCallback(async (title: string, focusTitle = false) => {
     const id = crypto.randomUUID()
     let doc = await documentCall<DocumentationRecord>(rootPath, 'create', { documentId: id, title })
     const sessionId = rememberedSession(rootPath)
     if (sessionId) doc = await documentCall<DocumentationRecord>(rootPath, 'selectSources', { documentId: id, revision: doc.revision, sources: [{ kind: 'chat', id: sessionId, label: t('documents.currentChat') }] })
     await reload(id, true)
+    if (focusTitle) changeOpened((docs) => docs.map((d) => d.saved.id === id ? { ...d, justCreated: true } : d))
     return doc
-  }, [rootPath, reload, t])
+  }, [rootPath, reload, changeOpened, t])
   const edit = useCallback((id: string, patch: { title?: string; markdown?: string }) => {
-    changeOpened((docs) => docs.map((d) => d.saved.id === id ? { ...d, ...patch, dirty: true } : d))
+    changeOpened((docs) => docs.map((d) => d.saved.id === id ? { ...d, ...patch, dirty: true, justCreated: false } : d))
   }, [changeOpened])
+  /** Renames from the list: an open draft keeps the new title unsaved; otherwise it is saved right away. */
+  const rename = useCallback(async (id: string, title: string) => {
+    const next = title.trim()
+    if (!next) return
+    const draft = current.current.opened.find((d) => d.saved.id === id)
+    if (draft?.dirty) { if (draft.title !== next) edit(id, { title: next }); return }
+    const doc = await readDocument(rootPath, id)
+    if (doc.title === next) return
+    await saveDocumentContent(rootPath, id, doc.revision, next, doc.markdown)
+    if (draft) await reload(id)
+    else await refresh()
+  }, [rootPath, edit, reload, refresh])
   const save = useCallback(async (id: string) => {
     const draft = current.current.opened.find((d) => d.saved.id === id)
     if (!draft) return
     await saveDocumentContent(rootPath, id, draft.saved.revision, draft.title, draft.markdown)
     const saved = await readDocument(rootPath, id)
-    changeOpened((docs) => docs.map((d) => d.saved.id === id ? d.markdown === draft.markdown && d.title === draft.title ? { ...d, saved, title: saved.title, markdown: saved.markdown, dirty: false } : { ...d, saved, dirty: true } : d))
+    changeOpened((docs) => docs.map((d) => d.saved.id === id ? d.markdown === draft.markdown && d.title === draft.title ? { ...d, saved, title: saved.title, markdown: saved.markdown, dirty: false, justCreated: false } : { ...d, saved, dirty: true } : d))
     await refresh()
   }, [rootPath, changeOpened, refresh])
   const remove = useCallback(async (id: string, revision: number) => {
@@ -183,7 +200,7 @@ export function useDocuments(rootPath: string) {
     content: <DocumentEditor key={doc.saved.id} document={doc} actions={actions} />,
   })), [opened, actions, changeOpened])
   const cancelJob = cancelExport
-  return useMemo(() => ({ documents, tabs, agent, create, open, refresh, loading, error, describeError, job, cancelJob }), [documents, tabs, agent, create, open, refresh, loading, error, describeError, job, cancelJob])
+  return useMemo(() => ({ documents, opened, tabs, agent, create, open, rename, remove, exportFile, refresh, loading, error, describeError, job, cancelJob }), [documents, opened, tabs, agent, create, open, rename, remove, exportFile, refresh, loading, error, describeError, job, cancelJob])
 }
 export type DocumentsManager = ReturnType<typeof useDocuments>
 export type DocumentActions = { captureImage: (id: string, revision: number, caption: string, input: Parameters<typeof captureDocumentRequest>[2], host?: WorkbenchAgentHost | null) => Promise<DocumentationRecord>; job: string | null; cancelExport: () => void; discard: (id: string) => Promise<void>; rootPath: string; edit: (id: string, patch: { title?: string; markdown?: string }) => void; save: (id: string) => Promise<void>; remove: (id: string, revision: number) => Promise<void>; selectSources: (id: string, revision: number, sources: DocumentSource[]) => Promise<void>; importImage: (id: string, revision: number, caption: string) => Promise<void>; exportFile: (id: string, format: 'pdf' | 'md') => Promise<unknown>; describeError: (error: unknown) => string; reload: (id: string, activate?: boolean) => Promise<DocumentationRecord> }

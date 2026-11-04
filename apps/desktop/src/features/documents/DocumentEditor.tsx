@@ -1,110 +1,204 @@
-import { Button } from '../../shared/ui/Button'
-import { IconButton } from '../../shared/ui/IconButton'
-import { SaveIcon, DownloadIcon, RefreshIcon, TrashIcon, PlusIcon } from '../../shared/ui/icons'
-import { Modal } from '../../shared/ui/Modal'
-import { useEffect, useState } from 'react'
-import { documentCall, documentImageUrl, type DocumentSource, type DocumentSourceList } from '../../bindings/documentation'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { formatCombo } from '../../shared/shortcuts/shortcuts'
+import { Button } from '../../shared/ui/Button'
+import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
+import { IconButton } from '../../shared/ui/IconButton'
+import { InlineAlert } from '../../shared/ui/InlineAlert'
+import { InlineEditInput } from '../../shared/ui/InlineEditInput'
+import { LoadingBar } from '../../shared/ui/LoadingBar'
+import { MenuItem, MenuSeparator, OptionsMenu } from '../../shared/ui/Menu'
+import { SegmentedControl } from '../../shared/ui/SegmentedControl'
+import { Tooltip } from '../../shared/ui/Tooltip'
+import { useToast } from '../../shared/ui/use-toast'
+import { CloseIcon, ColumnsIcon, DocumentIcon, DownloadIcon, EllipsisIcon, EyeIcon, ImageIcon, LinkIcon, LockIcon, PencilIcon, RefreshIcon, SaveIcon, TrashIcon } from '../../shared/ui/icons'
+import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 import { MarkdownView } from '../notifications/MarkdownView'
+import { DocumentFormatBar } from './DocumentFormatBar'
+import { FORMAT_SHORTCUTS } from './format-actions'
+import { DocumentImage } from './DocumentImage'
+import { DocumentInspector, type EditorTask, type InspectorTab } from './DocumentInspector'
+import { countWords, formatRelativeTime } from './document-format'
+import { applyMarkdownFormat, imageReference, insertBlock, type MarkdownFormat, type TextEdit } from './markdown-format'
 import type { DocumentActions, OpenDocument } from './use-documents'
 import './documents.css'
 
-function DocumentImage({ rootPath, documentId, assetId, caption }: { rootPath: string; documentId: string; assetId: string; caption: string }) {
-  const [url, setUrl] = useState<string | null>(null)
-  const [failed, setFailed] = useState(false)
-  const { t } = useLanguage()
-  useEffect(() => {
-    let cancelled = false
-    let objectUrl: string | null = null
-    void documentImageUrl(rootPath, documentId, assetId).then((result) => {
-      objectUrl = result
-      if (cancelled) URL.revokeObjectURL(result)
-      else setUrl(result)
-    }).catch(() => { if (!cancelled) setFailed(true) })
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [rootPath, documentId, assetId])
-  return <span className="document-image">{url ? <img src={url} alt={caption} /> : <span>{t(failed ? 'documents.imageFailed' : 'documents.loading')}</span>}<span className="document-caption">{caption}</span></span>
-}
+type View = 'edit' | 'split' | 'preview'
+const SAVE_COMBO = formatCombo({ ctrl: true, alt: false, shift: false, key: 'S' })
 
 export function DocumentEditor({ document: doc, actions }: { document: OpenDocument; actions: DocumentActions }) {
-  const { t } = useLanguage()
-  const { rootPath, describeError } = actions
+  const { t, language } = useLanguage()
+  const { showToast } = useToast()
+  const { describeError } = actions
+  const id = doc.saved.id
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [view, setView] = useState<'edit' | 'split' | 'preview'>('split')
-  const [attachments, setAttachments] = useState(false)
-  const [sourcePicker, setSourcePicker] = useState(false)
-  const [query, setQuery] = useState('')
-  const [offset, setOffset] = useState(0)
-  const [choices, setChoices] = useState<DocumentSourceList | null>(null)
-  const [caption, setCaption] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const [confirmReload, setConfirmReload] = useState(false)
-  const run = async (work: () => Promise<unknown>) => {
-    setError(null); setBusy(true)
-    try { await work() } catch (e) { if (!(e instanceof Error && e.name === 'cancelled')) setError(actions.describeError(e)) } finally { setBusy(false) }
+  const [task, setTask] = useState<EditorTask | null>(null)
+  const [view, setView] = useState<View>('split')
+  const [inspector, setInspector] = useState<InspectorTab | null>(null)
+  const [menu, setMenu] = useState<'export' | 'more' | null>(null)
+  const [confirm, setConfirm] = useState<'delete' | 'discard' | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
+  const pendingSelection = useRef<[number, number] | null>(null)
+  const busy = task !== null
+  const locked = busy || doc.dirty
+
+  const run = useCallback(async (next: EditorTask, work: () => Promise<unknown>) => {
+    setError(null); setTask(next)
+    try { await work(); return true } catch (e) {
+      if (!(e instanceof Error && e.name === 'cancelled')) setError(describeError(e))
+      return false
+    } finally { setTask(null) }
+  }, [describeError])
+  const save = () => { if (!busy && doc.dirty) void run('save', () => actions.save(id)) }
+  const exportAs = (format: 'md' | 'pdf') => {
+    setMenu(null)
+    void run('export', async () => {
+      const result = await actions.exportFile(id, format)
+      if (!(result && typeof result === 'object' && 'cancelled' in result)) showToast(t('documents.exported'))
+    })
   }
+
   useEffect(() => {
-    if (!sourcePicker) return
-    let cancelled = false
-    void documentCall<DocumentSourceList>(rootPath, 'sources', { query, offset }).then((value) => { if (!cancelled) setChoices(value) }).catch((e: unknown) => { if (!cancelled) setError(describeError(e)) })
-    return () => { cancelled = true }
-  }, [sourcePicker, query, offset, rootPath, describeError])
-  const toggleSource = (source: DocumentSource) => {
-    const selected = doc.saved.sources.some((s) => s.id === source.id && s.kind === source.kind)
-    return actions.selectSources(doc.saved.id, doc.saved.revision, selected ? doc.saved.sources.filter((s) => s.id !== source.id || s.kind !== source.kind) : [...doc.saved.sources, source])
+    if (!doc.justCreated) return
+    titleRef.current?.focus()
+    titleRef.current?.select()
+  }, [doc.justCreated])
+
+  // Formatting replaces the text through `edit`; restore the selection once React rendered it.
+  useLayoutEffect(() => {
+    const selection = pendingSelection.current
+    const textarea = textareaRef.current
+    pendingSelection.current = null
+    if (!selection || !textarea) return
+    textarea.focus()
+    textarea.setSelectionRange(selection[0], selection[1])
+  }, [doc.markdown])
+  const applyEdit = (edit: TextEdit) => {
+    pendingSelection.current = [edit.selectionStart, edit.selectionEnd]
+    actions.edit(id, { markdown: edit.text })
   }
-  return <section className="document-editor" aria-label={t('documents.editor')}>
+  const format = (kind: MarkdownFormat) => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    applyEdit(applyMarkdownFormat(doc.markdown, textarea.selectionStart, textarea.selectionEnd, kind, {
+      text: t('documents.format.placeholder'), column: t('documents.format.column'), cell: t('documents.format.cell'),
+    }))
+  }
+  const insertImage = (assetId: string, caption: string) => {
+    const textarea = textareaRef.current
+    const end = textarea ? textarea.selectionEnd : doc.markdown.length
+    applyEdit(insertBlock(doc.markdown, textarea ? textarea.selectionStart : end, end, imageReference(assetId, caption)))
+  }
+  const onEditorKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 's') {
+      event.preventDefault(); event.stopPropagation(); save()
+    }
+  }
+  const onTextareaKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+    const shortcut = FORMAT_SHORTCUTS[event.key.toLowerCase()]
+    if (!shortcut) return
+    event.preventDefault(); event.stopPropagation(); format(shortcut)
+  }
+  const toggleInspector = (tab: InspectorTab) => setInspector((current) => current === tab ? null : tab)
+  const reportError = useCallback((message: string) => setError(message), [])
+
+  const counted = useDeferredValue(doc.markdown)
+  const words = useMemo(() => countWords(counted), [counted])
+  const number = useMemo(() => new Intl.NumberFormat(language), [language])
+  const status = task === 'save' ? 'saving' : doc.dirty ? 'unsaved' : 'saved'
+  const lockedReason = doc.dirty ? t('documents.saveFirst') : undefined
+
+  return <section className="document-editor" aria-label={t('documents.editor')} onKeyDown={onEditorKeyDown}>
+    {(busy || actions.job) && <div className="document-progress"><LoadingBar /></div>}
     <header className="document-header">
+      <DocumentIcon size={18} className="document-header-icon" />
       <div className="document-heading">
-        <span className="document-eyebrow">{t('documents.label')}</span>
-        <input className="document-title" aria-label={t('documents.title')} value={doc.title} maxLength={240} onChange={(e) => actions.edit(doc.saved.id, { title: e.target.value })} />
-        <span className="document-status" role="status">{t(doc.dirty ? 'documents.unsaved' : 'documents.saved')}</span>
+        <InlineEditInput ref={titleRef} className="document-title" aria-label={t('documents.title')} value={doc.title} maxLength={240}
+          placeholder={t('documents.untitled')}
+          onChange={(e) => actions.edit(id, { title: e.target.value })}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save() } }} />
+        <div className="document-meta">
+          <span className={`document-status document-status--${status}`} role="status"><span className="document-status-dot" aria-hidden="true" />{t(`documents.${status}`)}</span>
+          <span aria-hidden="true">·</span>
+          <span>{t('documents.updatedAt', { time: formatRelativeTime(doc.saved.updatedAtMs, language) })}</span>
+        </div>
       </div>
       <div className="document-actions">
-        <Button disabled={busy || !doc.dirty} onClick={() => void run(() => actions.save(doc.saved.id))}><SaveIcon size={14} />{t('documents.save')}</Button>
-        <div className="document-export" role="group" aria-label={t('documents.export')} title={doc.dirty ? t('documents.saveFirst') : undefined}>
-          <DownloadIcon size={14} />
-          <button disabled={busy || doc.dirty} onClick={() => void run(() => actions.exportFile(doc.saved.id, 'md'))}>Markdown</button>
-          <button disabled={busy || doc.dirty} onClick={() => void run(() => actions.exportFile(doc.saved.id, 'pdf'))}>PDF</button>
-        </div>
-        <IconButton icon={<RefreshIcon size={14} />} label={t('documents.reload')} disabled={busy} onClick={() => setConfirmReload(true)} />
-        <IconButton icon={<TrashIcon size={14} />} label={t('documents.delete')} variant="danger" disabled={busy || doc.dirty} onClick={() => setConfirmDelete(true)} />
+        <Tooltip label={`${t('documents.save')} (${SAVE_COMBO})`}>
+          <Button isLoading={task === 'save'} disabled={busy || !doc.dirty} onClick={save}>{task !== 'save' && <SaveIcon size={13} />}{t('documents.save')}</Button>
+        </Tooltip>
+        <OptionsMenu label={t('documents.export')} buttonClassName="ui-button ui-button--ghost ui-button--sm document-menu-button"
+          icon={<><DownloadIcon size={13} /><span className="ui-button-label">{t('documents.exportShort')}</span></>}
+          isOpen={menu === 'export'} onToggle={() => setMenu((open) => open === 'export' ? null : 'export')} onClose={() => setMenu(null)} menuPortal>
+          {doc.dirty && <p className="document-menu-note">{t('documents.saveFirst')}</p>}
+          <MenuItem icon={<DocumentIcon size={13} />} label={t('documents.exportMarkdown')} disabled={locked} onSelect={() => exportAs('md')} />
+          <MenuItem icon={<DownloadIcon size={13} />} label={t('documents.exportPdf')} disabled={locked} onSelect={() => exportAs('pdf')} />
+        </OptionsMenu>
+        <OptionsMenu label={t('documents.moreActions')} icon={<EllipsisIcon size={14} />} isOpen={menu === 'more'}
+          onToggle={() => setMenu((open) => open === 'more' ? null : 'more')} onClose={() => setMenu(null)} menuPortal>
+          {doc.dirty
+            ? <MenuItem icon={<RefreshIcon size={13} />} label={t('documents.discardChanges')} disabled={busy} onSelect={() => { setMenu(null); setConfirm('discard') }} />
+            : <MenuItem icon={<RefreshIcon size={13} />} label={t('documents.reloadSaved')} disabled={busy} onSelect={() => { setMenu(null); void run('discard', () => actions.discard(id)) }} />}
+          <MentionInChatMenuItem item={{ kind: 'document', id, label: doc.title }} onDone={() => setMenu(null)} />
+          <MenuSeparator />
+          <MenuItem icon={<TrashIcon size={13} />} label={t('documents.deleteDocument')} danger disabled={locked} onSelect={() => { setMenu(null); setConfirm('delete') }} />
+        </OptionsMenu>
       </div>
     </header>
     <div className="document-toolbar">
-      <div className="document-view-switch" role="group" aria-label={t('documents.view')}>
-        {(['edit', 'split', 'preview'] as const).map((mode) => <button key={mode} aria-pressed={view === mode} onClick={() => setView(mode)}>{t(`documents.${mode}`)}</button>)}
-      </div>
-      <div className="document-toolbar-tools">
-        <button disabled={busy || doc.dirty} aria-expanded={sourcePicker} onClick={() => setSourcePicker((shown) => !shown)}>{t('documents.sources')} <span className="document-count">{doc.saved.sources.length}</span></button>
-        <button aria-expanded={attachments} onClick={() => setAttachments((shown) => !shown)}><PlusIcon size={13} />{t('documents.images')}</button>
+      <DocumentFormatBar disabled={view === 'preview'} onFormat={format} />
+      <div className="document-toolbar-end">
+        <SegmentedControl<View> layout="inline" size="sm" ariaLabel={t('documents.view')} value={view} onChange={setView} options={[
+          { value: 'edit', label: <><PencilIcon size={12} /><span className="document-view-label">{t('documents.edit')}</span></> },
+          { value: 'split', label: <><ColumnsIcon size={12} /><span className="document-view-label">{t('documents.split')}</span></> },
+          { value: 'preview', label: <><EyeIcon size={12} /><span className="document-view-label">{t('documents.preview')}</span></> },
+        ]} />
+        <span className="document-toolbar-separator" aria-hidden="true" />
+        <Button variant="ghost" className="document-panel-toggle" aria-pressed={inspector === 'sources'} onClick={() => toggleInspector('sources')}>
+          <LinkIcon size={13} /><span className="document-panel-toggle-label">{t('documents.sources')}</span><span className="document-count">{doc.saved.sources.length}</span>
+        </Button>
+        <Button variant="ghost" className="document-panel-toggle" aria-pressed={inspector === 'images'} onClick={() => toggleInspector('images')}>
+          <ImageIcon size={13} /><span className="document-panel-toggle-label">{t('documents.imagesTab')}</span><span className="document-count">{doc.saved.assets.length}</span>
+        </Button>
       </div>
     </div>
-    {doc.dirty && <p className="document-notice">{t('documents.saveFirst')}</p>}
-    {error && <p role="alert" className="document-notice">{error}</p>}
-    {busy && <p role="status" className="document-notice">{t('documents.working')}{actions.job && <button onClick={actions.cancelExport}>{t('documents.cancel')}</button>}</p>}
-    {confirmDelete && <Modal title={t('documents.delete')} closeAriaLabel={t('documents.cancel')} onClose={() => setConfirmDelete(false)}><p>{t('documents.deleteConfirm')}</p><div className="document-dialog-actions"><Button variant="danger" onClick={() => { setConfirmDelete(false); void run(() => actions.remove(doc.saved.id, doc.saved.revision)) }}>{t('documents.delete')}</Button><Button variant="ghost" onClick={() => setConfirmDelete(false)}>{t('documents.cancel')}</Button></div></Modal>}
-    {confirmReload && <Modal title={t('documents.reload')} closeAriaLabel={t('documents.cancel')} onClose={() => setConfirmReload(false)}><p>{t('documents.reloadConfirm')}</p><div className="document-dialog-actions"><Button onClick={() => { setConfirmReload(false); void run(() => actions.discard(doc.saved.id)) }}>{t('documents.reload')}</Button><Button variant="ghost" onClick={() => setConfirmReload(false)}>{t('documents.cancel')}</Button></div></Modal>}
-    {sourcePicker && <div className="document-sources">
-      <p>{t('documents.sourcesHelp')}</p>
-      {doc.saved.sources.map((source) => <label key={`selected:${source.kind}:${source.id}`}><input type="checkbox" checked disabled={busy || doc.dirty} onChange={() => void run(() => toggleSource(source))} />{source.label}{source.atMs && <small> · {new Date(source.atMs).toLocaleString()}</small>}</label>)}
-      <input aria-label={t('documents.searchSources')} placeholder={t('documents.searchSources')} value={query} onChange={(e) => { setQuery(e.target.value); setOffset(0) }} />
-      {choices === null ? <p>{t('documents.loading')}</p> : choices.sources.length === 0 ? <p>{t('documents.noSources')}</p> : choices.sources.map((source) => <label key={`${source.kind}:${source.id}`}><input type="checkbox" disabled={busy || doc.dirty} checked={doc.saved.sources.some((s) => s.id === source.id && s.kind === source.kind)} onChange={() => void run(() => toggleSource(source))} />{t(source.kind === 'chat' ? 'documents.conversation' : 'documents.request')} · {source.label}{source.atMs && <small> · {new Date(source.atMs).toLocaleString()}</small>}</label>)}
-      <div><button disabled={offset === 0 || busy} onClick={() => setOffset(Math.max(0, offset - 25))}>{t('documents.previous')}</button><button disabled={choices?.nextOffset == null || busy} onClick={() => setOffset(choices?.nextOffset ?? 0)}>{t('documents.next')}</button></div>
-    </div>}
-    {attachments && <div className="document-attachments">
-      <label className="document-field">{t('documents.caption')}
-      <input aria-label={t('documents.caption')} placeholder={t('documents.caption')} value={caption} maxLength={500} onChange={(e) => setCaption(e.target.value)} /></label>
-      <button disabled={busy || doc.dirty || !caption.trim()} onClick={() => void run(() => actions.importImage(doc.saved.id, doc.saved.revision, caption))}>{t('documents.attachImage')}</button>
-      {doc.saved.sources.filter((s) => s.kind === 'request').map((source) => <button key={source.id} title={source.label} disabled={busy || doc.dirty || !caption.trim()} onClick={() => void run(() => actions.captureImage(doc.saved.id, doc.saved.revision, caption, { sourceId: source.id }))}>{t('documents.capture')} · {source.label}</button>)}
-    </div>}
-    <div className={`document-split document-split--${view}`}>
-      {view !== 'preview' && <div className="document-code-pane"><div className="document-pane-heading">Markdown <span>{t('documents.saveShortcut')}</span></div>
-      <textarea aria-label={t('documents.markdown')} value={doc.markdown} spellCheck={false} onChange={(e) => actions.edit(doc.saved.id, { markdown: e.target.value })} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); e.stopPropagation(); if (!busy) void run(() => actions.save(doc.saved.id)) } }} />
-      </div>}
-      {view !== 'edit' && <div className="document-preview-pane"><div className="document-pane-heading">{t('documents.preview')}</div><div className="document-preview" aria-label={t('documents.preview')}><MarkdownView source={doc.markdown} renderImage={(assetId, caption) => <DocumentImage key={assetId} rootPath={actions.rootPath} documentId={doc.saved.id} assetId={assetId} caption={caption} />} /></div></div>}
+    {error && <InlineAlert className="document-alert"><span>{error}</span><IconButton icon={<CloseIcon size={12} />} label={t('documents.dismiss')} onClick={() => setError(null)} /></InlineAlert>}
+    <div className="document-body">
+      <div className={`document-split document-split--${view}`}>
+        {view !== 'preview' && <div className="document-code-pane">
+          {view === 'split' && <div className="document-pane-heading">Markdown</div>}
+          <textarea ref={textareaRef} aria-label={t('documents.markdown')} value={doc.markdown} spellCheck={false} placeholder={t('documents.markdownPlaceholder')}
+            onChange={(e) => actions.edit(id, { markdown: e.target.value })} onKeyDown={onTextareaKeyDown} />
+        </div>}
+        {view !== 'edit' && <div className="document-preview-pane">
+          {view === 'split' && <div className="document-pane-heading">{t('documents.preview')}</div>}
+          <div className="document-preview" aria-label={t('documents.preview')}>
+            <article className="document-page">
+              {doc.markdown.trim()
+                ? <MarkdownView source={doc.markdown} renderImage={(assetId, caption) => <DocumentImage key={assetId} rootPath={actions.rootPath} documentId={id} assetId={assetId} caption={caption} />} />
+                : <p className="document-preview-empty">{t('documents.previewEmpty')}</p>}
+            </article>
+          </div>
+        </div>}
+      </div>
+      {inspector && <DocumentInspector document={doc} actions={actions} tab={inspector} busy={busy} onTabChange={setInspector} onClose={() => setInspector(null)}
+        run={run} onError={reportError} onInsertImage={insertImage} />}
     </div>
-    <footer><span>{t('documents.local')}</span><span>{t('documents.revision', { revision: doc.saved.revision })}</span></footer>
+    <footer className="document-statusbar">
+      <span className="document-statusbar-item"><LockIcon size={11} />{t('documents.local')}</span>
+      {actions.job && <span className="document-statusbar-item document-statusbar-job" role="status">{t('documents.working')}<Button variant="ghost" onClick={actions.cancelExport}>{t('documents.cancel')}</Button></span>}
+      <span className="document-statusbar-spacer" />
+      {lockedReason && <span className="document-statusbar-item document-statusbar-hint">{lockedReason}</span>}
+      <span className="document-statusbar-item">{t(words === 1 ? 'documents.wordsOne' : 'documents.words', { count: number.format(words) })}</span>
+      <span className="document-statusbar-item document-statusbar-optional">{t(doc.markdown.length === 1 ? 'documents.charactersOne' : 'documents.characters', { count: number.format(doc.markdown.length) })}</span>
+      <span className="document-statusbar-item">{t('documents.revision', { revision: doc.saved.revision })}</span>
+      <kbd className="document-statusbar-kbd document-statusbar-optional" title={t('documents.saveShortcut')}>{SAVE_COMBO}</kbd>
+    </footer>
+    {confirm === 'delete' && <ConfirmDialog title={t('documents.deleteDocument')} description={t('documents.deleteConfirm')} confirmLabel={t('documents.delete')} cancelLabel={t('documents.cancel')} closeAriaLabel={t('documents.cancel')}
+      onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); void run('delete', () => actions.remove(id, doc.saved.revision)) }} />}
+    {confirm === 'discard' && <ConfirmDialog title={t('documents.discardChanges')} description={t('documents.reloadConfirm')} confirmLabel={t('documents.discard')} cancelLabel={t('documents.cancel')} closeAriaLabel={t('documents.cancel')}
+      onCancel={() => setConfirm(null)} onConfirm={() => { setConfirm(null); void run('discard', () => actions.discard(id)) }} />}
   </section>
 }
