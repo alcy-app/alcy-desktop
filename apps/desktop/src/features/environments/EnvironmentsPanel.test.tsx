@@ -323,6 +323,23 @@ describe('EnvironmentsPanel', () => {
       expect(visibleNames()).toEqual(['baseUrl', 'apiToken', 'timeout'])
     })
 
+    it('focuses the new row once it renders, since "Add variable" sits above the list', () => {
+      const { rerender } = render(panel())
+
+      fireEvent.click(screen.getByRole('button', { name: 'Adicionar variável' }))
+      // Unrelated re-render before the new row arrives: nothing moves the focus yet.
+      rerender(panel())
+      expect(document.body).toHaveFocus()
+
+      const [local, staging] = environments
+      const withNewRow = [
+        { ...local, variables: [...local.variables, { id: 'var-new', name: '', value: '', sensitive: false }] },
+        staging,
+      ]
+      rerender(panel({ environments: withNewRow }))
+      expect(screen.getAllByRole('textbox', { name: 'Nome da variável' }).at(-1)).toHaveFocus()
+    })
+
     it('does not apply to bulk editing', () => {
       render(panel())
 

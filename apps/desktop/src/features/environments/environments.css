@@ -195,6 +195,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   gap: 2px;
 }
 
@@ -373,6 +374,81 @@
   color: var(--text-heading);
 }
 
+/* Environment variables: the detail takes the height left under the
+   environment list, its header and toolbar stay put and only the variables
+   scroll, under a sticky column header. Below the minimum height the whole
+   tab panel scrolls instead, so a short sidebar never squeezes the table. */
+.env-detail--pinned {
+  flex: 1 0 240px;
+  min-height: 0;
+}
+
+.env-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.env-detail-header .env-detail-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-detail-header .ui-bulk-toolbar {
+  flex: none;
+  margin-bottom: 0;
+}
+
+.env-detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.env-detail-toolbar .env-search {
+  flex: 1;
+}
+
+.env-detail-toolbar .env-search-input,
+.env-detail-toolbar .env-add-variable-button {
+  min-height: var(--button-height-sm);
+}
+
+.env-add-variable-button {
+  flex: none;
+  margin-left: auto;
+  padding-inline: 8px;
+  white-space: nowrap;
+}
+
+/* Sized to its rows, shrinking into a scroll area once they outgrow the
+   panel. `position: relative` keeps the visually hidden cell labels inside
+   it, and `isolation` keeps the sticky header's z-index local. */
+.env-detail-body {
+  position: relative;
+  isolation: isolate;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/* Bulk text editor: no frame of its own, and room for the field's focus ring. */
+.env-detail-body--bulk {
+  margin: -3px;
+  padding: 3px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
 /* Variable search: same layout as the collections sidebar search (icon inside the field, clear button at the end). */
 .env-search {
   position: relative;
@@ -403,22 +479,40 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--font-size-sm);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
 }
 
+/* Sticky inside `.env-detail-body`. A collapsed border would scroll away with
+   the table, so the divider under the header is an inset shadow. */
 .env-variables-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   text-align: left;
   font-weight: 500;
   color: var(--text-muted);
   padding: 7px 4px;
   background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 .env-variables-table td {
   padding: 4px;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+/* The frame of `.env-detail-body` already closes the table. */
+.env-variables-table tbody tr:last-child > td {
+  border-bottom: none;
+}
+
+.env-variable-row > td {
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+/* Half-way to the header tone, so a highlighted row never reads as a header. */
+.env-variable-row:hover > td,
+.env-variable-row:focus-within > td {
+  background: color-mix(in srgb, var(--surface-raised) 50%, var(--surface));
 }
 
 .env-variable-value-cell {

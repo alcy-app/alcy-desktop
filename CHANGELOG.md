@@ -23,6 +23,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Na URL, a lista de sugestões de variáveis abre logo abaixo do `{{` digitado.
 - Nos flows, um clique só seleciona o bloco; as configurações abrem com duplo clique ou pela opção "Gerenciar" do menu do bloco.
 - No console, os detalhes de uma requisição mostram também o body enviado, junto dos headers.
+- Nas variáveis de um ambiente, a busca, "Adicionar variável" e os nomes das colunas ficam sempre visíveis no topo, e só a lista rola.
 
 ### Fixed
 
