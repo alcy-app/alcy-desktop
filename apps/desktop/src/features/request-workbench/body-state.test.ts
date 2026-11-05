@@ -86,6 +86,12 @@ describe('syncContentTypeHeader', () => {
 })
 
 describe('bodyPreviewText', () => {
+  it('shows a JSON body without its comments, as sent, and other raw bodies as they are', () => {
+    const raw = '{\n  "a": 1,\n  // "b": 2\n}'
+    expect(bodyPreviewText({ ...emptyBodyState, type: 'raw', rawLanguage: 'json', raw })).toBe('{\n  "a": 1\n}')
+    expect(bodyPreviewText({ ...emptyBodyState, type: 'raw', rawLanguage: 'text', raw })).toBe(raw)
+  })
+
   it('describes every body type as text for the console', () => {
     expect(bodyPreviewText({ ...emptyBodyState, type: 'none', raw: 'ignored' })).toBe('')
     expect(bodyPreviewText({ ...emptyBodyState, raw: '{}' })).toBe('{}')

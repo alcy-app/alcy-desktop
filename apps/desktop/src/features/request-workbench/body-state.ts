@@ -1,5 +1,6 @@
 import type { RawBodyLanguage, RestBodyInput } from '../../bindings/execute-rest-request'
 import type { CodeLanguage } from './codemirror-shared'
+import { stripJsonComments } from './json-comments'
 import type { BodyState, BodyType, FormDataEntry, HeaderEntry, UrlEncodedEntry } from './request-workbench.types'
 
 let bodyRowIdSequence = 0
@@ -174,15 +175,15 @@ export function fileNameOf(path: string): string {
   return parts[parts.length - 1] || path
 }
 
-/** Representação em texto do corpo para o console/HAR (o corpo multipart ou
- * binário real só existe no backend). Arquivos aparecem como `@caminho`, a
- * mesma notação do `curl`. */
+/** Text form of the body for the console/HAR (the real multipart or binary
+ * body only exists in the backend). Files show as `@path`, the `curl`
+ * notation; a JSON body shows without its comments, as sent (spec 0146). */
 export function bodyPreviewText(body: BodyState): string {
   switch (body.type) {
     case 'none':
       return ''
     case 'raw':
-      return body.raw
+      return body.rawLanguage === 'json' ? stripJsonComments(body.raw) : body.raw
     case 'urlencoded': {
       const params = new URLSearchParams()
       for (const field of body.urlEncoded) if (field.enabled && field.name) params.append(field.name, field.value)

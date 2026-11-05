@@ -104,6 +104,15 @@ describe('jsonCursorContext', () => {
   it('não sugere nada fora de qualquer objeto ou lista', () => {
     expect(jsonCursorContext('', 0)).toBeNull()
   })
+
+  it('ignores comments and suggests nothing inside one', () => {
+    const [afterComments, afterCommentsPos] = at('{\n  // "x": { "y"\n  "name": "Rex", /* } */ |')
+    expect(jsonCursorContext(afterComments, afterCommentsPos)).toMatchObject({ kind: 'key', path: [], existingKeys: ['name'] })
+    const [inLine, inLinePos] = at('{\n  // "na|\n}')
+    expect(jsonCursorContext(inLine, inLinePos)).toBeNull()
+    const [inBlock, inBlockPos] = at('{ /* "na| */ }')
+    expect(jsonCursorContext(inBlock, inBlockPos)).toBeNull()
+  })
 })
 
 describe('jsonSchemaCompletions', () => {

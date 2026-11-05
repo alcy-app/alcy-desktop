@@ -179,6 +179,7 @@ export function RestBodyPanel({
             environmentVariables={environmentVariables}
             bodySchema={body.rawLanguage === 'json' ? bodySchema : null}
             agentSlot={agentEditors ? 'body' : undefined}
+            jsonComments
           />
         )}
         {body.type === 'urlencoded' && (

@@ -649,6 +649,7 @@ const en: Record<TranslationKey, string> = {
   'settings.shortcuts.action.renameItem': 'Rename selected item (collections, flows and monitors)',
   'settings.shortcuts.action.showSuggestions': 'Open/close autocomplete suggestions (editors)',
   'settings.shortcuts.action.acceptSuggestion': 'Accept autocomplete suggestion (editors)',
+  'settings.shortcuts.action.toggleComment': 'Comment/uncomment: one line with //, several as a /* */ block (request body)',
   'settings.shortcuts.mouseNotAllowed': 'Mouse buttons can only be used for flow canvas actions.',
   'settings.shortcuts.mouse.MouseLeft': 'Left button',
   'settings.shortcuts.mouse.MouseMiddle': 'Middle button',

@@ -22,6 +22,7 @@ mod grpc_call;
 mod header;
 mod history_entry;
 mod http_method;
+mod json_comments;
 mod mock_server;
 mod onedrive;
 mod proxy_settings;
@@ -79,6 +80,7 @@ pub use grpc_call::{GrpcCall, GrpcSchemaSource};
 pub use header::{HeaderEntry, HeaderError};
 pub use history_entry::{HistoryEntry, HistoryFailureKind, HistoryOutcome};
 pub use http_method::HttpMethod;
+pub use json_comments::strip_json_comments;
 pub use mock_server::{
     DEFAULT_MOCK_PORT, MAX_MOCK_BODY_BYTES, MAX_MOCK_DELAY_MS, MockCondition, MockConditionGroup,
     MockConditionOperator, MockConditionSource, MockMatchOperator, MockResponse, MockRoute,

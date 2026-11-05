@@ -643,6 +643,7 @@ const ptBR = {
   'settings.shortcuts.action.renameItem': 'Renomear item selecionado (collections, flows e monitores)',
   'settings.shortcuts.action.showSuggestions': 'Abrir/fechar sugestões do autocompletar (editores)',
   'settings.shortcuts.action.acceptSuggestion': 'Aceitar sugestão do autocompletar (editores)',
+  'settings.shortcuts.action.toggleComment': 'Comentar/descomentar: uma linha com //, várias em bloco /* */ (body da requisição)',
   'settings.shortcuts.mouseNotAllowed': 'Botões do mouse só podem ser usados em ações do canvas de flows.',
   'settings.shortcuts.mouse.MouseLeft': 'Botão esquerdo',
   'settings.shortcuts.mouse.MouseMiddle': 'Botão do meio',

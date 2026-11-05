@@ -51,6 +51,9 @@ impl CollectionRunStep for CollectionRunStepExecutor<'_> {
         scopes: &[VariableScope],
         iteration: &RunIteration,
     ) -> StepResult {
+        // A JSON body runs without its comments, from the pre-request script on (spec 0146).
+        let request = request.without_json_body_comments();
+        let request = request.as_ref();
         let script_iteration = ScriptIteration {
             index: iteration.index,
             count: iteration.count,
@@ -244,4 +247,67 @@ fn domain_variables(environment: &[EnvironmentVariableDto]) -> Vec<EnvironmentVa
             .ok()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use alcy_domain::{Authentication, Endpoint, ProtocolId, RequestDocument};
+    use alcy_graphql::ReqwestGraphqlExecutor;
+    use alcy_rest::ReqwestRestExecutor;
+    use wiremock::matchers::{body_string, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn sends_a_json_body_without_its_comments() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string("{\n  \"a\": 1\n}"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let request = Request::new(
+            Endpoint::new(server.uri()).unwrap(),
+            RequestDocument::new(
+                ProtocolId::Rest,
+                "{\n  \"a\": 1,\n  // \"b\": {{missing}}\n}",
+            ),
+            "",
+            vec![],
+            Authentication::None,
+        )
+        .with_scripts("al.environment.set('a', String(al.request.json().a));", "");
+        let graphql = ReqwestGraphqlExecutor::new();
+        let rest = ReqwestRestExecutor::new();
+        let step = CollectionRunStepExecutor {
+            inner: ProtocolDispatchingExecutor {
+                app: None,
+                graphql: &graphql,
+                rest: &rest,
+                workspace_root: Path::new("."),
+            },
+            cookies: None,
+            runtime_variables: Mutex::default(),
+        };
+        let iteration = RunIteration {
+            index: 0,
+            count: 1,
+            data: vec![],
+        };
+
+        let result = step.run(&request, &[], &[], &iteration).await;
+
+        assert_eq!(
+            result.response.map(|response| response.status_code),
+            Ok(200)
+        );
+        assert_eq!(
+            result.environment_changes,
+            vec![("a".to_string(), Some("1".to_string()))]
+        );
+    }
 }

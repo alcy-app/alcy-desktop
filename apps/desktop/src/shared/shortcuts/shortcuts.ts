@@ -17,6 +17,7 @@ export const SHORTCUT_ACTIONS = [
   'openSettings',
   'showSuggestions',
   'acceptSuggestion',
+  'toggleComment',
   'openBlockPalette',
 ] as const
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number]
@@ -33,11 +34,12 @@ export function isCanvasAction(action: ShortcutAction): boolean {
   return CANVAS_ACTIONS.has(action)
 }
 
-/** Code editor actions (autocomplete), dispatched by the editors themselves
- * — the only ones that accept Tab without a modifier. */
+/** Code editor actions (autocomplete, comments), dispatched by the editors
+ * themselves — the only ones that accept Tab without a modifier. */
 const EDITOR_ACTIONS: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
   'showSuggestions',
   'acceptSuggestion',
+  'toggleComment',
 ])
 
 export function isEditorAction(action: ShortcutAction): boolean {
@@ -117,6 +119,8 @@ export const DEFAULT_SHORTCUTS: ShortcutBindings = {
   openSettings: [{ ...CTRL, key: ',' }],
   showSuggestions: [{ ...CTRL, key: 'Space' }],
   acceptSuggestion: [{ ...NO_MODIFIERS, key: 'Tab' }],
+  // `;` is where `/` sits on a US keyboard for ABNT2 layouts.
+  toggleComment: [{ ...CTRL, key: '/' }, { ...CTRL, key: ';' }],
   openBlockPalette: [{ ...NO_MODIFIERS, key: 'MouseRight' }],
 }
 

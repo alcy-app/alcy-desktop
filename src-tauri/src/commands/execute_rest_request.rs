@@ -7,7 +7,7 @@ use alcy_domain::{
     Authentication, BodyPayload, Endpoint, EndpointError, EnvironmentVariable,
     EnvironmentVariableError, ExecutionError, FormDataField, FormDataFieldValue, HeaderEntry,
     HeaderError, HttpMethod, ProtocolId, RawBodyLanguage, Request, RequestDocument, RouteParameter,
-    UrlEncodedField,
+    UrlEncodedField, strip_json_comments,
 };
 use alcy_rest::ReqwestRestExecutor;
 use serde::{Deserialize, Serialize};
@@ -100,7 +100,7 @@ impl From<HttpMethod> for HttpMethodInput {
     }
 }
 
-/// Raw language is retained for UI round trips and Content-Type synchronization, not execution parsing.
+/// Raw language is retained for UI round trips and Content-Type synchronization; execution only reads it to remove JSON comments (spec 0146).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RawBodyLanguageInput {
@@ -458,6 +458,19 @@ fn script_body_text(body: &BodyInput) -> String {
     }
 }
 
+/// A raw JSON body runs without its comments (spec 0146): the pre-request
+/// script, variable resolution, sending and history all see it that way.
+fn strip_body_comments(body: &mut BodyInput) {
+    if let BodyInput::Raw {
+        content,
+        raw_language: RawBodyLanguageInput::Json,
+    } = body
+        && let std::borrow::Cow::Owned(stripped) = strip_json_comments(content)
+    {
+        *content = stripped;
+    }
+}
+
 /// Apply script body text only to raw requests.
 fn apply_scripted_body(body: &mut BodyInput, scripted_text: String) {
     if let BodyInput::Raw { content, .. } = body {
@@ -656,6 +669,7 @@ async fn execute_rest_request_inner(
     history: HistoryPreferences,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let mut input = input;
+    strip_body_comments(&mut input.body);
     let execution_id = input.execution_id.clone();
     let root_path = input.root_path.clone();
     let history_source = (input.request_id.clone(), input.tab_id.clone());
@@ -1182,6 +1196,90 @@ mod tests {
             name: "cookie".to_string(),
             value: "sid=abc".to_string(),
         }));
+    }
+
+    #[tokio::test]
+    async fn sends_a_json_body_without_its_comments() {
+        use wiremock::matchers::body_string;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string("{\n  \"name\": \"Ana\"\n}"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut input = valid_input();
+        input.endpoint_url = server.uri();
+        input.method = HttpMethodInput::Post;
+        input.body = BodyInput::Raw {
+            content: "{\n  \"name\": \"{{name}}\", // who\n  // \"age\": {{missing}}\n}"
+                .to_string(),
+            raw_language: RawBodyLanguageInput::Json,
+        };
+        input.environment_variables = vec![EnvironmentVariableDto {
+            name: "name".to_string(),
+            value: "Ana".to_string(),
+            sensitive: false,
+        }];
+        // The script sees the body already without comments: `json()` parses it.
+        input.pre_request_script =
+            "al.environment.set('keys', Object.keys(al.request.json()).join(','));".to_string();
+
+        let output = execute_rest_request_inner(
+            input,
+            &ExecutionRegistry::default(),
+            &ReqwestRestExecutor::new(),
+            &ResponseBodyCache::default(),
+            &CookieJar::default(),
+            HistoryPreferences::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.status_code, 200);
+        assert_eq!(
+            output.environment_changes,
+            vec![EnvironmentChangeOutput {
+                name: "keys".to_string(),
+                value: Some("name".to_string()),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_a_text_body_with_slashes_as_it_is() {
+        use wiremock::matchers::body_string;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string("a // b\n/* c */"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut input = valid_input();
+        input.endpoint_url = server.uri();
+        input.method = HttpMethodInput::Post;
+        input.body = BodyInput::Raw {
+            content: "a // b\n/* c */".to_string(),
+            raw_language: RawBodyLanguageInput::Text,
+        };
+
+        let output = execute_rest_request_inner(
+            input,
+            &ExecutionRegistry::default(),
+            &ReqwestRestExecutor::new(),
+            &ResponseBodyCache::default(),
+            &CookieJar::default(),
+            HistoryPreferences::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.status_code, 200);
     }
 
     #[tokio::test]

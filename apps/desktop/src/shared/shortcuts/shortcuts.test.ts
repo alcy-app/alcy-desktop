@@ -80,6 +80,13 @@ describe('combinações', () => {
     expect(isLocalAction('showSuggestions')).toBe(true)
     expect(isLocalAction('acceptSuggestion')).toBe(true)
   })
+
+  it('comments with Ctrl+/ or Ctrl+; by default, as the ABNT2 key for / types ;', () => {
+    expect(DEFAULT_SHORTCUTS.toggleComment.map(formatCombo)).toEqual(['Ctrl+/', 'Ctrl+;'])
+    expect(findShortcutAction(DEFAULT_SHORTCUTS, keyEvent(';', { ctrlKey: true }))).toBe('toggleComment')
+    expect(findShortcutAction(DEFAULT_SHORTCUTS, keyEvent('/', { ctrlKey: true }))).toBe('toggleComment')
+    expect(isLocalAction('toggleComment')).toBe(true)
+  })
 })
 
 describe('atribuições', () => {

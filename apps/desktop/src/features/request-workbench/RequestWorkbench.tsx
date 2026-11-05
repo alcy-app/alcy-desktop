@@ -1849,6 +1849,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'deleteItem':
       case 'showSuggestions':
       case 'acceptSuggestion':
+      case 'toggleComment':
         // Local actions are dispatched by tabs, canvas, sidebar rows and editors (isLocalAction).
         return false
     }
@@ -1909,6 +1910,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       case 'deleteItem':
       case 'showSuggestions':
       case 'acceptSuggestion':
+      case 'toggleComment':
         return
     }
   }

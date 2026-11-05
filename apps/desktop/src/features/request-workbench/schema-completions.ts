@@ -85,6 +85,22 @@ export function jsonCursorContext(text: string, pos: number): JsonCursorContext 
   while (index < pos) {
     const char = text[index]
     const top = frames[frames.length - 1]
+    // Comments (spec 0146) are skipped; inside one there is nothing to suggest.
+    if (char === '/' && text[index + 1] === '/') {
+      const lineEnd = text.indexOf('\n', index)
+      const end = lineEnd === -1 ? text.length : lineEnd
+      if (pos <= end) return null
+      index = end
+      continue
+    }
+    if (char === '/' && text[index + 1] === '*') {
+      const close = text.indexOf('*/', index + 2)
+      if (close !== -1) {
+        if (pos < close + 2) return null
+        index = close + 2
+        continue
+      }
+    }
     if (char === '"') {
       let end = index + 1
       while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1

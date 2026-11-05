@@ -1397,7 +1397,9 @@ fn prepare_request<S: FlowRunSink>(
     ancestors: &HashSet<String>,
     sink: &S,
 ) -> Option<Request> {
-    let resolved = match resolve_request_variables(request_to_run, variables, history, ancestors) {
+    // A JSON body runs without its comments; scripts run later, on the resolved request (spec 0146).
+    let request_to_run = request_to_run.without_json_body_comments();
+    let resolved = match resolve_request_variables(&request_to_run, variables, history, ancestors) {
         Ok(resolved) => resolved,
         Err(error) => {
             sink.node_finished(
@@ -2464,6 +2466,57 @@ mod tests {
             "Bearer abc123",
             "req-b deveria ter recebido o token extraído da resposta de req-a"
         );
+    }
+
+    #[tokio::test]
+    async fn a_request_node_sends_its_json_body_without_comments() {
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                node(
+                    "req-a",
+                    FlowNodeKind::Request {
+                        request_id: "request-a".to_string(),
+                    },
+                ),
+            ],
+            vec![edge("edge-1", "start", "req-a")],
+        );
+        let request = Request::new(
+            Endpoint::new("https://api.example.com/a").unwrap(),
+            RequestDocument::new(
+                ProtocolId::Rest,
+                "{\n  \"a\": 1,\n  // \"b\": {{missing}}\n}",
+            ),
+            "",
+            vec![],
+            Authentication::None,
+        );
+        let collections = vec![
+            Collection::new(
+                "collection-1",
+                "Customer API",
+                vec![],
+                vec![SavedRequest::new("request-a", "A", request).unwrap()],
+            )
+            .unwrap(),
+        ];
+        let executor = ChainRecordingExecutor::new();
+
+        execute_flow(
+            &flow,
+            &collections,
+            &executor,
+            &[],
+            &RecordingSink::new(),
+            &NeverCancelled,
+            &NoMockServers,
+        )
+        .await
+        .unwrap();
+
+        let received = executor.received.lock().unwrap();
+        assert_eq!(received[0].document.body, "{\n  \"a\": 1\n}");
     }
 
     #[tokio::test]

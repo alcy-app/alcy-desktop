@@ -2,12 +2,14 @@ import { useEffect, useRef } from 'react'
 import { Compartment } from '@codemirror/state'
 import type { Extension } from '@codemirror/state'
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, toggleBlockComment, toggleComment } from '@codemirror/commands'
 import { foldGutter, foldKeymap, syntaxHighlighting } from '@codemirror/language'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { useShortcuts } from '../../../shared/shortcuts/use-shortcuts'
+import { commentShortcutExtension } from '../comment-toggle'
 import { completionShortcutsExtension } from '../completion-shortcuts'
+import { jsoncLanguageSupport } from '../jsonc-language'
 import type { CodeLanguage } from '../codemirror-shared'
 import { editorSearchHighlightExtension } from '../editor-search'
 import { bodySchemaExtension, setBodySchema } from '../schema-completions'
@@ -32,13 +34,19 @@ import type { EditorSlot } from '../editor-bridge'
 import { LineCount } from './LineCount'
 import './template-highlight.css'
 
-/** Linguagem do editor mais o fechamento automático de pares, que só vale
- * para JSON (corpo) e JavaScript (scripts); XML e HTML já fecham tags pelo
- * próprio pacote de linguagem. */
-function editingLanguageExtension(language: CodeLanguage): Extension {
+/** The editor language plus auto-closing pairs, which only apply to JSON
+ * (body) and JavaScript (scripts); XML and HTML close tags through their own
+ * language package. With `jsonComments`, JSON accepts comments (spec 0146). */
+function editingLanguageExtension(language: CodeLanguage, jsonComments: boolean): Extension {
   const autoClose = language === 'json' || language === 'javascript'
-  return [languageExtensionFor(language), autoClose ? autoCloseBracketsExtension() : []]
+  const languageExtension = language === 'json' && jsonComments ? jsoncLanguageSupport() : languageExtensionFor(language)
+  return [languageExtension, autoClose ? autoCloseBracketsExtension() : []]
 }
+
+/** CodeMirror's comment keys give way to the configurable `toggleComment` shortcut. */
+const keymapWithoutCommentKeys = defaultKeymap.filter(
+  (binding) => binding.run !== toggleComment && binding.run !== toggleBlockComment,
+)
 
 interface RequestBodyPanelProps {
   value: string
@@ -60,6 +68,10 @@ interface RequestBodyPanelProps {
   bodySchema?: BodySchema | null
   /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
   agentSlot?: EditorSlot
+  /** REST request body: JSON accepts `//` and `/* *\/` comments, removed
+   * before sending, and the configurable comment shortcut picks a line or a
+   * block comment by the selection (spec 0146). Read only at mount. */
+  jsonComments?: boolean
 }
 
 /**
@@ -78,6 +90,7 @@ export function RequestBodyPanel({
   environmentVariables,
   bodySchema,
   agentSlot,
+  jsonComments = false,
 }: RequestBodyPanelProps) {
   const { t } = useLanguage()
   const editorLabel = label ?? t('requestBody.editorLabel')
@@ -125,14 +138,20 @@ export function RequestBodyPanel({
         history(),
         completionShortcutsExtension(() => shortcutBindingsRef.current),
         tabIndentKeymap,
-        keymap.of([{ key: 'Mod-f', run: openSearch }, ...foldKeymap, ...defaultKeymap, ...historyKeymap]),
+        jsonComments ? commentShortcutExtension(() => shortcutBindingsRef.current) : [],
+        keymap.of([
+          { key: 'Mod-f', run: openSearch },
+          ...foldKeymap,
+          ...(jsonComments ? keymapWithoutCommentKeys : defaultKeymap),
+          ...historyKeymap,
+        ]),
         EditorView.lineWrapping,
         drawSelection(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
         selectableLineNumbers(),
         foldGutter(),
-        languageCompartment.of(editingLanguageExtension(language)),
+        languageCompartment.of(editingLanguageExtension(language, jsonComments)),
         syntaxHighlighting(codeHighlightStyle),
         extraExtensions ?? [],
         environmentVariables ? environmentVariablesExtension(() => translateRef.current, () => setVariableRef.current) : [],
@@ -186,7 +205,8 @@ export function RequestBodyPanel({
     const view = viewRef.current
     const languageCompartment = languageCompartmentRef.current
     if (!view || !languageCompartment) return
-    view.dispatch({ effects: languageCompartment.reconfigure(editingLanguageExtension(language)) })
+    view.dispatch({ effects: languageCompartment.reconfigure(editingLanguageExtension(language, jsonComments)) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jsonComments is read only at mount.
   }, [language])
 
   useEffect(() => {

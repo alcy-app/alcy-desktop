@@ -1,6 +1,8 @@
+use std::borrow::Cow;
+
 use crate::{
-    Authentication, BodyPayload, Endpoint, GrpcCall, HeaderEntry, HttpMethod, RequestDocument,
-    WebSocketCall,
+    Authentication, BodyPayload, Endpoint, GrpcCall, HeaderEntry, HttpMethod, ProtocolId,
+    RawBodyLanguage, RequestDocument, WebSocketCall, strip_json_comments,
 };
 
 /// Política de redirecionamento aplicada por uma execução HTTP. É efêmera:
@@ -128,12 +130,82 @@ impl Request {
         self.websocket = websocket;
         self
     }
+
+    /// The request as it runs: a REST raw JSON body without its comments
+    /// (spec 0146). Borrowed when there is nothing to remove. Applied before
+    /// variables are resolved and before the pre-request script.
+    pub fn without_json_body_comments(&self) -> Cow<'_, Request> {
+        let is_json_body = self.document.protocol == ProtocolId::Rest
+            && self.body_payload
+                == BodyPayload::Raw {
+                    language: RawBodyLanguage::Json,
+                };
+        if !is_json_body {
+            return Cow::Borrowed(self);
+        }
+        match strip_json_comments(&self.document.body) {
+            Cow::Borrowed(_) => Cow::Borrowed(self),
+            Cow::Owned(body) => {
+                let mut request = self.clone();
+                request.document.body = body;
+                Cow::Owned(request)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ProtocolId, RawBodyLanguage};
+
+    fn rest_request(body: &str, payload: BodyPayload) -> Request {
+        Request::new(
+            Endpoint::new("https://api.example.test/users").unwrap(),
+            RequestDocument::new(ProtocolId::Rest, body),
+            "",
+            vec![],
+            Authentication::None,
+        )
+        .with_body_payload(payload)
+    }
+
+    #[test]
+    fn removes_comments_only_from_a_rest_json_body() {
+        let json = BodyPayload::Raw {
+            language: RawBodyLanguage::Json,
+        };
+        let commented = "{\n  \"a\": 1,\n  // \"b\": 2\n}";
+
+        let request = rest_request(commented, json.clone());
+        assert_eq!(
+            request.without_json_body_comments().document.body,
+            "{\n  \"a\": 1\n}"
+        );
+
+        let text = rest_request(
+            commented,
+            BodyPayload::Raw {
+                language: RawBodyLanguage::Text,
+            },
+        );
+        assert!(matches!(
+            text.without_json_body_comments(),
+            Cow::Borrowed(_)
+        ));
+
+        let mut graphql = rest_request(commented, json.clone());
+        graphql.document = RequestDocument::new(ProtocolId::GraphQl, commented);
+        assert!(matches!(
+            graphql.without_json_body_comments(),
+            Cow::Borrowed(_)
+        ));
+
+        let plain = rest_request("{\"a\": 1}", json);
+        assert!(matches!(
+            plain.without_json_body_comments(),
+            Cow::Borrowed(_)
+        ));
+    }
 
     #[test]
     fn builds_a_request_from_its_parts() {
