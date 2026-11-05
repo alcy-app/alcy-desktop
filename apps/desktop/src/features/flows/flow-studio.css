@@ -213,7 +213,7 @@
 .flow-request-destination > span:first-child { flex: 1; overflow-wrap: anywhere; }
 .flow-request-dirty { color: var(--warning); }
 .flow-request-endpoint { display: flex; gap: var(--space-2); align-items: center; }
-.flow-request-endpoint > .ui-select { width: auto; flex: none; }
+.flow-request-endpoint > .ui-select-wrapper { width: auto; flex: none; }
 .flow-request-endpoint > .var-highlight-wrapper { flex: 1; min-width: 0; }
 .flow-request-protocol { font-family: var(--font-mono); color: var(--accent-strong); font-weight: var(--font-weight-semibold); }
 .flow-request-tabs { padding-inline: 0; overflow-x: auto; }

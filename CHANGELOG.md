@@ -25,6 +25,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Fixed
 
 - Nomes longos de variável não ultrapassam mais a caixa de descrição das sugestões no body.
+- Nos flows, o campo de URL das requisições avulsas volta a ocupar a largura da linha, em vez de ficar espremido ao lado do método.
 
 ## [0.9.0] - 03/11/2026
 
