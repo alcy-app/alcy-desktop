@@ -32,7 +32,7 @@ export function QuickNodeEdit({ config, onChange, nodeId }: { config: QuickConfi
     {anchor && createPortal(<div ref={popover} className="flow-quick-editor" role="dialog" aria-label={t('flows.studio.quickEdit')} data-flow-fields data-flow-node-id={nodeId} style={{ left: `clamp(12px, ${anchor.left}px, calc(100vw - 352px))`, top, maxHeight: `calc(100dvh - ${top} - 12px)` }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
       <div className="flow-quick-heading">{t('flows.studio.quickEdit')}<IconButton icon={<CloseIcon size={12} />} label={t('common.close')} onClick={close} /></div>
       <div className="flow-quick-body">
-      {config.kind !== 'sleep' && <p className="flow-inspector-hint">{t('flows.studio.autocompleteFieldHint')}</p>}
+      <p className="flow-inspector-hint">{t('flows.studio.autocompleteFieldHint')}</p>
       {config.kind === 'sleep' && <SleepFields durationMs={config.durationMs} onChange={(durationMs) => onChange({ ...config, durationMs })} />}
       {(config.kind === 'if' || config.kind === 'while') && <ConditionFields condition={config.condition} onChange={(condition) => onChange({ ...config, condition })} />}
       {config.kind === 'setVariables' && <AssignmentFields assignments={config.assignments} onChange={(assignments) => onChange({ ...config, assignments })} />}

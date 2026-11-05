@@ -80,10 +80,10 @@ export function createFlowFromTemplate(templateId: FlowTemplateId, t: Translate)
       break
     case 'repeat':
       nodes.push({ id: 'initialize', kind: 'setVariables', assignments: [{ name: 'iteration', operation: 'set', value: '0' }], position: position(1) })
-      nodes.push({ id: 'repeat', kind: 'while', condition: { left: '{{iteration}}', operator: 'lessThan', right: '3' }, maxIterations: 3, position: position(2) })
+      nodes.push({ id: 'repeat', kind: 'while', condition: { left: '{{iteration}}', operator: 'lessThan', right: '3' }, maxIterations: '3', position: position(2) })
       request('request', 'flows.templates.healthRequest', '{{baseUrl}}/health', 3)
-      nodes.push({ id: 'pause', kind: 'sleep', durationMs: 1000, position: position(4) })
-      nodes.push({ id: 'increment', kind: 'setVariables', assignments: [{ name: 'iteration', operation: 'increment', by: 1 }], position: position(5) })
+      nodes.push({ id: 'pause', kind: 'sleep', durationMs: '1000', position: position(4) })
+      nodes.push({ id: 'increment', kind: 'setVariables', assignments: [{ name: 'iteration', operation: 'increment', by: '1' }], position: position(5) })
       nodes.push({ id: 'complete', kind: 'log', message: t('flows.templates.completed'), position: position(3, 1) })
       connect('start', 'initialize')
       connect('initialize', 'repeat')

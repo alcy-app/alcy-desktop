@@ -40,7 +40,7 @@ describe('readable flow identifiers', () => {
     const nodes: FlowNodeState[] = [
       { id: 'old', kind: 'request', requestId: 'collection-request', position: { x: 0, y: 0 } },
       { id: 'display', kind: 'display', template: '{{ nodes.old.response.body.token }} / {{nodes.older.response.status}} / old', position: { x: 0, y: 0 } },
-      { id: 'wait', kind: 'mockWaitRequest', startNodeId: 'old', routeId: 'old', timeoutMs: 5, position: { x: 0, y: 0 } },
+      { id: 'wait', kind: 'mockWaitRequest', startNodeId: 'old', routeId: 'old', timeoutMs: '5', position: { x: 0, y: 0 } },
       { id: 'inline', kind: 'inlineRequest', request: { id: 'request', name: 'Old', protocol: 'rest', content: { ...emptyRequestContent('rest'), headers: [{ name: 'Authorization', value: 'Bearer {{nodes.old.response.body.token}}', enabled: true }] } }, position: { x: 0, y: 0 } },
       { id: 'load', kind: 'load', loadKind: 'request', label: 'Old', config: '{"url":"{{nodes.old.response.body.url}}"}', position: { x: 0, y: 0 } },
     ]

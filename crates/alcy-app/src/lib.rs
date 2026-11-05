@@ -32,6 +32,7 @@ mod load_flow;
 mod mock_control;
 mod node_reference;
 mod request_executor;
+mod resolve_number_setting;
 mod resolve_request_variables;
 mod resolve_variables;
 mod run_collection;

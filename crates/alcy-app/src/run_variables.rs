@@ -5,6 +5,7 @@ use thiserror::Error;
 
 use crate::TemplateError;
 use crate::node_reference::{NodeRunHistory, is_node_reference};
+use crate::resolve_number_setting::{NumberSettingError, resolve_decimal_setting};
 use crate::resolve_variables::{
     MASKED_VALUE, MAX_OUTPUT_VALUE_CHARS, resolve_for_display, resolve_variables_with_node_history,
     truncate_for_display,
@@ -20,6 +21,11 @@ pub(crate) enum RunVariableError {
     Template(#[from] TemplateError),
     #[error("variável '{name}' não é um número ('{value}'), não dá para incrementar")]
     NotANumber { name: String, value: String },
+    #[error("incremento de '{name}': {source}")]
+    InvalidIncrement {
+        name: String,
+        source: NumberSettingError,
+    },
 }
 
 /// `base` (ambiente já sobreposto por coleção/pastas) sobreposto pelas
@@ -67,6 +73,12 @@ pub(crate) fn apply_assignments(
                 (resolved, sensitive)
             }
             VariableOperation::Increment { by } => {
+                let by = resolve_decimal_setting(by, &visible, history, ancestors).map_err(
+                    |source| RunVariableError::InvalidIncrement {
+                        name: name.to_string(),
+                        source,
+                    },
+                )?;
                 let current = visible.iter().find(|variable| variable.name() == name);
                 let number = match current {
                     None => 0.0,
@@ -133,7 +145,7 @@ mod tests {
     fn increment(name: &str, by: f64) -> VariableAssignment {
         VariableAssignment {
             name: name.to_string(),
-            operation: VariableOperation::Increment { by },
+            operation: VariableOperation::Increment { by: by.to_string() },
         }
     }
 
@@ -200,6 +212,29 @@ mod tests {
         let (run, summary) = apply(&[increment("i", 2.0)], &[], &run).unwrap();
         assert_eq!(run[0].value(), "3");
         assert_eq!(summary, "i = 3");
+    }
+
+    #[test]
+    fn increment_amount_can_come_from_a_variable() {
+        let increment_by = |by: &str| VariableAssignment {
+            name: "i".to_string(),
+            operation: VariableOperation::Increment { by: by.to_string() },
+        };
+        let (run, _) = apply(
+            &[increment_by("{{step}}")],
+            &[variable("step", "5", false)],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(run[0].value(), "5");
+
+        let error = apply(
+            &[increment_by("{{step}}")],
+            &[variable("step", "x", false)],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "incremento de 'i': 'x' não é um número");
     }
 
     #[test]

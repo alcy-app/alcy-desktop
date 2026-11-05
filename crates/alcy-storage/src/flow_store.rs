@@ -126,7 +126,7 @@ enum PersistedNodeKind {
         template: String,
     },
     Sleep {
-        duration_ms: u64,
+        duration_ms: PersistedNumberSetting,
     },
     SetVariables {
         assignments: Vec<PersistedVariableAssignment>,
@@ -134,7 +134,7 @@ enum PersistedNodeKind {
     // Additive variant (spec 0084), as above.
     While {
         condition: PersistedCondition,
-        max_iterations: u32,
+        max_iterations: PersistedNumberSetting,
     },
     // Additive variants (spec 0085), as above.
     Break,
@@ -160,7 +160,7 @@ enum PersistedNodeKind {
     MockWaitRequest {
         start_node_id: String,
         route_id: String,
-        timeout_ms: u64,
+        timeout_ms: PersistedNumberSetting,
     },
     MockSetResponse {
         start_node_id: String,
@@ -172,8 +172,44 @@ enum PersistedNodeKind {
         start_node_id: String,
         route_id: String,
         operator: PersistedMockCallCountOperator,
-        count: u32,
+        count: PersistedNumberSetting,
     },
+}
+
+/// A numeric block setting. Numbers stay JSON numbers, the format every earlier version wrote and reads;
+/// a `{{...}}` template (or other text) is written as a string. Additive: no version bump.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum PersistedNumberSetting {
+    Integer(u64),
+    Decimal(f64),
+    Text(String),
+}
+
+impl PersistedNumberSetting {
+    /// Whole-number settings: a plain unsigned integer is written as a number.
+    fn integer(text: &str) -> Self {
+        match text.parse::<u64>() {
+            Ok(number) if number.to_string() == text => Self::Integer(number),
+            _ => Self::Text(text.to_string()),
+        }
+    }
+
+    /// Decimal settings: a finite number that reads back as the same text is written as a number.
+    fn decimal(text: &str) -> Self {
+        match text.parse::<f64>() {
+            Ok(number) if number.is_finite() && number.to_string() == text => Self::Decimal(number),
+            _ => Self::Text(text.to_string()),
+        }
+    }
+
+    fn into_text(self) -> String {
+        match self {
+            Self::Integer(number) => number.to_string(),
+            Self::Decimal(number) => number.to_string(),
+            Self::Text(text) => text,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -223,7 +259,7 @@ struct PersistedVariableAssignment {
 #[serde(tag = "operation", rename_all = "camelCase")]
 enum PersistedVariableOperation {
     Set { value: String },
-    Increment { by: f64 },
+    Increment { by: PersistedNumberSetting },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -366,7 +402,9 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
                     },
                     PersistedNodeKind::Log { message } => FlowNodeKind::Log { message },
                     PersistedNodeKind::Display { template } => FlowNodeKind::Display { template },
-                    PersistedNodeKind::Sleep { duration_ms } => FlowNodeKind::Sleep { duration_ms },
+                    PersistedNodeKind::Sleep { duration_ms } => FlowNodeKind::Sleep {
+                        duration_ms: duration_ms.into_text(),
+                    },
                     PersistedNodeKind::InlineRequest { request } => FlowNodeKind::InlineRequest {
                         request: Box::new(request_from_persisted(*request)?),
                     },
@@ -401,7 +439,7 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
                     } => FlowNodeKind::MockWaitRequest {
                         start_node_id,
                         route_id,
-                        timeout_ms,
+                        timeout_ms: timeout_ms.into_text(),
                     },
                     PersistedNodeKind::MockSetResponse {
                         start_node_id,
@@ -427,7 +465,7 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
                             }
                             PersistedMockCallCountOperator::AtMost => MockCallCountOperator::AtMost,
                         },
-                        count,
+                        count: count.into_text(),
                     },
                     PersistedNodeKind::Break => FlowNodeKind::Break,
                     PersistedNodeKind::Continue => FlowNodeKind::Continue,
@@ -436,7 +474,7 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
                         max_iterations,
                     } => FlowNodeKind::While {
                         condition: condition_from_persisted(condition),
-                        max_iterations,
+                        max_iterations: max_iterations.into_text(),
                     },
                     PersistedNodeKind::SetVariables { assignments } => FlowNodeKind::SetVariables {
                         assignments: assignments
@@ -448,7 +486,7 @@ pub(crate) fn flow_from_persisted(persisted: PersistedFlow) -> Result<Flow, Stor
                                         VariableOperation::Set { value }
                                     }
                                     PersistedVariableOperation::Increment { by } => {
-                                        VariableOperation::Increment { by }
+                                        VariableOperation::Increment { by: by.into_text() }
                                     }
                                 },
                             })
@@ -609,7 +647,7 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
                         template: template.clone(),
                     },
                     FlowNodeKind::Sleep { duration_ms } => PersistedNodeKind::Sleep {
-                        duration_ms: *duration_ms,
+                        duration_ms: PersistedNumberSetting::integer(duration_ms),
                     },
                     FlowNodeKind::InlineRequest { request } => PersistedNodeKind::InlineRequest {
                         request: Box::new(persisted_from_request(request)),
@@ -639,7 +677,7 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
                     } => PersistedNodeKind::MockWaitRequest {
                         start_node_id: start_node_id.clone(),
                         route_id: route_id.clone(),
-                        timeout_ms: *timeout_ms,
+                        timeout_ms: PersistedNumberSetting::integer(timeout_ms),
                     },
                     FlowNodeKind::MockSetResponse {
                         start_node_id,
@@ -665,7 +703,7 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
                             }
                             MockCallCountOperator::AtMost => PersistedMockCallCountOperator::AtMost,
                         },
-                        count: *count,
+                        count: PersistedNumberSetting::integer(count),
                     },
                     FlowNodeKind::Break => PersistedNodeKind::Break,
                     FlowNodeKind::Continue => PersistedNodeKind::Continue,
@@ -674,7 +712,7 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
                         max_iterations,
                     } => PersistedNodeKind::While {
                         condition: condition_to_persisted(condition),
-                        max_iterations: *max_iterations,
+                        max_iterations: PersistedNumberSetting::integer(max_iterations),
                     },
                     FlowNodeKind::SetVariables { assignments } => PersistedNodeKind::SetVariables {
                         assignments: assignments
@@ -688,7 +726,9 @@ pub(crate) fn persisted_from_flow(flow: &Flow) -> PersistedFlow {
                                         }
                                     }
                                     VariableOperation::Increment { by } => {
-                                        PersistedVariableOperation::Increment { by: *by }
+                                        PersistedVariableOperation::Increment {
+                                            by: PersistedNumberSetting::decimal(by),
+                                        }
                                     }
                                 },
                             })
@@ -903,7 +943,7 @@ mod tests {
                     FlowNodeKind::MockWaitRequest {
                         start_node_id: "inline".to_string(),
                         route_id: "route-1".to_string(),
-                        timeout_ms: 30_000,
+                        timeout_ms: "30000".to_string(),
                     },
                 ),
                 node(
@@ -920,7 +960,7 @@ mod tests {
                         start_node_id: "inline".to_string(),
                         route_id: "route-1".to_string(),
                         operator: MockCallCountOperator::AtLeast,
-                        count: 2,
+                        count: "2".to_string(),
                     },
                 ),
                 node(
@@ -1060,7 +1100,12 @@ mod tests {
                         template: "{{token}}".to_string(),
                     },
                 ),
-                node("sleep-1", FlowNodeKind::Sleep { duration_ms: 1500 }),
+                node(
+                    "sleep-1",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "1500".to_string(),
+                    },
+                ),
                 node("break-1", FlowNodeKind::Break),
                 node(
                     "inline-1",
@@ -1099,7 +1144,7 @@ mod tests {
                             operator: alcy_domain::ComparisonOperator::LessThan,
                             right: "3".to_string(),
                         },
-                        max_iterations: 50,
+                        max_iterations: "50".to_string(),
                     },
                 ),
                 node(
@@ -1114,7 +1159,9 @@ mod tests {
                             },
                             VariableAssignment {
                                 name: "count".to_string(),
-                                operation: VariableOperation::Increment { by: 2.5 },
+                                operation: VariableOperation::Increment {
+                                    by: "2.5".to_string(),
+                                },
                             },
                         ],
                     },
@@ -1155,6 +1202,121 @@ mod tests {
         assert!(raw.contains("\"kind\": \"inlineRequest\""));
 
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn numeric_settings_keep_numbers_as_numbers_and_templates_as_text() {
+        let root = temp_root();
+        let store = FlowStore::new(root.clone());
+        let now = millis_now();
+        let node = |id: &str, kind: FlowNodeKind| FlowNode {
+            id: id.to_string(),
+            kind,
+            position: FlowPosition { x: 0.0, y: 0.0 },
+        };
+        let flow = Flow::new(
+            "flow-1",
+            "My flow",
+            vec![
+                node("start", FlowNodeKind::Start),
+                node(
+                    "sleep-1",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "{{delay}}".to_string(),
+                    },
+                ),
+                node(
+                    "while-1",
+                    FlowNodeKind::While {
+                        condition: Condition {
+                            left: "1".to_string(),
+                            operator: ComparisonOperator::Equals,
+                            right: "1".to_string(),
+                        },
+                        max_iterations: "{{loop-count}}".to_string(),
+                    },
+                ),
+                node(
+                    "vars-1",
+                    FlowNodeKind::SetVariables {
+                        assignments: vec![
+                            VariableAssignment {
+                                name: "i".to_string(),
+                                operation: VariableOperation::Increment {
+                                    by: "{{step}}".to_string(),
+                                },
+                            },
+                            VariableAssignment {
+                                name: "j".to_string(),
+                                operation: VariableOperation::Increment {
+                                    by: "1".to_string(),
+                                },
+                            },
+                        ],
+                    },
+                ),
+            ],
+            vec![],
+            now,
+            now,
+        )
+        .unwrap();
+        let snapshot = FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        };
+
+        store.save(&snapshot).unwrap();
+        let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+
+        assert_eq!(store.load().unwrap(), snapshot);
+        assert!(raw.contains("\"duration_ms\": \"{{delay}}\""));
+        assert!(raw.contains("\"max_iterations\": \"{{loop-count}}\""));
+        assert!(raw.contains("\"by\": \"{{step}}\""));
+        assert!(raw.contains("\"by\": 1.0"));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn load_reads_numeric_settings_written_as_numbers() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join(MANIFEST_FILE_NAME),
+            r#"{"version":5,"flows":[{"id":"flow-1","name":"Old","nodes":[
+                {"id":"start","kind":"start","x":0.0,"y":0.0},
+                {"id":"sleep","kind":"sleep","duration_ms":1500,"x":0.0,"y":0.0},
+                {"id":"vars","kind":"setVariables","assignments":[{"name":"i","operation":"increment","by":2.5},{"name":"j","operation":"increment","by":1.0}],"x":0.0,"y":0.0}
+            ],"edges":[],"created_at_ms":0,"updated_at_ms":0}]}"#,
+        )
+        .unwrap();
+
+        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let nodes = snapshot.flows[0].nodes();
+        assert_eq!(
+            nodes[1].kind,
+            FlowNodeKind::Sleep {
+                duration_ms: "1500".to_string()
+            }
+        );
+        let FlowNodeKind::SetVariables { assignments } = &nodes[2].kind else {
+            panic!("expected setVariables");
+        };
+        assert_eq!(
+            assignments[0].operation,
+            VariableOperation::Increment {
+                by: "2.5".to_string()
+            }
+        );
+        assert_eq!(
+            assignments[1].operation,
+            VariableOperation::Increment {
+                by: "1".to_string()
+            }
+        );
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

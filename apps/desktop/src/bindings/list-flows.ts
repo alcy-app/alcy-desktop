@@ -11,9 +11,10 @@ export interface ConditionDto {
   right: string
 }
 
+/** Numeric block settings (durationMs, maxIterations, by, timeoutMs, count) are text: a number or a `{{variable}}`. */
 export type VariableAssignmentDto = { name: string } & (
   | { operation: 'set'; value: string }
-  | { operation: 'increment'; by: number }
+  | { operation: 'increment'; by: string }
 )
 
 export type FlowExecutionKindDto = 'standard' | 'load'
@@ -52,9 +53,9 @@ export type FlowNodeKindDto =
   | { kind: 'note'; text: string; width: number; height: number }
   | { kind: 'log'; message: string }
   | { kind: 'display'; template: string }
-  | { kind: 'sleep'; durationMs: number }
+  | { kind: 'sleep'; durationMs: string }
   | { kind: 'setVariables'; assignments: VariableAssignmentDto[] }
-  | { kind: 'while'; condition: ConditionDto; maxIterations: number }
+  | { kind: 'while'; condition: ConditionDto; maxIterations: string }
   | { kind: 'break' }
   | { kind: 'continue' }
   | { kind: 'load'; loadKind: LoadNodeKindDto; label: string; config: string }
@@ -63,9 +64,9 @@ export type FlowNodeKindDto =
   /** Mock blocks reference the mockStart node that started their mock (spec 0121). */
   | { kind: 'mockStart'; source: MockServerSourceDto }
   | { kind: 'mockStop'; startNodeId: string }
-  | { kind: 'mockWaitRequest'; startNodeId: string; routeId: string; timeoutMs: number }
+  | { kind: 'mockWaitRequest'; startNodeId: string; routeId: string; timeoutMs: string }
   | { kind: 'mockSetResponse'; startNodeId: string; routeId: string; responseId: string | null }
-  | { kind: 'mockAssertCalls'; startNodeId: string; routeId: string; operator: MockCallCountOperatorDto; count: number }
+  | { kind: 'mockAssertCalls'; startNodeId: string; routeId: string; operator: MockCallCountOperatorDto; count: string }
 
 export type FlowNodeDto = FlowNodeKindDto & {
   id: string

@@ -28,7 +28,7 @@ describe('conversão de nodes para o DTO', () => {
       id: 'while-1',
       kind: 'while',
       condition: { left: '{{i}}', operator: 'lessThan', right: '3' },
-      maxIterations: 5,
+      maxIterations: '5',
       position: { x: 0, y: 0 },
     }
     expect(flowNodeFromDto(dtoFromFlowNode(node))).toEqual(node)

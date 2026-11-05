@@ -71,7 +71,7 @@ describe('replayRun with a while node', () => {
     const replayed = replayRun(
       [
         { id: 'start', kind: 'start', position: { x: 0, y: 0 } },
-        { id: 'w', kind: 'while', condition: { left: '{{i}}', operator: 'lessThan', right: '2' }, maxIterations: 10, position: { x: 1, y: 0 } },
+        { id: 'w', kind: 'while', condition: { left: '{{i}}', operator: 'lessThan', right: '2' }, maxIterations: '10', position: { x: 1, y: 0 } },
         { id: 'log', kind: 'log', message: '{{i}}', position: { x: 2, y: 0 } },
         { id: 'end', kind: 'log', message: 'fim', position: { x: 3, y: 0 } },
       ],

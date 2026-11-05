@@ -14,6 +14,7 @@ import type { RunLogNodeInfo } from './RunLogPanel'
 import type { NodeRunStatus } from './use-flow-run'
 import type { DisplayFormat } from './display-format'
 import type { DisplayBodySource } from './display-output-source'
+import { literalNumber } from './number-setting'
 
 /** Canonical configuration plus transient execution and interaction data for simple canvas nodes (spec 0083). */
 export interface SimpleNodeData extends Record<string, unknown> {
@@ -51,10 +52,10 @@ export const CONDITION_OPERATOR_SYMBOL: Record<ComparisonOperatorState, string> 
 
 /** Default While condition; a counter is the common starting point. */
 const DEFAULT_WHILE_CONDITION: ConditionState = { left: '', operator: 'lessThan', right: '' }
-const DEFAULT_WHILE_MAX_ITERATIONS = 100
+const DEFAULT_WHILE_MAX_ITERATIONS = '100'
 
 /** Initial timeout for a Wait for request block. */
-export const DEFAULT_MOCK_WAIT_TIMEOUT_MS = 30_000
+export const DEFAULT_MOCK_WAIT_TIMEOUT_MS = '30000'
 
 /** Default dimensions for a new note. */
 export const DEFAULT_NOTE_SIZE = { width: 260, height: 140 }
@@ -72,7 +73,7 @@ export function defaultSimpleNodeConfig(kind: Exclude<SimpleNodeKind, 'inlineReq
     case 'display':
       return { kind: 'display', template: '' }
     case 'sleep':
-      return { kind: 'sleep', durationMs: 1000 }
+      return { kind: 'sleep', durationMs: '1000' }
     case 'setVariables':
       return { kind: 'setVariables', assignments: [] }
     case 'while':
@@ -90,7 +91,7 @@ export function defaultSimpleNodeConfig(kind: Exclude<SimpleNodeKind, 'inlineReq
     case 'mockSetResponse':
       return { kind: 'mockSetResponse', startNodeId: '', routeId: '', responseId: null }
     case 'mockAssertCalls':
-      return { kind: 'mockAssertCalls', startNodeId: '', routeId: '', operator: 'equals', count: 1 }
+      return { kind: 'mockAssertCalls', startNodeId: '', routeId: '', operator: 'equals', count: '1' }
   }
 }
 
@@ -148,9 +149,11 @@ export function describeRequest(request: RequestSummary): string {
   return `${requestMethodLabel(request)} ${request.content.endpointUrl}`
 }
 
-/** Display milliseconds below one second, otherwise seconds. */
-export function formatSleepDuration(durationMs: number): string {
-  return durationMs < 1000 ? `${durationMs} ms` : `${durationMs / 1000} s`
+/** Display milliseconds below one second, otherwise seconds; a `{{variable}}` is shown as typed, in ms. */
+export function formatSleepDuration(durationMs: string): string {
+  const ms = literalNumber(durationMs)
+  if (ms === null) return `${durationMs.trim() || '—'} ms`
+  return ms < 1000 ? `${ms} ms` : `${ms / 1000} s`
 }
 
 const MAX_LOG_LABEL_CHARS = 40

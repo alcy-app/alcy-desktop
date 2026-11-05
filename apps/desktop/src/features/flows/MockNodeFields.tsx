@@ -8,10 +8,9 @@ import { Select } from '../../shared/ui/Select'
 import { newMockServer } from '../mock-servers/mock-server-defaults'
 import type { MockCallCountOperatorState, SimpleNodeKindState } from './flows.types'
 import { findMockRoute, mockRouteLabel, mockRouteResponses } from './mock-nodes'
+import { DurationSettingFields, NumberSettingField } from './NumberSettingFields'
 import type { MockStartInfo } from './mock-nodes'
 
-/** Maior espera aceita pelo motor (`MAX_SLEEP_MS` em `execute_flow.rs`). */
-const MAX_WAIT_MS = 10 * 60 * 1000
 const DEFAULT_INLINE_MOCK_PORT = 3001
 
 type MockConfig = Extract<SimpleNodeKindState, { kind: 'mockStart' | 'mockStop' | 'mockWaitRequest' | 'mockSetResponse' | 'mockAssertCalls' }>
@@ -214,20 +213,13 @@ function MockTargetFields({
       )}
 
       {config.kind === 'mockWaitRequest' && (
-        <Field label={t('flows.canvas.mockWaitTimeoutLabel')} hint={t('flows.canvas.mockWaitHint')}>
-          <Input
-            type="number"
-            min={0.1}
-            max={MAX_WAIT_MS / 1000}
-            step={1}
-            defaultValue={String(config.timeoutMs / 1000)}
-            onChange={(event) => {
-              const seconds = Number.parseFloat(event.target.value)
-              if (Number.isNaN(seconds)) return
-              onChange({ ...config, timeoutMs: Math.min(MAX_WAIT_MS, Math.max(100, Math.round(seconds * 1000))) })
-            }}
-          />
-        </Field>
+        <DurationSettingFields
+          label={t('flows.canvas.mockWaitTimeoutLabel')}
+          hint={t('flows.canvas.mockWaitHint')}
+          value={config.timeoutMs}
+          min={1}
+          onChange={(timeoutMs) => onChange({ ...config, timeoutMs })}
+        />
       )}
 
       {config.kind === 'mockSetResponse' && (
@@ -253,18 +245,12 @@ function MockTargetFields({
               <option value="atMost">{t('flows.canvas.mockAssertAtMost')}</option>
             </Select>
           </Field>
-          <Field label={t('flows.canvas.mockAssertCountLabel')}>
-            <Input
-              type="number"
-              min={0}
-              step={1}
-              defaultValue={String(config.count)}
-              onChange={(event) => {
-                const count = Number.parseInt(event.target.value, 10)
-                if (!Number.isNaN(count) && count >= 0) onChange({ ...config, count })
-              }}
-            />
-          </Field>
+          <NumberSettingField
+            label={t('flows.canvas.mockAssertCountLabel')}
+            value={config.count}
+            rules={{ min: 0, integer: true }}
+            onChange={(count) => onChange({ ...config, count })}
+          />
           <p className="flow-inspector-hint">{t('flows.canvas.mockAssertHint')}</p>
         </div>
       )}

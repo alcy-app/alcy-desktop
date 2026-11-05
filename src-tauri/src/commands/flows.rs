@@ -100,14 +100,16 @@ pub enum FlowNodeKindDto {
         template: String,
     },
     Sleep {
-        duration_ms: u64,
+        #[serde(deserialize_with = "number_setting")]
+        duration_ms: String,
     },
     SetVariables {
         assignments: Vec<VariableAssignmentDto>,
     },
     While {
         condition: ConditionDto,
-        max_iterations: u32,
+        #[serde(deserialize_with = "number_setting")]
+        max_iterations: String,
     },
     Break,
     Continue,
@@ -131,7 +133,8 @@ pub enum FlowNodeKindDto {
     MockWaitRequest {
         start_node_id: String,
         route_id: String,
-        timeout_ms: u64,
+        #[serde(deserialize_with = "number_setting")]
+        timeout_ms: String,
     },
     MockSetResponse {
         start_node_id: String,
@@ -143,8 +146,26 @@ pub enum FlowNodeKindDto {
         start_node_id: String,
         route_id: String,
         operator: MockCallCountOperatorDto,
-        count: u32,
+        #[serde(deserialize_with = "number_setting")]
+        count: String,
     },
+}
+
+/// Numeric block settings travel as text: a number or a `{{...}}` template, resolved when the node runs.
+/// A JSON number is accepted too, as older callers send.
+fn number_setting<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Setting {
+        Integer(u64),
+        Decimal(f64),
+        Text(String),
+    }
+    Ok(match Setting::deserialize(deserializer)? {
+        Setting::Integer(number) => number.to_string(),
+        Setting::Decimal(number) => number.to_string(),
+        Setting::Text(text) => text,
+    })
 }
 
 /// Saved mock ID or inline mock using the mock-server editor DTO.
@@ -178,8 +199,13 @@ pub struct VariableAssignmentDto {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "operation", rename_all = "camelCase")]
 pub enum VariableOperationDto {
-    Set { value: String },
-    Increment { by: f64 },
+    Set {
+        value: String,
+    },
+    Increment {
+        #[serde(deserialize_with = "number_setting")]
+        by: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -413,7 +439,7 @@ fn node_to_dto(node: &FlowNode) -> FlowNodeDto {
                 template: template.clone(),
             },
             FlowNodeKind::Sleep { duration_ms } => FlowNodeKindDto::Sleep {
-                duration_ms: *duration_ms,
+                duration_ms: duration_ms.clone(),
             },
             FlowNodeKind::InlineRequest { request } => FlowNodeKindDto::InlineRequest {
                 request: Box::new(request_to_dto(request)),
@@ -443,7 +469,7 @@ fn node_to_dto(node: &FlowNode) -> FlowNodeDto {
             } => FlowNodeKindDto::MockWaitRequest {
                 start_node_id: start_node_id.clone(),
                 route_id: route_id.clone(),
-                timeout_ms: *timeout_ms,
+                timeout_ms: timeout_ms.clone(),
             },
             FlowNodeKind::MockSetResponse {
                 start_node_id,
@@ -467,7 +493,7 @@ fn node_to_dto(node: &FlowNode) -> FlowNodeDto {
                     MockCallCountOperator::AtLeast => MockCallCountOperatorDto::AtLeast,
                     MockCallCountOperator::AtMost => MockCallCountOperatorDto::AtMost,
                 },
-                count: *count,
+                count: count.clone(),
             },
             FlowNodeKind::Break => FlowNodeKindDto::Break,
             FlowNodeKind::Continue => FlowNodeKindDto::Continue,
@@ -476,7 +502,7 @@ fn node_to_dto(node: &FlowNode) -> FlowNodeDto {
                 max_iterations,
             } => FlowNodeKindDto::While {
                 condition: condition_to_dto(condition),
-                max_iterations: *max_iterations,
+                max_iterations: max_iterations.clone(),
             },
             FlowNodeKind::SetVariables { assignments } => FlowNodeKindDto::SetVariables {
                 assignments: assignments
@@ -488,7 +514,7 @@ fn node_to_dto(node: &FlowNode) -> FlowNodeDto {
                                 value: value.clone(),
                             },
                             VariableOperation::Increment { by } => {
-                                VariableOperationDto::Increment { by: *by }
+                                VariableOperationDto::Increment { by: by.clone() }
                             }
                         },
                     })
@@ -921,13 +947,15 @@ mod tests {
 
         let nodes = nodes_from_dto(serde_json::from_str(json).unwrap()).unwrap();
 
-        assert_eq!(nodes[3].kind, FlowNodeKind::Sleep { duration_ms: 1500 });
-        assert!(matches!(
-            nodes[6].kind,
-            FlowNodeKind::While {
-                max_iterations: 5,
-                ..
+        assert_eq!(
+            nodes[3].kind,
+            FlowNodeKind::Sleep {
+                duration_ms: "1500".to_string()
             }
+        );
+        assert!(matches!(
+            &nodes[6].kind,
+            FlowNodeKind::While { max_iterations, .. } if max_iterations == "5"
         ));
         assert_eq!(
             nodes[4].kind,
@@ -941,14 +969,42 @@ mod tests {
                     },
                     VariableAssignment {
                         name: "i".to_string(),
-                        operation: VariableOperation::Increment { by: 1.0 },
+                        operation: VariableOperation::Increment {
+                            by: "1".to_string()
+                        },
                     },
                 ],
             }
         );
         assert_eq!(
             serde_json::to_value(node_to_dto(&nodes[3])).unwrap(),
-            serde_json::json!({"id":"sleep","kind":"sleep","durationMs":1500,"x":0.0,"y":0.0})
+            serde_json::json!({"id":"sleep","kind":"sleep","durationMs":"1500","x":0.0,"y":0.0})
+        );
+    }
+
+    #[test]
+    fn numeric_settings_accept_variable_templates() {
+        let json = r#"[
+            {"id":"sleep","kind":"sleep","durationMs":"{{delay}}","x":0.0,"y":0.0},
+            {"id":"vars","kind":"setVariables","assignments":[{"name":"i","operation":"increment","by":"{{step}}"}],"x":0.0,"y":0.0},
+            {"id":"while","kind":"while","condition":{"left":"1","operator":"equals","right":"1"},"maxIterations":"{{loop-count}}","x":0.0,"y":0.0}
+        ]"#;
+
+        let nodes = nodes_from_dto(serde_json::from_str(json).unwrap()).unwrap();
+
+        assert_eq!(
+            nodes[0].kind,
+            FlowNodeKind::Sleep {
+                duration_ms: "{{delay}}".to_string()
+            }
+        );
+        assert!(matches!(
+            &nodes[2].kind,
+            FlowNodeKind::While { max_iterations, .. } if max_iterations == "{{loop-count}}"
+        ));
+        assert_eq!(
+            serde_json::to_value(node_to_dto(&nodes[1])).unwrap()["assignments"][0]["by"],
+            "{{step}}"
         );
     }
 

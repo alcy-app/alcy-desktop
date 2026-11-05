@@ -96,7 +96,8 @@ pub enum VariableOperation {
     /// Set the variable to a template resolved at execution time.
     Set { value: String },
     /// Add to the current value, treating an absent variable as zero; supports counters without an expression language.
-    Increment { by: f64 },
+    /// `by` is a number or a `{{...}}` template resolved when the node runs.
+    Increment { by: String },
 }
 
 /// Run-local assignment. Execution validates the name so incomplete configurations remain editable.
@@ -147,7 +148,9 @@ pub enum FlowNodeKind {
     /// Resolve the template and display its value in this node.
     Display { template: String },
     /// Wait asynchronously without blocking independent branches.
-    Sleep { duration_ms: u64 },
+    /// Numeric block settings (`duration_ms` here, `max_iterations`, `timeout_ms`, `count`) hold a number or a
+    /// `{{...}}` template; execution resolves and validates them when the node runs, so they stay editable while incomplete.
+    Sleep { duration_ms: String },
     /// Run-local variables available as {{name}} and discarded at run completion.
     SetVariables {
         assignments: Vec<VariableAssignment>,
@@ -155,7 +158,7 @@ pub enum FlowNodeKind {
     /// Repeat the loop body while its condition holds, up to max_iterations, then take done (spec 0084, ADR 0033).
     While {
         condition: Condition,
-        max_iterations: u32,
+        max_iterations: String,
     },
     /// Exit the innermost While, skip unstarted body nodes and take done. Has no outputs (spec 0085).
     Break,
@@ -173,7 +176,7 @@ pub enum FlowNodeKind {
     MockWaitRequest {
         start_node_id: String,
         route_id: String,
-        timeout_ms: u64,
+        timeout_ms: String,
     },
     /// Force the route response until run completion; None restores normal rules.
     MockSetResponse {
@@ -186,7 +189,7 @@ pub enum FlowNodeKind {
         start_node_id: String,
         route_id: String,
         operator: MockCallCountOperator,
-        count: u32,
+        count: String,
     },
 }
 
@@ -774,7 +777,7 @@ mod tests {
                     operator: ComparisonOperator::LessThan,
                     right: "3".to_string(),
                 },
-                max_iterations: 100,
+                max_iterations: "100".to_string(),
             },
             position: FlowPosition { x: 0.0, y: 0.0 },
         };
@@ -845,7 +848,7 @@ mod tests {
             kind: FlowNodeKind::MockWaitRequest {
                 start_node_id: "mock-1".to_string(),
                 route_id: "route-1".to_string(),
-                timeout_ms: 1_000,
+                timeout_ms: "1000".to_string(),
             },
             position: FlowPosition { x: 0.0, y: 0.0 },
         }

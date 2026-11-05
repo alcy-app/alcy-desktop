@@ -141,12 +141,12 @@ function newNode(entry: Input, position: { x: number; y: number }): FlowNodeDto 
     case 'request': string(entry, 'requestId'); break
     case 'inlineRequest': if (entry.request === undefined) defaults.request = inlineRequestDto({}, undefined); break
     case 'if': defaults.condition = { left: '', operator: 'equals', right: '' }; break
-    case 'while': defaults.condition = { left: '', operator: 'equals', right: '' }; defaults.maxIterations = 100; break
+    case 'while': defaults.condition = { left: '', operator: 'equals', right: '' }; defaults.maxIterations = '100'; break
     case 'humanAction': defaults.form = { title: '', description: '', sections: [] }; break
     case 'note': Object.assign(defaults, { text: '', width: 300, height: 160 }); break
     case 'log': defaults.message = ''; break
     case 'display': defaults.template = ''; break
-    case 'sleep': defaults.durationMs = 1000; break
+    case 'sleep': defaults.durationMs = '1000'; break
     case 'setVariables': defaults.assignments = []; break
     case 'load': {
       const loadKind = string(entry, 'loadKind') as LoadNodeKindState
@@ -157,9 +157,9 @@ function newNode(entry: Input, position: { x: number; y: number }): FlowNodeDto 
     }
     case 'mockStart': record(entry.source, 'source (or serverId)'); break
     case 'mockStop': string(entry, 'startNodeId'); break
-    case 'mockWaitRequest': string(entry, 'startNodeId'); string(entry, 'routeId'); defaults.timeoutMs = 30_000; break
+    case 'mockWaitRequest': string(entry, 'startNodeId'); string(entry, 'routeId'); defaults.timeoutMs = '30000'; break
     case 'mockSetResponse': string(entry, 'startNodeId'); string(entry, 'routeId'); defaults.responseId = null; break
-    case 'mockAssertCalls': string(entry, 'startNodeId'); string(entry, 'routeId'); defaults.operator = 'equals'; defaults.count = 1; break
+    case 'mockAssertCalls': string(entry, 'startNodeId'); string(entry, 'routeId'); defaults.operator = 'equals'; defaults.count = '1'; break
     default: throw new Error(`Unknown node kind '${kind}'. See get_flow_guide.`)
   }
   return mergeResource(defaults, entry) as FlowNodeDto

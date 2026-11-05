@@ -1313,7 +1313,7 @@ mod tests {
                 operator: ComparisonOperatorDto::NotEquals,
                 right: right.to_string(),
             },
-            max_iterations: 10,
+            max_iterations: "10".to_string(),
         }
     }
 

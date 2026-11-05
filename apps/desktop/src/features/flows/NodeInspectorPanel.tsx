@@ -35,6 +35,7 @@ import { FlowTabs } from './FlowTabs'
 import type { FlowDatasetSource } from './FlowDatasetFields'
 import { NodeIdentifierField } from './NodeIdentifierField'
 import { FlowTemplateTextarea } from './FlowTemplateTextarea'
+import { DurationSettingFields, NumberSettingField } from './NumberSettingFields'
 import { FlowFormEditor } from './FlowFormEditor'
 import { emptyFlowForm } from './form-model'
 import type { FlowForm } from '../../bindings/flow-forms'
@@ -98,8 +99,6 @@ interface NodeInspectorPanelProps {
   onClose: () => void
 }
 
-/** Maximum wait accepted by the execution engine. */
-const MAX_SLEEP_MS = 10 * 60 * 1000
 /** Maximum loop iteration count accepted by the execution engine. */
 const MAX_WHILE_ITERATIONS = 10_000
 
@@ -354,21 +353,12 @@ export function NodeInspectorPanel({
               condition={selection.condition}
               onChange={(condition) => changeConfig({ ...selection, condition })}
             />
-            <Field label={t('flows.canvas.whileMaxIterationsLabel')}>
-              <Input
-                key={selection.id}
-                type="number"
-                min={1}
-                max={MAX_WHILE_ITERATIONS}
-                step={1}
-                defaultValue={String(selection.maxIterations)}
-                onChange={(event) => {
-                  const value = Number.parseInt(event.target.value, 10)
-                  if (Number.isNaN(value)) return
-                  changeConfig({ ...selection, maxIterations: Math.min(MAX_WHILE_ITERATIONS, Math.max(1, value)) })
-                }}
-              />
-            </Field>
+            <NumberSettingField
+              label={t('flows.canvas.whileMaxIterationsLabel')}
+              value={selection.maxIterations}
+              rules={{ min: 1, max: MAX_WHILE_ITERATIONS, integer: true }}
+              onChange={(maxIterations) => changeConfig({ ...selection, maxIterations })}
+            />
           </>
         )}
 
@@ -1437,39 +1427,10 @@ function InlineRequestNameField({ name, onChange }: { name: string; onChange: (n
   )
 }
 
-type SleepUnit = 'ms' | 's'
-
-/** Sleep durations are stored in milliseconds. Keep the numeric input uncontrolled so intermediate input such as 1. remains editable when switching display units. */
-export function SleepFields({ durationMs, onChange }: { durationMs: number; onChange: (durationMs: number) => void }) {
+/** Sleep duration in milliseconds, typed in ms or s, or a `{{variable}}`. */
+export function SleepFields({ durationMs, onChange }: { durationMs: string; onChange: (durationMs: string) => void }) {
   const { t } = useLanguage()
-  const [unit, setUnit] = useState<SleepUnit>(durationMs >= 1000 && durationMs % 1000 === 0 ? 's' : 'ms')
-  const factor = unit === 's' ? 1000 : 1
-
-  return (
-    <div className="flow-inspector-condition">
-      <Field label={t('flows.canvas.sleepDurationLabel')} hint={t('flows.canvas.sleepLimitHint')}>
-        <Input
-          key={unit}
-          type="number"
-          min={0}
-          max={MAX_SLEEP_MS / factor}
-          step={unit === 's' ? 0.1 : 100}
-          defaultValue={String(durationMs / factor)}
-          onChange={(event) => {
-            const value = Number.parseFloat(event.target.value)
-            if (Number.isNaN(value)) return
-            onChange(Math.min(MAX_SLEEP_MS, Math.max(0, Math.round(value * factor))))
-          }}
-        />
-      </Field>
-      <Field label={t('flows.canvas.sleepUnitLabel')}>
-        <Select value={unit} onChange={(event) => setUnit(event.target.value as SleepUnit)}>
-          <option value="ms">{t('flows.canvas.sleepUnitMilliseconds')}</option>
-          <option value="s">{t('flows.canvas.sleepUnitSeconds')}</option>
-        </Select>
-      </Field>
-    </div>
-  )
+  return <DurationSettingFields label={t('flows.canvas.sleepDurationLabel')} hint={t('flows.canvas.sleepLimitHint')} value={durationMs} min={0} onChange={onChange} />
 }
 
 /** Editable assignments for a Set variables node. */
@@ -1513,7 +1474,7 @@ export function AssignmentFields({
               update(
                 index,
                 event.target.value === 'increment'
-                  ? { name: assignment.name, operation: 'increment', by: 1 }
+                  ? { name: assignment.name, operation: 'increment', by: '1' }
                   : { name: assignment.name, operation: 'set', value: '' },
               )
             }
@@ -1530,16 +1491,11 @@ export function AssignmentFields({
               onChange={(event) => update(index, { ...assignment, value: event.target.value })}
             />
           ) : (
-            <Input
-              key={`increment-${index}`}
-              type="number"
-              step="any"
-              defaultValue={String(assignment.by)}
-              aria-label={t('flows.canvas.setVariablesByLabel')}
-              onChange={(event) => {
-                const by = Number.parseFloat(event.target.value)
-                if (!Number.isNaN(by)) update(index, { ...assignment, by })
-              }}
+            <NumberSettingField
+              label={t('flows.canvas.setVariablesByLabel')}
+              value={assignment.by}
+              rules={{}}
+              onChange={(by) => update(index, { ...assignment, by })}
             />
           )}
         </div>

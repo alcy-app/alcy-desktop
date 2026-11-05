@@ -21,7 +21,7 @@ describe('explicit flow graph persistence', () => {
   it('waits for persistence before applying the edited graph', async () => {
     const { result } = renderHook(() => useFlowsState('/workspace'), { wrapper })
     await waitFor(() => expect(result.current.loaded).toBe(true))
-    const nodes: FlowNodeState[] = [...result.current.flows[0].nodes, { id: 'wait', kind: 'sleep', durationMs: 500, position: { x: 300, y: 0 } }]
+    const nodes: FlowNodeState[] = [...result.current.flows[0].nodes, { id: 'wait', kind: 'sleep', durationMs: '500', position: { x: 300, y: 0 } }]
     let finish: ((value: { ok: true }) => void) | undefined
     vi.mocked(saveFlows).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     let saving: Promise<void>
@@ -29,7 +29,7 @@ describe('explicit flow graph persistence', () => {
     expect(result.current.flows[0].nodes).toHaveLength(1)
     await act(async () => { finish?.({ ok: true }); await saving! })
     expect(result.current.flows[0].nodes).toHaveLength(2)
-    expect(saveFlows).toHaveBeenCalledWith('/workspace', expect.objectContaining({ flows: [expect.objectContaining({ nodes: expect.arrayContaining([expect.objectContaining({ id: 'wait', durationMs: 500 })]) })] }))
+    expect(saveFlows).toHaveBeenCalledWith('/workspace', expect.objectContaining({ flows: [expect.objectContaining({ nodes: expect.arrayContaining([expect.objectContaining({ id: 'wait', durationMs: '500' })]) })] }))
   })
 
   it('propagates disk failures without marking the new graph as persisted', async () => {

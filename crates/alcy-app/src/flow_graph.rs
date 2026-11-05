@@ -513,7 +513,7 @@ mod tests {
                     operator: alcy_domain::ComparisonOperator::LessThan,
                     right: "3".to_string(),
                 },
-                max_iterations: 10,
+                max_iterations: "10".to_string(),
             },
         )
     }

@@ -17,6 +17,7 @@ use crate::mock_control::{
     CapturedRequest, MockControlError, MockRouteSummary, MockRunHandle, MockServerControl,
 };
 use crate::node_reference::NodeRunHistory;
+use crate::resolve_number_setting::resolve_integer_setting;
 use crate::resolve_variables::{
     MAX_OUTPUT_VALUE_CHARS, resolve_for_display_with_limit, resolve_request_for_display,
 };
@@ -245,7 +246,7 @@ where
                         step_loop(
                             &while_id,
                             condition,
-                            *max_iterations,
+                            max_iterations,
                             &mut scheduler,
                             &variables,
                             &history,
@@ -473,22 +474,29 @@ where
                     scheduler.complete(&node_id, true, None);
                 }
                 Some(FlowNodeKind::Sleep { duration_ms }) => {
-                    if *duration_ms > MAX_SLEEP_MS {
-                        sink.node_finished(
-                            &node_id,
-                            FlowNodeOutcome::Failed {
-                                message: format!(
-                                    "espera de {duration_ms} ms acima do limite de {MAX_SLEEP_MS} ms"
-                                ),
-                            },
-                        );
-                        scheduler.complete(&node_id, true, None);
-                        continue;
-                    }
+                    let ancestors = graph.ancestors.get(&node_id).unwrap_or(&no_ancestors);
+                    let variables = with_run_variables(environment_variables, &run_variables);
+                    let duration_ms =
+                        match resolve_integer_setting(duration_ms, &variables, &history, ancestors)
+                        {
+                            Ok(duration_ms) if duration_ms > MAX_SLEEP_MS => Err(format!(
+                                "espera de {duration_ms} ms acima do limite de {MAX_SLEEP_MS} ms"
+                            )),
+                            Ok(duration_ms) => Ok(duration_ms),
+                            Err(error) => Err(format!("duração da espera: {error}")),
+                        };
+                    let duration_ms = match duration_ms {
+                        Ok(duration_ms) => duration_ms,
+                        Err(message) => {
+                            sink.node_finished(&node_id, FlowNodeOutcome::Failed { message });
+                            scheduler.complete(&node_id, true, None);
+                            continue;
+                        }
+                    };
                     sink.node_started(&node_id);
                     in_flight.push(run_in_flight(
                         node_id.clone(),
-                        InFlightWork::Sleep(Duration::from_millis(*duration_ms)),
+                        InFlightWork::Sleep(Duration::from_millis(duration_ms)),
                         executor,
                         cancellation,
                         mocks,
@@ -544,21 +552,27 @@ where
                     timeout_ms,
                 }) => {
                     let ancestors = graph.ancestors.get(&node_id).unwrap_or(&no_ancestors);
-                    let work = if *timeout_ms == 0 || *timeout_ms > MAX_SLEEP_MS {
-                        Err(format!(
-                            "tempo de espera de {timeout_ms} ms fora do intervalo de 1 a {MAX_SLEEP_MS} ms"
-                        ))
-                    } else {
-                        mock_session.route(start_node_id, route_id, ancestors).map(
-                            |(handle, route)| InFlightWork::MockWait {
+                    let variables = with_run_variables(environment_variables, &run_variables);
+                    let timeout_ms =
+                        resolve_integer_setting(timeout_ms, &variables, &history, ancestors)
+                            .map_err(|error| format!("tempo de espera: {error}"));
+                    let work = match timeout_ms {
+                        Err(message) => Err(message),
+                        Ok(timeout_ms) if timeout_ms == 0 || timeout_ms > MAX_SLEEP_MS => {
+                            Err(format!(
+                                "tempo de espera de {timeout_ms} ms fora do intervalo de 1 a {MAX_SLEEP_MS} ms"
+                            ))
+                        }
+                        Ok(timeout_ms) => mock_session
+                            .route(start_node_id, route_id, ancestors)
+                            .map(|(handle, route)| InFlightWork::MockWait {
                                 start_node_id: start_node_id.clone(),
                                 key: handle.key.clone(),
                                 route_id: route_id.clone(),
                                 route_label: route.label.clone(),
                                 after_seq: mock_session.cursor(start_node_id, route_id),
-                                timeout: Duration::from_millis(*timeout_ms),
-                            },
-                        )
+                                timeout: Duration::from_millis(timeout_ms),
+                            }),
                     };
                     match work {
                         Ok(work) => {
@@ -607,15 +621,29 @@ where
                     count,
                 }) => {
                     let ancestors = graph.ancestors.get(&node_id).unwrap_or(&no_ancestors);
-                    match assert_mock_calls(
-                        &mock_session,
-                        mocks,
-                        start_node_id,
-                        route_id,
-                        *operator,
-                        *count,
-                        ancestors,
-                    ) {
+                    let variables = with_run_variables(environment_variables, &run_variables);
+                    let checked = resolve_integer_setting(count, &variables, &history, ancestors)
+                        .map_err(|error| format!("chamadas esperadas: {error}"))
+                        .and_then(|count| {
+                            u32::try_from(count).map_err(|_| {
+                                format!(
+                                    "chamadas esperadas: {count} acima do limite de {}",
+                                    u32::MAX
+                                )
+                            })
+                        })
+                        .and_then(|count| {
+                            assert_mock_calls(
+                                &mock_session,
+                                mocks,
+                                start_node_id,
+                                route_id,
+                                *operator,
+                                count,
+                                ancestors,
+                            )
+                        });
+                    match checked {
                         Ok((result, message)) => {
                             sink.node_finished(
                                 &node_id,
@@ -660,7 +688,7 @@ where
                     step_loop(
                         &node_id,
                         condition,
-                        *max_iterations,
+                        max_iterations,
                         &mut scheduler,
                         &variables,
                         &history,
@@ -878,7 +906,7 @@ const LOOP_DONE_HANDLE: &str = "done";
 fn step_loop<S: FlowRunSink, C: FlowCancellation>(
     while_id: &str,
     condition: &Condition,
-    max_iterations: u32,
+    max_iterations: &str,
     scheduler: &mut Scheduler,
     variables: &[EnvironmentVariable],
     history: &NodeRunHistory,
@@ -903,16 +931,33 @@ fn step_loop<S: FlowRunSink, C: FlowCancellation>(
         return;
     }
 
-    if max_iterations == 0 || max_iterations > MAX_WHILE_ITERATIONS {
-        let message = format!(
-            "limite de iterações {max_iterations} fora do intervalo de 1 a {MAX_WHILE_ITERATIONS}"
-        );
-        finish(scheduler, FlowNodeOutcome::Failed { message }, None);
-        return;
-    }
-
     // Use only While ancestors. Initially the body has not run; body results reach conditions through run variables.
     let ancestors = graph.ancestors.get(while_id).cloned().unwrap_or_default();
+
+    // A template limit is read at every check, like the condition.
+    let max_iterations = match resolve_integer_setting(
+        max_iterations,
+        variables,
+        history,
+        &ancestors,
+    ) {
+        Ok(limit) => u32::try_from(limit)
+            .ok()
+            .filter(|limit| (1..=MAX_WHILE_ITERATIONS).contains(limit))
+            .ok_or_else(|| {
+                format!(
+                    "limite de iterações {limit} fora do intervalo de 1 a {MAX_WHILE_ITERATIONS}"
+                )
+            }),
+        Err(error) => Err(format!("limite de iterações: {error}")),
+    };
+    let max_iterations = match max_iterations {
+        Ok(limit) => limit,
+        Err(message) => {
+            finish(scheduler, FlowNodeOutcome::Failed { message }, None);
+            return;
+        }
+    };
 
     match evaluate_condition(condition, variables, history, &ancestors) {
         Err(error) => finish(
@@ -3489,7 +3534,12 @@ mod tests {
         let flow = build_flow(
             vec![
                 node("start", FlowNodeKind::Start),
-                node("sleep", FlowNodeKind::Sleep { duration_ms: 150 }),
+                node(
+                    "sleep",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "150".to_string(),
+                    },
+                ),
                 log_node("log", "ok"),
             ],
             vec![
@@ -3534,7 +3584,12 @@ mod tests {
         let flow = build_flow(
             vec![
                 node("start", FlowNodeKind::Start),
-                node("sleep", FlowNodeKind::Sleep { duration_ms: 5_000 }),
+                node(
+                    "sleep",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "5000".to_string(),
+                    },
+                ),
                 log_node("log", "ok"),
             ],
             vec![
@@ -3578,7 +3633,7 @@ mod tests {
                 node(
                     "sleep",
                     FlowNodeKind::Sleep {
-                        duration_ms: MAX_SLEEP_MS + 1,
+                        duration_ms: (MAX_SLEEP_MS + 1).to_string(),
                     },
                 ),
             ],
@@ -3616,7 +3671,7 @@ mod tests {
                     operator,
                     right: right.to_string(),
                 },
-                max_iterations: max,
+                max_iterations: max.to_string(),
             },
         )
     }
@@ -3627,7 +3682,9 @@ mod tests {
             FlowNodeKind::SetVariables {
                 assignments: vec![alcy_domain::VariableAssignment {
                     name: name.to_string(),
-                    operation: alcy_domain::VariableOperation::Increment { by: 1.0 },
+                    operation: alcy_domain::VariableOperation::Increment {
+                        by: "1".to_string(),
+                    },
                 }],
             },
         )
@@ -3761,6 +3818,98 @@ mod tests {
         );
     }
 
+    fn while_limited_by(id: &str, max_iterations: &str) -> FlowNode {
+        node(
+            id,
+            FlowNodeKind::While {
+                condition: Condition {
+                    left: "1".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    right: "1".to_string(),
+                },
+                max_iterations: max_iterations.to_string(),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn a_while_limit_can_come_from_a_variable() {
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                set_variables_node("init", &[("loop-count", "2")]),
+                while_limited_by("while", "{{loop-count}}"),
+                log_node("body", "x"),
+            ],
+            vec![
+                edge("e1", "start", "init"),
+                edge("e2", "init", "while"),
+                handled_edge("e3", "while", "body", "loop"),
+            ],
+        );
+
+        let events = run(&flow, &[], &FailingExecutor).await;
+
+        let while_events = outcome_of(&events, "while");
+        assert_eq!(while_events.len(), 3, "{while_events:?}");
+        assert!(
+            while_events[2].contains("limite de 2 iterações atingido"),
+            "{while_events:?}"
+        );
+        assert_eq!(outcome_of(&events, "body").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_while_limit_that_is_not_a_number_fails_before_the_body() {
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                set_variables_node("init", &[("loop-count", "many")]),
+                while_limited_by("while", "{{loop-count}}"),
+                log_node("body", "x"),
+            ],
+            vec![
+                edge("e1", "start", "init"),
+                edge("e2", "init", "while"),
+                handled_edge("e3", "while", "body", "loop"),
+            ],
+        );
+
+        let events = run(&flow, &[], &FailingExecutor).await;
+
+        let while_events = outcome_of(&events, "while");
+        assert_eq!(while_events.len(), 1, "{while_events:?}");
+        assert!(
+            while_events[0].contains("limite de iterações: 'many' não é um número inteiro"),
+            "{while_events:?}"
+        );
+        assert_eq!(outcome_of(&events, "body"), vec!["Skipped(BranchNotTaken)"]);
+    }
+
+    #[tokio::test]
+    async fn a_sleep_duration_can_come_from_a_variable() {
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                set_variables_node("init", &[("delay", "5")]),
+                node(
+                    "sleep",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "{{delay}}".to_string(),
+                    },
+                ),
+            ],
+            vec![edge("e1", "start", "init"), edge("e2", "init", "sleep")],
+        );
+
+        let events = run(&flow, &[], &FailingExecutor).await;
+
+        assert_eq!(
+            outcome_of(&events, "sleep"),
+            vec!["started", "Completed { message: None }"]
+        );
+    }
+
     #[tokio::test]
     async fn nested_whiles_restart_the_inner_loop_on_every_outer_iteration() {
         let flow = build_flow(
@@ -3887,7 +4036,12 @@ mod tests {
             vec![
                 node("start", FlowNodeKind::Start),
                 while_node("while", "1", ComparisonOperator::Equals, "1", 100),
-                node("sleep", FlowNodeKind::Sleep { duration_ms: 5_000 }),
+                node(
+                    "sleep",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "5000".to_string(),
+                    },
+                ),
                 log_node("after", "ok"),
             ],
             vec![
@@ -3978,7 +4132,12 @@ mod tests {
                 increment_node("inc", "i"),
                 if_node("if", "{{i}}", ComparisonOperator::Equals, "2"),
                 node("continue", FlowNodeKind::Continue),
-                node("sleep", FlowNodeKind::Sleep { duration_ms: 20 }),
+                node(
+                    "sleep",
+                    FlowNodeKind::Sleep {
+                        duration_ms: "20".to_string(),
+                    },
+                ),
                 log_node("log", "{{i}}"),
             ],
             vec![
@@ -4291,7 +4450,7 @@ mod tests {
             FlowNodeKind::MockWaitRequest {
                 start_node_id: "mock".to_string(),
                 route_id: "route-1".to_string(),
-                timeout_ms,
+                timeout_ms: timeout_ms.to_string(),
             },
         )
     }
@@ -4412,7 +4571,7 @@ mod tests {
                     start_node_id: "mock".to_string(),
                     route_id: "route-1".to_string(),
                     operator,
-                    count,
+                    count: count.to_string(),
                 },
             )
         };

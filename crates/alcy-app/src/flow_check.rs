@@ -296,16 +296,27 @@ fn reference_issue(
 /// Text a node resolves with `{{…}}` at run time.
 fn templates(kind: &FlowNodeKind) -> Vec<&str> {
     match kind {
-        FlowNodeKind::If { condition } | FlowNodeKind::While { condition, .. } => {
+        FlowNodeKind::If { condition } => {
             vec![condition.left.as_str(), condition.right.as_str()]
         }
+        FlowNodeKind::While {
+            condition,
+            max_iterations,
+        } => vec![
+            condition.left.as_str(),
+            condition.right.as_str(),
+            max_iterations.as_str(),
+        ],
         FlowNodeKind::Log { message } => vec![message.as_str()],
         FlowNodeKind::Display { template } => vec![template.as_str()],
+        FlowNodeKind::Sleep { duration_ms } => vec![duration_ms.as_str()],
+        FlowNodeKind::MockWaitRequest { timeout_ms, .. } => vec![timeout_ms.as_str()],
+        FlowNodeKind::MockAssertCalls { count, .. } => vec![count.as_str()],
         FlowNodeKind::SetVariables { assignments } => assignments
             .iter()
-            .filter_map(|assignment| match &assignment.operation {
-                VariableOperation::Set { value } => Some(value.as_str()),
-                VariableOperation::Increment { .. } => None,
+            .map(|assignment| match &assignment.operation {
+                VariableOperation::Set { value } => value.as_str(),
+                VariableOperation::Increment { by } => by.as_str(),
             })
             .collect(),
         FlowNodeKind::InlineRequest { request } => request_templates(&request.request),
@@ -446,7 +457,9 @@ mod tests {
                     FlowNodeKind::SetVariables {
                         assignments: vec![VariableAssignment {
                             name: "counter".into(),
-                            operation: VariableOperation::Increment { by: 1.0 },
+                            operation: VariableOperation::Increment {
+                                by: "1".to_string(),
+                            },
                         }],
                     },
                 ),
@@ -461,6 +474,40 @@ mod tests {
         let known = HashSet::from(["baseUrl".to_string()]);
 
         assert_eq!(check_flow(&flow, Some(&known)), vec![]);
+    }
+
+    #[test]
+    fn numeric_settings_are_checked_like_other_templates() {
+        let sleep = |id: &str, duration_ms: &str| {
+            node(
+                id,
+                FlowNodeKind::Sleep {
+                    duration_ms: duration_ms.into(),
+                },
+            )
+        };
+        let flow = flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                sleep("fixed", "1000"),
+                sleep("wait", "{{delay}}"),
+                sleep("pause", "{{nodes.ghost.response.body}}"),
+            ],
+            vec![
+                edge("start", "fixed", None),
+                edge("fixed", "wait", None),
+                edge("wait", "pause", None),
+            ],
+        );
+        let known = HashSet::from(["baseUrl".to_string()]);
+
+        let issues = check_flow(&flow, Some(&known));
+
+        assert_eq!(issues.len(), 2, "{:?}", messages(&issues));
+        assert_eq!(issues[0].node_id.as_deref(), Some("wait"));
+        assert_eq!(issues[0].severity, FlowIssueSeverity::Warning);
+        assert_eq!(issues[1].node_id.as_deref(), Some("pause"));
+        assert!(issues[1].message.contains("'ghost', which does not exist"));
     }
 
     #[test]

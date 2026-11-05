@@ -17,7 +17,7 @@ export type MockCallCountOperatorState = 'equals' | 'atLeast' | 'atMost'
 
 export type VariableAssignmentState = { name: string } & (
   | { operation: 'set'; value: string }
-  | { operation: 'increment'; by: number }
+  | { operation: 'increment'; by: string }
 )
 
 /** Complete configuration lives in data.config; simple nodes share DTO conversion and duplication (spec 0083). */
@@ -26,9 +26,9 @@ export type SimpleNodeKindState =
   | { kind: 'note'; text: string; width: number; height: number }
   | { kind: 'log'; message: string }
   | { kind: 'display'; template: string }
-  | { kind: 'sleep'; durationMs: number }
+  | { kind: 'sleep'; durationMs: string }
   | { kind: 'setVariables'; assignments: VariableAssignmentState[] }
-  | { kind: 'while'; condition: ConditionState; maxIterations: number }
+  | { kind: 'while'; condition: ConditionState; maxIterations: string }
   | { kind: 'break' }
   | { kind: 'continue' }
   /** Complete inline request stored in the flow and edited in a workbench tab (spec 0086). */
@@ -36,9 +36,9 @@ export type SimpleNodeKindState =
   /** Dependent mock blocks reference the mockStart node that started their server (spec 0121). */
   | { kind: 'mockStart'; source: MockServerSourceState }
   | { kind: 'mockStop'; startNodeId: string }
-  | { kind: 'mockWaitRequest'; startNodeId: string; routeId: string; timeoutMs: number }
+  | { kind: 'mockWaitRequest'; startNodeId: string; routeId: string; timeoutMs: string }
   | { kind: 'mockSetResponse'; startNodeId: string; routeId: string; responseId: string | null }
-  | { kind: 'mockAssertCalls'; startNodeId: string; routeId: string; operator: MockCallCountOperatorState; count: number }
+  | { kind: 'mockAssertCalls'; startNodeId: string; routeId: string; operator: MockCallCountOperatorState; count: string }
 
 export type SimpleNodeKind = SimpleNodeKindState['kind']
 
