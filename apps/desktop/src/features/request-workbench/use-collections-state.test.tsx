@@ -7,6 +7,15 @@ import { useCollectionsState } from './use-collections-state'
 
 const listCollections = vi.fn()
 const saveCollections = vi.fn()
+const exportCollections = vi.fn()
+const pickExportFile = vi.fn()
+
+vi.mock('../../bindings/export-collections', () => ({
+  exportCollections: (...args: unknown[]) => exportCollections(...args),
+}))
+vi.mock('../../bindings/pick-export-file', () => ({
+  pickExportFile: (...args: unknown[]) => pickExportFile(...args),
+}))
 
 vi.mock('../../bindings/list-collections', () => ({
   listCollections: (...args: unknown[]) => listCollections(...args),
@@ -24,7 +33,7 @@ function wrapper({ children }: { children: ReactNode }) {
   )
 }
 
-/** Mais que o debounce do salvamento automático. */
+/** Wait longer than the autosave debounce. */
 const afterSaveDebounce = () => new Promise((resolve) => setTimeout(resolve, 700))
 
 describe('useCollectionsState — leitura que falha', () => {
@@ -94,5 +103,31 @@ describe('useCollectionsState — rótulos', () => {
       { name: 'Legado', color: 'gray' },
     ])
     expect(body[0].folders[0]).not.toHaveProperty('labels')
+  })
+})
+
+describe('useCollectionsState — folder export', () => {
+  it('exports only the selected subtree and deduplicates descendants in batch export', async () => {
+    const nested = { id: 'f2', name: 'Nested', folders: [], requests: [], variables: [], authentication: { type: 'inherit' } }
+    const folder = {
+      id: 'f1', name: 'Orders', folders: [nested], requests: [],
+      authentication: { type: 'none' },
+      variables: [{ key: 'baseUrl', value: 'https://example.com', enabled: true }],
+    }
+    listCollections.mockResolvedValue({
+      ok: true,
+      value: [{ id: 'c1', name: 'API', folders: [folder], requests: [], authentication: { type: 'inherit' } }],
+    })
+    exportCollections.mockReset().mockResolvedValue({ ok: true })
+    pickExportFile.mockReset().mockResolvedValue('/export/orders.alcy.json')
+    const { result } = renderHook(() => useCollectionsState('/workspace', vi.fn()), { wrapper })
+    await waitFor(() => expect(result.current.loaded).toBe(true))
+
+    await act(() => result.current.exportCollection('f1'))
+    expect(pickExportFile).toHaveBeenCalledWith('Orders')
+    expect(exportCollections).toHaveBeenLastCalledWith('/export/orders.alcy.json', [folder])
+
+    await act(() => result.current.exportCollectionsByIds(['f2', 'f1']))
+    expect(exportCollections).toHaveBeenLastCalledWith('/export/orders.alcy.json', [folder])
   })
 })

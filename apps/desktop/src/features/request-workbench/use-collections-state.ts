@@ -34,6 +34,7 @@ import { assignCollectionLabel, recolorLabelEverywhere, removeLabelEverywhere, r
 import {
   allFolderIds,
   sortNodeChildren,
+  topLevelSelection,
   duplicateRequest as duplicateRequestInTree,
   emptyRequestContent,
   findAncestorIds,
@@ -569,12 +570,12 @@ export function useCollectionsState(
     [collections, t, showToast],
   )
 
-  /** Export multiple selected collections into one file (spec 0104). */
+  /** Export selected collections and folders into one file, excluding selected descendants. */
   const exportCollectionsByIds = useCallback(
     async (ids: string[]) => {
-      const nodes = ids
-        .map((id) => collections.find((collection) => collection.id === id))
-        .filter((node): node is TreeNode => node !== undefined)
+      const nodes = topLevelSelection(collections, new Set(ids))
+        .map((id) => findNode(collections, id))
+        .filter((node): node is TreeNode => node !== null)
       if (nodes.length === 0) return
       const defaultName =
         nodes.length === 1 ? nodes[0].name || t('collections.newCollectionName') : t('collections.exportAllFileName')

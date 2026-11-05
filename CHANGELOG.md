@@ -15,6 +15,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Changed
 
+- Pastas também podem ser exportadas no formato Alcy, individualmente ou junto com outras pastas e collections.
+
 - Ao voltar para uma aba, a resposta continua onde você parou: mesma rolagem, cursor e trechos recolhidos, e a busca (Ctrl+F) segue aberta com o mesmo texto e a mesma ocorrência selecionada.
 - Com um texto selecionado no editor, Ctrl+F já abre a busca procurando por ele.
 - O menu de opções de um monitor de valores tem "Mencionar no chat", como as demais listas.

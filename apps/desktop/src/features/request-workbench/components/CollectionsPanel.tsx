@@ -718,19 +718,16 @@ function FolderRow({
           >
             {showExportOptions ? (
               <>
-                {kind === 'collection' && (
-                  <MenuItem
-                    label={t('collections.exportMenu.alcy')}
-                    autoFocus
-                    onSelect={() => {
-                      onExport(node.id)
-                      onCloseMenu()
-                    }}
-                  />
-                )}
+                <MenuItem
+                  label={t('collections.exportMenu.alcy')}
+                  autoFocus
+                  onSelect={() => {
+                    onExport(node.id)
+                    onCloseMenu()
+                  }}
+                />
                 <MenuItem
                   label={t('collections.exportMenu.webclient')}
-                  autoFocus={kind !== 'collection'}
                   disabled={!containsRequest(node)}
                   onSelect={() => {
                     onExportWebclient(node.id)
@@ -806,19 +803,16 @@ function FolderRow({
             {FEATURE_FLAGS.webclientExport ? (
               <MenuItem
                 label={t('collections.exportMenuItem')}
-                disabled={kind === 'folder' && !containsRequest(node)}
                 onSelect={() => setShowExportOptions(true)}
               />
             ) : (
-              kind === 'collection' && (
-                <MenuItem
-                  label={t('collections.exportMenuItem')}
-                  onSelect={() => {
-                    onExport(node.id)
-                    onCloseMenu()
-                  }}
-                />
-              )
+              <MenuItem
+                label={t('collections.exportMenuItem')}
+                onSelect={() => {
+                  onExport(node.id)
+                  onCloseMenu()
+                }}
+              />
             )}
             <MenuSeparator />
             <MenuItem
@@ -1042,6 +1036,7 @@ export function CollectionsPanel({
   const selection = useMemo(() => topLevelSelection(collections, selectedIds), [collections, selectedIds])
   const isCollectionId = (id: string) => collections.some((collection) => collection.id === id)
   const selectionHasCollection = selection.some(isCollectionId)
+  const selectionOnlyFolders = selection.length > 0 && selection.every((id) => findNode(collections, id) !== null)
   const selectionOnlyCollections = selection.length > 0 && selection.every(isCollectionId)
   const selectionRemovalCounts = useMemo(
     () => selection.reduce(
@@ -1596,7 +1591,7 @@ export function CollectionsPanel({
             <IconButton
               icon={<DownloadIcon size={13} />}
               label={t('collections.exportMenuItem')}
-              disabled={!selectionOnlyCollections}
+              disabled={!selectionOnlyFolders}
               onClick={() => onExportCollections(selection)}
             />
             <IconButton

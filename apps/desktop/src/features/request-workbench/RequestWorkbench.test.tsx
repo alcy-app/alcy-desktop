@@ -2719,7 +2719,7 @@ describe('RequestWorkbench', () => {
         expect(within(collectionsSidebar()).getByDisplayValue('Nova Collection')).toBeInTheDocument()
       })
 
-      it('oferece o "Formato Alcy" só para Collections de nível raiz', async () => {
+      it('offers Alcy export for collections and empty folders', async () => {
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -2736,12 +2736,13 @@ describe('RequestWorkbench', () => {
         expect(screen.getByRole('menuitem', { name: 'Formato Alcy' })).toBeInTheDocument()
         fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
 
-        // Folder export only offers the webclient, which requires requests.
         openMenu('Nova pasta')
-        expect(screen.getByRole('menuitem', { name: 'Exportar' })).toBeDisabled()
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
+        expect(screen.getByRole('menuitem', { name: 'Formato Alcy' })).toBeEnabled()
+        expect(screen.getByRole('menuitem', { name: 'Como webclient' })).toBeDisabled()
       })
 
-      it('com a flag do webclient desligada, "Exportar" exporta direto e não existe numa pasta', async () => {
+      it('exports folders directly when the webclient flag is disabled', async () => {
         featureFlags.webclientExport = false
         pickExportFile.mockResolvedValue('/export/customer-api.alcy.json')
         render()
@@ -2756,11 +2757,12 @@ describe('RequestWorkbench', () => {
         fireEvent.keyDown(within(collectionsSidebar()).getByLabelText('Nome'), { key: 'Enter' })
 
         openMenu('Nova pasta')
-        expect(screen.queryByRole('menuitem', { name: 'Exportar' })).toBeNull()
-        fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
-
-        openMenu('Nova Collection')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
+        await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith(
+          '/export/customer-api.alcy.json',
+          [expect.objectContaining({ name: 'Nova pasta', folders: [], requests: [] })],
+        ))
+        expect(pickExportFile).toHaveBeenCalledWith('Nova pasta')
 
         expect(screen.queryByRole('menuitem', { name: 'Como webclient' })).toBeNull()
         await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith('/export/customer-api.alcy.json', expect.any(Array)))

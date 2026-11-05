@@ -317,25 +317,31 @@ describe('CollectionsPanel — exportar', () => {
     expect(onExportWebclient).toHaveBeenCalledWith('c1')
   })
 
-  it('numa pasta, oferece só o webclient', () => {
+  it('offers Alcy and webclient export for a folder', () => {
+    const onExportCollection = vi.fn()
     const onExportWebclient = vi.fn()
     const collections = [node('c1', 'Customer API', [node('f1', 'Orders', [], [request('r1', 'List')])])]
-    renderPanel(collections, new Map(), new Set(['c1']), noop, noop, { onExportWebclient })
+    renderPanel(collections, new Map(), new Set(['c1']), noop, noop, { onExportCollection, onExportWebclient })
 
     fireEvent.contextMenu(screen.getByText('Orders'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
 
-    expect(screen.queryByRole('menuitem', { name: 'Formato Alcy' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Formato Alcy' }))
+    expect(onExportCollection).toHaveBeenCalledWith('f1')
+    fireEvent.contextMenu(screen.getByText('Orders'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Como webclient' }))
     expect(onExportWebclient).toHaveBeenCalledWith('f1')
   })
 
-  it('sem requisições, desabilita o webclient (e a exportação de uma pasta)', () => {
+  it('allows empty folder export while disabling the webclient', () => {
     const collections = [node('c1', 'Customer API', [node('f1', 'Empty')])]
     renderPanel(collections, new Map(), new Set(['c1']))
 
     fireEvent.contextMenu(screen.getByText('Empty'))
-    expect(screen.getByRole('menuitem', { name: 'Exportar' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
+    expect(screen.getByRole('menuitem', { name: 'Formato Alcy' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: 'Como webclient' })).toBeDisabled()
 
     fireEvent.contextMenu(screen.getByText('Customer API'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
@@ -549,7 +555,18 @@ describe('CollectionsPanel — seleção múltipla', () => {
     expect(within(selectionBar()).getByRole('button', { name: 'Mover' })).toBeDisabled()
   })
 
-  it('exporta em lote só quando todos os selecionados são coleções', () => {
+  it('exports a mixed selection of collections and folders', () => {
+    const onExportCollections = vi.fn()
+    const collections = [node('c1', 'Customer API', [node('f1', 'Orders')]), node('c2', 'Billing')]
+    renderPanel(collections, new Map(), new Set(['c1']), noop, noop, { onExportCollections })
+
+    fireEvent.click(screen.getByText('Orders'), { ctrlKey: true })
+    fireEvent.click(screen.getByText('Billing'), { ctrlKey: true })
+    fireEvent.click(within(selectionBar()).getByRole('button', { name: 'Exportar' }))
+    expect(onExportCollections).toHaveBeenCalledWith(['f1', 'c2'])
+  })
+
+  it('exports collections in batch and disables export for requests', () => {
     const onExportCollections = vi.fn()
     const collections = [node('c1', 'Customer API', [], [request('r1', 'Get user')]), node('c2', 'Billing')]
     renderPanel(collections, new Map(), new Set(['c1']), noop, noop, { onExportCollections })
