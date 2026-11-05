@@ -1737,6 +1737,7 @@ const en: Record<TranslationKey, string> = {
   'flows.canvas.copyVariableAria': 'Copy {reference}',
   'flows.canvas.connectSelfLoopToast': 'A node cannot connect to itself.',
   'flows.canvas.connectDuplicateToast': 'That connection already exists.',
+  'flows.canvas.manageNode': 'Manage',
   'flows.canvas.deleteNodeAria': 'Delete this node',
   'flows.canvas.duplicateNodeAria': 'Duplicate this node',
   'flows.canvas.openNodeSettingsAria': 'Open this node\'s settings',

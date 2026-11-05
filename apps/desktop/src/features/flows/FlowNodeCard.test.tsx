@@ -49,16 +49,34 @@ describe('FlowNodeCard', () => {
     expect(screen.getByRole('status')).toHaveTextContent('variável ausente')
   })
 
-  it('opens the inspector from the title and node actions from the menu', () => {
+  it('opens the inspector from the title with the keyboard, not with a single mouse click', () => {
+    const onOpenSettings = vi.fn()
+    renderCard(<FlowNodeCard kind="sleep" onOpenSettings={onOpenSettings} onDuplicate={vi.fn()} onDelete={vi.fn()} />)
+    const title = screen.getByRole('button', { name: 'Abrir configurações deste node' })
+
+    // A mouse click has `detail` 1 and only selects the block; the canvas opens settings on a double click.
+    fireEvent.click(title, { detail: 1 })
+    expect(onOpenSettings).not.toHaveBeenCalled()
+
+    // Enter/Space fire a click with `detail` 0.
+    fireEvent.click(title, { detail: 0 })
+    expect(onOpenSettings).toHaveBeenCalledOnce()
+  })
+
+  it('lists Manage first in the node actions menu, opening the settings', () => {
     const onOpenSettings = vi.fn()
     const onDuplicate = vi.fn()
     renderCard(<FlowNodeCard kind="sleep" onOpenSettings={onOpenSettings} onDuplicate={onDuplicate} onDelete={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Abrir configurações deste node' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ações do bloco' }))
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Gerenciar', 'Duplicar este node', 'Excluir este node'])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Gerenciar' }))
     expect(onOpenSettings).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: 'Ações do bloco' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicar este node' }))
     expect(onDuplicate).toHaveBeenCalledOnce()
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
   it('opens node actions from a right-click on the block', () => {

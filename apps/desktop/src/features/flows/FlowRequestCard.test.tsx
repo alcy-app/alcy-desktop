@@ -19,7 +19,7 @@ describe('compact request overview', () => {
     expect(screen.getByText('Falha')).toBeInTheDocument()
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
     expect(screen.queryByText(request.content.postResponseScript)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Abrir configurações deste node' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir configurações deste node' }), { detail: 0 })
     expect(onOpenSettings).toHaveBeenCalledOnce()
   })
 
@@ -46,5 +46,19 @@ describe('compact request overview', () => {
     expect(tokens[0]).toHaveAttribute('title', 'base_url = https://api.test')
     expect(tokens[1].getAttribute('title')).toBeTruthy()
     expect(container.querySelector('.flow-node-request-picker')).toHaveTextContent(templatedRequest.content.endpointUrl)
+  })
+
+  it('opens an inline request editor from its URL on a double click, not a single one', () => {
+    const onEditRequest = vi.fn<() => void>()
+    const inline = simpleFlowNode('inline', { x: 0, y: 0 }, { kind: 'inlineRequest', request })
+    const props = { id: inline.id, data: { ...inline.data, onEditRequest: () => onEditRequest() } } as NodeProps<SimpleFlowNodeType>
+    const { container } = render(<ReactFlowProvider><InlineRequestNode {...props} /></ReactFlowProvider>)
+    const summary = container.querySelector('.flow-node-request-picker') as HTMLElement
+
+    fireEvent.click(summary, { detail: 1 })
+    expect(onEditRequest).not.toHaveBeenCalled()
+
+    fireEvent.doubleClick(summary)
+    expect(onEditRequest).toHaveBeenCalledOnce()
   })
 })

@@ -21,6 +21,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Selecione um trecho da resposta e use "Compartilhar como imagem" no menu do botão direito: a imagem mostra só as linhas escolhidas, com a numeração original, e você decide se inclui nome, URL e status.
 - Variáveis `{{nome}}` ficam mais fáceis de ler, selecionar e editar na URL, nos parâmetros e no body: a variável em edição ou selecionada fica destacada, e a pré-visualização não abre mais no meio de uma seleção.
 - Na URL, a lista de sugestões de variáveis abre logo abaixo do `{{` digitado.
+- Nos flows, um clique só seleciona o bloco; as configurações abrem com duplo clique ou pela opção "Gerenciar" do menu do bloco.
+- No console, os detalhes de uma requisição mostram também o body enviado, junto dos headers.
 
 ### Fixed
 

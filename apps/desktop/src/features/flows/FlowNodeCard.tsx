@@ -72,7 +72,8 @@ export function FlowNodeCard({ kind, title, subtitle, titleBadge, headerControls
             onKeyDown={() => setTitlePointerInteraction(false)}
             onBlur={() => setTitlePointerInteraction(false)}
             onMouseDown={(event) => { event.stopPropagation(); startNodeDragFromChassis(chassisRef.current, event) }}
-            onClick={(event) => { event.stopPropagation(); onOpenSettings() }}
+            // A mouse click selects the block like a click anywhere on it (settings open on a double click); Enter/Space still open them.
+            onClick={(event) => { if (event.detail !== 0) return; event.stopPropagation(); onOpenSettings() }}
           >{resolvedTitle}</button> : <span className="flow-node-title" title={resolvedTitle}>{resolvedTitle}</span>}
         </div>
         {compact && kind === 'start' && <span className="flow-node-subtitle">{subtitle ?? t(appearance.descriptionKey)}</span>}
@@ -81,6 +82,7 @@ export function FlowNodeCard({ kind, title, subtitle, titleBadge, headerControls
       {chip && <span className={`flow-node-run-chip flow-node-status--${chip.tone}`} title={[chip.label, chip.detail].filter(Boolean).join(' · ')}>{chip.label}</span>}
       {!readOnly && (onDuplicate || onDelete) && <div className="nodrag nopan" onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
         <OptionsMenu label={t('flows.canvas.nodeActions')} isOpen={menuOpen} onToggle={() => setMenuOpen(!menuOpen)} onClose={() => setMenuOpen(false)} menuPortal menuPlacement="auto">
+          {onOpenSettings && <MenuItem label={t('flows.canvas.manageNode')} onSelect={() => { setMenuOpen(false); onOpenSettings() }} />}
           {onDuplicate && <MenuItem label={t('flows.canvas.duplicateNodeAria')} onSelect={() => { setMenuOpen(false); onDuplicate() }} />}
           {onDelete && <MenuItem label={t('flows.canvas.deleteNodeAria')} danger onSelect={() => { setMenuOpen(false); onDelete() }} />}
         </OptionsMenu>

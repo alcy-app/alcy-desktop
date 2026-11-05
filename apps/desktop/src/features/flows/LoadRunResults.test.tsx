@@ -134,7 +134,7 @@ describe('load run results', () => {
     flow.nodes.push({ id: 'scenario', kind: 'load', loadKind: 'scenario', label: 'Scenario', config: '{"executor":"constantVus","vus":1,"durationMs":1000}', position: { x: 300, y: 0 } })
     const session = renderHook(() => useLoadFlowRunSession('/load-results-tests', flow.id))
     const view = render(<FlowCanvas rootPath="/load-results-tests" flow={flow} collections={[]} environmentVariables={[]} onChange={vi.fn()} />, { wrapper })
-    fireEvent.click(view.container.querySelector('[data-id="scenario"]')!)
+    fireEvent.doubleClick(view.container.querySelector('[data-id="scenario"]')!)
     const canvas = view.container.querySelector('.flow-canvas')!
     const inspector = view.container.querySelector('.flow-studio-inspector')!
     expect(inspector).toBeVisible()

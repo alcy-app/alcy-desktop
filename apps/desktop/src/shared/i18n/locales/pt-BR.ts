@@ -1731,6 +1731,7 @@ const ptBR = {
   'flows.canvas.copyVariableAria': 'Copiar {reference}',
   'flows.canvas.connectSelfLoopToast': 'Um node não pode se conectar a si mesmo.',
   'flows.canvas.connectDuplicateToast': 'Essa conexão já existe.',
+  'flows.canvas.manageNode': 'Gerenciar',
   'flows.canvas.deleteNodeAria': 'Excluir este node',
   'flows.canvas.duplicateNodeAria': 'Duplicar este node',
   'flows.canvas.openNodeSettingsAria': 'Abrir configurações deste node',

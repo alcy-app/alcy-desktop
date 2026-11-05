@@ -1271,7 +1271,8 @@ export function FlowCanvas({
         connectionLineType={ConnectionLineType.SmoothStep}
         onNodesChange={onNodesChange}
         onNodeDoubleClick={(_event, node) => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }}
-        onNodeClick={(_event, node) => { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') }}
+        // A single click only selects the block (to move or connect it); a double click opens its settings. With the settings already open, they follow the clicked block.
+        onNodeClick={(_event, node) => { if (selectedNodeId !== null && selectedNodeId !== node.id) { setSelectedNodeId(node.id); setMappingNodeId(node.id); setInspectorTab('configuration') } }}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
