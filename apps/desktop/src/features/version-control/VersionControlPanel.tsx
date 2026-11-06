@@ -15,6 +15,11 @@ import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Modal } from '../../shared/ui/Modal'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { useTooltip } from '../../shared/ui/use-tooltip'
+import { GitHistory } from './GitHistory'
+import { GitBranches, GitMergeBanner, GitSharedFolder } from './GitWorkspace'
+import { syncSharedFolder } from './git-sync'
+import { useGitState } from './use-git-state'
+import { GitLinkForm } from './GitLinkForm'
 import { LinkWorkspaceForm } from './LinkWorkspaceForm'
 import { OnedriveLinkForm } from './OnedriveLinkForm'
 import { DiffView } from './DiffView'
@@ -28,7 +33,9 @@ const DETAIL_PAGE_SIZE = 200
 /** Required by the shared push command; the OneDrive provider ignores it. */
 const ONEDRIVE_PUSH_MESSAGE = 'Alcy'
 
-type Provider = 'gitlab' | 'onedrive'
+type Provider = 'gitlab' | 'onedrive' | 'git'
+
+const PROVIDER_LABELS: Record<Provider, string> = { gitlab: 'GitLab', onedrive: 'OneDrive', git: 'Git' }
 
 const STATE_MARKERS: Record<FileState, string> = { clean: '', localAdded: 'A', localModified: 'M', localDeleted: 'D', remoteChanged: '↓', conflict: '!' }
 
@@ -50,7 +57,8 @@ interface VersionControlPanelProps {
   rootPath: string
   vc: VersionControl
   onClose?: () => void
-  onOpenSettings: () => void
+  /** Opens the settings; `git` goes straight to the git author. */
+  onOpenSettings: (category?: 'git') => void
   onReview?: (target: VersionReviewTarget) => void
   onPull: () => void
   onResolveConflict: (fileName: string, changes: StructuredFileChangesDto) => void
@@ -65,14 +73,16 @@ export function VersionControlPanel(props: VersionControlPanelProps) {
   const providers: Provider[] = [
     ...(FEATURE_FLAGS.gitlab && gitlab.accounts.length > 0 ? ['gitlab' as const] : []),
     ...(FEATURE_FLAGS.onedrive && onedrive.accounts.length > 0 ? ['onedrive' as const] : []),
+    // A git folder needs no account.
+    ...(FEATURE_FLAGS.localGit ? ['git' as const] : []),
   ]
   const body = !props.vc.linkLoaded || !accountsLoaded ? (
     <p className="vc-muted" role="status">{t('vc.panel.loading')}</p>
   ) : props.vc.link === null ? (
     providers.length === 0 ? (
-      <EmptyState icon={<GitIcon size={28} />} title={t('vc.panel.noAccountTitle')} description={t('vc.panel.noAccountDescription')} action={<Button onClick={props.onOpenSettings}>{t('vc.panel.openSettings')}</Button>} />
+      <EmptyState icon={<GitIcon size={28} />} title={t('vc.panel.noAccountTitle')} description={t('vc.panel.noAccountDescription')} action={<Button onClick={() => props.onOpenSettings()}>{t('vc.panel.openSettings')}</Button>} />
     ) : (
-      <LinkWorkspaceChooser providers={providers} vc={props.vc} />
+      <LinkWorkspaceChooser providers={providers} vc={props.vc} rootPath={props.rootPath} />
     )
   ) : <LinkedView {...props} />
 
@@ -85,15 +95,18 @@ export function VersionControlPanel(props: VersionControlPanelProps) {
   return <Modal title={t('vc.panel.title')} closeAriaLabel={t('vc.panel.close')} onClose={props.onClose ?? (() => {})} className="vc-modal">{body}</Modal>
 }
 
-/** Link form of the chosen provider; the choice only shows when both have accounts. */
-function LinkWorkspaceChooser({ providers, vc }: { providers: Provider[]; vc: VersionControl }) {
+/** Link form of the chosen provider; the choice only shows when more than one is available. */
+function LinkWorkspaceChooser({ providers, vc, rootPath }: { providers: Provider[]; vc: VersionControl; rootPath: string }) {
   const { t } = useLanguage()
   const [chosen, setChosen] = useState<Provider>(providers[0])
   const provider = providers.includes(chosen) ? chosen : providers[0]
   const formProps = {
     busy: vc.busy === 'link',
     error: vc.error ? gitlabErrorMessage(vc.error, t) : null,
-    onSubmit: (params: LinkParams) => void vc.linkTo(params),
+    onSubmit: (params: LinkParams) => void vc.linkTo(params).then((result) => {
+      // Joining a shared folder: bring in what is already published there.
+      if (result.ok && params.provider === 'git' && params.sharedFolder) void syncSharedFolder(vc, rootPath, t)
+    }),
     onCancelBusy: vc.cancel,
   }
   return <div className="vc-link-form">
@@ -103,13 +116,13 @@ function LinkWorkspaceChooser({ providers, vc }: { providers: Provider[]; vc: Ve
       onChange={setChosen}
       layout="inline"
       size="sm"
-      options={[{ value: 'gitlab', label: 'GitLab' }, { value: 'onedrive', label: 'OneDrive' }]}
+      options={providers.map((value) => ({ value, label: PROVIDER_LABELS[value] }))}
     />}
-    {provider === 'gitlab' ? <LinkWorkspaceForm {...formProps} /> : <OnedriveLinkForm {...formProps} />}
+    {provider === 'gitlab' ? <LinkWorkspaceForm {...formProps} /> : provider === 'git' ? <GitLinkForm {...formProps} /> : <OnedriveLinkForm {...formProps} />}
   </div>
 }
 
-function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: VersionControlPanelProps) {
+function LinkedView({ rootPath, vc, onOpenSettings, onReview, onPull, onResolveConflict }: VersionControlPanelProps) {
   const { t } = useLanguage()
   const [detailEntries, setDetailEntries] = useState<Record<string, DetailEntry>>({})
   const [detailLoading, setDetailLoading] = useState<Set<string>>(new Set())
@@ -119,6 +132,9 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
   const [menuOpen, setMenuOpen] = useState(false)
   const moreTooltip = useTooltip(t('vc.action.more'), { enabled: !menuOpen })
   const [inlineReview, setInlineReview] = useState<{ name: string; direction: 'outgoing' | 'incoming' } | null>(null)
+  const isGit = vc.link?.provider === 'git'
+  const gitEntry = useGitState(rootPath, isGit, `${vc.gitVersion}:${vc.statusVersion}`)
+  const gitState = isGit ? gitEntry?.state ?? null : null
   const detailRequests = useRef(new Map<string, DetailRequest>())
   const detailFiles = useMemo(() => vc.files.filter((file) => file.state !== 'clean'), [vc.files])
   const detailKeys = useMemo(() => Object.fromEntries(detailFiles.map((file) => [
@@ -201,7 +217,9 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
   })
   const working = vc.busy !== null
   // A drive has nowhere to keep a commit message: OneDrive pushes without one.
-  const needsMessage = vc.link.provider === 'gitlab'
+  const needsMessage = vc.link.provider !== 'onedrive'
+  // A pending git merge is finished from its banner, not with a commit.
+  const merging = gitState?.merge != null
   const canPush = vc.stagedSelections.length > 0 && conflicts.length === 0 && (!needsMessage || vc.message.trim() !== '') && !working
   const push = () => vc.push(needsMessage ? vc.message : ONEDRIVE_PUSH_MESSAGE, vc.stagedSelections)
   const toggleSection = (kind: CollapsibleSection) => setCollapsed((current) => {
@@ -239,7 +257,7 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
 
   return <div className="vc-linked">
     <div className="vc-repository">
-      <div className="vc-repository-name">{vc.link.provider === 'gitlab' ? <GitIcon size={15} /> : <FolderIcon size={15} />}<span>{remoteLocation(vc.link)}</span></div>
+      <div className="vc-repository-name">{vc.link.provider === 'onedrive' ? <FolderIcon size={15} /> : <GitIcon size={15} />}<span>{remoteLocation(vc.link)}</span></div>
       <div className="vc-repository-actions">
         <IconButton icon={vc.busy === 'pull' ? <Spinner size={13} /> : <GitPullIcon size={13} />} label={t('vc.action.pull')} disabled={working} onClick={onPull} />
         <IconButton icon={vc.checking ? <Spinner size={13} /> : <RefreshIcon size={13} />} label={t('vc.action.refresh')} disabled={working} onClick={() => void vc.refresh()} />
@@ -250,10 +268,14 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
     </div>
 
     <div className="vc-linked-body">
-      {needsMessage && <Input className="vc-commit-message" id="vc-commit-message" value={vc.message} aria-label={t('vc.commit.messageLabel')} placeholder={t('vc.commit.messagePlaceholder')} disabled={working} onChange={(event) => vc.setMessage(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canPush) void push() }} />}
-      <Button className="vc-primary-action" isLoading={vc.busy === 'push'} disabled={!canPush} onClick={() => void push()}>{needsMessage ? t('vc.action.commitAndPush') : t('vc.action.push')}</Button>
+      {isGit && gitEntry?.error && <InlineAlert>{gitlabErrorMessage(gitEntry.error, t)}</InlineAlert>}
+      {gitState && <GitBranches rootPath={rootPath} vc={vc} state={gitState} />}
+      {gitState?.merge && <GitMergeBanner rootPath={rootPath} vc={vc} label={gitState.merge.label} />}
+      {needsMessage && !merging && <Input className="vc-commit-message" id="vc-commit-message" value={vc.message} aria-label={t('vc.commit.messageLabel')} placeholder={t('vc.commit.messagePlaceholder')} disabled={working} onChange={(event) => vc.setMessage(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canPush) void push() }} />}
+      {!merging && <Button className="vc-primary-action" isLoading={vc.busy === 'push'} disabled={!canPush} onClick={() => void push()}>{isGit ? t('vc.action.commit') : needsMessage ? t('vc.action.commitAndPush') : t('vc.action.push')}</Button>}
 
       {vc.error && <InlineAlert>{gitlabErrorMessage(vc.error, t)}</InlineAlert>}
+      {vc.error?.kind === 'gitIdentityMissing' && <Button variant="ghost" onClick={() => onOpenSettings('git')}>{t('vc.git.configureAuthor')}</Button>}
       {loadError && Object.values(detailKeys).includes(loadError.key) && <InlineAlert>{loadError.message}</InlineAlert>}
       {vc.notice && <p className="vc-notice" role="status">{vc.notice}</p>}
 
@@ -270,6 +292,8 @@ function LinkedView({ rootPath, vc, onReview, onPull, onResolveConflict }: Versi
       <ChangeSection kind="changes" files={changedFiles} details={details} detailLoading={loadingDetailNames} expanded={expanded} collapsed={collapsed.has('changes')} vc={vc} onToggle={() => toggleSection('changes')} onToggleFile={toggleFile} onLoadDetail={loadDetail} onStageItem={stageItemWithDependencies} onReview={openReview} />
 
       {vc.summary === 'clean' && !vc.checking && conflicts.length === 0 && upcomingFiles.length === 0 && localFiles.length === 0 && <p className="vc-clean-state">{t('vc.changes.empty')}</p>}
+      {gitState && <GitSharedFolder rootPath={rootPath} vc={vc} state={gitState} />}
+      {gitState && <GitHistory rootPath={rootPath} vc={vc} reloadKey={`${vc.gitVersion}:${gitState.branch}:${vc.files.map((file) => `${file.name}:${file.remoteRevision ?? ''}`).join('|')}`} />}
       {inlineReview && <DiffView rootPath={rootPath} fileName={inlineReview.name} version={vc.files} remoteRevision={vc.files.find((file) => file.name === inlineReview.name)?.remoteRevision} direction={inlineReview.direction} onClose={() => setInlineReview(null)} />}
     </div>
   </div>

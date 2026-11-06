@@ -5,6 +5,9 @@ import type { GitlabCommandError, VersionStatusDto } from './gitlab-types'
 export type LinkTarget =
   | { provider: 'gitlab'; accountId: string; projectId: number; projectPath: string; branch: string; directory: string }
   | { provider: 'onedrive'; accountId: string; driveId: string; folderId: string }
+  /** Creates (or adopts) the git repository in the workspace folder, on
+   * `main`; with `sharedFolder`, joins it (the next sync brings its work). */
+  | { provider: 'git'; sharedFolder?: string }
 
 export type LinkWorkspaceInput = LinkTarget & {
   rootPath: string

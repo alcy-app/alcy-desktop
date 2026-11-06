@@ -7,6 +7,10 @@ describe('FEATURE_FLAGS', () => {
     expect(FEATURE_FLAGS.onedrive).toBe(false)
   })
 
+  it('ships git in the workspace on in this build', () => {
+    expect(FEATURE_FLAGS.localGit).toBe(true)
+  })
+
   it('keeps workspace documents behind their flag, off in this build', () => {
     expect(FEATURE_FLAGS.documents).toBe(false)
   })

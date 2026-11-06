@@ -20,7 +20,15 @@ const FOCUS_REFRESH_MIN_INTERVAL_MS = 30_000
  * verificar — agrupa vários arquivos salvos em sequência numa única consulta. */
 const LOCAL_CHANGE_DEBOUNCE_MS = 1_000
 
-export type VersionBusy = 'link' | 'pull' | 'push' | 'resolve'
+export type VersionBusy = 'link' | 'pull' | 'push' | 'resolve' | 'git'
+
+/** What a finished git operation changed, for `runGit`. */
+export interface GitOperationEffect {
+  /** Files rewritten on disk: the workspace reloads them. */
+  files?: string[]
+  notice?: string | null
+  link?: WorkspaceLinkDto
+}
 
 export type LinkParams = LinkTarget & { includeEnvironments: boolean }
 
@@ -46,6 +54,8 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
   const [error, setError] = useState<GitlabCommandError | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [statusVersion, setStatusVersion] = useState(0)
+  /** Bumped after every git operation, so git views reload their state. */
+  const [gitVersion, setGitVersion] = useState(0)
 
   const operationRef = useRef<string | null>(null)
   const [sessionRoot, setSessionRoot] = useState(rootPath)
@@ -320,6 +330,26 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
     [refresh, rootPath, runAction],
   )
 
+  /** Runs a git operation (branch, merge, sync…) exclusively, then reloads
+   * the files it rewrote and the status. */
+  const runGit = useCallback(
+    async <T,>(
+      run: (operationId: string) => Promise<{ ok: true; value: T } | { ok: false; error: GitlabCommandError }>,
+      describe: (value: T) => GitOperationEffect,
+    ): Promise<ActionResult> => {
+      const result = await runAction('git', run, (value) => {
+        const effect = describe(value)
+        if (effect.files && effect.files.length > 0) onFilesChangedRef.current(effect.files)
+        if (effect.link) setLink(effect.link)
+        return effect.notice ?? null
+      })
+      setGitVersion((version) => version + 1)
+      if (result.ok) void refresh()
+      return result
+    },
+    [refresh, runAction],
+  )
+
   const stageFile = useCallback((detail: StructuredFileChangesDto) => {
     setStaged((current) => ({
       ...current,
@@ -447,6 +477,8 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       message,
       setMessage,
       statusVersion,
+      gitVersion,
+      runGit,
       staged,
       stagedSelections,
       stageFile,
@@ -476,6 +508,8 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       notice,
       message,
       statusVersion,
+      gitVersion,
+      runGit,
       staged,
       stagedSelections,
       stageFile,

@@ -328,13 +328,13 @@ install updates when it runs from a writable `.app` bundle.
 
 Workspace sync compares three SHA-256 hashes per file (last synced base,
 local, remote) without a local repository. The use cases in `alcy-app` only
-know the `RemoteRepository` and `WorkspaceFiles` ports; `alcy-gitlab` and
-`alcy-onedrive` implement the remote side, and the composition root
-dispatches between them by the link's provider (ADR 0063).
+know the `RemoteRepository` and `WorkspaceFiles` ports; `alcy-gitlab`,
+`alcy-onedrive` and `alcy-git` implement the remote side, and the
+composition root dispatches between them by the link's provider (ADR 0063).
 
 The link (`alcy-git-link.json`) records the provider's location and the base
-hashes. GitLab links keep format v1; OneDrive links use v2, tagged by
-provider, which older builds reject. GitLab commits several files atomically.
+hashes. GitLab links keep format v1; OneDrive and git links use v2, tagged
+by provider, which older builds reject. GitLab commits several files atomically.
 Graph has no multi-file transaction, so OneDrive writes each file guarded by
 its eTag (`If-Match`); a push interrupted midway is reconciled by the next
 status, which adopts as base every file whose local and remote contents
@@ -347,6 +347,33 @@ workspace. Listing goes through the account's joined teams, so visibility is
 exactly SharePoint's permission on that library. Opening one creates the
 local copy, links it and pulls, or reuses a recent copy linked to the same
 folder.
+
+Git in the workspace (ADR 0074, behind the `localGit` feature flag) needs no
+server or account. "Start git in the workspace" creates or adopts
+`<workspace>/.git` on `main`, with a managed `.gitignore` that allow-lists only
+the versioned files; "join a shared workspace" also sets the shared folder,
+and a fresh workspace with no commits takes the published work on its first
+sync. `alcy-git` (`gix`, no git installation) serves the committed
+state as the `RemoteRepository` of the same use cases: "remote" is `HEAD`'s
+tree, or the merge tree while a merge waits for decisions, so status, partial
+commits and per-item conflict resolution are shared with the other providers.
+Commits are built from the `WorkspaceFiles` view, never from git's index,
+which is rewritten from `HEAD` after every operation so the git CLI sees a
+clean tree. Branch switches and merges never overwrite uncommitted files.
+Merges are three-way per file, and per item in the structured files
+(`alcy_app::merge_file`): only the same item changed on both sides is a
+conflict, recorded as a pending merge in `.git/alcy-merge.json`.
+
+Sharing goes through a bare repository in a folder: a network share, or a
+folder synced by OneDrive, Dropbox or Google Drive. A branch file rewritten by
+two machines within the sync latency would silently lose a commit, so each
+installation writes only its own refs, `refs/heads/alcy/<peer>/<branch>`
+(peer id created once per installation), and objects are write-once files
+copied parents first. Sync publishes, then integrates every other person's ref
+whose objects have all arrived; one still arriving is reported as syncing and
+left alone. The author comes from the git config (`user.name`/`user.email`)
+unless overridden in Alcy (`git-identity.json` in app data, never the git
+config files).
 
 ### Workspace documentation
 
@@ -662,6 +689,7 @@ crates/alcy-agent/     # agent model providers (Anthropic, OpenAI-compatible)
 crates/alcy-collection-import/ # import of external collection formats
 crates/alcy-gitlab/    # GitLab client (OAuth PKCE and API v4)
 crates/alcy-onedrive/  # OneDrive/SharePoint client (Microsoft OAuth PKCE and Graph)
+crates/alcy-git/       # git in the workspace and shared folders (gix)
 crates/alcy-load/      # reusable load plan, scheduler, runtime and metrics
 crates/alcy-graphql/   # GraphQL capability
 crates/alcy-grpc/      # gRPC capability (reflection, .proto, streaming)

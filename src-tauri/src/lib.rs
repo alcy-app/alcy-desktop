@@ -11,9 +11,10 @@ use alcy_onedrive::OnedriveClient;
 use alcy_platform::KeyringCredentialStore;
 use alcy_rest::ReqwestRestExecutor;
 use alcy_storage::{
-    ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitlabAccountsStore,
-    LocalSecrets, OnedriveAccountsStore, ProxySettingsStore, RecentWorkspacesStore, SchemaStore,
-    SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore, UsagePreferencesStore,
+    ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitIdentityStore, GitPeerStore,
+    GitlabAccountsStore, LocalSecrets, OnedriveAccountsStore, ProxySettingsStore,
+    RecentWorkspacesStore, SchemaStore, SecuritySettingsStore, TlsSettingsStore,
+    UpdateSettingsStore, UsagePreferencesStore,
 };
 use commands::agent::{
     AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, compact_agent_session,
@@ -82,6 +83,12 @@ use commands::inspect_load_dataset::inspect_load_dataset;
 use commands::load_dataset_assets::copy_load_dataset_asset;
 use commands::load_schema::load_schema;
 use commands::load_test_import::{analyze_load_test_import, commit_load_test_import};
+use commands::local_git::{
+    LocalGitProvider, abort_git_merge, create_git_branch, delete_git_branch, finish_git_merge,
+    get_git_commit_changes, get_git_history, get_git_identity, get_git_peers, get_git_state,
+    merge_git_branch, restore_git_file, save_git_identity, set_git_shared_folder,
+    switch_git_branch, sync_git_shared_folder,
+};
 use commands::mock_servers::{
     MockServerRuntime, clear_mock_calls, delete_mock_server, get_mock_server, list_mock_calls,
     list_mock_servers, save_mock_server, start_mock_server, stop_mock_server, validate_mock_server,
@@ -332,6 +339,10 @@ pub fn run_with(extensions: Vec<Extension>) {
             app.manage(GitlabAccountsStore::new(
                 app_data_dir.join("gitlab-accounts.json"),
             ));
+            app.manage(LocalGitProvider::new(
+                GitIdentityStore::new(app_data_dir.join("git-identity.json")),
+                GitPeerStore::new(app_data_dir.join("git-peer-id")),
+            ));
             app.manage(OnedriveProvider {
                 client: OnedriveClient::new(),
                 accounts: OnedriveAccountsStore::new(app_data_dir.join("onedrive-accounts.json")),
@@ -555,6 +566,21 @@ pub fn run_with(extensions: Vec<Extension>) {
                 preview_pull_changes,
                 pull_changes,
                 resolve_conflict,
+                get_git_state,
+                create_git_branch,
+                switch_git_branch,
+                delete_git_branch,
+                merge_git_branch,
+                finish_git_merge,
+                abort_git_merge,
+                get_git_history,
+                get_git_commit_changes,
+                restore_git_file,
+                set_git_shared_folder,
+                get_git_peers,
+                sync_git_shared_folder,
+                get_git_identity,
+                save_git_identity,
                 list_collections,
                 save_collections,
                 export_collections,

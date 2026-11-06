@@ -17,6 +17,7 @@ mod flow_form;
 pub use flow_form::*;
 mod flow_folder;
 mod general_settings;
+mod git_identity;
 mod gitlab;
 mod grpc_call;
 mod header;
@@ -75,6 +76,7 @@ pub use general_settings::{
     MAX_HISTORY_RETENTION_DAYS, MAX_REQUEST_TIMEOUT_SECONDS, MAX_RESPONSE_SIZE_LIMIT_MB,
     RequestTimeout, RequestTimeoutError, ResponseSizeLimit, ResponseSizeLimitError,
 };
+pub use git_identity::{GitIdentity, GitIdentityError, GitIdentitySettings};
 pub use gitlab::{GitlabAccount, GitlabAccountError, normalize_instance_url};
 pub use grpc_call::{GrpcCall, GrpcSchemaSource};
 pub use header::{HeaderEntry, HeaderError};
@@ -114,4 +116,5 @@ pub use workspace::{Workspace, WorkspaceError};
 pub use workspace_link::{
     API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, MANIFEST_FILE, RemoteLocation,
     VALUE_MONITORS_FILE, VERSIONED_FILES, WorkspaceLink, WorkspaceLinkError, classify,
+    is_valid_branch_name, normalize_shared_folder,
 };

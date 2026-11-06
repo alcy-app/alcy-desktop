@@ -1,0 +1,24 @@
+[package]
+name = "alcy-git"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+alcy-app = { path = "../alcy-app" }
+alcy-domain = { path = "../alcy-domain" }
+# Pure Rust: reads and writes objects, refs, the index and config without a C
+# toolchain or a git installation (ADR 0074). `revision` brings merge-base;
+# no network, worktree checkout or diff features.
+gix = { version = "0.90", default-features = false, features = ["sha1", "index", "revision"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+tokio = { version = "1", features = ["rt"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

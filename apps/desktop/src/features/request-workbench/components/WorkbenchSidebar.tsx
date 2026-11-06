@@ -17,6 +17,7 @@ import '../../mock-servers/mock-servers.css'
 import { MenuItem } from '../../../shared/ui/Menu'
 import { Tooltip } from '../../../shared/ui/Tooltip'
 import { FEATURE_FLAGS } from '../../../shared/feature-flags'
+import { isVersionControlEnabled } from '../../../shared/version-control-enabled'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import type { CollectionLabelDto, LabelColor, ScopedVariableDto } from '../../../bindings/list-collections'
 import type { HistoryEntrySummaryDto } from '../../../bindings/list-history'
@@ -179,7 +180,7 @@ interface WorkbenchSidebarProps {
   versionControl: {
     rootPath: string
     vc: VersionControl
-    onOpenSettings: () => void
+    onOpenSettings: (category?: 'git') => void
     onReview: (target: VersionReviewTarget) => void
     onPull: () => void
     onResolveConflict: (fileName: string, changes: StructuredFileChangesDto) => void
@@ -359,7 +360,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
         ...(FEATURE_FLAGS.valueMonitors ? [{ id: 'monitors' as const, label: t('monitors.title'), icon: <MonitorIcon size={19} /> }] : []),
         ...(FEATURE_FLAGS.documents ? [{ id: 'documents' as const, label: t('documents.label'), icon: <DocumentIcon size={19} /> }] : []),
         { id: 'history', label: t('environments.historyTab'), icon: <ClockIcon size={19} /> },
-        ...(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
+        ...(isVersionControlEnabled() ? [{ id: 'git' as const, label: t('vc.panel.title'), icon: <GitIcon size={19} /> }] : []),
         ...EXTENSION_SIDEBAR_MODULES.map((module) => ({ id: module.id, label: module.label[language], icon: module.icon })),
         ...(agentModuleLabel !== null ? [{ id: 'agent' as const, label: agentModuleLabel, icon: <RobotIcon size={19} /> }] : []),
       ] satisfies SidebarModuleNavigationItem[],
@@ -582,7 +583,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
             {visibleActiveTab === 'documents' && FEATURE_FLAGS.documents && documentsPanel}
             {visibleActiveTab === 'environments' && <EnvironmentsPanel {...environments} />}
             {visibleActiveTab === 'monitors' && FEATURE_FLAGS.valueMonitors && <ValueMonitorsPanel {...valueMonitors} />}
-            {visibleActiveTab === 'git' && (FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}
+            {visibleActiveTab === 'git' && isVersionControlEnabled() && <VersionControlPanel rootPath={versionControl.rootPath} vc={versionControl.vc} onOpenSettings={versionControl.onOpenSettings} onReview={versionControl.onReview} onPull={versionControl.onPull} onResolveConflict={versionControl.onResolveConflict} embedded />}
             {EXTENSION_SIDEBAR_MODULES.map((module) => visibleActiveTab === module.id && <module.Panel key={module.id} />)}
             {visibleActiveTab === 'agent' && <div ref={agentSlotRef} className="agent-sidebar-slot" />}
           </div>

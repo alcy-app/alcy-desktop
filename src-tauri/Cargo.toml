@@ -20,6 +20,7 @@ alcy-agent = { path = "../crates/alcy-agent" }
 alcy-app = { path = "../crates/alcy-app" }
 alcy-collection-import = { path = "../crates/alcy-collection-import" }
 alcy-domain = { path = "../crates/alcy-domain" }
+alcy-git = { path = "../crates/alcy-git" }
 alcy-gitlab = { path = "../crates/alcy-gitlab" }
 alcy-graphql = { path = "../crates/alcy-graphql" }
 alcy-grpc = { path = "../crates/alcy-grpc" }
@@ -57,6 +58,7 @@ gtk = "0.18"
 webkit2gtk = "2.0"
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 wiremock = "0.6"
 

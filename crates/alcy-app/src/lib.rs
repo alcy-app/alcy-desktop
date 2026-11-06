@@ -113,11 +113,11 @@ pub use usage::{
 };
 pub use version_control::{
     ChangeSelection, ChangedItem, CommitAction, ConflictSide, DiffHunk, DiffLine, DiffLineKind,
-    FieldChange, FileDiff, FileStatus, ItemChangeKind, ItemResolution, MAX_DIFF_BYTES,
+    FieldChange, FileDiff, FileMerge, FileStatus, ItemChangeKind, ItemResolution, MAX_DIFF_BYTES,
     MAX_DIFF_LINES, PreviewField, PullOutcome, PullPreview, PushOutcome, RemoteError,
     RemoteFileMeta, RemoteRepository, Resolution, ResolutionPreview, ResolutionPreviewInput,
     StructuredFileChanges, VersionControlError, VersionStatus, WorkspaceFiles, content_hash,
-    file_diff, local_file_status, preview_conflict_resolution, preview_pull, pull_changes,
-    push_changes, push_selected_changes, resolve_conflict, structured_file_changes,
+    file_diff, local_file_status, merge_file, preview_conflict_resolution, preview_pull,
+    pull_changes, push_changes, push_selected_changes, resolve_conflict, structured_file_changes,
     structured_file_changes_from_content, version_status,
 };

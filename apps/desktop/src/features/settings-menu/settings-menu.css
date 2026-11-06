@@ -1250,3 +1250,15 @@
   font-size: var(--font-size-xs);
   word-break: break-all;
 }
+
+.settings-git-identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-git-identity-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

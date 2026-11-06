@@ -23,6 +23,13 @@ export type GitlabCommandError =
   | { kind: 'browser'; message: string }
   | { kind: 'cancelled' }
   | { kind: 'incompleteResolution'; file: string }
+  | { kind: 'gitIdentityMissing' }
+  | { kind: 'gitNotBare' }
+  | { kind: 'gitNotRepository' }
+  | { kind: 'gitUncommittedChanges'; files: string[] }
+  | { kind: 'gitMergeInProgress' }
+  | { kind: 'gitNoMergeInProgress' }
+  | { kind: 'gitInvalidBranch'; name: string }
 
 export interface GitlabAccountDto {
   id: string
@@ -69,8 +76,16 @@ export interface OnedriveWorkspaceLinkDto {
   includeEnvironments: boolean
 }
 
+/** Git in the workspace folder; the branch lives in the repository's HEAD. */
+export interface GitWorkspaceLinkDto {
+  provider: 'git'
+  /** Folder (network or synced by OneDrive, Dropbox…) shared with others. */
+  sharedFolder: string | null
+  includeEnvironments: boolean
+}
+
 /** Vínculo do workspace com o remoto, por provider. */
-export type WorkspaceLinkDto = GitlabWorkspaceLinkDto | OnedriveWorkspaceLinkDto
+export type WorkspaceLinkDto = GitlabWorkspaceLinkDto | OnedriveWorkspaceLinkDto | GitWorkspaceLinkDto
 
 export type FileState = 'clean' | 'localAdded' | 'localModified' | 'localDeleted' | 'remoteChanged' | 'conflict'
 

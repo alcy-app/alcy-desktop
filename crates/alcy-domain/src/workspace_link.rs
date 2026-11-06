@@ -31,6 +31,10 @@ pub enum WorkspaceLinkError {
     InvalidDirectory,
     #[error("a pasta do OneDrive é inválida")]
     InvalidFolder,
+    #[error("the shared folder must be an absolute path")]
+    InvalidSharedFolder,
+    #[error("invalid branch name")]
+    InvalidBranch,
 }
 
 /// Where the shared copy of the workspace lives.
@@ -53,6 +57,10 @@ pub enum RemoteLocation {
         /// Folder path shown to the user; never used for addressing.
         display_path: String,
     },
+    /// A git repository in the workspace folder itself (ADR 0074); the
+    /// current branch is whatever `HEAD` names. `shared_folder` holds the
+    /// bare repository where each person publishes their own branches.
+    Git { shared_folder: Option<String> },
 }
 
 /// Link between a workspace and its remote copy.
@@ -111,6 +119,18 @@ impl WorkspaceLink {
         ))
     }
 
+    pub fn git(
+        shared_folder: Option<&str>,
+        include_environments: bool,
+    ) -> Result<Self, WorkspaceLinkError> {
+        Ok(Self::with_location(
+            RemoteLocation::Git {
+                shared_folder: normalize_shared_folder(shared_folder)?,
+            },
+            include_environments,
+        ))
+    }
+
     fn with_location(location: RemoteLocation, include_environments: bool) -> Self {
         Self {
             location,
@@ -119,10 +139,12 @@ impl WorkspaceLink {
         }
     }
 
-    pub fn account_id(&self) -> &str {
+    /// Account that reaches the remote; a git folder needs none.
+    pub fn account_id(&self) -> Option<&str> {
         match &self.location {
             RemoteLocation::Gitlab { account_id, .. }
-            | RemoteLocation::Onedrive { account_id, .. } => account_id,
+            | RemoteLocation::Onedrive { account_id, .. } => Some(account_id),
+            RemoteLocation::Git { .. } => None,
         }
     }
 
@@ -136,7 +158,8 @@ impl WorkspaceLink {
     }
 
     /// Path of the file in the remote: inside the repository directory on
-    /// GitLab, relative to the linked folder on OneDrive.
+    /// GitLab, relative to the linked folder on OneDrive, at the root of a
+    /// git folder.
     pub fn remote_path(&self, file_name: &str) -> String {
         match &self.location {
             RemoteLocation::Gitlab { directory, .. } if !directory.is_empty() => {
@@ -145,6 +168,35 @@ impl WorkspaceLink {
             _ => file_name.to_string(),
         }
     }
+}
+
+/// Shared folder of a git link: absolute, or none.
+pub fn normalize_shared_folder(folder: Option<&str>) -> Result<Option<String>, WorkspaceLinkError> {
+    let Some(folder) = folder.map(str::trim).filter(|folder| !folder.is_empty()) else {
+        return Ok(None);
+    };
+    if !std::path::Path::new(folder).is_absolute() {
+        return Err(WorkspaceLinkError::InvalidSharedFolder);
+    }
+    Ok(Some(folder.to_string()))
+}
+
+/// Subset of `git check-ref-format` rules for a single branch name: enough to
+/// keep the name a plain path under `refs/heads/`.
+pub fn is_valid_branch_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 200
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && !name.contains("..")
+        && !name.contains("//")
+        && !name.contains("@{")
+        && !name.contains("/.")
+        && name != "@"
+        && !name
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
 }
 
 fn normalize_directory(input: &str) -> Result<String, WorkspaceLinkError> {
@@ -213,7 +265,7 @@ mod tests {
             &link.location,
             RemoteLocation::Gitlab { directory, .. } if directory == "alcy"
         ));
-        assert_eq!(link.account_id(), "a");
+        assert_eq!(link.account_id(), Some("a"));
         assert_eq!(
             link.remote_path("alcy-collections.json"),
             "alcy/alcy-collections.json"
@@ -235,7 +287,7 @@ mod tests {
     fn onedrive_link_addresses_files_relative_to_the_folder() {
         let link =
             WorkspaceLink::onedrive("m", " b!drive ", "01ABC", "/Equipe/Alcy", true).unwrap();
-        assert_eq!(link.account_id(), "m");
+        assert_eq!(link.account_id(), Some("m"));
         assert!(matches!(
             &link.location,
             RemoteLocation::Onedrive { drive_id, .. } if drive_id == "b!drive"
@@ -252,6 +304,47 @@ mod tests {
                 Err(WorkspaceLinkError::InvalidFolder),
                 "{drive} {folder}"
             );
+        }
+    }
+
+    #[test]
+    fn git_link_keeps_an_optional_absolute_shared_folder() {
+        let local = WorkspaceLink::git(None, false).unwrap();
+        assert_eq!(local.account_id(), None);
+        assert_eq!(
+            local.location,
+            RemoteLocation::Git {
+                shared_folder: None
+            }
+        );
+        assert_eq!(
+            local.remote_path("alcy-collections.json"),
+            "alcy-collections.json"
+        );
+        assert_eq!(WorkspaceLink::git(Some("  "), false), Ok(local));
+
+        let folder = std::env::temp_dir().join("alcy-shared");
+        let folder = folder.to_string_lossy();
+        let shared = WorkspaceLink::git(Some(&folder), true).unwrap();
+        assert!(matches!(
+            &shared.location,
+            RemoteLocation::Git { shared_folder: Some(path) } if path == folder.as_ref()
+        ));
+        assert_eq!(
+            WorkspaceLink::git(Some("relative/folder"), false),
+            Err(WorkspaceLinkError::InvalidSharedFolder)
+        );
+    }
+
+    #[test]
+    fn branch_names_follow_git_rules() {
+        for branch in [
+            "", "a b", "a..b", "-x", "x.lock", "x/", "a:b", "a@{1}", "@", ".x", "a//b",
+        ] {
+            assert!(!is_valid_branch_name(branch), "{branch:?}");
+        }
+        for branch in ["main", "team/alcy", "release-1.2"] {
+            assert!(is_valid_branch_name(branch), "{branch}");
         }
     }
 

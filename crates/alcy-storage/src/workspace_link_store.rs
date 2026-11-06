@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::storage_error::StorageError;
 
 /// GitLab links stay on v1 so builds without other providers keep reading
-/// them; v2 carries a `provider` tag and is only written for OneDrive
-/// (ADR 0063).
+/// them; v2 carries a `provider` tag and is written for OneDrive (ADR 0063)
+/// and git folders (ADR 0074; builds without that provider reject the tag).
 const GITLAB_VERSION: u32 = 1;
 const PROVIDER_VERSION: u32 = 2;
 pub(crate) const LINK_FILE_NAME: &str = "alcy-git-link.json";
@@ -57,6 +57,11 @@ enum PersistedLocation {
         folder_id: String,
         #[serde(default)]
         display_path: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Git {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shared_folder: Option<String>,
     },
 }
 
@@ -115,6 +120,9 @@ impl WorkspaceLinkStore {
                         display_path,
                         persisted.include_environments,
                     ),
+                    PersistedLocation::Git { shared_folder } => {
+                        WorkspaceLink::git(shared_folder.as_deref(), persisted.include_environments)
+                    }
                 };
                 (link, persisted.base)
             }
@@ -161,6 +169,16 @@ impl WorkspaceLinkStore {
                 include_environments,
                 base,
             }),
+            RemoteLocation::Git { shared_folder } => {
+                serde_json::to_string_pretty(&PersistedProviderLink {
+                    version: PROVIDER_VERSION,
+                    location: PersistedLocation::Git {
+                        shared_folder: shared_folder.clone(),
+                    },
+                    include_environments,
+                    base,
+                })
+            }
         }
         .map_err(|error| StorageError::Write(error.to_string()))?;
 
@@ -253,6 +271,31 @@ mod tests {
   }
 }"#
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn roundtrips_git_links_as_v2() {
+        let root = temp_root();
+        let store = WorkspaceLinkStore::new(root.clone());
+
+        let mut local = WorkspaceLink::git(None, false).unwrap();
+        local.base.insert("alcy-flows.json".into(), "abc".into());
+        store.save(&local).unwrap();
+        assert_eq!(store.load().unwrap(), Some(local));
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(LINK_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(raw["version"], 2);
+        assert_eq!(raw["provider"], "git");
+        assert!(raw.get("sharedFolder").is_none());
+
+        let folder = root.join("shared");
+        let shared = WorkspaceLink::git(Some(&folder.to_string_lossy()), true).unwrap();
+        store.save(&shared).unwrap();
+        assert_eq!(store.load().unwrap(), Some(shared));
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(LINK_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(raw["sharedFolder"], folder.to_string_lossy().as_ref());
         let _ = fs::remove_dir_all(root);
     }
 

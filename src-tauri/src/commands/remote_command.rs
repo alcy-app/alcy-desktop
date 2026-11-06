@@ -1,11 +1,11 @@
 //! Pieces shared by the commands of every remote provider (GitLab,
-//! OneDrive) and by version control.
+//! OneDrive, git folders) and by version control.
 
 use std::future::Future;
 
 use alcy_agent::AgentHttpClient;
 use alcy_app::{RemoteError, VersionControlError};
-use alcy_domain::WorkspaceLinkError;
+use alcy_domain::{GitIdentityError, WorkspaceLinkError};
 use alcy_gitlab::GitlabClient;
 use alcy_http_proxy::{ProxyError, ProxyPlan};
 use alcy_onedrive::OnedriveClient;
@@ -21,29 +21,71 @@ use super::execution_registry::ExecutionRegistry;
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RemoteCommandError {
-    Invalid { message: String },
-    Storage { message: String },
-    Credentials { message: String },
+    Invalid {
+        message: String,
+    },
+    Storage {
+        message: String,
+    },
+    Credentials {
+        message: String,
+    },
     Unauthorized,
-    Network { message: String },
-    Rejected { message: String },
-    NotFound { message: String },
+    Network {
+        message: String,
+    },
+    Rejected {
+        message: String,
+    },
+    NotFound {
+        message: String,
+    },
     Conflict,
     TooLarge,
-    Files { message: String },
-    Conflicts { files: Vec<String> },
+    Files {
+        message: String,
+    },
+    Conflicts {
+        files: Vec<String>,
+    },
     NothingToCommit,
     EmptyMessage,
-    IncompleteResolution { file: String },
+    IncompleteResolution {
+        file: String,
+    },
     NotLinked,
     AccountMissing,
     BranchNotWritable,
-    Denied { message: String },
-    Login { message: String },
+    Denied {
+        message: String,
+    },
+    Login {
+        message: String,
+    },
     Timeout,
-    PortBusy { port: u16 },
-    Browser { message: String },
+    PortBusy {
+        port: u16,
+    },
+    Browser {
+        message: String,
+    },
     Cancelled,
+    /// No git author: neither set in Alcy nor in the system's git config.
+    GitIdentityMissing,
+    /// The chosen folder holds a repository with a working tree.
+    GitNotBare,
+    /// The chosen folder has other files and is not a git repository.
+    GitNotRepository,
+    /// Files a git operation would overwrite have uncommitted changes.
+    GitUncommittedChanges {
+        files: Vec<String>,
+    },
+    /// A merge waits for its conflicts to be resolved.
+    GitMergeInProgress,
+    GitNoMergeInProgress,
+    GitInvalidBranch {
+        name: String,
+    },
 }
 
 impl From<StorageError> for RemoteCommandError {
@@ -58,6 +100,32 @@ impl From<WorkspaceLinkError> for RemoteCommandError {
     fn from(error: WorkspaceLinkError) -> Self {
         Self::Invalid {
             message: error.to_string(),
+        }
+    }
+}
+
+impl From<GitIdentityError> for RemoteCommandError {
+    fn from(error: GitIdentityError) -> Self {
+        Self::Invalid {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<alcy_git::GitError> for RemoteCommandError {
+    fn from(error: alcy_git::GitError) -> Self {
+        use alcy_git::GitError;
+        match error {
+            GitError::Remote(error) => error.into(),
+            GitError::Files(message) => Self::Files { message },
+            GitError::IdentityMissing => Self::GitIdentityMissing,
+            GitError::UncommittedChanges(files) => Self::GitUncommittedChanges { files },
+            GitError::MergeInProgress => Self::GitMergeInProgress,
+            GitError::NoMergeInProgress => Self::GitNoMergeInProgress,
+            GitError::Conflicts(files) => Self::Conflicts { files },
+            GitError::InvalidBranch(name) => Self::GitInvalidBranch { name },
+            GitError::NotBare => Self::GitNotBare,
+            GitError::NotARepository => Self::GitNotRepository,
         }
     }
 }

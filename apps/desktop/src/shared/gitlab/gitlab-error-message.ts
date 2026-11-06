@@ -16,7 +16,16 @@ export function gitlabErrorMessage(error: GitlabCommandError, t: Translate): str
     case 'branchNotWritable':
     case 'timeout':
     case 'cancelled':
+    case 'gitIdentityMissing':
+    case 'gitNotBare':
+    case 'gitNotRepository':
+    case 'gitMergeInProgress':
+    case 'gitNoMergeInProgress':
       return t(`gitlab.error.${error.kind}`)
+    case 'gitUncommittedChanges':
+      return t('gitlab.error.gitUncommittedChanges', { files: error.files.join(', ') })
+    case 'gitInvalidBranch':
+      return t('gitlab.error.gitInvalidBranch', { name: error.name })
     case 'conflicts':
       return t('gitlab.error.conflicts', { files: error.files.join(', ') })
     case 'portBusy':

@@ -9,9 +9,14 @@ const testProxySettings = vi.fn()
 const listCustomCaCertificates = vi.fn()
 const addCustomCaCertificate = vi.fn()
 const removeCustomCaCertificate = vi.fn()
-const flags = vi.hoisted(() => ({ updates: true, gitlab: true }))
+const flags = vi.hoisted(() => ({ updates: true, gitlab: true, localGit: false }))
 
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: flags }))
+const getGitIdentity = vi.fn()
+vi.mock('../../bindings/local-git', () => ({
+  getGitIdentity: (...args: unknown[]) => getGitIdentity(...args),
+  saveGitIdentity: vi.fn(),
+}))
 
 vi.mock('../../bindings/get-proxy-settings', () => ({
   getProxySettings: (...args: unknown[]) => getProxySettings(...args),
@@ -59,6 +64,12 @@ vi.mock('../../bindings/save-general-settings', () => ({
 beforeEach(() => {
   flags.updates = true
   flags.gitlab = true
+  flags.localGit = false
+  getGitIdentity.mockReset()
+  getGitIdentity.mockResolvedValue({
+    ok: true,
+    value: { system: { name: 'Ana', email: 'ana@example.com' }, overrides: { name: null, email: null }, effective: { name: 'Ana', email: 'ana@example.com' } },
+  })
   getProxySettings.mockReset()
   saveProxySettings.mockReset()
   testProxySettings.mockReset()
@@ -188,6 +199,8 @@ describe('SettingsMenu — categorias', () => {
     render(<SettingsMenu open initialCategory="gitlab" onOpenChange={() => {}} />)
     expect(screen.queryByRole('button', { name: 'GitLab' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'OneDrive' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Git' })).not.toBeInTheDocument()
+    expect(getGitIdentity).not.toHaveBeenCalled()
     // Requesting it as the initial category falls back to General instead of an empty page.
     expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByTestId('gitlab-settings')).not.toBeInTheDocument()
@@ -195,6 +208,19 @@ describe('SettingsMenu — categorias', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
     expect(screen.queryByText('Sincronização do workspace')).not.toBeInTheDocument()
     expect(getSecuritySettings).not.toHaveBeenCalled()
+  })
+
+  it('shows the Git category and workspace sync protection with only the git folder provider on', async () => {
+    flags.gitlab = false
+    flags.localGit = true
+    render(<SettingsMenu open initialCategory="git" onOpenChange={() => {}} />)
+
+    expect(screen.getByRole('button', { name: 'Git' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('button', { name: 'GitLab' })).not.toBeInTheDocument()
+    expect(await screen.findByText('Os commits serão assinados por Ana <ana@example.com>.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
+    expect(await screen.findByText('Sincronização do workspace')).toBeInTheDocument()
   })
 
   it('liga e desliga as sugestões da documentação importada na hora, sem "Aplicar"', async () => {

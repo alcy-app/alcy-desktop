@@ -797,6 +797,127 @@ fn compose_selection(
         .map_err(|_| VersionControlError::InvalidStructuredFile(name.to_string()))
 }
 
+/// Result of merging one file from a common base (ADR 0074).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileMerge {
+    /// Merged content; `None` means the file ends up deleted.
+    Merged(Option<Vec<u8>>),
+    /// Both sides changed the same thing differently.
+    Conflict,
+}
+
+fn same_item(a: Option<&FlatItem>, b: Option<&FlatItem>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            a.parent_id == b.parent_id && shallow_fields(&a.value) == shallow_fields(&b.value)
+        }
+        _ => false,
+    }
+}
+
+/// Three-way merge of one versioned file. A side that left the file as in
+/// `base` takes the other side. When both changed a structured file, entities
+/// and top-level fields changed on one side only are combined; the same
+/// entity changed differently on both sides, or any other file changed on
+/// both sides, is a conflict.
+pub fn merge_file(
+    name: &str,
+    base: Option<&[u8]>,
+    ours: Option<&[u8]>,
+    theirs: Option<&[u8]>,
+) -> FileMerge {
+    if ours == theirs || theirs == base {
+        return FileMerge::Merged(ours.map(ToOwned::to_owned));
+    }
+    if ours == base {
+        return FileMerge::Merged(theirs.map(ToOwned::to_owned));
+    }
+    let (Some(ours), Some(theirs)) = (ours, theirs) else {
+        return FileMerge::Conflict;
+    };
+    let too_large = |bytes: &[u8]| bytes.len() > MAX_STRUCTURED_DIFF_BYTES;
+    if !supports_partial_format(name)
+        || too_large(ours)
+        || too_large(theirs)
+        || base.is_some_and(too_large)
+    {
+        return FileMerge::Conflict;
+    }
+    let parse = |bytes: Option<&[u8]>| parse_json(bytes, name).ok().map(Option::unwrap_or_default);
+    let (Some(base_json), Some(ours_json), Some(theirs_json)) =
+        (parse(base), parse(Some(ours)), parse(Some(theirs)))
+    else {
+        return FileMerge::Conflict;
+    };
+    let empty = Value::Object(Map::new());
+    let base_json = if base_json.is_null() {
+        empty
+    } else {
+        base_json
+    };
+
+    let base_items = collect_items(&base_json);
+    let ours_items = collect_items(&ours_json);
+    let theirs_items = collect_items(&theirs_json);
+    let ours_changed = changed_item_ids(&base_items, &ours_items);
+    let theirs_changed = changed_item_ids(&base_items, &theirs_items);
+    let clash = ours_changed
+        .intersection(&theirs_changed)
+        .any(|id| !same_item(ours_items.get(id), theirs_items.get(id)));
+    if clash {
+        return FileMerge::Conflict;
+    }
+
+    // Top-level fields outside the entity arrays (e.g. a format version).
+    let base_fields = shallow_fields(&base_json);
+    let ours_fields = shallow_fields(&ours_json);
+    let theirs_fields = shallow_fields(&theirs_json);
+    let mut ours_only = Vec::new();
+    let field_names: std::collections::BTreeSet<_> = base_fields
+        .keys()
+        .chain(ours_fields.keys())
+        .chain(theirs_fields.keys())
+        .cloned()
+        .collect();
+    for field in field_names {
+        let (b, o, t) = (
+            base_fields.get(&field),
+            ours_fields.get(&field),
+            theirs_fields.get(&field),
+        );
+        if o == t || o == b {
+            continue;
+        }
+        if t != b {
+            return FileMerge::Conflict;
+        }
+        ours_only.push((field, o.map(|value| (*value).clone())));
+    }
+
+    let selected: HashSet<String> = ours_changed.into_iter().collect();
+    let Some(mut merged) = merge_partial_value(Some(&theirs_json), Some(&ours_json), &selected)
+    else {
+        return FileMerge::Conflict;
+    };
+    if let Some(object) = merged.as_object_mut() {
+        for (field, value) in ours_only {
+            match value {
+                Some(value) => {
+                    object.insert(field, value);
+                }
+                None => {
+                    object.remove(&field);
+                }
+            }
+        }
+    }
+    match serde_json::to_vec_pretty(&merged) {
+        Ok(bytes) => FileMerge::Merged(Some(bytes)),
+        Err(_) => FileMerge::Conflict,
+    }
+}
+
 pub async fn push_selected_changes<F, R>(
     files: &F,
     remote: &R,
@@ -2499,4 +2620,188 @@ fn compose_conflict_value(
         .collect();
     merge_partial_value(Some(&remote_json), Some(&local_json), &selected_local)
         .ok_or_else(|| VersionControlError::InvalidStructuredFile(name.to_string()))
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    use serde_json::json;
+
+    const COLLECTIONS: &str = "alcy-collections.json";
+
+    fn bytes(value: Value) -> Vec<u8> {
+        serde_json::to_vec_pretty(&value).unwrap()
+    }
+
+    fn merged(result: FileMerge) -> Value {
+        match result {
+            FileMerge::Merged(Some(bytes)) => serde_json::from_slice(&bytes).unwrap(),
+            other => panic!("expected a merge, got {other:?}"),
+        }
+    }
+
+    fn collections(requests: Value) -> Value {
+        json!({ "version": 1, "collections": [{ "id": "c", "name": "API", "requests": requests }] })
+    }
+
+    #[test]
+    fn a_side_that_kept_the_base_takes_the_other_side() {
+        let base = b"a".as_slice();
+        assert_eq!(
+            merge_file("x.json", Some(base), Some(b"b"), Some(base)),
+            FileMerge::Merged(Some(b"b".to_vec()))
+        );
+        assert_eq!(
+            merge_file("x.json", Some(base), Some(base), None),
+            FileMerge::Merged(None)
+        );
+        assert_eq!(
+            merge_file("x.json", None, Some(b"same"), Some(b"same")),
+            FileMerge::Merged(Some(b"same".to_vec()))
+        );
+        // Unstructured file changed on both sides.
+        assert_eq!(
+            merge_file("alcy-workspace.json", Some(base), Some(b"b"), Some(b"c")),
+            FileMerge::Conflict
+        );
+        // Deleted on one side, changed on the other.
+        assert_eq!(
+            merge_file(COLLECTIONS, Some(base), None, Some(b"c")),
+            FileMerge::Conflict
+        );
+    }
+
+    #[test]
+    fn combines_entities_changed_on_different_sides() {
+        let base = collections(json!([
+            { "id": "r1", "name": "Login", "url": "/login" },
+            { "id": "r2", "name": "Users", "url": "/users" },
+            { "id": "r3", "name": "Old", "url": "/old" }
+        ]));
+        let ours = collections(json!([
+            { "id": "r1", "name": "Login", "url": "/v2/login" },
+            { "id": "r2", "name": "Users", "url": "/users" },
+            { "id": "r4", "name": "Mine", "url": "/mine" }
+        ]));
+        let theirs = collections(json!([
+            { "id": "r1", "name": "Login", "url": "/login" },
+            { "id": "r2", "name": "All users", "url": "/users" },
+            { "id": "r3", "name": "Old", "url": "/old" },
+            { "id": "r5", "name": "Theirs", "url": "/theirs" }
+        ]));
+        let result = merged(merge_file(
+            COLLECTIONS,
+            Some(&bytes(base)),
+            Some(&bytes(ours)),
+            Some(&bytes(theirs)),
+        ));
+        let requests = result["collections"][0]["requests"].as_array().unwrap();
+        let by_id: BTreeMap<_, _> = requests
+            .iter()
+            .map(|request| (request["id"].as_str().unwrap(), request))
+            .collect();
+        assert_eq!(by_id["r1"]["url"], "/v2/login");
+        assert_eq!(by_id["r2"]["name"], "All users");
+        assert!(!by_id.contains_key("r3"), "deleted by ours");
+        assert!(by_id.contains_key("r4"));
+        assert!(by_id.contains_key("r5"));
+        assert_eq!(result["version"], 1);
+    }
+
+    #[test]
+    fn the_same_entity_changed_on_both_sides_conflicts() {
+        let base = collections(json!([{ "id": "r1", "name": "Login", "url": "/login" }]));
+        let ours = collections(json!([{ "id": "r1", "name": "Login", "url": "/a" }]));
+        let theirs = collections(json!([{ "id": "r1", "name": "Login", "url": "/b" }]));
+        assert_eq!(
+            merge_file(
+                COLLECTIONS,
+                Some(&bytes(base.clone())),
+                Some(&bytes(ours)),
+                Some(&bytes(theirs))
+            ),
+            FileMerge::Conflict
+        );
+
+        // Identical edits on both sides are not a conflict.
+        let both = collections(json!([{ "id": "r1", "name": "Login", "url": "/same" }]));
+        let result = merged(merge_file(
+            COLLECTIONS,
+            Some(&bytes(base.clone())),
+            Some(&bytes(both.clone())),
+            Some(&bytes(collections(json!([
+                { "id": "r1", "name": "Login", "url": "/same" },
+                { "id": "r2", "name": "New", "url": "/new" }
+            ])))),
+        ));
+        assert_eq!(
+            result["collections"][0]["requests"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // Deleted on one side, edited on the other.
+        let deleted = collections(json!([]));
+        let edited = collections(json!([{ "id": "r1", "name": "Login", "url": "/c" }]));
+        assert_eq!(
+            merge_file(
+                COLLECTIONS,
+                Some(&bytes(base)),
+                Some(&bytes(deleted)),
+                Some(&bytes(edited))
+            ),
+            FileMerge::Conflict
+        );
+    }
+
+    #[test]
+    fn top_level_fields_merge_like_entities() {
+        let base = json!({ "version": 1, "collections": [] });
+        let ours = json!({ "version": 1, "theme": "dark", "collections": [] });
+        let theirs = json!({ "version": 1, "collections": [{ "id": "c", "name": "New" }] });
+        let result = merged(merge_file(
+            COLLECTIONS,
+            Some(&bytes(base.clone())),
+            Some(&bytes(ours)),
+            Some(&bytes(theirs)),
+        ));
+        assert_eq!(result["theme"], "dark");
+        assert_eq!(result["collections"][0]["name"], "New");
+
+        assert_eq!(
+            merge_file(
+                COLLECTIONS,
+                Some(&bytes(base)),
+                Some(&bytes(json!({ "version": 2, "collections": [] }))),
+                Some(&bytes(json!({ "version": 3, "collections": [] })))
+            ),
+            FileMerge::Conflict
+        );
+    }
+
+    #[test]
+    fn edits_inside_a_renamed_folder_survive() {
+        let base = json!({ "collections": [{ "id": "c", "name": "API", "folders": [
+            { "id": "f", "name": "Auth", "requests": [{ "id": "r1", "name": "Login" }] }
+        ] }] });
+        let ours = json!({ "collections": [{ "id": "c", "name": "API", "folders": [
+            { "id": "f", "name": "Authentication", "requests": [{ "id": "r1", "name": "Login" }] }
+        ] }] });
+        let theirs = json!({ "collections": [{ "id": "c", "name": "API", "folders": [
+            { "id": "f", "name": "Auth", "requests": [
+                { "id": "r1", "name": "Login" }, { "id": "r2", "name": "Logout" }
+            ] }
+        ] }] });
+        let result = merged(merge_file(
+            COLLECTIONS,
+            Some(&bytes(base)),
+            Some(&bytes(ours)),
+            Some(&bytes(theirs)),
+        ));
+        let folder = &result["collections"][0]["folders"][0];
+        assert_eq!(folder["name"], "Authentication");
+        assert_eq!(folder["requests"].as_array().unwrap().len(), 2);
+    }
 }

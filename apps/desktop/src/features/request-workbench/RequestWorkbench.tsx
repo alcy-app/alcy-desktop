@@ -111,6 +111,7 @@ import { markReleaseNotesSeen } from '../updates/release-notes-storage'
 import { APP_VERSION } from '../../shared/app-version'
 import { useUpdates } from '../updates/use-updates'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
+import { isVersionControlEnabled } from '../../shared/version-control-enabled'
 import { trackUsage } from '../../shared/usage-events/track-usage'
 import { useChangedItemMarkers } from '../version-control/use-changed-items'
 import { useVersionControl } from '../version-control/use-version-control'
@@ -527,7 +528,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     },
     [reloadCollections, reloadEnvironments, reloadFlows, reloadValueMonitors],
   )
-  const versionControl = useVersionControl(workspace.rootPath, handleWorkspaceFilesChanged, FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive)
+  const versionControl = useVersionControl(workspace.rootPath, handleWorkspaceFilesChanged, isVersionControlEnabled())
   useEffect(() => {
     notifyLocalChangeRef.current = versionControl.notifyLocalChange
   }, [versionControl.notifyLocalChange])
@@ -1290,8 +1291,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     () => ({
       rootPath: workspace.rootPath,
       vc: versionControl,
-      onOpenSettings: () => {
-        setSettingsCategory('gitlab')
+      onOpenSettings: (category?: 'git') => {
+        setSettingsCategory(category ?? 'gitlab')
         setSettingsOpen(true)
       },
       onReview: (target: VersionReviewTarget) => {
@@ -2572,7 +2573,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
           </button>
           <div id="rw-import-statusbar-slot" className="rw-statusbar-import-slot" />
           <div className="rw-statusbar-end">
-            {(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && (
+            {isVersionControlEnabled() && (
               <GitStatusButton
                 summary={versionControl.summary}
                 counts={versionControl.counts}

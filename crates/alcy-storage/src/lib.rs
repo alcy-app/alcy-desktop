@@ -19,6 +19,8 @@ mod flow_run_history_store;
 mod flow_store;
 pub use flow_form_config::*;
 mod general_settings_store;
+mod git_identity_store;
+mod git_peer_store;
 mod gitlab_accounts_store;
 mod history_store;
 mod local_secrets;
@@ -73,6 +75,8 @@ pub use flow_run_history_store::{
 };
 pub use flow_store::{FlowStore, FlowsSnapshot};
 pub use general_settings_store::GeneralSettingsStore;
+pub use git_identity_store::GitIdentityStore;
+pub use git_peer_store::GitPeerStore;
 pub use gitlab_accounts_store::GitlabAccountsStore;
 pub use history_store::{HistoryStore, HistorySummary, HistorySummaryOutcome};
 pub use local_secrets::LocalSecrets;

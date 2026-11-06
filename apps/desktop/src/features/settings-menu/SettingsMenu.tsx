@@ -4,6 +4,7 @@ import { useProxy } from '../../shared/proxy/use-proxy'
 import { useSecurityPreferences } from '../../shared/security/use-security-preferences'
 import { THEME_PREFERENCES, THEME_PREVIEW, type ThemePreference } from '../../shared/appearance/theme'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
+import { isVersionControlEnabled } from '../../shared/version-control-enabled'
 import { useTheme } from '../../shared/appearance/use-theme'
 import { useUiScale } from '../../shared/appearance/use-ui-scale'
 import { DEFAULT_UI_SCALE, MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from '../../shared/appearance/ui-scale'
@@ -19,7 +20,7 @@ import { Modal } from '../../shared/ui/Modal'
 import { RangeSlider } from '../../shared/ui/RangeSlider'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Tooltip } from '../../shared/ui/Tooltip'
-import { AlertIcon, CheckIcon, ComponentsIcon, EyeIcon, FolderIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
+import { AlertIcon, BranchIcon, CheckIcon, ComponentsIcon, EyeIcon, FolderIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
 import { UpdatesSection } from '../updates/UpdatesSection'
 import { AgentSection } from './AgentSection'
 import { GeneralSection } from './GeneralSection'
@@ -27,6 +28,7 @@ import { CustomCaCertificatesSection } from './CustomCaCertificatesSection'
 import { GitlabAccountSection } from './GitlabAccountSection'
 import { OnedriveAccountSection } from './OnedriveAccountSection'
 import { SensitiveSyncSection } from './SensitiveSyncSection'
+import { GitIdentitySection } from './GitIdentitySection'
 import { TlsVerificationSection } from './TlsVerificationSection'
 import { ShortcutsSection } from './ShortcutsSection'
 import { TelemetrySection } from './TelemetrySection'
@@ -191,6 +193,7 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
           {FEATURE_FLAGS.agent && <div id={`${id}-agent`} hidden={category !== 'agent'}><AgentSection /></div>}
           {FEATURE_FLAGS.gitlab && <div id={`${id}-gitlab`} hidden={category !== 'gitlab'}><GitlabAccountSection /></div>}
           {FEATURE_FLAGS.onedrive && <div id={`${id}-onedrive`} hidden={category !== 'onedrive'}><OnedriveAccountSection /></div>}
+          {FEATURE_FLAGS.localGit && <div id={`${id}-git`} hidden={category !== 'git'}><GitIdentitySection /></div>}
           {FEATURE_FLAGS.updates && (
             <div id={`${id}-updates`} hidden={category !== 'updates'}>
               <UpdatesSection
@@ -250,6 +253,7 @@ const CATEGORIES = [
   { key: 'agent', icon: SparkleIcon },
   { key: 'gitlab', icon: GitIcon },
   { key: 'onedrive', icon: FolderIcon },
+  { key: 'git', icon: BranchIcon },
   { key: 'updates', icon: RefreshIcon },
 ] as const
 
@@ -259,6 +263,7 @@ export type SettingsCategory = (typeof CATEGORIES)[number]['key']
 function isCategoryHidden(key: SettingsCategory): boolean {
   if (key === 'gitlab') return !FEATURE_FLAGS.gitlab
   if (key === 'onedrive') return !FEATURE_FLAGS.onedrive
+  if (key === 'git') return !FEATURE_FLAGS.localGit
   if (key === 'agent') return !FEATURE_FLAGS.agent
   if (key === 'telemetry') return !FEATURE_FLAGS.usageEvents
   return false
@@ -400,7 +405,7 @@ function SecuritySection() {
           )}
         </div>
       </section>
-      {(FEATURE_FLAGS.gitlab || FEATURE_FLAGS.onedrive) && <SensitiveSyncSection />}
+      {isVersionControlEnabled() && <SensitiveSyncSection />}
     </>
   )
 }

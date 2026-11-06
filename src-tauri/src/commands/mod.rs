@@ -42,6 +42,7 @@ pub mod linked_remote;
 pub mod load_dataset_assets;
 pub mod load_schema;
 pub mod load_test_import;
+pub mod local_git;
 pub mod mock_servers;
 pub mod notify_when_unfocused;
 pub mod onedrive;

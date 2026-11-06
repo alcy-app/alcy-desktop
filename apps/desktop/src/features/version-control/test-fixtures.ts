@@ -15,6 +15,8 @@ export function fakeVersionControl(overrides: Partial<VersionControl> = {}): Ver
     message: '',
     setMessage: () => {},
     statusVersion: 0,
+    gitVersion: 0,
+    runGit: async () => ({ ok: true }),
     staged: {},
     stagedSelections: [],
     stageFile: () => {},
