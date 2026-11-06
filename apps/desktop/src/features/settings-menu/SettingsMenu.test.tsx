@@ -93,7 +93,7 @@ describe('SettingsMenu — proxy', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'Script PAC' }))
     expect(screen.getByLabelText('URL do script')).toBeInTheDocument()
-    expect(apply).toBeDisabled() // URL vazia
+    expect(apply).toBeDisabled() // Empty URL
 
     fireEvent.change(screen.getByLabelText('URL do script'), { target: { value: 'https://corp/p.pac' } })
     expect(apply).toBeEnabled()
@@ -149,7 +149,7 @@ describe('SettingsMenu — proxy', () => {
 describe('SettingsMenu — tooltip do botão', () => {
   it('não mostra o tooltip do botão ao passar o mouse sobre o modal aberto', async () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
-    // Eventos de mouse do React atravessam o portal do modal até os ancestrais.
+    // React mouse events cross the modal portal to its ancestors.
     fireEvent.mouseEnter(screen.getByRole('dialog'))
     await new Promise((resolve) => setTimeout(resolve, TOOLTIP_DELAY_MS + 50))
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
@@ -175,7 +175,7 @@ describe('SettingsMenu — categorias', () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     const updates = screen.getByRole('button', { name: 'Atualizações' })
     expect(updates).toBeDisabled()
-    // O botão desabilitado não recebe o hover: quem dispara o tooltip é o host.
+    // The disabled button cannot receive hover; its host triggers the tooltip.
     fireEvent.mouseEnter(updates.parentElement!)
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Funcionalidade desabilitada')
     fireEvent.click(updates)
@@ -188,7 +188,7 @@ describe('SettingsMenu — categorias', () => {
     render(<SettingsMenu open initialCategory="gitlab" onOpenChange={() => {}} />)
     expect(screen.queryByRole('button', { name: 'GitLab' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'OneDrive' })).not.toBeInTheDocument()
-    // Pedida como categoria inicial, cai em "Geral" em vez de abrir uma página vazia.
+    // Requesting it as the initial category falls back to General instead of an empty page.
     expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByTestId('gitlab-settings')).not.toBeInTheDocument()
 
@@ -231,7 +231,7 @@ describe('SettingsMenu — categorias', () => {
 
   it('abre diretamente na categoria solicitada pelo atalho', () => {
     render(<SettingsMenu open initialCategory="gitlab" onOpenChange={() => {}} />)
-    expect(screen.getByRole('button', { name: 'GitLab' })).toHaveFocus()
+    expect(screen.getByRole('dialog')).toHaveFocus()
     expect(screen.getByTestId('gitlab-settings')).toBeVisible()
     expect(screen.queryByRole('radio', { name: 'Claro' })).not.toBeInTheDocument()
   })
@@ -240,7 +240,7 @@ describe('SettingsMenu — categorias', () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     const categories = screen.getByRole('navigation', { name: 'Categorias de configuração' })
     expect(within(categories).getAllByRole('button')[0]).toHaveTextContent('Geral')
-    expect(screen.getByRole('button', { name: 'Geral' })).toHaveFocus()
+    expect(screen.getByRole('dialog')).toHaveFocus()
     expect(await screen.findByTestId('general-settings')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Aparência' }))
     expect(screen.getByRole('radio', { name: 'Claro' })).toBeVisible()
@@ -681,7 +681,7 @@ describe('SettingsMenu — atalhos', () => {
     fireEvent.keyDown(capture(), { key: 'Escape' })
     await captureClosed('Próxima aba')
 
-    // Com o foco fora do campo de captura, quem trata o Esc é a pilha de modais.
+    // When focus is outside the capture field, the modal stack handles Escape.
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Tab de Próxima aba' }))
     fireEvent.keyDown(screen.getByRole('button', { name: 'Cancelar' }), { key: 'Escape' })
     await captureClosed('Próxima aba')

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { ProxyMode } from '../../bindings/get-proxy-settings'
 import { useProxy } from '../../shared/proxy/use-proxy'
 import { useSecurityPreferences } from '../../shared/security/use-security-preferences'
@@ -40,9 +40,9 @@ interface SettingsMenuProps {
   open: boolean
   initialCategory?: SettingsCategory
   onOpenChange: (open: boolean) => void
-  /** Abre a aba "Novidades da versão"; sem ele, o botão em Geral fica desabilitado. */
+  /** Opens the release notes tab; without it, the button in General is disabled. */
   onOpenReleaseNotes?: () => void
-  /** Recarrega o histórico depois de uma nova retenção ser aplicada. */
+  /** Reloads history after a new retention setting is applied. */
   onHistoryRetentionChange?: () => void
 }
 
@@ -63,8 +63,8 @@ export function SettingsMenu({
 
   return (
     <>
-      {/* O modal fica fora do host: eventos de mouse do React atravessam o
-          portal e, dentro do host, o hover no modal abriria este tooltip. */}
+      {/* Keep the modal outside the host: React mouse events cross the portal,
+          so hovering the modal inside the host would open this tooltip. */}
       <Tooltip label={t('settings.triggerAria')} side="right" className="settings-menu-tooltip" hoverOnly>
         <IconButton
           ref={triggerRef}
@@ -84,7 +84,7 @@ export function SettingsMenu({
           onOpenReleaseNotes={
             onOpenReleaseNotes &&
             (() => {
-              // A aba aberta recebe o foco da área principal; não volta para o botão.
+              // The opened tab receives focus in the main area instead of the trigger.
               onOpenChange(false)
               onOpenReleaseNotes()
             })
@@ -117,18 +117,13 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
     trackUsage({ name: 'settings_changed', category: 'appearance', key: 'theme' })
   }
   const [category, setCategory] = useState<SettingsCategory>(isCategoryDisabled(initialCategory) ? 'general' : initialCategory)
-  const navigationRef = useRef<HTMLElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const id = useId()
-
-  useEffect(() => {
-    navigationRef.current?.querySelector<HTMLButtonElement>('[aria-current="page"]')?.focus()
-  }, [])
 
   return (
     <Modal title={t('settings.modalTitle')} closeAriaLabel={t('settings.close')} onClose={onClose} className="settings-modal">
       <div className="settings-layout">
-        <nav ref={navigationRef} className="settings-navigation" aria-label={t('settings.categories')}>
+        <nav className="settings-navigation" aria-label={t('settings.categories')}>
           {CATEGORIES.filter(({ key }) => !isCategoryHidden(key)).map(({ key, icon: Icon }) => {
             const disabled = isCategoryDisabled(key)
             const item = (
@@ -283,8 +278,8 @@ function ProxySection() {
   const [busy, setBusy] = useState<'test' | 'apply' | null>(null)
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null)
 
-  // A configuração salva pode chegar (ou mudar) depois de a seção montar: o
-  // rascunho acompanha, mantendo o feedback da última ação.
+  // Saved settings may arrive or change after this section mounts.
+  // Keep the draft in sync while preserving feedback from the last action.
   const [syncedSettings, setSyncedSettings] = useState(settings)
   if (syncedSettings !== settings) {
     setSyncedSettings(settings)
