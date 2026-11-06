@@ -49,6 +49,7 @@ use commands::execute_load_flow::execute_load_flow;
 use commands::execute_rest_request::execute_rest_request;
 use commands::execution_registry::ExecutionRegistry;
 use commands::export_collection_run_report::export_collection_run_report;
+use commands::export_flow::{export_flow, preview_flow_export};
 use commands::export_har::export_har;
 use commands::export_png::export_png;
 use commands::export_webclient::{export_webclient, preview_webclient_export};
@@ -73,6 +74,7 @@ use commands::history::{
     get_collection_run_history, get_flow_run_history, get_history_entry, list_history,
 };
 use commands::import_fetcher::ImportFetcher;
+use commands::import_flow::{analyze_flow_import, import_flow};
 use commands::inspect_flow_output::{
     FlowOutputQueries, cancel_flow_output_query, inspect_flow_node_output,
 };
@@ -464,6 +466,10 @@ pub fn run_with(extensions: Vec<Extension>) {
                 save_environments,
                 list_flows,
                 save_flows,
+                preview_flow_export,
+                export_flow,
+                import_flow,
+                analyze_flow_import,
                 check_flow,
                 list_mock_servers,
                 get_mock_server,

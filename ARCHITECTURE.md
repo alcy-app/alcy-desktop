@@ -134,6 +134,37 @@ Flows control mock servers through the `MockServerControl` port in `alcy-app`, i
 
 ### Flow editing and output inspection
 
+Flow export is a local native operation. React captures the current editor graph
+and active environment, requests a bounded dependency summary, and offers to keep
+references or embed linked requests and external variables. The pure `alcy-app`
+export use case consumes the validated editor JSON contract and produces an
+`alcy-flow` version 1 envelope containing one camelCase graph. Export does not
+change workspace persistence or the original graph. Native adapters load linked
+requests, resolve inherited authentication and collection/folder precedence, and
+validate the resulting graph before writing the selected file on a blocking worker.
+Standalone standard exports initialize run variables after Start; load exports
+use session configuration at scenario entry. Scoped values use collision-free
+names, and run assignments continue to override them. Sensitive or unavailable
+external values become empty fields. Unconvertible script scope accesses, saved
+mocks, external datasets and variable values containing templates keep as-is export
+available and disable automatic embedding. Export documents are distinct from the
+workspace manifest and collection interchange format. Import reads at most 2 MiB
+on a blocking worker, verifies the envelope version and validates the graph with
+the same native DTO conversion as export and persistence. Each import gets a fresh
+flow ID and timestamps; node IDs, references and panel layout stay scoped to the
+new graph. No request or script executes during import. React commits the new flow
+together with current edits and folders through the explicit snapshot save before
+opening it. Failed or conflicting saves leave the current interface intact.
+As-is exports retain their external dependencies; import does not create those
+workspace resources or bundle external assets.
+
+The sidebar import button opens one native file selector for Alcy JSON, k6
+JavaScript/TypeScript and JMeter XML/JMX when load testing is enabled. Rust
+dispatches by content and filename through the same bounded reader. Alcy
+documents follow the explicit snapshot save; load sources reuse the existing
+analysis, diagnostics and hash-checked review/commit workflow. There is no
+separate format-selection menu before choosing a file.
+
 Standard flows may declare an optional Start form and asynchronous HumanAction nodes. The shared form definition supports ordered collapsible sections, text, numeric quantities, static choices, booleans and result selectors. `alcy-app` validates definitions and answers and exposes typed values through `nodes.<id>.form.<field>` references restricted to actual ancestors. Initial answers are validated before any effects. The `FlowHumanInteraction` port pauses only the dependent branch. Native execution-scoped queues identify every wait independently, including repeated loop visits, and reject stale or duplicate submissions. Cancellation drops pending queues; execution does not survive application shutdown.
 
 Result selectors prepare immutable native snapshots on blocking workers with cooperative cancellation, a 64 MiB aggregate snapshot limit and at most 100,000 items per source. Only projected pages of up to 100 rows and 64 KiB cross IPC. Submission carries source indices, and validation resolves original values natively. Answers and selected objects remain session-only; history stores waiting/submission events without their values. React keeps sessions outside the mounted canvas, so changing tabs preserves progress, drafts and diagram/panel mode. Closing a flow tab cancels its active run. Native output caches are separated by execution and released after completion when the session closes or starts a replacement run.

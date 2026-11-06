@@ -1,4 +1,5 @@
 import { useDocuments } from '../documents/use-documents'
+import { useFlowImport } from '../flows/use-flow-import'
 import { DocumentsPanel } from '../documents/DocumentsPanel'
 import type { SettingsCategory } from '../settings-menu/SettingsMenu'
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -21,11 +22,9 @@ import { requestIdsForItem } from '../flows/request-chain'
 import { useFlowsState } from '../flows/use-flows-state'
 import { releaseClosedFlowSessions } from '../flows/flow-run-session'
 import {
-  analyzeLoadTestImport,
   commitLoadTestImport,
   type LoadTestImportAnalysisDto,
 } from '../../bindings/load-test-import'
-import { pickLoadTestFile } from '../../bindings/pick-load-test-file'
 import { useValueMonitorsState } from '../value-monitors/use-value-monitors-state'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { ResizeHandle } from '../../shared/ResizeHandle'
@@ -1128,22 +1127,18 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   // Use stable flow methods to preserve sidebar prop identities.
   const { addImportedFlow, removeFlow } = flows
-  const handleImportLoadTest = useCallback(() => {
-    void (async () => {
-      const sourcePath = await pickLoadTestFile()
-      if (!sourcePath) return
-      const analysis = await analyzeLoadTestImport(sourcePath)
-      if (!analysis.ok) {
-        const message = analysis.error.kind === 'incompatible'
-          ? analysis.error.diagnostics.map((diagnostic) => `L${diagnostic.line}:${diagnostic.column}: ${diagnostic.message}`).join('\n')
-          : ('message' in analysis.error ? analysis.error.message : t('flows.importLoadTestChanged'))
-        showToast(message, 'error')
-        return
-      }
-      const preview = analysis.value
-      setPendingLoadTestImport({ sourcePath, preview })
-    })()
-  }, [showToast, t])
+  const handleFlowImportError = useCallback((message: string) => showToast(message, 'error'), [showToast])
+  const handleLoadTestAnalysis = useCallback((sourcePath: string, preview: LoadTestImportAnalysisDto) => {
+    setPendingLoadTestImport({ sourcePath, preview })
+  }, [])
+  const { importFlowFile, importingFlow } = useFlowImport({
+    rootPath: workspace.rootPath,
+    loadTestingEnabled: FEATURE_FLAGS.loadTesting,
+    onImport: flows.importFlow,
+    onImported: openFlowTab,
+    onError: handleFlowImportError,
+    onLoadTest: handleLoadTestAnalysis,
+  })
 
   const confirmLoadTestImport = useCallback(() => {
     const pending = pendingLoadTestImport
@@ -1655,6 +1650,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const flowsSlice = useMemo(
     () => ({
+      exportContext: { rootPath: workspace.rootPath, environmentVariables: activeEnvironmentVariables },
       flows: FEATURE_FLAGS.loadTesting ? flows.flows : flows.flows.filter((flow) => flow.executionKind !== 'load'),
       folders: flows.folders,
       saveError: flows.saveError,
@@ -1666,13 +1662,14 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       onAddFlow: flows.addFlow,
       onAddFlowFromTemplate: flows.addFlowFromTemplate,
       onAddLoadFlow: FEATURE_FLAGS.loadTesting ? flows.addLoadFlow : undefined,
-      onImportLoadTest: FEATURE_FLAGS.loadTesting ? handleImportLoadTest : undefined,
+      onImportFlow: importFlowFile,
+      importingFlow,
       onRenameFlow: flows.renameFlow,
       onRemoveFlow: handleRemoveFlow,
       onMoveFlow: flows.moveFlow,
       onOpenFlow: openFlow,
     }),
-    [flows.flows, flows.folders, flows.saveError, flows.addFolder, flows.renameFolder, flows.removeFolder, flows.moveFolder, flows.moveFlowToFolder, flows.addFlow, flows.addFlowFromTemplate, flows.addLoadFlow, flows.renameFlow, flows.moveFlow, handleImportLoadTest, handleRemoveFlow, openFlow],
+    [workspace.rootPath, activeEnvironmentVariables, flows.flows, flows.folders, flows.saveError, flows.addFolder, flows.renameFolder, flows.removeFolder, flows.moveFolder, flows.moveFlowToFolder, flows.addFlow, flows.addFlowFromTemplate, flows.addLoadFlow, flows.renameFlow, flows.moveFlow, handleRemoveFlow, openFlow, importFlowFile, importingFlow],
   )
 
   const activeFlow =

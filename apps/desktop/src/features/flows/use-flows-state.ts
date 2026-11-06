@@ -297,6 +297,16 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     return flow.id
   }, [])
 
+  /** Persist a validated imported copy together with current edits before opening it. */
+  const importFlow = useCallback(async (dto: FlowDto) => {
+    const flow = flowFromDto(dto)
+    await commitSnapshot((current) => {
+      if (current.flows.some((candidate) => candidate.id === flow.id)) throw new Error('A flow with this identifier already exists.')
+      return { ...current, flows: [...current.flows, flow] }
+    })
+    return flow.id
+  }, [commitSnapshot])
+
   /** Reorder flows by drag; the persisted array determines display order. */
   const moveFlow = useCallback((draggedId: string, targetId: string, edge: SiblingEdge) => {
     setFlows((current) => moveById(current, draggedId, targetId, edge))
@@ -452,6 +462,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     addFlowFromRequests,
     addFlowFromTemplate,
     addImportedFlow,
+    importFlow,
     removeFlow,
     moveFlow,
     renameFlow,

@@ -100,17 +100,24 @@ fn analyze_load_test_import_blocking(
         "analisar importação de teste de carga",
         || {
             let (name, bytes) = read_source(&input.source_path)?;
-            let source =
-                std::str::from_utf8(&bytes).map_err(|_| LoadTestImportErrorDto::InvalidSource {
-                    message: "o arquivo precisa estar em UTF-8".to_string(),
-                })?;
-            let mut analysis = analyze_load_test(&name, source, SystemTime::now())
-                .map_err(LoadTestImportErrorDto::from)?;
-            validate_execution(&analysis)?;
-            analysis.flow.id = provisional_flow_id(&bytes);
-            Ok(analysis_to_dto(analysis, content_hash(&bytes)))
+            analyze_load_test_source(&name, &bytes)
         },
     )
+}
+
+/// Analyze an already bounded source for the unified flow file selector.
+pub(crate) fn analyze_load_test_source(
+    name: &str,
+    bytes: &[u8],
+) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
+    let source = std::str::from_utf8(bytes).map_err(|_| LoadTestImportErrorDto::InvalidSource {
+        message: "o arquivo precisa estar em UTF-8".to_string(),
+    })?;
+    let mut analysis =
+        analyze_load_test(name, source, SystemTime::now()).map_err(LoadTestImportErrorDto::from)?;
+    validate_execution(&analysis)?;
+    analysis.flow.id = provisional_flow_id(bytes);
+    Ok(analysis_to_dto(analysis, content_hash(bytes)))
 }
 
 /// Reanalyze immediately before persistence; the hash prevents a preview from

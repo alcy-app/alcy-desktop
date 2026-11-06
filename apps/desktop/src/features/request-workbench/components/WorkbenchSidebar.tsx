@@ -130,6 +130,7 @@ interface HistoryPanelSlice {
 }
 
 interface FlowsPanelSlice {
+  exportContext?: Omit<import('../../../bindings/export-flow').FlowExportSource, 'flow'>
   flows: FlowState[]
   folders: FlowFolderDto[]
   saveError: string | null
@@ -142,6 +143,8 @@ interface FlowsPanelSlice {
   onAddFlowFromTemplate: (templateId: FlowTemplateId, folderId?: string) => string
   onAddLoadFlow?: (folderId?: string) => string
   onImportLoadTest?: () => void
+  onImportFlow?: () => void
+  importingFlow?: boolean
   onRenameFlow: (id: string, name: string) => void
   onRemoveFlow: (id: string) => void
   onMoveFlow: (draggedId: string, targetId: string, edge: SiblingEdge) => void

@@ -17,15 +17,19 @@ import { Button } from '../../shared/ui/Button'
 import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { Modal } from '../../shared/ui/Modal'
 import { Select } from '../../shared/ui/Select'
-import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FlowIcon, FolderIcon, ImportIcon, LoadTestIcon, PlusIcon, SearchIcon } from '../../shared/ui/icons'
+import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FlowIcon, FolderIcon, ImportIcon, LoadTestIcon, PlusIcon, SearchIcon, Spinner } from '../../shared/ui/icons'
 import { VirtualizedList, type VirtualizedListHandle } from '../request-workbench/components/VirtualizedList'
 import type { FlowState } from './flows.types'
+import type { FlowExportSource } from '../../bindings/export-flow'
+import { ExportFlowModal } from './ExportFlowModal'
+import { dtoFromFlow } from './use-flows-state'
 import { RemoveFlowModal } from './RemoveFlowModal'
 import { FlowTemplatesModal } from './FlowTemplatesModal'
 import type { FlowTemplateId } from './flow-templates'
 import './flows-panel.css'
 
 interface FlowsPanelProps {
+  exportContext?: Omit<FlowExportSource, 'flow'>
   flows: FlowState[]
   folders: FlowFolderDto[]
   saveError?: string | null
@@ -34,6 +38,8 @@ interface FlowsPanelProps {
   onAddFlowFromTemplate: (templateId: FlowTemplateId, folderId?: string) => string
   onAddLoadFlow?: (folderId?: string) => string
   onImportLoadTest?: () => void
+  onImportFlow?: () => void
+  importingFlow?: boolean
   onRenameFlow: (id: string, name: string) => void
   onRemoveFlow: (id: string) => void
   onMoveFlow: (draggedId: string, targetId: string, edge: SiblingEdge) => void
@@ -70,13 +76,14 @@ function MoveFlowModal({ flow, folders, onMove, onCancel }: {
   )
 }
 
-export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow, onAddFlowFromTemplate, onAddLoadFlow, onImportLoadTest, onRenameFlow, onRemoveFlow, onMoveFlow, onOpenFlow, onAddFolder, onRenameFolder, onRemoveFolder, onMoveFolder, onMoveFlowToFolder }: FlowsPanelProps) {
+export function FlowsPanel({ exportContext, flows, folders, saveError, changeMarkers, onAddFlow, onAddFlowFromTemplate, onAddLoadFlow, onImportLoadTest, onImportFlow, importingFlow = false, onRenameFlow, onRemoveFlow, onMoveFlow, onOpenFlow, onAddFolder, onRenameFolder, onRemoveFolder, onMoveFolder, onMoveFlowToFolder }: FlowsPanelProps) {
   const { t } = useLanguage()
   const { bindings: shortcutBindings } = useShortcuts()
   const [renamingKey, setRenamingKey] = useState<string | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [pendingRemove, setPendingRemove] = useState<Row | null>(null)
   const [movingFlow, setMovingFlow] = useState<FlowState | null>(null)
+  const [exportSource, setExportSource] = useState<FlowExportSource | null>(null)
   const [menuOpenKey, setMenuOpenKey] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(() => new Set<string>())
   const [searchOpen, setSearchOpen] = useState(false)
@@ -191,7 +198,9 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
               <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates()} />
               <MenuItem label={t('flows.addFolderAria')} onSelect={addFolder} />
             </OptionsMenu>
-            {onImportLoadTest && <IconButton icon={<ImportIcon size={12} />} label={t('flows.importLoadTestAria')} onClick={onImportLoadTest} />}
+            {onImportFlow
+              ? <IconButton icon={importingFlow ? <Spinner size={12} /> : <ImportIcon size={12} />} label={t('flows.import.menu')} disabled={importingFlow} aria-busy={importingFlow || undefined} onClick={onImportFlow} />
+              : onImportLoadTest && <IconButton icon={<ImportIcon size={12} />} label={t('flows.importLoadTestAria')} onClick={onImportLoadTest} />}
           </>
         )}
       </div>
@@ -273,6 +282,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
                 {kind === 'folder' && <MenuItem label={t('flows.templates.menu')} onSelect={() => openTemplates(item.id)} />}
                 <MenuItem label={t('flows.renameMenuItem')} shortcutAction="renameItem" onSelect={() => rename(row)} />
                 {row.kind === 'flow' && <MenuItem label={t('flows.moveToFolder')} onSelect={() => { setMovingFlow(row.item); setMenuOpenKey(null) }} />}
+                {row.kind === 'flow' && exportContext && <MenuItem label={t('flows.export.title')} onSelect={() => { setExportSource({ ...exportContext, flow: dtoFromFlow(row.item) }); setMenuOpenKey(null) }} />}
                 {row.kind === 'flow' && <MentionInChatMenuItem item={{ kind: 'flow', id: item.id, label }} onDone={() => setMenuOpenKey(null)} />}
                 <MenuItem label={t('common.remove')} shortcutAction="deleteItem" danger onSelect={() => { setPendingRemove(row); setMenuOpenKey(null) }} />
               </OptionsMenu>
@@ -281,6 +291,7 @@ export function FlowsPanel({ flows, folders, saveError, changeMarkers, onAddFlow
         }} />
       )}
       <DragPreview label={draggedLabel} position={position} />
+      {exportSource && <ExportFlowModal source={exportSource} onClose={() => setExportSource(null)} />}
       {templateContext && <FlowTemplatesModal loadTestingEnabled={!!onAddLoadFlow} onCancel={cancelTemplates} onCreate={(templateId) => {
         const id = onAddFlowFromTemplate(templateId, templateContext.folderId)
         closeSearch()

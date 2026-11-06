@@ -710,7 +710,7 @@ pub(crate) fn edges_from_dto(edges: Vec<FlowEdgeDto>) -> Vec<FlowEdge> {
         .collect()
 }
 
-fn flow_from_input(input: FlowInput) -> Result<Flow, FlowsError> {
+pub(crate) fn flow_from_input(input: FlowInput) -> Result<Flow, FlowsError> {
     let nodes = nodes_from_dto(input.nodes).map_err(|message| FlowsError::Invalid { message })?;
     let edges = edges_from_dto(input.edges);
 
