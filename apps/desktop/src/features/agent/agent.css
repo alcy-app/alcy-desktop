@@ -9,6 +9,58 @@
   background: var(--surface);
 }
 
+/* Light chat uses a quiet canvas with distinct message and composer surfaces. */
+:root:not([data-theme='dark']) .agent-panel {
+  --text-muted: color-mix(in srgb, var(--text) 78%, var(--surface));
+  --border-subtle: color-mix(in srgb, var(--border) 75%, var(--surface));
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface));
+}
+
+:root:not([data-theme='dark']) .agent-panel-header {
+  border-bottom-color: var(--border);
+  background: transparent;
+}
+
+:root:not([data-theme='dark']) .agent-message--user {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text-heading);
+}
+
+:root:not([data-theme='dark']) :is(.agent-suggestion, .agent-follow-up).ui-button {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+:root:not([data-theme='dark']) :is(.agent-suggestion, .agent-follow-up).ui-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  color: var(--accent-strong);
+}
+
+:root:not([data-theme='dark']) .agent-composer {
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-theme='dark']) .agent-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border-strong));
+  box-shadow: none;
+}
+
+:root:not([data-theme='dark']) .agent-composer-send.ui-icon-button:disabled {
+  border-color: var(--border);
+  background: var(--bg);
+}
+
+:root:not([data-theme='dark']) .agent-day::before,
+:root:not([data-theme='dark']) .agent-day::after {
+  border-top-style: solid;
+}
+
 .agent-panel-header {
   position: relative;
   display: flex;
