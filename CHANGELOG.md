@@ -8,35 +8,37 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Added
 
-- Exporte e importe flows em arquivos Alcy, mantendo as referências ou incorporando requisições e variáveis no próprio flow.
 - **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
-- **Git no workspace**: inicie um histórico git no próprio workspace, sem conta nem git instalado, com commits, branches, mesclagem item a item e um histórico de onde dá para restaurar versões anteriores. O autor dos commits vem da sua configuração do git e pode ser trocado em Configurações › Git.
-- **Workspace compartilhado por pasta**: trabalhe em equipe por uma pasta de rede ou sincronizada pelo OneDrive, Dropbox ou Google Drive. Cada pessoa publica o próprio trabalho e o Alcy junta tudo ao sincronizar, sem perder alterações feitas ao mesmo tempo.
-- **Posição do chat**: arraste o painel do agente pelo cabeçalho para a direita ou a parte de baixo da tela, ou para a esquerda, onde ele vira um módulo da barra lateral. A posição também pode ser escolhida em Configurações › Agente e fica salva.
-- **Aparência "Padrão do sistema"**: em Configurações › Aparência, o Alcy pode seguir o tema claro ou escuro do sistema operacional, inclusive quando ele muda com o app aberto.
 - **Versão para macOS**: o Alcy passa a ter instalador `.dmg` para Macs com Apple Silicon e Intel (macOS 13.3 ou mais recente), com atualização automática pelo app. Como o app ainda não é assinado pela Apple, na primeira instalação é preciso liberá-lo uma vez no Terminal.
-- **Comentários no body JSON**: comente trechos do body com Ctrl+/ ou Ctrl+; (uma linha vira `//`, várias viram um bloco `/* */`). Os comentários ficam salvos na requisição e destacados no editor, mas não são enviados.
+
+## [0.10.0-preview01] - 06/11/2026
+
+### Added
+
+- **Git no workspace**: inicie um histórico git no próprio workspace, sem conta nem git instalado, com commits, branches, mesclagem item a item e um histórico de onde dá para restaurar versões anteriores. Trabalhe em equipe por uma pasta de rede ou sincronizada.
+- **Posição do chat**: arraste o painel do agente pelo cabeçalho para a direita ou a parte de baixo da tela, ou para a esquerda, onde ele vira um módulo da barra lateral. A posição também pode ser escolhida em Configurações › Agente e fica salva.
+- **Aparência "Padrão do sistema"**: em Configurações › Aparência, o Alcy pode seguir o tema claro ou escuro do sistema operacional.
+- **Comentários no body JSON**: comente trechos do body com Ctrl+/ ou Ctrl+; (uma linha vira `//`, várias viram um bloco `/* */`).
+- Exporte e importe flows em arquivos Alcy, mantendo as referências ou incorporando requisições e variáveis no próprio flow.
 
 ### Changed
 
-- Pastas também podem ser exportadas no formato Alcy, individualmente ou junto com outras pastas e collections.
-
-- Ao voltar para uma aba, a resposta continua onde você parou: mesma rolagem, cursor e trechos recolhidos, e a busca (Ctrl+F) segue aberta com o mesmo texto e a mesma ocorrência selecionada.
+- Pastas também podem ser exportadas no formato Alcy.
 - Com um texto selecionado no editor, Ctrl+F já abre a busca procurando por ele.
 - O menu de opções de um monitor de valores tem "Mencionar no chat", como as demais listas.
-- Selecione um trecho da resposta e use "Compartilhar como imagem" no menu do botão direito: a imagem mostra só as linhas escolhidas, com a numeração original, e você decide se inclui nome, URL e status.
-- Variáveis `{{nome}}` ficam mais fáceis de ler, selecionar e editar na URL, nos parâmetros e no body: a variável em edição ou selecionada fica destacada, e a pré-visualização não abre mais no meio de uma seleção.
-- Na URL, a lista de sugestões de variáveis abre logo abaixo do `{{` digitado.
+- Selecione um trecho da resposta e use "Compartilhar como imagem".
+- Variáveis `{{nome}}` ficam mais fáceis de ler, selecionar e editar na URL, nos parâmetros e no body.
 - Nos flows, um clique só seleciona o bloco; as configurações abrem com duplo clique ou pela opção "Gerenciar" do menu do bloco.
-- No console, os detalhes de uma requisição mostram também o body enviado, junto dos headers.
-- Nas variáveis de um ambiente, a busca, "Adicionar variável" e os nomes das colunas ficam sempre visíveis no topo, e só a lista rola.
-- Nos flows, os valores numéricos dos blocos, como o máximo de iterações do loop e a duração da espera, aceitam uma `{{variável}}` além de um número.
+- Nas variáveis de um ambiente, a busca, "Adicionar variável" e os nomes das colunas ficam sempre visíveis no topo.
+- Nos flows, os valores numéricos dos blocos, como o máximo de iterações do loop e a duração da espera, passam a aceitar variáveis.
 
 ### Fixed
 
 - Nomes longos de variável não ultrapassam mais a caixa de descrição das sugestões no body.
 - Nos flows, o campo de URL das requisições avulsas volta a ocupar a largura da linha, em vez de ficar espremido ao lado do método.
+- Ao voltar para uma aba, a resposta continua onde você parou.
+- No console, os detalhes de uma requisição mostram também o body enviado, junto dos headers.
 
 ## [0.9.0] - 03/11/2026
 
