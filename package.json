@@ -18,6 +18,8 @@
     "release:build": "node scripts/check-release-toolchain.mjs && pnpm install --frozen-lockfile && node scripts/with-env.mjs tauri build --config src-tauri/tauri.release.conf.json -- --locked",
     "release:prepare:windows": "rustup target add x86_64-pc-windows-msvc",
     "release:build:windows:nsis": "node scripts/check-release-toolchain.mjs && pnpm install --frozen-lockfile && node scripts/with-env.mjs tauri build --config src-tauri/tauri.release.conf.json --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis -- --locked",
+    "release:prepare:macos": "rustup target add aarch64-apple-darwin x86_64-apple-darwin",
+    "release:build:macos": "node scripts/check-release-toolchain.mjs && pnpm install --frozen-lockfile && node scripts/with-env.mjs tauri build --config src-tauri/tauri.release.conf.json --target universal-apple-darwin --bundles app,dmg -- --locked",
     "release:publish": "node scripts/publish-release.mjs",
     "check": "node scripts/check-security-invariants.mjs && node --test scripts/security/security.test.mjs && pnpm --filter desktop run check && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && node scripts/with-env.mjs cargo test --workspace",
     "security:audit": "node scripts/check-security-invariants.mjs && pnpm audit && cargo deny check",

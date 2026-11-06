@@ -1,26 +1,27 @@
 #!/usr/bin/env node
-// Publica o build assinado desta máquina na origem de atualizações definida
-// por ALCY_UPDATE_PROVIDER e ALCY_UPDATE_URL (no ambiente ou no `.env`; ver
-// scripts/build-env.mjs e ADR 0026).
+// Publishes this machine's signed build to the update source set by
+// ALCY_UPDATE_PROVIDER and ALCY_UPDATE_URL (environment or `.env`; see
+// scripts/build-env.mjs and ADR 0026).
 //
-// Em todos os provedores, o manifesto `latest.json` do updater é mesclado com
-// o que outra plataforma já publicou para a mesma versão, para que Windows e
-// Linux possam publicar de máquinas diferentes.
+// For every provider, the updater manifest `latest.json` is merged with what
+// another platform already published for the same version, so Windows, Linux
+// and macOS can publish from different machines.
 //
-// - gitlab: instaladores e manifesto no Generic Package Registry do projeto
-//   (pacote `alcy`); a release `vX.Y.Z` recebe asset links para eles.
-//   Env: GITLAB_TOKEN (escopo api). GITLAB_URL e GITLAB_PROJECT são deduzidos
-//   de ALCY_UPDATE_URL (defina-os se a instância estiver num subcaminho).
-// - github: instaladores e manifesto como assets da release `vX.Y.Z`.
-//   Env: GITHUB_TOKEN (permissão contents: write).
-// - releaseServer: instaladores e manifesto no serviço de releases
-//   próprio; o manifesto vai por último e é ele que publica a versão.
+// - gitlab: installers and manifest in the project's Generic Package Registry
+//   (package `alcy`); release `vX.Y.Z` gets asset links to them.
+//   Env: GITLAB_TOKEN (api scope). GITLAB_URL and GITLAB_PROJECT are derived
+//   from ALCY_UPDATE_URL (set them if the instance lives under a subpath).
+// - github: installers and manifest as assets of release `vX.Y.Z`.
+//   Env: GITHUB_TOKEN (contents: write permission).
+// - releaseServer: installers and manifest on the own release service; the
+//   manifest goes last and is what publishes the version.
 //   Env: ALCY_RELEASES_TOKEN.
-// - manifest: gera o latest.json em target/release/bundle/ apontando para a
-//   mesma pasta do manifesto; os arquivos são enviados à hospedagem por você.
+// - manifest: writes latest.json in the bundle folder pointing to the
+//   manifest's own folder; you upload the files to the hosting.
 //
-// Uso (após `pnpm release:build` com TAURI_SIGNING_PRIVATE_KEY definido):
-//   pnpm release:publish [--notes-file NOTAS.md] [--dry-run] [--bundle-dir <pasta>]
+// Usage (after `pnpm release:build`, or `release:build:macos` on a Mac, with
+// TAURI_SIGNING_PRIVATE_KEY set):
+//   pnpm release:publish [--notes-file NOTES.md] [--dry-run] [--bundle-dir <folder>]
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -39,7 +40,9 @@ function fail(message) {
 }
 
 function parseArgs(argv) {
-  const args = { dryRun: false, notesFile: null, bundleDir: join(ROOT, 'target', 'release', 'bundle') }
+  // On macOS, release builds are universal (see `release:build:macos`).
+  const target = process.platform === 'darwin' ? ['universal-apple-darwin', 'release'] : ['release']
+  const args = { dryRun: false, notesFile: null, bundleDir: join(ROOT, 'target', ...target, 'bundle') }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--dry-run') args.dryRun = true
@@ -64,7 +67,52 @@ function readJson(path) {
   }
 }
 
-/** Instalador + assinatura de cada formato atualizável encontrado no bundle. */
+/** macOS arch in the DMG name (`Alcy_1.2.3_universal.dmg`) → updater platforms. */
+const MACOS_PLATFORMS = {
+  universal: ['darwin-x86_64', 'darwin-aarch64', 'darwin-x86_64-app', 'darwin-aarch64-app'],
+  aarch64: ['darwin-aarch64', 'darwin-aarch64-app'],
+  x64: ['darwin-x86_64', 'darwin-x86_64-app'],
+}
+
+/**
+ * macOS: the DMG is uploaded for first installs (no manifest entry); the
+ * updater archive `Alcy.app.tar.gz` has no version or arch in its name, so it
+ * is checked against the bundle's Info.plist and uploaded as
+ * `Alcy_<version>_<arch>.app.tar.gz`.
+ */
+function findMacosArtifacts(bundleDir, version) {
+  const dmgDir = join(bundleDir, 'dmg')
+  const appDir = join(bundleDir, 'macos')
+  const pattern = new RegExp(`^(.+)_${version.replaceAll('.', '\\.')}_(universal|aarch64|x64)\\.dmg$`)
+  const dmgs = existsSync(dmgDir)
+    ? readdirSync(dmgDir).map((file) => ({ file, match: pattern.exec(file) })).filter(({ match }) => match)
+    : []
+  const archives = existsSync(appDir) ? readdirSync(appDir).filter((file) => file.endsWith('.app.tar.gz')) : []
+  if (archives.length > 0 && dmgs.length !== 1) {
+    fail(`${appDir} tem pacote de atualização, mas ${dmgDir} precisa ter exatamente um .dmg da versão ${version}. Gere o build com "pnpm release:build:macos".`)
+  }
+  const artifacts = dmgs.map(({ file }) => ({ path: join(dmgDir, file), signaturePath: null, name: file, platforms: [] }))
+  for (const archive of archives) {
+    const [, product, arch] = dmgs[0].match
+    const app = archive.slice(0, -'.tar.gz'.length)
+    const plist = join(appDir, app, 'Contents', 'Info.plist')
+    const built = existsSync(plist)
+      ? /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(readFileSync(plist, 'utf8'))?.[1]
+      : undefined
+    if (built !== version) {
+      fail(`${archive} é da versão ${built ?? 'desconhecida'} (${plist}), não da ${version}. Gere o build de novo.`)
+    }
+    const path = join(appDir, archive)
+    const signaturePath = `${path}.sig`
+    if (!existsSync(signaturePath)) {
+      fail(`${archive} não tem assinatura (${basename(signaturePath)}). Gere o build com "pnpm release:build:macos" e TAURI_SIGNING_PRIVATE_KEY definido.`)
+    }
+    artifacts.push({ path, signaturePath, name: `${product}_${version}_${arch}.app.tar.gz`, platforms: MACOS_PLATFORMS[arch] })
+  }
+  return artifacts
+}
+
+/** Installer + signature of each updatable format found in the bundle. */
 function findArtifacts(bundleDir, version) {
   const formats = [
     { dir: 'nsis', suffix: '-setup.exe', platforms: ['windows-x86_64-nsis', 'windows-x86_64'] },
@@ -85,10 +133,10 @@ function findArtifacts(bundleDir, version) {
       artifacts.push({ path, signaturePath, name: file, platforms: format.platforms })
     }
   }
-  return artifacts
+  return [...artifacts, ...findMacosArtifacts(bundleDir, version)]
 }
 
-/** Manifesto do updater com as plataformas deste build somadas às já publicadas. */
+/** Updater manifest with this build's platforms added to the published ones. */
 function buildManifest({ version, previous, notesFile, artifacts, urlFor }) {
   const notes = notesFile ? readFileSync(notesFile, 'utf8').trim() : previous?.notes ?? `Alcy ${version}`
   const manifest = {
@@ -97,7 +145,7 @@ function buildManifest({ version, previous, notesFile, artifacts, urlFor }) {
     pub_date: previous?.pub_date ?? new Date().toISOString(),
     platforms: { ...(previous?.version === version ? previous.platforms : {}) },
   }
-  for (const artifact of artifacts) {
+  for (const artifact of artifacts.filter((artifact) => artifact.platforms.length > 0)) {
     const entry = { url: urlFor(artifact.name), signature: readFileSync(artifact.signaturePath, 'utf8').trim() }
     for (const platform of artifact.platforms) manifest.platforms[platform] = entry
   }
@@ -108,7 +156,7 @@ function releaseRef() {
   return process.env.RELEASE_REF?.trim() || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim()
 }
 
-/** Cliente HTTP mínimo: falha com mensagem clara e, em dry-run, não escreve nada. */
+/** Minimal HTTP client: fails with a clear message and writes nothing in dry-run. */
 function createHttp({ headers, dryRun, schemeHint }) {
   async function request(method, url, { body, json, allow404 = false, extraHeaders = {} } = {}) {
     const allHeaders = { ...headers, ...extraHeaders }
@@ -118,7 +166,7 @@ function createHttp({ headers, dryRun, schemeHint }) {
       response = await fetch(url, { method, headers: allHeaders, body: json !== undefined ? JSON.stringify(json) : body })
     } catch (error) {
       const cause = error.cause ?? error
-      // TLS falando com um servidor que responde HTTP puro nessa porta.
+      // TLS talking to a server that answers plain HTTP on this port.
       const plainHttp = cause.code === 'ERR_SSL_PACKET_LENGTH_TOO_LONG' || cause.code === 'ERR_SSL_WRONG_VERSION_NUMBER'
       const hint = plainHttp && schemeHint ? ` O servidor parece não usar HTTPS: ${schemeHint}` : ''
       fail(`não foi possível conectar a ${new URL(url).origin} (${cause.code ?? cause.message}).${hint}`)
@@ -161,20 +209,20 @@ async function publishGitlab({ source, version, tag, artifacts, args }) {
   const packageUrl = (file) => `${packageBase}/${encodeURIComponent(file)}`
   console.log(`GitLab: projeto ${project.path_with_namespace} (id ${project.id}), versão ${version}`)
 
-  // 1. Instaladores (as assinaturas vão dentro do manifesto, não como arquivos).
+  // 1. Installers (signatures go inside the manifest, not as files).
   for (const artifact of artifacts) {
     console.log(`Enviando ${artifact.name}…`)
     await http.write('PUT', packageUrl(artifact.name), { body: readFileSync(artifact.path) })
   }
 
-  // 2. Manifesto, mesclado com as plataformas já publicadas nesta versão.
+  // 2. Manifest, merged with the platforms already published for this version.
   const existing = await http.get(packageUrl(MANIFEST_NAME), { allow404: true })
   const previous = typeof existing === 'string' ? JSON.parse(existing) : existing
   const manifest = buildManifest({ version, previous, notesFile: args.notesFile, artifacts, urlFor: packageUrl })
   console.log(`Enviando ${MANIFEST_NAME} (${Object.keys(manifest.platforms).join(', ')})…`)
   await http.write('PUT', packageUrl(MANIFEST_NAME), { body: JSON.stringify(manifest, null, 2) })
 
-  // 3. Release e asset links.
+  // 3. Release and asset links.
   const releaseUrl = `${apiBase}/projects/${project.id}/releases/${encodeURIComponent(tag)}`
   const release = await http.get(releaseUrl, { allow404: true })
   if (!release) {
@@ -220,7 +268,7 @@ async function publishGithub({ source, version, tag, artifacts, args }) {
   let release = await http.get(`${api}/releases/tags/${encodeURIComponent(tag)}`, { allow404: true })
   const existingAsset = (name) => release?.assets?.find((asset) => asset.name === name)
 
-  // Manifesto já publicado nesta release (outra plataforma), para mesclar.
+  // Manifest already published in this release (another platform), to merge.
   const manifestAsset = existingAsset(MANIFEST_NAME)
   const existing = manifestAsset
     ? await http.get(`${api}/releases/assets/${manifestAsset.id}`, { extraHeaders: { Accept: 'application/octet-stream' } })
@@ -238,7 +286,7 @@ async function publishGithub({ source, version, tag, artifacts, args }) {
     await http.write('PATCH', `${api}/releases/${release.id}`, { json: { body: manifest.notes } })
   }
 
-  // Assets com o mesmo nome são substituídos (a API não sobrescreve).
+  // Assets with the same name are replaced (the API does not overwrite).
   const upload = async (name, body) => {
     const current = existingAsset(name)
     if (current) await http.write('DELETE', `${api}/releases/assets/${current.id}`)
@@ -265,7 +313,7 @@ async function publishReleaseServer({ source, version, artifacts, args }) {
   const fileUrl = (file) => `${base}/v1/releases/${version}/files/${encodeURIComponent(file)}`
   console.log(`Servidor de releases: ${base}, versão ${version}`)
 
-  // 1. Instaladores (as assinaturas vão dentro do manifesto, não como arquivos).
+  // 1. Installers (signatures go inside the manifest, not as files).
   for (const artifact of artifacts) {
     console.log(`Enviando ${artifact.name}…`)
     await http.write('PUT', fileUrl(artifact.name), {
@@ -274,8 +322,8 @@ async function publishReleaseServer({ source, version, artifacts, args }) {
     })
   }
 
-  // 2. Manifesto por último: só com ele a versão aparece para o app. Mesclado
-  // com as plataformas já publicadas nesta versão.
+  // 2. Manifest last: only then does the version show up for the app. Merged
+  // with the platforms already published for this version.
   const existing = await http.get(fileUrl(MANIFEST_NAME), { allow404: true })
   const previous = typeof existing === 'string' ? JSON.parse(existing) : existing
   const manifest = buildManifest({ version, previous, notesFile: args.notesFile, artifacts, urlFor: fileUrl })
@@ -298,7 +346,10 @@ function writeManifestLocally({ source, version, artifacts, args }) {
   else writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`)
   console.log(`Manifesto: ${target} (${Object.keys(manifest.platforms).join(', ')})`)
   console.log(`Envie para ${base}:`)
-  for (const artifact of artifacts) console.log(`  - ${artifact.path}`)
+  for (const artifact of artifacts) {
+    const renamed = basename(artifact.path) === artifact.name ? '' : ` (como ${artifact.name})`
+    console.log(`  - ${artifact.path}${renamed}`)
+  }
   console.log(`  - ${target} (como ${source.url.slice(base.length)})`)
 }
 

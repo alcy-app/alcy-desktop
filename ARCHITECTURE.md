@@ -283,11 +283,15 @@ is unavailable. Existing files in the former `Documents/Alcy/` location remain
 untouched; new writes use the selected location. Workspace locations and other
 application settings keep their existing paths.
 
-The release publisher provides signed Windows EXE/MSI installers and raw Linux
-AppImages. The native updater retains TLS and system proxy support, with its
-legacy archive extraction feature disabled. ZIP and tar.gz update bundles,
-including macOS application bundles, are not supported by this configuration.
-Adding archive-based updates requires reviewing the extraction dependencies.
+The release publisher provides signed Windows EXE/MSI installers, raw Linux
+AppImages and, for macOS, a universal DMG for first installs plus the signed
+`.app.tar.gz` updater archive. The native updater retains TLS and system proxy
+support, with its optional archive extraction feature disabled: Windows and
+Linux updates are never archives. On macOS the updater always extracts the
+`.app.tar.gz` (the plugin's `tar`/`flate2` are unconditional there), only after
+its signature is verified. macOS builds are ad-hoc signed (no Developer ID), so
+a downloaded DMG must have its quarantine removed once; the app only offers to
+install updates when it runs from a writable `.app` bundle.
 
 ### Version control providers
 

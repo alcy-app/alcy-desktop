@@ -290,16 +290,29 @@ fn public_key(app: &AppHandle) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A instalação atual consegue ser substituída pelo updater?
+/// Can the updater replace the current installation?
 fn installable() -> bool {
     if cfg!(target_os = "windows") {
         true
     } else if cfg!(target_os = "linux") {
-        // O updater só substitui AppImages (pacotes .deb/.rpm são do gerenciador).
+        // The updater only replaces AppImages (.deb/.rpm belong to the package manager).
         std::env::var_os("APPIMAGE").is_some()
+    } else if cfg!(target_os = "macos") {
+        std::env::current_exe().is_ok_and(|exe| replaceable_macos_bundle(&exe))
     } else {
         false
     }
+}
+
+/// The updater replaces the whole `.app`, so the executable must run from a
+/// bundle that can be written: not from the mounted DMG (`/Volumes/...`) and
+/// not from the read-only copy macOS makes for a quarantined app
+/// (`AppTranslocation`).
+fn replaceable_macos_bundle(exe: &std::path::Path) -> bool {
+    let text = exe.to_string_lossy();
+    text.contains(".app/Contents/MacOS/")
+        && !text.starts_with("/Volumes/")
+        && !text.contains("/AppTranslocation/")
 }
 
 fn host_of(url: &str) -> String {
@@ -1117,6 +1130,22 @@ mod tests {
 
     use alcy_app::CredentialError;
     use alcy_gitlab::{TokenSet, save_tokens};
+
+    #[test]
+    fn macos_updates_need_a_writable_app_bundle() {
+        let bundle = |path: &str| replaceable_macos_bundle(std::path::Path::new(path));
+        assert!(bundle("/Applications/Alcy.app/Contents/MacOS/alcy"));
+        assert!(bundle(
+            "/Users/ana/Applications/Alcy.app/Contents/MacOS/alcy"
+        ));
+        // Still on the mounted DMG, or translocated by Gatekeeper.
+        assert!(!bundle("/Volumes/Alcy/Alcy.app/Contents/MacOS/alcy"));
+        assert!(!bundle(
+            "/private/var/folders/x/AppTranslocation/1234/d/Alcy.app/Contents/MacOS/alcy"
+        ));
+        // Not a bundle (`cargo run`).
+        assert!(!bundle("/Users/ana/alcy/target/debug/alcy"));
+    }
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

@@ -12,6 +12,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
 - **Posição do chat**: arraste o painel do agente pelo cabeçalho para a direita ou a parte de baixo da tela, ou para a esquerda, onde ele vira um módulo da barra lateral. A posição também pode ser escolhida em Configurações › Agente e fica salva.
 - **Aparência "Padrão do sistema"**: em Configurações › Aparência, o Alcy pode seguir o tema claro ou escuro do sistema operacional, inclusive quando ele muda com o app aberto.
+- **Versão para macOS**: o Alcy passa a ter instalador `.dmg` para Macs com Apple Silicon e Intel (macOS 13.3 ou mais recente), com atualização automática pelo app. Como o app ainda não é assinado pela Apple, na primeira instalação é preciso liberá-lo uma vez no Terminal.
 - **Comentários no body JSON**: comente trechos do body com Ctrl+/ ou Ctrl+; (uma linha vira `//`, várias viram um bloco `/* */`). Os comentários ficam salvos na requisição e destacados no editor, mas não são enviados.
 
 ### Changed
