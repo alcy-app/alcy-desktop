@@ -205,6 +205,14 @@ vi.mock('./components/WorkbenchSidebar', async (importOriginal) => {
 })
 
 const getWorkspaceLink = vi.fn()
+// The Settings menu mounts the Git author section while the git flag is on.
+vi.mock('../../bindings/local-git', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getGitIdentity: () => Promise.resolve({
+    ok: true,
+    value: { system: { name: null, email: null }, overrides: { name: null, email: null }, effective: null },
+  }),
+}))
 vi.mock('../../bindings/get-workspace-link', () => ({
   getWorkspaceLink: (...args: unknown[]) => getWorkspaceLink(...args),
 }))
