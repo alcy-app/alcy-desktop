@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { cancelGitlabOperation } from '../../bindings/cancel-gitlab-operation'
+import { cancelVersionControlOperation } from '../../bindings/cancel-version-control-operation'
 import { getStructuredFileChanges } from '../../bindings/get-structured-file-changes'
 import { previewPullChanges } from '../../bindings/preview-pull-changes'
-import type { GitlabCommandError, StructuredFileChangesDto } from '../../bindings/gitlab-types'
-import { gitlabErrorMessage } from '../../shared/gitlab/gitlab-error-message'
+import type { VersionControlCommandError, StructuredFileChangesDto } from '../../bindings/version-control-types'
+import { versionControlErrorMessage } from '../../shared/version-control-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { EmptyState } from '../../shared/ui/EmptyState'
@@ -22,7 +22,7 @@ interface PullReviewModalProps {
 
 type PreviewState =
   | { status: 'loading' }
-  | { status: 'error'; error: GitlabCommandError }
+  | { status: 'error'; error: VersionControlCommandError }
   | { status: 'ready'; incoming: string[]; conflicts: string[] }
 
 /** Revisa o que uma atualização traria do remoto (com diff) antes de aplicar. */
@@ -31,7 +31,7 @@ export function PullReviewModal({ rootPath, vc, onClose }: PullReviewModalProps)
   const [preview, setPreview] = useState<PreviewState>({ status: 'loading' })
   const [details, setDetails] = useState<Record<string, StructuredFileChangesDto>>({})
   const [selected, setSelected] = useState<string | null>(null)
-  const [applyError, setApplyError] = useState<GitlabCommandError | null>(null)
+  const [applyError, setApplyError] = useState<VersionControlCommandError | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -47,7 +47,7 @@ export function PullReviewModal({ rootPath, vc, onClose }: PullReviewModalProps)
     })
     return () => {
       cancelled = true
-      void cancelGitlabOperation(operationId)
+      void cancelVersionControlOperation(operationId)
     }
   }, [rootPath])
 
@@ -66,7 +66,7 @@ export function PullReviewModal({ rootPath, vc, onClose }: PullReviewModalProps)
     }))
     return () => {
       cancelled = true
-      operationIds.forEach((id) => void cancelGitlabOperation(id))
+      operationIds.forEach((id) => void cancelVersionControlOperation(id))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootPath, incoming.join(',')])
@@ -81,7 +81,7 @@ export function PullReviewModal({ rootPath, vc, onClose }: PullReviewModalProps)
       }
       return <>
       {preview.status === 'loading' && <p className="vc-diff-message" role="status"><Spinner size={14} /> {t('vc.pull.review.loading')}</p>}
-      {preview.status === 'error' && <InlineAlert>{gitlabErrorMessage(preview.error, t)}</InlineAlert>}
+      {preview.status === 'error' && <InlineAlert>{versionControlErrorMessage(preview.error, t)}</InlineAlert>}
       {preview.status === 'ready' && preview.incoming.length === 0 && preview.conflicts.length === 0 && (
         <EmptyState icon={<GitPullIcon size={28} />} title={t('vc.pull.review.empty')} />
       )}
@@ -115,7 +115,7 @@ export function PullReviewModal({ rootPath, vc, onClose }: PullReviewModalProps)
       {preview.status === 'ready' && preview.conflicts.length > 0 && (
         <p className="vc-pull-review-conflicts-note">{t('vc.pull.review.conflictsNote', { count: preview.conflicts.length })}</p>
       )}
-      {applyError && <InlineAlert>{gitlabErrorMessage(applyError, t)}</InlineAlert>}
+      {applyError && <InlineAlert>{versionControlErrorMessage(applyError, t)}</InlineAlert>}
       <div className="vc-actions">
         <Button variant="ghost" onClick={requestClose}>{t('vc.pull.review.cancel')}</Button>
         {preview.status === 'ready' && preview.incoming.length > 0 && (

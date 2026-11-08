@@ -2,70 +2,37 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use alcy_domain::{RemoteLocation, WorkspaceLink};
+use alcy_domain::WorkspaceLink;
 use serde::{Deserialize, Serialize};
 
 use crate::storage_error::StorageError;
 
-/// GitLab links stay on v1 so builds without other providers keep reading
-/// them; v2 carries a `provider` tag and is written for OneDrive (ADR 0063)
-/// and git folders (ADR 0074; builds without that provider reject the tag).
-const GITLAB_VERSION: u32 = 1;
-const PROVIDER_VERSION: u32 = 2;
+const LINK_VERSION: u32 = 2;
+/// Version 1 and any other provider tag come from version control backends
+/// that no longer exist: such a workspace simply counts as not linked.
+const LEGACY_VERSION: u32 = 1;
+const GIT_PROVIDER: &str = "git";
 pub(crate) const LINK_FILE_NAME: &str = "alcy-git-link.json";
 
 #[derive(Deserialize)]
-struct VersionProbe {
+struct LinkProbe {
     version: u32,
+    #[serde(default)]
+    provider: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PersistedGitlabLink {
+struct PersistedLink {
     version: u32,
-    account_id: String,
-    project_id: u64,
-    project_path: String,
-    branch: String,
-    #[serde(default)]
-    directory: String,
+    provider: String,
     #[serde(default)]
     include_environments: bool,
     #[serde(default)]
     base: BTreeMap<String, String>,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PersistedProviderLink {
-    version: u32,
-    #[serde(flatten)]
-    location: PersistedLocation,
-    #[serde(default)]
-    include_environments: bool,
-    #[serde(default)]
-    base: BTreeMap<String, String>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "provider", rename_all = "camelCase")]
-enum PersistedLocation {
-    #[serde(rename_all = "camelCase")]
-    Onedrive {
-        account_id: String,
-        drive_id: String,
-        folder_id: String,
-        #[serde(default)]
-        display_path: String,
-    },
-    #[serde(rename_all = "camelCase")]
-    Git {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        shared_folder: Option<String>,
-    },
-}
-
-/// Reads and writes the link between the workspace and its remote copy
+/// Reads and writes the link between the workspace and its git repository
 /// (`alcy-git-link.json`, at the workspace root).
 pub struct WorkspaceLinkStore {
     path: PathBuf,
@@ -86,100 +53,28 @@ impl WorkspaceLinkStore {
 
         let raw = fs::read_to_string(&self.path)
             .map_err(|error| StorageError::Read(error.to_string()))?;
-        let probe: VersionProbe = serde_json::from_str(&raw)
+        let probe: LinkProbe = serde_json::from_str(&raw)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
-        let corrupted = |error: serde_json::Error| StorageError::Corrupted(error.to_string());
-
-        let (link, base) = match probe.version {
-            GITLAB_VERSION => {
-                let persisted: PersistedGitlabLink =
-                    serde_json::from_str(&raw).map_err(corrupted)?;
-                let link = WorkspaceLink::gitlab(
-                    persisted.account_id,
-                    persisted.project_id,
-                    persisted.project_path,
-                    persisted.branch,
-                    &persisted.directory,
-                    persisted.include_environments,
-                );
-                (link, persisted.base)
-            }
-            PROVIDER_VERSION => {
-                let persisted: PersistedProviderLink =
-                    serde_json::from_str(&raw).map_err(corrupted)?;
-                let link = match persisted.location {
-                    PersistedLocation::Onedrive {
-                        account_id,
-                        drive_id,
-                        folder_id,
-                        display_path,
-                    } => WorkspaceLink::onedrive(
-                        account_id,
-                        &drive_id,
-                        &folder_id,
-                        display_path,
-                        persisted.include_environments,
-                    ),
-                    PersistedLocation::Git { shared_folder } => {
-                        WorkspaceLink::git(shared_folder.as_deref(), persisted.include_environments)
-                    }
-                };
-                (link, persisted.base)
-            }
+        match probe.version {
+            LEGACY_VERSION => return Ok(None),
+            LINK_VERSION if probe.provider.as_deref() != Some(GIT_PROVIDER) => return Ok(None),
+            LINK_VERSION => {}
             other => return Err(StorageError::UnsupportedVersion(other)),
-        };
-        let mut link = link.map_err(|error| StorageError::Corrupted(error.to_string()))?;
-        link.base = base;
+        }
+        let persisted: PersistedLink = serde_json::from_str(&raw)
+            .map_err(|error| StorageError::Corrupted(error.to_string()))?;
+        let mut link = WorkspaceLink::new(persisted.include_environments);
+        link.base = persisted.base;
         Ok(Some(link))
     }
 
     pub fn save(&self, link: &WorkspaceLink) -> Result<(), StorageError> {
-        let include_environments = link.include_environments;
-        let base = link.base.clone();
-        let json = match &link.location {
-            RemoteLocation::Gitlab {
-                account_id,
-                project_id,
-                project_path,
-                branch,
-                directory,
-            } => serde_json::to_string_pretty(&PersistedGitlabLink {
-                version: GITLAB_VERSION,
-                account_id: account_id.clone(),
-                project_id: *project_id,
-                project_path: project_path.clone(),
-                branch: branch.clone(),
-                directory: directory.clone(),
-                include_environments,
-                base,
-            }),
-            RemoteLocation::Onedrive {
-                account_id,
-                drive_id,
-                folder_id,
-                display_path,
-            } => serde_json::to_string_pretty(&PersistedProviderLink {
-                version: PROVIDER_VERSION,
-                location: PersistedLocation::Onedrive {
-                    account_id: account_id.clone(),
-                    drive_id: drive_id.clone(),
-                    folder_id: folder_id.clone(),
-                    display_path: display_path.clone(),
-                },
-                include_environments,
-                base,
-            }),
-            RemoteLocation::Git { shared_folder } => {
-                serde_json::to_string_pretty(&PersistedProviderLink {
-                    version: PROVIDER_VERSION,
-                    location: PersistedLocation::Git {
-                        shared_folder: shared_folder.clone(),
-                    },
-                    include_environments,
-                    base,
-                })
-            }
-        }
+        let json = serde_json::to_string_pretty(&PersistedLink {
+            version: LINK_VERSION,
+            provider: GIT_PROVIDER.to_string(),
+            include_environments: link.include_environments,
+            base: link.base.clone(),
+        })
         .map_err(|error| StorageError::Write(error.to_string()))?;
 
         if let Some(parent) = self.path.parent() {
@@ -234,7 +129,7 @@ mod tests {
     fn roundtrips_and_removes_the_link() {
         let root = temp_root();
         let store = WorkspaceLinkStore::new(root.clone());
-        let mut link = WorkspaceLink::gitlab("u@h", 7, "eq/proj", "main", "alcy", true).unwrap();
+        let mut link = WorkspaceLink::new(true);
         link.base.insert("alcy-flows.json".into(), "abc".into());
 
         store.save(&link).unwrap();
@@ -247,92 +142,41 @@ mod tests {
     }
 
     #[test]
-    fn gitlab_links_keep_the_v1_format() {
-        let root = temp_root();
-        let store = WorkspaceLinkStore::new(root.clone());
-        let mut link = WorkspaceLink::gitlab("u@h", 7, "eq/proj", "main", "alcy", false).unwrap();
-        link.base.insert("alcy-flows.json".into(), "abc".into());
-
-        store.save(&link).unwrap();
-
-        let raw = fs::read_to_string(root.join(LINK_FILE_NAME)).unwrap();
-        assert_eq!(
-            raw,
-            r#"{
-  "version": 1,
-  "accountId": "u@h",
-  "projectId": 7,
-  "projectPath": "eq/proj",
-  "branch": "main",
-  "directory": "alcy",
-  "includeEnvironments": false,
-  "base": {
-    "alcy-flows.json": "abc"
-  }
-}"#
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn roundtrips_git_links_as_v2() {
         let root = temp_root();
         let store = WorkspaceLinkStore::new(root.clone());
 
-        let mut local = WorkspaceLink::git(None, false).unwrap();
-        local.base.insert("alcy-flows.json".into(), "abc".into());
-        store.save(&local).unwrap();
-        assert_eq!(store.load().unwrap(), Some(local));
+        let mut link = WorkspaceLink::new(true);
+        link.base.insert("alcy-flows.json".into(), "abc".into());
+        store.save(&link).unwrap();
+        assert_eq!(store.load().unwrap(), Some(link.clone()));
         let raw: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(root.join(LINK_FILE_NAME)).unwrap()).unwrap();
         assert_eq!(raw["version"], 2);
         assert_eq!(raw["provider"], "git");
         assert!(raw.get("sharedFolder").is_none());
 
-        let folder = root.join("shared");
-        let shared = WorkspaceLink::git(Some(&folder.to_string_lossy()), true).unwrap();
-        store.save(&shared).unwrap();
-        assert_eq!(store.load().unwrap(), Some(shared));
-        let raw: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(root.join(LINK_FILE_NAME)).unwrap()).unwrap();
-        assert_eq!(raw["sharedFolder"], folder.to_string_lossy().as_ref());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn roundtrips_a_onedrive_link_as_v2() {
-        let root = temp_root();
-        let store = WorkspaceLinkStore::new(root.clone());
-        let mut link =
-            WorkspaceLink::onedrive("m@x", "b!drive", "01FOLDER", "/Equipe/Alcy", true).unwrap();
-        link.base
-            .insert("alcy-collections.json".into(), "def".into());
-
-        store.save(&link).unwrap();
-
-        let raw = fs::read_to_string(root.join(LINK_FILE_NAME)).unwrap();
-        assert!(raw.contains("\"version\": 2"));
-        assert!(raw.contains("\"provider\": \"onedrive\""));
+        // The shared folder of 0.10.0-preview01 links is dropped on load.
+        fs::write(
+            root.join(LINK_FILE_NAME),
+            r#"{"version":2,"provider":"git","sharedFolder":"/team","includeEnvironments":true,"base":{"alcy-flows.json":"abc"}}"#,
+        )
+        .unwrap();
         assert_eq!(store.load().unwrap(), Some(link));
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn rejects_invalid_v2_links() {
+    fn links_of_removed_backends_count_as_not_linked() {
         let root = temp_root();
         let store = WorkspaceLinkStore::new(root.clone());
-        let path = root.join(LINK_FILE_NAME);
-
         for raw in [
-            r#"{"version":2,"provider":"onedrive","accountId":"a","driveId":"","folderId":"f"}"#,
-            r#"{"version":2,"provider":"onedrive","accountId":"a","driveId":"d"}"#,
-            r#"{"version":2,"provider":"dropbox","accountId":"a"}"#,
+            r#"{"version":1,"accountId":"u","projectId":7,"projectPath":"p","branch":"main"}"#,
+            r#"{"version":2,"provider":"another","accountId":"u"}"#,
+            r#"{"version":2}"#,
         ] {
-            fs::write(&path, raw).unwrap();
-            assert!(
-                matches!(store.load(), Err(StorageError::Corrupted(_))),
-                "{raw}"
-            );
+            fs::write(root.join(LINK_FILE_NAME), raw).unwrap();
+            assert_eq!(store.load().unwrap(), None, "{raw}");
         }
         let _ = fs::remove_dir_all(root);
     }
@@ -358,7 +202,7 @@ mod tests {
 
         fs::write(
             &path,
-            r#"{"version":1,"accountId":"a","projectId":1,"projectPath":"p","branch":"main","directory":"../outside"}"#,
+            r#"{"version":2,"provider":"git","base":"not a map"}"#,
         )
         .unwrap();
         assert!(matches!(store.load(), Err(StorageError::Corrupted(_))));

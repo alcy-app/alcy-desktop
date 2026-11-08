@@ -8,9 +8,17 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Added
 
-- **Workspace compartilhado pelo OneDrive**: entre com a conta Microsoft e vincule o workspace a uma pasta do OneDrive, do SharePoint ou do Teams para enviar e receber alterações com outras pessoas. Pastas de outras pessoas podem ser vinculadas pelo link de compartilhamento.
-- **Workspaces do time**: publique um workspace num time do Teams e abra, pela tela inicial, os workspaces dos times de que você participa. Quem não está no time não os vê.
 - **Versão para macOS**: o Alcy passa a ter instalador `.dmg` para Macs com Apple Silicon e Intel (macOS 13.3 ou mais recente), com atualização automática pelo app. Como o app ainda não é assinado pela Apple, na primeira instalação é preciso liberá-lo uma vez no Terminal.
+
+### Changed
+
+- **Git no workspace** agora funciona como um git tradicional: conecte um repositório remoto, faça fetch, pull e push, e traga um workspace direto de um repositório em "Importar workspace existente". Usar um remoto requer o git instalado no computador.
+- O painel de versionamento ganhou um grafo de commits, onde dá para abrir o que mudou em cada um.
+- Na barra lateral, o versionamento agora vem logo antes do histórico.
+
+### Removed
+
+- A sincronização por pasta compartilhada com uma branch por pessoa, substituída pelo repositório remoto.
 
 ## [0.10.0-preview01] - 06/11/2026
 

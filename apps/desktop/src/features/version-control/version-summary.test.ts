@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { FileStatusDto } from '../../bindings/gitlab-types'
+import type { FileStatusDto } from '../../bindings/version-control-types'
 import { countChanges, mergeLocalStatus, summarize } from './version-summary'
 
 const file = (state: FileStatusDto['state']): FileStatusDto => ({ name: `${state}.json`, state })

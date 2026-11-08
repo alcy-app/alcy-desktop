@@ -1,21 +1,14 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { GitlabCommandError, VersionStatusDto } from './gitlab-types'
+import type { VersionControlCommandError, VersionStatusDto } from './version-control-types'
 
-/** Onde vincular o workspace, por provider. */
-export type LinkTarget =
-  | { provider: 'gitlab'; accountId: string; projectId: number; projectPath: string; branch: string; directory: string }
-  | { provider: 'onedrive'; accountId: string; driveId: string; folderId: string }
-  /** Creates (or adopts) the git repository in the workspace folder, on
-   * `main`; with `sharedFolder`, joins it (the next sync brings its work). */
-  | { provider: 'git'; sharedFolder?: string }
-
-export type LinkWorkspaceInput = LinkTarget & {
+/** Creates (or adopts) the git repository in the workspace folder, on `main`. */
+export interface LinkWorkspaceInput {
   rootPath: string
   operationId: string
   includeEnvironments: boolean
 }
 
-export type LinkWorkspaceResult = CommandResult<VersionStatusDto, GitlabCommandError>
+export type LinkWorkspaceResult = CommandResult<VersionStatusDto, VersionControlCommandError>
 
 export function linkWorkspace(input: LinkWorkspaceInput): Promise<LinkWorkspaceResult> {
   return invokeResult('link_workspace', { input })

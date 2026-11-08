@@ -1,11 +1,11 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { FileStatusDto, GitlabCommandError } from './gitlab-types'
+import type { FileStatusDto, VersionControlCommandError } from './version-control-types'
 
-export type GetLocalVersionStatusResult = CommandResult<FileStatusDto[], GitlabCommandError>
+export type GetLocalVersionStatusResult = CommandResult<FileStatusDto[], VersionControlCommandError>
 
 /**
  * Estado dos arquivos rastreados só a partir do disco (hash local × base
- * salva, sem chamar o GitLab) — para refletir uma edição local na hora, sem
+ * salva, sem consultar o repositório) — para refletir uma edição local na hora, sem
  * gerar uma consulta ao remoto. Nunca devolve `remoteChanged`/`conflict`;
  * só `getVersionStatus` (que consulta o remoto) sabe disso.
  */

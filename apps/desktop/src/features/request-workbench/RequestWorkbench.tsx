@@ -116,7 +116,7 @@ import { trackUsage } from '../../shared/usage-events/track-usage'
 import { useChangedItemMarkers } from '../version-control/use-changed-items'
 import { useVersionControl } from '../version-control/use-version-control'
 import type { VersionReviewTarget } from '../version-control/VersionControlPanel'
-import type { StructuredFileChangesDto } from '../../bindings/gitlab-types'
+import type { StructuredFileChangesDto } from '../../bindings/version-control-types'
 import { WorkspaceMenu } from '../workspace-menu/WorkspaceMenu'
 import { MockServerEditor } from '../mock-servers/MockServerEditor'
 import type { MockServerDto } from '../../bindings/mock-servers'
@@ -1292,7 +1292,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       rootPath: workspace.rootPath,
       vc: versionControl,
       onOpenSettings: (category?: 'git') => {
-        setSettingsCategory(category ?? 'gitlab')
+        setSettingsCategory(category ?? 'git')
         setSettingsOpen(true)
       },
       onReview: (target: VersionReviewTarget) => {
@@ -1755,7 +1755,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
             <VersionReview
               rootPath={workspace.rootPath}
               target={versionReviewTab.target}
-              onOpenItem={['request', 'flow'].includes(versionReviewTab.target.item?.itemKind ?? '') ? openReviewedItem : undefined}
+              onOpenItem={!versionReviewTab.target.historical && ['request', 'flow'].includes(versionReviewTab.target.item?.itemKind ?? '') ? openReviewedItem : undefined}
             />
           ),
         }]

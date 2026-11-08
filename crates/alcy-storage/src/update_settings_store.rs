@@ -135,7 +135,7 @@ mod tests {
         let store = UpdateSettingsStore::new(path.clone());
         fs::write(
             &path,
-            r#"{"version":1,"source":{"projectUrl":"https://gitlab.corp/g/alcy","accountId":"u@gitlab.corp","projectId":4,"projectName":"g/alcy","projectWebUrl":"https://gitlab.corp/g/alcy"},"checkOnStartup":false}"#,
+            r#"{"version":1,"source":{"projectUrl":"https://git.example.com/g/alcy","accountId":"u@example.com","projectId":4,"projectName":"g/alcy","projectWebUrl":"https://git.corp/g/alcy"},"checkOnStartup":false}"#,
         )
         .unwrap();
 

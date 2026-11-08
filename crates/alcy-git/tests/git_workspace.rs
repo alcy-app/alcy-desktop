@@ -9,9 +9,10 @@ use alcy_app::{
 };
 use alcy_domain::{FileState, GitIdentity, WorkspaceLink};
 use alcy_git::{
-    BlobHashCache, GitError, Integration, PeerState, WorkspaceRemote, abort_merge, checkout,
-    create_branch, delete_branch, file_versions, finish_merge, git_state, history, init_bare,
-    init_workspace, merge_branch, peer_statuses, restore_file, sync,
+    BlobHashCache, GitError, Integration, Tracking, WorkspaceRemote, abort_merge, checkout, clone,
+    create_branch, delete_branch, fetch, file_versions, finish_merge, git_state, history,
+    init_workspace, merge_branch, merge_upstream, push, restore_file, set_remote,
+    versions_environments,
 };
 use serde_json::{Value, json};
 
@@ -43,14 +44,13 @@ struct Workspace {
     files: DiskFiles,
     link: WorkspaceLink,
     identity: GitIdentity,
-    peer: String,
 }
 
 impl Workspace {
     fn new(name: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        let link = WorkspaceLink::git(None, false).unwrap();
+        let link = WorkspaceLink::new(false);
         init_workspace(&root, "main", &link.tracked_files()).unwrap();
         std::fs::write(root.join("alcy-history.json"), "[]").unwrap();
         Self {
@@ -60,7 +60,6 @@ impl Workspace {
             link,
             identity: GitIdentity::new(name, &format!("{}@example.com", name.to_lowercase()))
                 .unwrap(),
-            peer: name.to_lowercase(),
         }
     }
 
@@ -98,19 +97,45 @@ impl Workspace {
         self.link = outcome.link;
     }
 
-    fn sync(&mut self, shared: &Path) -> alcy_git::SyncOutcome {
-        let outcome = sync(
-            &self.root,
-            &self.files,
-            &self.link,
-            Some(&self.identity),
-            shared,
-            &self.peer,
-        )
-        .unwrap();
-        self.link = outcome.link.clone();
-        outcome
+    /// Fetches and merges `origin/<branch>`.
+    async fn pull(&mut self) -> Result<(Integration, Vec<String>), GitError> {
+        fetch(&self.root).await?;
+        let (integration, applied) =
+            merge_upstream(&self.root, &self.files, &self.link, Some(&self.identity))?;
+        self.link = applied.link;
+        Ok((integration, applied.files))
     }
+
+    /// A workspace cloned from `url`, linked as the app does it.
+    async fn cloned(name: &str, url: &Path) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("clone");
+        clone(&url.to_string_lossy(), &root).await.unwrap();
+        let link = WorkspaceLink::new(versions_environments(&root).unwrap());
+        init_workspace(&root, "main", &link.tracked_files()).unwrap();
+        let mut workspace = Self {
+            _dir: dir,
+            files: DiskFiles(root.clone()),
+            root,
+            link,
+            identity: GitIdentity::new(name, &format!("{}@example.com", name.to_lowercase()))
+                .unwrap(),
+        };
+        workspace.status().await;
+        workspace
+    }
+}
+
+/// A bare repository standing in for a server or a shared folder.
+fn origin(default_branch: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    gix::init_bare(dir.path()).unwrap();
+    std::fs::write(
+        dir.path().join("HEAD"),
+        format!("ref: refs/heads/{default_branch}\n"),
+    )
+    .unwrap();
+    dir
 }
 
 fn state(status: &VersionStatus, name: &str) -> FileState {
@@ -249,7 +274,10 @@ async fn merging_combines_items_and_pauses_on_conflicts() {
     assert_eq!(request_url(&ana, "r1").as_deref(), Some("/v2/login"));
     assert_eq!(request_url(&ana, "r2").as_deref(), Some("/v2/users"));
     assert_eq!(state(&ana.status().await, COLLECTIONS), FileState::Clean);
-    assert!(history(&ana.root, 0, 1).unwrap().commits[0].merge);
+    assert_eq!(
+        history(&ana.root, 0, 1).unwrap().commits[0].parents.len(),
+        2
+    );
 
     // Same request on both branches: a pending merge.
     ana.link = checkout(&ana.root, &ana.files, &ana.link, "feature")
@@ -332,7 +360,7 @@ async fn merging_combines_items_and_pauses_on_conflicts() {
     assert_eq!(git_state(&ana.root).unwrap().merge, None);
     assert_eq!(state(&ana.status().await, COLLECTIONS), FileState::Clean);
     let last = &history(&ana.root, 0, 1).unwrap().commits[0];
-    assert!(last.merge);
+    assert_eq!(last.parents.len(), 2);
     assert_eq!(last.summary, "Merge changes from feature");
     assert_eq!(request_url(&ana, "r1").as_deref(), Some("/main"));
 }
@@ -377,31 +405,43 @@ async fn history_pages_and_restores_a_file_version() {
 }
 
 #[tokio::test]
-async fn people_sharing_a_folder_never_lose_concurrent_commits() {
-    let shared = tempfile::tempdir().unwrap();
-    init_bare(shared.path(), "main").unwrap();
-    let shared = shared.path();
+async fn pushes_clones_and_pulls_through_origin() {
+    let origin = origin("main");
+    let url = origin.path().to_string_lossy().to_string();
 
     let mut ana = seeded("Ana");
+    assert_eq!(push(&ana.root).await, Err(GitError::NoRemote));
+    assert_eq!(
+        set_remote(&ana.root, Some(" ext::sh -c touch ")).await,
+        Err(GitError::InvalidRemote("ext::sh -c touch".to_string()))
+    );
+    assert_eq!(
+        set_remote(&ana.root, Some(&url)).await.unwrap(),
+        Some(url.clone())
+    );
     ana.commit("Initial").await;
-    assert!(ana.sync(shared).published);
-
-    // Bia starts from an empty workspace and receives everything.
-    let mut bia = Workspace::new("Bia");
+    let first = git_state(&ana.root).unwrap();
+    assert_eq!(first.remote.as_deref(), Some(url.as_str()));
+    assert_eq!(first.tracking, None);
+    push(&ana.root).await.unwrap();
     assert_eq!(
-        peer_statuses(&bia.root, shared, &bia.peer).unwrap()[0].state,
-        PeerState::Incoming
+        git_state(&ana.root).unwrap().tracking,
+        Some(Tracking {
+            ahead: 0,
+            behind: 0
+        })
     );
-    let outcome = bia.sync(shared);
-    assert_eq!(outcome.integrated, ["Ana"]);
-    assert_eq!(outcome.files, [COLLECTIONS, MANIFEST]);
+
+    let mut bia = Workspace::cloned("Bia", origin.path()).await;
     assert_eq!(request_url(&bia, "r1").as_deref(), Some("/login"));
+    assert_eq!(state(&bia.status().await, COLLECTIONS), FileState::Clean);
     assert_eq!(
-        peer_statuses(&bia.root, shared, &bia.peer).unwrap()[0].state,
-        PeerState::UpToDate
+        git_state(&bia.root).unwrap().remote.as_deref(),
+        Some(url.as_str())
     );
 
-    // Both commit different requests before syncing.
+    // Both change different requests; the second push is rejected until a
+    // pull merges the two.
     ana.write(
         COLLECTIONS,
         &collections(json!([
@@ -410,6 +450,14 @@ async fn people_sharing_a_folder_never_lose_concurrent_commits() {
         ])),
     );
     ana.commit("Ana's change").await;
+    assert_eq!(
+        git_state(&ana.root).unwrap().tracking,
+        Some(Tracking {
+            ahead: 1,
+            behind: 0
+        })
+    );
+    push(&ana.root).await.unwrap();
     bia.write(
         COLLECTIONS,
         &collections(json!([
@@ -418,24 +466,42 @@ async fn people_sharing_a_folder_never_lose_concurrent_commits() {
         ])),
     );
     bia.commit("Bia's change").await;
-    ana.sync(shared);
-    let outcome = bia.sync(shared);
-    assert_eq!(outcome.integrated, ["Ana"]);
+    assert_eq!(push(&bia.root).await, Err(GitError::PushRejected));
+    // What the fetch brought shows in the graph before it is pulled.
+    fetch(&bia.root).await.unwrap();
+    let graph = history(&bia.root, 0, 10).unwrap().commits;
+    let top = |summary: &str| {
+        graph
+            .iter()
+            .find(|commit| commit.summary == summary)
+            .unwrap()
+    };
+    assert_eq!(top("Ana's change").refs, ["origin/main"]);
+    assert_eq!(top("Bia's change").refs, ["main"]);
+    assert_eq!(top("Initial").parents.len(), 0);
+    assert_eq!(top("Ana's change").parents, [top("Initial").id.clone()]);
+    let (integration, files) = bia.pull().await.unwrap();
+    assert_eq!(integration, Integration::Merged);
+    assert_eq!(files, [COLLECTIONS]);
+    assert_eq!(
+        history(&bia.root, 0, 1).unwrap().commits[0].parents.len(),
+        2
+    );
     assert_eq!(request_url(&bia, "r1").as_deref(), Some("/ana"));
     assert_eq!(request_url(&bia, "r2").as_deref(), Some("/bia"));
+    assert_eq!(
+        git_state(&bia.root).unwrap().tracking,
+        Some(Tracking {
+            ahead: 2,
+            behind: 0
+        })
+    );
+    push(&bia.root).await.unwrap();
 
-    let outcome = ana.sync(shared);
-    assert_eq!(outcome.integrated, ["Bia"]);
+    assert_eq!(ana.pull().await.unwrap().0, Integration::FastForward);
     assert_eq!(request_url(&ana, "r2").as_deref(), Some("/bia"));
     assert_eq!(state(&ana.status().await, COLLECTIONS), FileState::Clean);
-    let authors: Vec<_> = history(&ana.root, 0, 10)
-        .unwrap()
-        .commits
-        .into_iter()
-        .map(|commit| commit.summary)
-        .collect();
-    assert!(authors.contains(&"Ana's change".to_string()));
-    assert!(authors.contains(&"Bia's change".to_string()));
+    assert_eq!(ana.pull().await.unwrap().0, Integration::UpToDate);
 
     // The same request on both sides waits for a decision.
     ana.write(
@@ -446,6 +512,7 @@ async fn people_sharing_a_folder_never_lose_concurrent_commits() {
         ])),
     );
     ana.commit("Ana edits r1").await;
+    push(&ana.root).await.unwrap();
     bia.write(
         COLLECTIONS,
         &collections(json!([
@@ -454,91 +521,84 @@ async fn people_sharing_a_folder_never_lose_concurrent_commits() {
         ])),
     );
     bia.commit("Bia edits r1").await;
-    ana.sync(shared);
-    let outcome = bia.sync(shared);
     assert_eq!(
-        outcome.merging,
-        Some(("Ana".to_string(), vec![COLLECTIONS.to_string()]))
+        bia.pull().await.unwrap().0,
+        Integration::Conflicts(vec![COLLECTIONS.to_string()])
     );
     assert_eq!(state(&bia.status().await, COLLECTIONS), FileState::Conflict);
     assert_eq!(
-        sync(
-            &bia.root,
-            &bia.files,
-            &bia.link,
-            Some(&bia.identity),
-            shared,
-            &bia.peer
-        ),
-        Err(GitError::MergeInProgress)
+        git_state(&bia.root).unwrap().merge.unwrap().label,
+        "origin/main"
     );
+    assert_eq!(bia.pull().await, Err(GitError::MergeInProgress));
+
+    assert_eq!(set_remote(&ana.root, None).await.unwrap(), None);
+    assert_eq!(git_state(&ana.root).unwrap().remote, None);
 }
 
 #[tokio::test]
-async fn a_peer_whose_objects_have_not_arrived_is_left_alone() {
-    let shared_dir = tempfile::tempdir().unwrap();
-    init_bare(shared_dir.path(), "main").unwrap();
-    let shared = shared_dir.path();
+async fn a_first_pull_fills_a_fresh_workspace_but_protects_one_with_content() {
+    let origin = origin("trunk");
+    let url = origin.path().to_string_lossy().to_string();
     let mut ana = seeded("Ana");
+    set_remote(&ana.root, Some(&url)).await.unwrap();
     ana.commit("Initial").await;
-    ana.sync(shared);
-
-    // Simulate a sync client that delivered the ref before the commit object.
-    let head = history(&ana.root, 0, 1).unwrap().commits[0].id.clone();
-    let object = shared.join("objects").join(&head[..2]).join(&head[2..]);
-    let saved = std::fs::read(&object).unwrap();
-    std::fs::remove_file(&object).unwrap();
-
-    let mut bia = Workspace::new("Bia");
-    assert_eq!(
-        peer_statuses(&bia.root, shared, &bia.peer).unwrap()[0].state,
-        PeerState::Syncing
-    );
-    let outcome = bia.sync(shared);
-    // Without the commit there is no author yet: the peer id stands in.
-    assert_eq!(outcome.syncing, ["ana"]);
-    assert!(outcome.integrated.is_empty());
-    assert!(bia.files.read(COLLECTIONS).unwrap().is_none());
-
-    std::fs::write(&object, saved).unwrap();
-    assert_eq!(bia.sync(shared).integrated, ["Ana"]);
-}
-
-#[tokio::test]
-async fn joining_replaces_a_fresh_workspace_but_protects_one_with_content() {
-    let shared_dir = tempfile::tempdir().unwrap();
-    init_bare(shared_dir.path(), "main").unwrap();
-    let shared = shared_dir.path();
-    let mut ana = seeded("Ana");
-    ana.commit("Initial").await;
-    ana.sync(shared);
+    // Ana works on "main"; the remote's default branch is "trunk".
+    create_branch(&ana.root, "trunk").unwrap();
+    checkout(&ana.root, &ana.files, &ana.link, "trunk").unwrap();
+    push(&ana.root).await.unwrap();
 
     // Just created: its own manifest and an empty collections file.
     let mut bia = Workspace::new("Bia");
     bia.write(MANIFEST, &json!({ "name": "Bia's new workspace" }));
     bia.write(COLLECTIONS, &json!({ "collections": [] }));
-    let outcome = bia.sync(shared);
-    assert_eq!(outcome.integrated, ["Ana"]);
+    set_remote(&bia.root, Some(&url)).await.unwrap();
+    let (integration, _) = bia.pull().await.unwrap();
+    assert_eq!(integration, Integration::FastForward);
+    assert_eq!(git_state(&bia.root).unwrap().branch, "trunk");
     assert_eq!(bia.json(MANIFEST)["name"], "W");
     assert_eq!(request_url(&bia, "r1").as_deref(), Some("/login"));
     assert_eq!(state(&bia.status().await, MANIFEST), FileState::Clean);
 
     // Work of its own is never overwritten.
-    let carlos = Workspace::new("Carlos");
+    let mut carlos = Workspace::new("Carlos");
     carlos.write(
         COLLECTIONS,
         &collections(json!([{ "id": "c1", "name": "Mine", "url": "/mine" }])),
     );
-    assert_eq!(
-        sync(
-            &carlos.root,
-            &carlos.files,
-            &carlos.link,
-            Some(&carlos.identity),
-            shared,
-            &carlos.peer
-        ),
-        Err(GitError::UncommittedChanges(vec![COLLECTIONS.to_string()]))
-    );
+    set_remote(&carlos.root, Some(&url)).await.unwrap();
+    assert!(matches!(
+        carlos.pull().await,
+        Err(GitError::UncommittedChanges(files)) if files.contains(&COLLECTIONS.to_string())
+    ));
     assert_eq!(request_url(&carlos, "c1").as_deref(), Some("/mine"));
+}
+
+#[tokio::test]
+async fn clone_needs_a_new_folder_and_an_alcy_workspace() {
+    let origin = origin("main");
+    let url = origin.path().to_string_lossy().to_string();
+
+    let busy = tempfile::tempdir().unwrap();
+    std::fs::write(busy.path().join("notes.txt"), "x").unwrap();
+    assert_eq!(
+        clone(&url, busy.path()).await,
+        Err(GitError::DestinationExists)
+    );
+    assert!(busy.path().join("notes.txt").is_file());
+
+    // An empty repository holds no workspace: the clone is removed.
+    let parent = tempfile::tempdir().unwrap();
+    let destination = parent.path().join("w");
+    assert_eq!(
+        clone(&url, &destination).await,
+        Err(GitError::NotAWorkspace)
+    );
+    assert!(!destination.exists());
+
+    let missing = parent.path().join("missing.git");
+    assert!(matches!(
+        clone(&missing.to_string_lossy(), &parent.path().join("x")).await,
+        Err(GitError::Command(_))
+    ));
 }

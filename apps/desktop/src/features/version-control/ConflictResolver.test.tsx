@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '../../test-utils'
-import type { StructuredFileChangesDto } from '../../bindings/gitlab-types'
+import type { StructuredFileChangesDto } from '../../bindings/version-control-types'
 import { fakeVersionControl } from './test-fixtures'
 import { ConflictResolver } from './ConflictResolver'
 
@@ -8,7 +8,7 @@ const previewConflictResolution = vi.fn()
 vi.mock('../../bindings/preview-conflict-resolution', () => ({
   previewConflictResolution: (...args: unknown[]) => previewConflictResolution(...args),
 }))
-vi.mock('../../bindings/cancel-gitlab-operation', () => ({ cancelGitlabOperation: () => Promise.resolve() }))
+vi.mock('../../bindings/cancel-version-control-operation', () => ({ cancelVersionControlOperation: () => Promise.resolve() }))
 
 const ROOT = '/work/space'
 const changes: StructuredFileChangesDto = {
@@ -39,7 +39,7 @@ describe('ConflictResolver', () => {
     expect(screen.getByRole('button', { name: 'Resolver conflito' })).toBeDisabled()
 
     fireEvent.click(screen.getByRole('option', { name: /Create user/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Versão do GitLab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Versão recebida' }))
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Resolver conflito' })).toBeEnabled())
     expect(previewConflictResolution).toHaveBeenCalledWith(ROOT, expect.any(String), changes.name, [
@@ -64,7 +64,7 @@ describe('ConflictResolver', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Minha versão' }))
     fireEvent.click(screen.getByRole('option', { name: /Create user/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Versão do GitLab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Versão recebida' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Resolver conflito' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Resolver conflito' }))
 

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { cancelGitlabOperation } from '../../bindings/cancel-gitlab-operation'
+import { cancelVersionControlOperation } from '../../bindings/cancel-version-control-operation'
 import { commitAndPush } from '../../bindings/commit-and-push'
-import type { ChangeSelectionDto, FileStatusDto, GitlabCommandError, ResolutionInput, StructuredFileChangesDto, WorkspaceLinkDto } from '../../bindings/gitlab-types'
+import type { ChangeSelectionDto, FileStatusDto, VersionControlCommandError, ResolutionInput, StructuredFileChangesDto, WorkspaceLinkDto } from '../../bindings/version-control-types'
 import { getLocalVersionStatus } from '../../bindings/get-local-version-status'
 import { getVersionStatus } from '../../bindings/get-version-status'
 import { getWorkspaceLink } from '../../bindings/get-workspace-link'
-import { linkWorkspace, type LinkTarget } from '../../bindings/link-workspace'
+import { linkWorkspace } from '../../bindings/link-workspace'
 import { pullChanges } from '../../bindings/pull-changes'
 import { resolveConflict } from '../../bindings/resolve-conflict'
 import { unlinkWorkspace } from '../../bindings/unlink-workspace'
@@ -22,17 +22,9 @@ const LOCAL_CHANGE_DEBOUNCE_MS = 1_000
 
 export type VersionBusy = 'link' | 'pull' | 'push' | 'resolve' | 'git'
 
-/** What a finished git operation changed, for `runGit`. */
-export interface GitOperationEffect {
-  /** Files rewritten on disk: the workspace reloads them. */
-  files?: string[]
-  notice?: string | null
-  link?: WorkspaceLinkDto
-}
+export type LinkParams = { includeEnvironments: boolean }
 
-export type LinkParams = LinkTarget & { includeEnvironments: boolean }
-
-type ActionResult = { ok: true } | { ok: false; error: GitlabCommandError }
+type ActionResult = { ok: true } | { ok: false; error: VersionControlCommandError }
 export type StagedSelection = ChangeSelectionDto
 
 
@@ -51,7 +43,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
   const [remoteStatusKnown, setRemoteStatusKnown] = useState(false)
   const [checking, setChecking] = useState(false)
   const [busy, setBusy] = useState<VersionBusy | null>(null)
-  const [error, setError] = useState<GitlabCommandError | null>(null)
+  const [error, setError] = useState<VersionControlCommandError | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [statusVersion, setStatusVersion] = useState(0)
   /** Bumped after every git operation, so git views reload their state. */
@@ -88,7 +80,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
 
   const cancel = useCallback(() => {
     const operationId = operationRef.current
-    if (operationId) void cancelGitlabOperation(operationId)
+    if (operationId) void cancelVersionControlOperation(operationId)
   }, [])
 
   if (sessionRoot !== rootPath) {
@@ -171,7 +163,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
 
   /** Chamado pelos hooks de coleções/ambientes/flows depois que o autosave
    * grava no disco: agenda uma checagem só local (hash local × base salva,
-   * sem chamar a API do GitLab) para que "Alterações" reflita a edição na
+   * sem consultar o repositório) para que "Alterações" reflita a edição na
    * hora, sem gerar uma consulta remota por alteração. Não substitui a
    * verificação periódica/de foco/manual — que segue sendo a única fonte de
    * `remoteChanged`/`conflict` — e o resultado é mesclado sobre o que já se
@@ -213,7 +205,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       window.clearInterval(interval)
       window.removeEventListener('focus', onFocus)
       const operationId = pollOperationRef.current
-      if (operationId) void cancelGitlabOperation(operationId)
+      if (operationId) void cancelVersionControlOperation(operationId)
     }
   }, [linked, pollStatus])
 
@@ -221,14 +213,14 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
   const runAction = useCallback(
     async <T,>(
       kind: VersionBusy,
-      run: (operationId: string) => Promise<{ ok: true; value: T } | { ok: false; error: GitlabCommandError }>,
+      run: (operationId: string) => Promise<{ ok: true; value: T } | { ok: false; error: VersionControlCommandError }>,
       onSuccess: (value: T) => string | null,
     ): Promise<ActionResult> => {
       if (busyRef.current !== null) return { ok: false, error: { kind: 'cancelled' } }
       busyRef.current = kind
       sequenceRef.current += 1 // descarta uma verificação em voo
       const pollOperationId = pollOperationRef.current
-      if (pollOperationId) void cancelGitlabOperation(pollOperationId)
+      if (pollOperationId) void cancelVersionControlOperation(pollOperationId)
       setBusy(kind)
       setChecking(false)
       setError(null)
@@ -302,7 +294,8 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       const result = await runAction(
         'push',
         (operationId) => commitAndPush(rootPath, operationId, message, selections),
-        (pushed) => t('vc.push.success', { count: pushed.pushed.length }),
+        // The commit shows up in the graph; it needs no confirmation.
+        () => null,
       )
       if (result.ok) {
         setMessage('')
@@ -311,7 +304,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       }
       return result
     },
-    [refresh, rootPath, runAction, t],
+    [refresh, rootPath, runAction],
   )
 
   const resolve = useCallback(
@@ -330,18 +323,17 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
     [refresh, rootPath, runAction],
   )
 
-  /** Runs a git operation (branch, merge, sync…) exclusively, then reloads
-   * the files it rewrote and the status. */
+  /** Runs a git operation (branch, merge, pull…) exclusively, then reloads
+   * the files it rewrote (`rewritten`) and the status. */
   const runGit = useCallback(
     async <T,>(
-      run: (operationId: string) => Promise<{ ok: true; value: T } | { ok: false; error: GitlabCommandError }>,
-      describe: (value: T) => GitOperationEffect,
+      run: (operationId: string) => Promise<{ ok: true; value: T } | { ok: false; error: VersionControlCommandError }>,
+      rewritten?: (value: T) => string[],
     ): Promise<ActionResult> => {
       const result = await runAction('git', run, (value) => {
-        const effect = describe(value)
-        if (effect.files && effect.files.length > 0) onFilesChangedRef.current(effect.files)
-        if (effect.link) setLink(effect.link)
-        return effect.notice ?? null
+        const files = rewritten?.(value) ?? []
+        if (files.length > 0) onFilesChangedRef.current(files)
+        return null
       })
       setGitVersion((version) => version + 1)
       if (result.ok) void refresh()

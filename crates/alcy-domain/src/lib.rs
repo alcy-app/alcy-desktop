@@ -18,14 +18,12 @@ pub use flow_form::*;
 mod flow_folder;
 mod general_settings;
 mod git_identity;
-mod gitlab;
 mod grpc_call;
 mod header;
 mod history_entry;
 mod http_method;
 mod json_comments;
 mod mock_server;
-mod onedrive;
 mod proxy_settings;
 mod request;
 mod response;
@@ -77,7 +75,6 @@ pub use general_settings::{
     RequestTimeout, RequestTimeoutError, ResponseSizeLimit, ResponseSizeLimitError,
 };
 pub use git_identity::{GitIdentity, GitIdentityError, GitIdentitySettings};
-pub use gitlab::{GitlabAccount, GitlabAccountError, normalize_instance_url};
 pub use grpc_call::{GrpcCall, GrpcSchemaSource};
 pub use header::{HeaderEntry, HeaderError};
 pub use history_entry::{HistoryEntry, HistoryFailureKind, HistoryOutcome};
@@ -88,9 +85,6 @@ pub use mock_server::{
     MockConditionOperator, MockConditionSource, MockMatchOperator, MockResponse, MockRoute,
     MockServer,
 };
-pub use onedrive::{
-    DEFAULT_ONEDRIVE_TENANT, OnedriveAccount, OnedriveAccountError, normalize_tenant,
-};
 pub use proxy_settings::{ProxySettings, ProxySettingsError};
 pub use request::{RedirectPolicy, Request, RouteParameter};
 pub use response::{
@@ -98,10 +92,7 @@ pub use response::{
     ResponseMetadata, WebSocketClosedBy, WebSocketOutcome,
 };
 pub use security_settings::SecuritySettings;
-pub use update::{
-    UpdateSettings, UpdateSource, UpdateSourceError, is_prerelease_tag, normalize_project_url,
-    project_path_in_instance,
-};
+pub use update::{UpdateSettings, UpdateSource, UpdateSourceError, is_prerelease_tag};
 pub use value_monitor::{
     CaseStyle, DateTimePattern, FieldPath, FieldPathError, MonitoredValue, RuleKind, RulePattern,
     TextMatch, ValueFormat, ValueMonitor, ValueMonitorError, ValuePathSegment, ValueRule,
@@ -114,7 +105,6 @@ pub use variable_scope::{
 pub use websocket_call::{WebSocketCall, WebSocketCollect, WebSocketMessageFormat};
 pub use workspace::{Workspace, WorkspaceError};
 pub use workspace_link::{
-    API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, MANIFEST_FILE, RemoteLocation,
-    VALUE_MONITORS_FILE, VERSIONED_FILES, WorkspaceLink, WorkspaceLinkError, classify,
-    is_valid_branch_name, normalize_shared_folder,
+    API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, MANIFEST_FILE, VALUE_MONITORS_FILE,
+    VERSIONED_FILES, WorkspaceLink, classify, is_valid_branch_name,
 };

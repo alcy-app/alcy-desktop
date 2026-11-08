@@ -7,10 +7,6 @@
 // another platform already published for the same version, so Windows, Linux
 // and macOS can publish from different machines.
 //
-// - gitlab: installers and manifest in the project's Generic Package Registry
-//   (package `alcy`); release `vX.Y.Z` gets asset links to them.
-//   Env: GITLAB_TOKEN (api scope). GITLAB_URL and GITLAB_PROJECT are derived
-//   from ALCY_UPDATE_URL (set them if the instance lives under a subpath).
 // - github: installers and manifest as assets of release `vX.Y.Z`.
 //   Env: GITHUB_TOKEN (contents: write permission).
 // - releaseServer: installers and manifest on the own release service; the
@@ -193,61 +189,6 @@ function createHttp({ headers, dryRun, schemeHint }) {
   }
 }
 
-async function publishGitlab({ source, version, tag, artifacts, args }) {
-  const projectUrl = new URL(source.url)
-  const gitlabUrl = (process.env.GITLAB_URL?.trim() || projectUrl.origin).replace(/\/+$/, '')
-  const projectPath = process.env.GITLAB_PROJECT?.trim() || projectUrl.pathname.replace(/^\/+|\/+$/g, '')
-  const apiBase = `${gitlabUrl}/api/v4`
-  const http = createHttp({
-    headers: { 'PRIVATE-TOKEN': requiredEnv('GITLAB_TOKEN') },
-    dryRun: args.dryRun,
-    schemeHint: `use http:// em ALCY_UPDATE_URL ou em GITLAB_URL.`,
-  })
-
-  const project = await http.get(`${apiBase}/projects/${encodeURIComponent(projectPath)}`)
-  const packageBase = `${apiBase}/projects/${project.id}/packages/generic/${PACKAGE_NAME}/${version}`
-  const packageUrl = (file) => `${packageBase}/${encodeURIComponent(file)}`
-  console.log(`GitLab: projeto ${project.path_with_namespace} (id ${project.id}), versão ${version}`)
-
-  // 1. Installers (signatures go inside the manifest, not as files).
-  for (const artifact of artifacts) {
-    console.log(`Enviando ${artifact.name}…`)
-    await http.write('PUT', packageUrl(artifact.name), { body: readFileSync(artifact.path) })
-  }
-
-  // 2. Manifest, merged with the platforms already published for this version.
-  const existing = await http.get(packageUrl(MANIFEST_NAME), { allow404: true })
-  const previous = typeof existing === 'string' ? JSON.parse(existing) : existing
-  const manifest = buildManifest({ version, previous, notesFile: args.notesFile, artifacts, urlFor: packageUrl })
-  console.log(`Enviando ${MANIFEST_NAME} (${Object.keys(manifest.platforms).join(', ')})…`)
-  await http.write('PUT', packageUrl(MANIFEST_NAME), { body: JSON.stringify(manifest, null, 2) })
-
-  // 3. Release and asset links.
-  const releaseUrl = `${apiBase}/projects/${project.id}/releases/${encodeURIComponent(tag)}`
-  const release = await http.get(releaseUrl, { allow404: true })
-  if (!release) {
-    const ref = releaseRef()
-    console.log(`Criando a release ${tag} a partir de ${ref}…`)
-    await http.write('POST', `${apiBase}/projects/${project.id}/releases`, {
-      json: { tag_name: tag, ref, name: `Alcy ${version}`, description: manifest.notes },
-    })
-  } else if (args.notesFile) {
-    await http.write('PUT', releaseUrl, { json: { description: manifest.notes } })
-  }
-
-  const existingLinks = release?.assets?.links?.map((link) => link.name) ?? []
-  const links = [
-    ...artifacts.map((artifact) => ({ name: artifact.name, url: packageUrl(artifact.name), link_type: 'package' })),
-    { name: MANIFEST_NAME, url: packageUrl(MANIFEST_NAME), link_type: 'other' },
-  ]
-  for (const link of links) {
-    if (existingLinks.includes(link.name)) continue
-    await http.write('POST', `${releaseUrl}/assets/links`, { json: link })
-  }
-
-  console.log(`Release ${tag} publicada: ${project.web_url}/-/releases/${tag}`)
-}
-
 async function publishGithub({ source, version, tag, artifacts, args }) {
   const repository = (process.env.GITHUB_REPOSITORY?.trim() || source.url)
     .replace(/^https?:\/\/github\.com\//, '')
@@ -375,8 +316,6 @@ async function main() {
 
   const context = { source, version, tag, artifacts, args }
   switch (source.provider) {
-    case 'gitlab':
-      return publishGitlab(context)
     case 'github':
       return publishGithub(context)
     case 'releaseServer':

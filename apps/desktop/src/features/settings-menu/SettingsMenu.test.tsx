@@ -9,7 +9,7 @@ const testProxySettings = vi.fn()
 const listCustomCaCertificates = vi.fn()
 const addCustomCaCertificate = vi.fn()
 const removeCustomCaCertificate = vi.fn()
-const flags = vi.hoisted(() => ({ updates: true, gitlab: true, localGit: false }))
+const flags = vi.hoisted(() => ({ updates: true, localGit: false }))
 
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: flags }))
 const getGitIdentity = vi.fn()
@@ -63,8 +63,7 @@ vi.mock('../../bindings/save-general-settings', () => ({
 
 beforeEach(() => {
   flags.updates = true
-  flags.gitlab = true
-  flags.localGit = false
+  flags.localGit = true
   getGitIdentity.mockReset()
   getGitIdentity.mockResolvedValue({
     ok: true,
@@ -194,29 +193,23 @@ describe('SettingsMenu — categorias', () => {
     expect(screen.queryByTestId('update-settings')).not.toBeInTheDocument()
   })
 
-  it('esconde as abas dos providers com as feature flags desligadas e some com a sincronização da segurança', async () => {
-    flags.gitlab = false
-    render(<SettingsMenu open initialCategory="gitlab" onOpenChange={() => {}} />)
-    expect(screen.queryByRole('button', { name: 'GitLab' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'OneDrive' })).not.toBeInTheDocument()
+  it('hides the Git category and the workspace sync protection with the flag off', async () => {
+    flags.localGit = false
+    render(<SettingsMenu open initialCategory="git" onOpenChange={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Git' })).not.toBeInTheDocument()
     expect(getGitIdentity).not.toHaveBeenCalled()
     // Requesting it as the initial category falls back to General instead of an empty page.
     expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.queryByTestId('gitlab-settings')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
     expect(screen.queryByText('Sincronização do workspace')).not.toBeInTheDocument()
     expect(getSecuritySettings).not.toHaveBeenCalled()
   })
 
-  it('shows the Git category and workspace sync protection with only the git folder provider on', async () => {
-    flags.gitlab = false
-    flags.localGit = true
+  it('shows the Git category and workspace sync protection with the flag on', async () => {
     render(<SettingsMenu open initialCategory="git" onOpenChange={() => {}} />)
 
     expect(screen.getByRole('button', { name: 'Git' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.queryByRole('button', { name: 'GitLab' })).not.toBeInTheDocument()
     expect(await screen.findByText('Os commits serão assinados por Ana <ana@example.com>.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
@@ -256,9 +249,9 @@ describe('SettingsMenu — categorias', () => {
   })
 
   it('abre diretamente na categoria solicitada pelo atalho', () => {
-    render(<SettingsMenu open initialCategory="gitlab" onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="git" onOpenChange={() => {}} />)
     expect(screen.getByRole('dialog')).toHaveFocus()
-    expect(screen.getByTestId('gitlab-settings')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Git' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByRole('radio', { name: 'Claro' })).not.toBeInTheDocument()
   })
 
@@ -276,7 +269,7 @@ describe('SettingsMenu — categorias', () => {
     await waitFor(() => expect(getProxySettings).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('radio', { name: 'Script PAC' }))
     fireEvent.change(screen.getByLabelText('URL do script'), { target: { value: 'https://corp/draft.pac' } })
-    fireEvent.click(screen.getByRole('button', { name: 'GitLab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Git' }))
     expect(screen.queryByRole('button', { name: 'Aplicar' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Rede' }))
     expect(screen.getByLabelText('URL do script')).toHaveValue('https://corp/draft.pac')
@@ -363,7 +356,7 @@ describe('SettingsMenu — segurança', () => {
     expect(window.localStorage.getItem('alcy:security:har-redact-sensitive')).toBe('false')
   })
 
-  it('não envia valores sensíveis ao GitLab por padrão e salva o opt-out com aviso', async () => {
+  it('não versiona valores sensíveis por padrão e salva o opt-out com aviso', async () => {
     saveSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: true } })
     render(<SettingsMenu open onOpenChange={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))

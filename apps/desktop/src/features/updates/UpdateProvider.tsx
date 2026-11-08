@@ -9,7 +9,6 @@ import { setUpdateIncludePrereleases } from '../../bindings/set-update-include-p
 import type { UpdateCommandError, UpdateSettingsDto } from '../../bindings/update-types'
 import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
-import { useGitlab } from '../../shared/gitlab/use-gitlab'
 import { isSourceReady } from './update-source'
 import { UpdatesContext, type UpdatePhase, type UpdatesContextValue } from './update-context'
 
@@ -113,9 +112,6 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     return result
   }, [])
 
-  // A conta usada para acessar a origem depende das contas conectadas:
-  // relê as preferências quando elas mudam.
-  const { accounts } = useGitlab()
   useEffect(() => {
     // Sem as preferências carregadas, a verificação ao abrir também não roda.
     if (!FEATURE_FLAGS.updates) return
@@ -126,7 +122,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [accounts])
+  }, [])
 
   // Uma vez por abertura do app: verifica se a preferência estiver ligada e
   // a origem puder ser consultada.

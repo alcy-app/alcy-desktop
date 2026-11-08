@@ -12,7 +12,7 @@ const NOTES = [
   'Versão com **melhorias** e `pnpm check` mais rápido.',
   '',
   '- Aba de detalhes',
-  '- Veja [o MR](https://gitlab.corp/alcy/-/merge_requests/7)',
+  '- Veja [o MR](https://git.example.com/alcy/-/merge_requests/7)',
   '',
   '```',
   '<b>código</b>',
@@ -59,6 +59,6 @@ describe('NotificationDetails', () => {
     fireEvent(link, click)
 
     expect(click.defaultPrevented).toBe(true)
-    expect(openExternalUrl).toHaveBeenCalledWith('https://gitlab.corp/alcy/-/merge_requests/7')
+    expect(openExternalUrl).toHaveBeenCalledWith('https://git.example.com/alcy/-/merge_requests/7')
   })
 })

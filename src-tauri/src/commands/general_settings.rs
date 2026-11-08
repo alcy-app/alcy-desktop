@@ -168,12 +168,11 @@ const PREVIOUS_INSTALL_MARKERS: &[&str] = &[
     "general-settings.json",
     "recent-workspaces.json",
     "proxy-settings.json",
-    "gitlab-accounts.json",
     "update-settings.json",
     "security-settings.json",
     "tls-settings.json",
     "schema-cache",
-    "gitlab-content-cache",
+    "version-control-cache",
 ];
 
 /// Diz se o app já foi aberto antes neste computador. Precisa rodar no

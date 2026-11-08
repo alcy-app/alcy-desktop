@@ -453,7 +453,7 @@ function parseEmphasis(text: string, index: number, autolink: boolean): { node: 
   return null
 }
 
-/** Plain text, with bare URLs turned into links (as GitLab does). */
+/** Plain text, with bare URLs turned into links (as code hosts do). */
 function pushText(nodes: MarkdownInline[], text: string, autolink: boolean) {
   if (!autolink) {
     nodes.push({ type: 'text', text })

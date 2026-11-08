@@ -6,7 +6,7 @@ import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon } from '../../shared/ui/icons'
 
 /** Verificação de certificado das chamadas do usuário (ADR 0058). Ligada por
- * padrão; GitLab, importação por URL e atualizações sempre verificam. */
+ * padrão; importação por URL e atualizações sempre verificam. */
 export function TlsVerificationSection() {
   const { t } = useLanguage()
   const [settings, setSettings] = useState<TlsSettingsDto | null>(null)

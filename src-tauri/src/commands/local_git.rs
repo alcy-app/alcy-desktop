@@ -1,42 +1,58 @@
-//! Git in the workspace (ADR 0074): branches, merges, history, the shared
-//! folder and the commit author. Status, commits and conflict resolution go
-//! through the shared version control commands.
+//! Git in the workspace (ADR 0074): branches, merges, history, the `origin`
+//! remote (fetch, pull, push, clone) and the commit author. Status, commits
+//! and conflict resolution go through the shared version control commands.
 
 use std::path::{Path, PathBuf};
 
-use alcy_app::structured_file_changes_from_content;
-use alcy_domain::{GitIdentity, GitIdentitySettings, RemoteLocation, WorkspaceLink};
+use alcy_app::{structured_file_changes_from_content, version_status};
+use alcy_domain::{GitIdentity, GitIdentitySettings, WorkspaceLink};
 use alcy_git::{
-    Applied, BlobHashCache, FolderKind, HistoryPage, Integration, MAX_HISTORY_PAGE, PeerState,
-    SyncOutcome,
+    Applied, BlobHashCache, HistoryPage, Integration, MAX_HISTORY_PAGE, Tracking, WorkspaceRemote,
 };
-use alcy_storage::{GitIdentityStore, GitPeerStore, WorkspaceLinkStore};
+use alcy_storage::{GitIdentityStore, RecentWorkspacesStore, WorkspaceLinkStore, WorkspaceStore};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 
 use super::execution_registry::ExecutionRegistry;
 use super::remote_command::{RemoteCommandError, cancellable};
 use super::version_control::{
-    StructuredFileChangesDto, VersionControlFiles, WorkspaceLinkDto, link_dto,
-    structured_changes_dto,
+    DEFAULT_GIT_BRANCH, StructuredFileChangesDto, VersionControlFiles, structured_changes_dto,
 };
 use super::workspace_operation_coordinator::WorkspaceOperationCoordinator;
+use super::workspaces::{
+    WORKSPACES_FOLDER_NAME, WorkspaceDto, next_available_path, record_recent_in_order,
+    workspace_to_dto,
+};
 
-/// The commit author override, this installation's peer id and the blob
-/// hashes already computed, managed together.
+/// The commit author override and the blob hashes already computed,
+/// managed together.
 pub struct LocalGitProvider {
     pub identity: GitIdentityStore,
-    pub peer: GitPeerStore,
     pub hashes: BlobHashCache,
 }
 
 impl LocalGitProvider {
-    pub fn new(identity: GitIdentityStore, peer: GitPeerStore) -> Self {
+    pub fn new(identity: GitIdentityStore) -> Self {
         Self {
             identity,
-            peer,
             hashes: BlobHashCache::default(),
         }
+    }
+
+    /// The repository in `root`, signing commits with the current author.
+    pub fn remote(&self, root: &Path) -> Result<WorkspaceRemote, RemoteCommandError> {
+        Ok(WorkspaceRemote::new(
+            root.to_path_buf(),
+            self.identity()?,
+            self.hashes.clone(),
+        ))
+    }
+
+    /// Commits need an author, set in Alcy or in the system's git config.
+    pub fn require_identity(&self) -> Result<(), RemoteCommandError> {
+        self.identity()?
+            .map(|_| ())
+            .ok_or(RemoteCommandError::GitIdentityMissing)
     }
 
     /// Author for the next commit: the Alcy override, field by field over the
@@ -46,49 +62,6 @@ impl LocalGitProvider {
         let system = alcy_git::system_identity();
         Ok(settings.resolve(system.name.as_deref(), system.email.as_deref()))
     }
-
-    /// This installation's id in shared folders: readable name plus a random
-    /// suffix, created once.
-    fn peer_id(&self, identity: Option<&GitIdentity>) -> Result<String, RemoteCommandError> {
-        Ok(self.peer.load_or_create(|| {
-            let name = identity
-                .map(|identity| identity.name.as_str())
-                .unwrap_or("");
-            format!("{}-{}", slug(name), random_suffix())
-        })?)
-    }
-}
-
-fn slug(name: &str) -> String {
-    let mut slug = String::new();
-    for c in name.to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c);
-        } else if !slug.ends_with('-') && !slug.is_empty() {
-            slug.push('-');
-        }
-    }
-    let slug: String = slug.trim_end_matches('-').chars().take(24).collect();
-    let slug = slug.trim_end_matches('-').to_string();
-    if slug.is_empty() {
-        "alcy".to_string()
-    } else {
-        slug
-    }
-}
-
-/// Eight hex digits from the process-seeded std hasher and the clock: enough
-/// to tell installations apart, no extra dependency.
-fn random_suffix() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    hasher.write_u128(nanos);
-    hasher.write_u32(std::process::id());
-    format!("{:08x}", hasher.finish() as u32)
 }
 
 async fn blocking<T, F>(work: F) -> Result<T, RemoteCommandError>
@@ -107,23 +80,7 @@ fn git_link(root: &Path) -> Result<WorkspaceLink, RemoteCommandError> {
     let link = WorkspaceLinkStore::new(root.to_path_buf())
         .load()?
         .ok_or(RemoteCommandError::NotLinked)?;
-    if !matches!(link.location, RemoteLocation::Git { .. }) {
-        return Err(RemoteCommandError::Invalid {
-            message: "the workspace does not use git".to_string(),
-        });
-    }
     Ok(link)
-}
-
-fn shared_folder(link: &WorkspaceLink) -> Result<PathBuf, RemoteCommandError> {
-    match &link.location {
-        RemoteLocation::Git {
-            shared_folder: Some(folder),
-        } => Ok(PathBuf::from(folder)),
-        _ => Err(RemoteCommandError::Invalid {
-            message: "no shared folder".to_string(),
-        }),
-    }
 }
 
 /// Saves the link a git operation changed and returns the files rewritten.
@@ -177,12 +134,23 @@ pub struct GitMergeDto {
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct GitTrackingDto {
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct GitStateDto {
     pub branch: String,
     pub branches: Vec<String>,
     pub has_commits: bool,
     pub merge: Option<GitMergeDto>,
-    pub shared_folder: Option<String>,
+    /// URL of `origin`.
+    pub remote: Option<String>,
+    /// Against `origin/<branch>` as of the last fetch; `None` while that
+    /// branch does not exist there.
+    pub tracking: Option<GitTrackingDto>,
 }
 
 #[tauri::command]
@@ -193,7 +161,7 @@ pub async fn get_git_state(
     let root = PathBuf::from(input.root_path);
     let _guard = coordinator.read(&root).await;
     let result = blocking(move || {
-        let link = git_link(&root)?;
+        git_link(&root)?;
         let state = alcy_git::git_state(&root)?;
         Ok(GitStateDto {
             branch: state.branch,
@@ -203,10 +171,10 @@ pub async fn get_git_state(
                 label: merge.label,
                 conflicts: merge.conflicts,
             }),
-            shared_folder: match link.location {
-                RemoteLocation::Git { shared_folder } => shared_folder,
-                _ => None,
-            },
+            remote: state.remote,
+            tracking: state
+                .tracking
+                .map(|Tracking { ahead, behind }| GitTrackingDto { ahead, behind }),
         })
     })
     .await;
@@ -389,7 +357,10 @@ pub struct GitCommitDto {
     pub time: i64,
     pub summary: String,
     pub files: Vec<String>,
-    pub merge: bool,
+    /// First parent first; more than one is a merge.
+    pub parents: Vec<String>,
+    /// Local and `origin/…` branches pointing at this commit.
+    pub refs: Vec<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -411,14 +382,15 @@ fn history_dto(page: HistoryPage) -> GitHistoryDto {
                 time: commit.time,
                 summary: commit.summary,
                 files: commit.files,
-                merge: commit.merge,
+                parents: commit.parents,
+                refs: commit.refs,
             })
             .collect(),
         next_offset: page.next_offset,
     }
 }
 
-/// One page of the current branch's history, newest first.
+/// One page of the current branch's history and its upstream, newest first.
 #[tauri::command]
 pub async fn get_git_history(
     input: GitHistoryInput,
@@ -504,145 +476,202 @@ pub async fn restore_git_file(
     crate::logging::logged("alcy::vc", "restaurar arquivo do commit", result)
 }
 
-/// Accepts an empty folder (a bare repository is created) or one already
-/// holding a bare repository.
-pub(super) fn prepare_shared_folder(folder: &Path) -> Result<(), RemoteCommandError> {
-    match alcy_git::inspect_folder(folder)? {
-        FolderKind::Empty => Ok(alcy_git::init_bare(folder, "main")?),
-        FolderKind::Bare { .. } => Ok(()),
-        FolderKind::NonBare => Err(RemoteCommandError::GitNotBare),
-        FolderKind::NotARepository => Err(RemoteCommandError::GitNotRepository),
-    }
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SetGitSharedFolderInput {
+pub struct SetGitRemoteInput {
     pub root_path: String,
-    /// `None` stops sharing (the folder is left as it is).
-    pub folder: Option<String>,
-}
-
-#[tauri::command]
-pub async fn set_git_shared_folder(
-    input: SetGitSharedFolderInput,
-    coordinator: State<'_, WorkspaceOperationCoordinator>,
-) -> Result<WorkspaceLinkDto, RemoteCommandError> {
-    let root = PathBuf::from(&input.root_path);
-    let _guard = coordinator.write(&root).await;
-    let result = blocking(move || {
-        let mut link = git_link(&root)?;
-        let folder = alcy_domain::normalize_shared_folder(input.folder.as_deref())?;
-        if let Some(folder) = &folder {
-            prepare_shared_folder(Path::new(folder))?;
-        }
-        link.location = RemoteLocation::Git {
-            shared_folder: folder,
-        };
-        WorkspaceLinkStore::new(root).save(&link)?;
-        Ok(link_dto(&link))
-    })
-    .await;
-    crate::logging::logged("alcy::vc", "definir pasta compartilhada git", result)
+    /// `None` (or blank) removes `origin`.
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct GitPeerDto {
-    pub peer: String,
-    pub name: String,
-    pub time: i64,
-    /// `upToDate`, `incoming` or `syncing`.
-    pub state: String,
+pub struct GitRemoteDto {
+    pub url: Option<String>,
 }
 
-fn peer_state_name(state: PeerState) -> &'static str {
-    match state {
-        PeerState::UpToDate => "upToDate",
-        PeerState::Incoming => "incoming",
-        PeerState::Syncing => "syncing",
-    }
-}
-
-/// Everyone else publishing the current branch in the shared folder.
+/// Adds, changes or removes `origin`, in the repository's own configuration.
 #[tauri::command]
-pub async fn get_git_peers(
+pub async fn set_git_remote(
+    input: SetGitRemoteInput,
+    coordinator: State<'_, WorkspaceOperationCoordinator>,
+) -> Result<GitRemoteDto, RemoteCommandError> {
+    let root = PathBuf::from(&input.root_path);
+    let _guard = coordinator.write(&root).await;
+    let result = async {
+        git_link(&root)?;
+        let url = alcy_git::set_remote(&root, input.url.as_deref()).await?;
+        Ok(GitRemoteDto { url })
+    }
+    .await;
+    crate::logging::logged("alcy::vc", "definir remote git", result)
+}
+
+/// Downloads what `origin` has, without touching the workspace files.
+#[tauri::command]
+pub async fn fetch_git_remote(
     input: GitOperationInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     registry: State<'_, ExecutionRegistry>,
-    git: State<'_, LocalGitProvider>,
-) -> Result<Vec<GitPeerDto>, RemoteCommandError> {
+) -> Result<(), RemoteCommandError> {
     let root = PathBuf::from(&input.root_path);
-    let _guard = coordinator.read(&root).await;
-    let identity = git.identity()?;
-    let me = git.peer_id(identity.as_ref())?;
-    let result = cancellable(&registry, &input.operation_id, async move {
-        blocking(move || {
-            let shared = shared_folder(&git_link(&root)?)?;
-            Ok(alcy_git::peer_statuses(&root, &shared, &me)?
-                .into_iter()
-                .map(|peer| GitPeerDto {
-                    peer: peer.peer,
-                    name: peer.name,
-                    time: peer.time,
-                    state: peer_state_name(peer.state).to_string(),
-                })
-                .collect())
-        })
-        .await
+    let _guard = coordinator.write(&root).await;
+    let result = cancellable(&registry, &input.operation_id, async {
+        git_link(&root)?;
+        Ok(alcy_git::fetch(&root).await?)
     })
     .await;
-    crate::logging::logged("alcy::vc", "ler pessoas da pasta compartilhada", result)
+    crate::logging::logged("alcy::vc", "buscar remote git", result)
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct GitSyncDto {
-    pub published: bool,
-    pub integrated: Vec<String>,
-    pub syncing: Vec<String>,
-    pub merge: Option<GitMergeDto>,
-    pub files: Vec<String>,
-}
-
-fn sync_dto(outcome: SyncOutcome) -> GitSyncDto {
-    GitSyncDto {
-        published: outcome.published,
-        integrated: outcome.integrated,
-        syncing: outcome.syncing,
-        merge: outcome
-            .merging
-            .map(|(label, conflicts)| GitMergeDto { label, conflicts }),
-        files: outcome.files,
-    }
-}
-
-/// Publishes this person's branch and integrates everyone else's.
+/// Fetches and merges `origin/<branch>` into the current branch.
 #[tauri::command]
-pub async fn sync_git_shared_folder(
+pub async fn pull_git_remote(
     input: GitOperationInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
     git: State<'_, LocalGitProvider>,
-) -> Result<GitSyncDto, RemoteCommandError> {
+) -> Result<GitMergeResultDto, RemoteCommandError> {
     let root = PathBuf::from(&input.root_path);
     let _guard = coordinator.write(&root).await;
     let files = files_view.open(root.clone())?;
     let identity = git.identity()?;
-    let me = git.peer_id(identity.as_ref())?;
-    let result = cancellable(&registry, &input.operation_id, async move {
+    let result = cancellable(&registry, &input.operation_id, async {
+        git_link(&root)?;
+        alcy_git::fetch(&root).await?;
+        let root = root.clone();
         blocking(move || {
             let link = git_link(&root)?;
-            let shared = shared_folder(&link)?;
-            let outcome = alcy_git::sync(&root, &files, &link, identity.as_ref(), &shared, &me)?;
-            WorkspaceLinkStore::new(root).save(&outcome.link)?;
-            Ok(sync_dto(outcome))
+            let (integration, applied) =
+                alcy_git::merge_upstream(&root, &files, &link, identity.as_ref())?;
+            let files = save_applied(&root, applied)?;
+            Ok(merge_result(integration, files))
         })
         .await
     })
     .await;
-    crate::logging::logged("alcy::vc", "sincronizar pasta compartilhada", result)
+    crate::logging::logged("alcy::vc", "pull do remote git", result)
+}
+
+/// Sends the current branch to `origin`.
+#[tauri::command]
+pub async fn push_git_remote(
+    input: GitOperationInput,
+    coordinator: State<'_, WorkspaceOperationCoordinator>,
+    registry: State<'_, ExecutionRegistry>,
+) -> Result<(), RemoteCommandError> {
+    let root = PathBuf::from(&input.root_path);
+    let _guard = coordinator.write(&root).await;
+    let result = cancellable(&registry, &input.operation_id, async {
+        git_link(&root)?;
+        Ok(alcy_git::push(&root).await?)
+    })
+    .await;
+    crate::logging::logged("alcy::vc", "push para o remote git", result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneGitWorkspaceInput {
+    pub operation_id: String,
+    pub url: String,
+}
+
+/// Local folder name used when the repository's has nothing usable.
+const FALLBACK_FOLDER_NAME: &str = "Workspace";
+
+/// A repository name made safe as a local folder name on every platform.
+fn local_folder_name(remote: &str) -> String {
+    let cleaned: String = remote
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_end_matches('.').trim();
+    if cleaned.is_empty() {
+        FALLBACK_FOLDER_NAME.to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// Folder name for a clone: the repository's name, without `.git`.
+fn repository_name(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches(['/', '\\']);
+    let last = trimmed.rsplit(['/', '\\', ':']).next().unwrap_or(trimmed);
+    local_folder_name(last.strip_suffix(".git").unwrap_or(last))
+}
+
+/// Clones a repository holding an Alcy workspace into a new folder of the
+/// workspaces folder, named after the repository, links it to git and opens
+/// it.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn clone_git_workspace(
+    input: CloneGitWorkspaceInput,
+    app: tauri::AppHandle,
+    registry: State<'_, ExecutionRegistry>,
+    files_view: State<'_, VersionControlFiles>,
+    recent_store: State<'_, RecentWorkspacesStore>,
+    git: State<'_, LocalGitProvider>,
+    usage: State<'_, alcy_app::UsageHub>,
+) -> Result<WorkspaceDto, RemoteCommandError> {
+    let result: Result<WorkspaceDto, RemoteCommandError> = async {
+        let url = alcy_git::validate_remote_url(&input.url)?;
+        let workspaces = app
+            .path()
+            .document_dir()
+            .map_err(|error| RemoteCommandError::Storage {
+                message: error.to_string(),
+            })?
+            .join(WORKSPACES_FOLDER_NAME);
+        std::fs::create_dir_all(&workspaces).map_err(|error| RemoteCommandError::Files {
+            message: error.to_string(),
+        })?;
+        let root = next_available_path(&workspaces, &repository_name(&url))?.0;
+        let created = cancellable(&registry, &input.operation_id, async {
+            alcy_git::clone(&url, &root).await?;
+            let link_root = root.clone();
+            let link = blocking(move || {
+                let link = WorkspaceLink::new(alcy_git::versions_environments(&link_root)?);
+                alcy_git::init_workspace(&link_root, DEFAULT_GIT_BRANCH, &link.tracked_files())?;
+                Ok(link)
+            })
+            .await?;
+            // Files equal to the cloned commit start as synced.
+            let files = files_view.open(root.clone())?;
+            let remote = WorkspaceRemote::new(root.clone(), None, git.hashes.clone());
+            let status = version_status(&files, &remote, &link).await?;
+            WorkspaceLinkStore::new(root.clone()).save(&status.link)?;
+            let workspace = WorkspaceStore::new(root.clone()).load()?;
+            record_recent_in_order(&recent_store, root.clone(), workspace.name().to_string())
+                .await?;
+            Ok(workspace_to_dto(
+                &workspace,
+                root.to_string_lossy().to_string(),
+            ))
+        })
+        .await;
+        // A cancelled or failed clone leaves nothing behind, unless the
+        // folder appeared meanwhile and clone refused to touch it.
+        if created.is_err() && !matches!(created, Err(RemoteCommandError::GitDestinationExists)) {
+            let _ = alcy_git::discard_clone(&root);
+        }
+        created
+    }
+    .await;
+    if result.is_ok() {
+        usage.record(alcy_app::UsageEvent::WorkspaceOpened {
+            kind: alcy_app::WorkspaceOpenKind::Opened,
+        });
+    }
+    crate::logging::logged("alcy::vc", "clonar workspace git", result)
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -714,36 +743,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn peer_ids_are_readable_ref_components() {
-        assert_eq!(slug("Ana Lima"), "ana-lima");
-        assert_eq!(slug("  João!! "), "jo-o");
-        assert_eq!(slug(""), "alcy");
-        assert_eq!(slug("---"), "alcy");
-        assert!(slug(&"x".repeat(80)).len() <= 24);
-        let suffix = random_suffix();
-        assert_eq!(suffix.len(), 8);
-        assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn shared_folders_must_be_empty_or_bare() {
-        let empty = tempfile::tempdir().unwrap();
-        prepare_shared_folder(empty.path()).unwrap();
-        assert!(empty.path().join("HEAD").is_file());
-        prepare_shared_folder(empty.path()).unwrap();
-
-        let other = tempfile::tempdir().unwrap();
-        std::fs::write(other.path().join("a.txt"), "x").unwrap();
-        assert_eq!(
-            prepare_shared_folder(other.path()),
-            Err(RemoteCommandError::GitNotRepository)
-        );
-        let worktree = tempfile::tempdir().unwrap();
-        std::fs::create_dir(worktree.path().join(".git")).unwrap();
-        assert_eq!(
-            prepare_shared_folder(worktree.path()),
-            Err(RemoteCommandError::GitNotBare)
-        );
+    fn clones_are_named_after_the_repository() {
+        assert_eq!(repository_name("https://example.com/team/api.git"), "api");
+        assert_eq!(repository_name("git@example.com:team/api.git/"), "api");
+        assert_eq!(repository_name("git@example.com:api"), "api");
+        assert_eq!(repository_name(r"C:\repos\Team API.git"), "Team API");
+        assert_eq!(repository_name("/srv/git/"), "git");
     }
 
     #[test]

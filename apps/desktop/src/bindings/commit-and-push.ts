@@ -1,12 +1,12 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { ChangeSelectionDto, GitlabCommandError } from './gitlab-types'
+import type { ChangeSelectionDto, VersionControlCommandError } from './version-control-types'
 
 export interface PushResultDto {
   commitId: string
   pushed: string[]
 }
 
-export type CommitAndPushResult = CommandResult<PushResultDto, GitlabCommandError>
+export type CommitAndPushResult = CommandResult<PushResultDto, VersionControlCommandError>
 
 export function commitAndPush(
   rootPath: string,

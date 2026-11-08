@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { AuthenticationInput } from '../../../bindings/execute-graphql-request'
-import type { ItemChangeKind, StructuredFileChangesDto } from '../../../bindings/gitlab-types'
+import type { ItemChangeKind, StructuredFileChangesDto } from '../../../bindings/version-control-types'
 import type { FocusEvent, MouseEvent as ReactMouseEvent, ReactNode, RefCallback } from 'react'
 import { EnvironmentsPanel } from '../../environments/EnvironmentsPanel'
 import '../../environments/environments.css'

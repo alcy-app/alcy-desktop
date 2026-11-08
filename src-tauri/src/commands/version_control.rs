@@ -7,26 +7,20 @@ use alcy_app::{
     preview_pull as run_preview_pull, pull_changes as run_pull, push_selected_changes,
     resolve_conflict as run_resolve, structured_file_changes_from_content, version_status,
 };
-use alcy_domain::{FileState, RemoteLocation, WorkspaceLink};
+use alcy_domain::{FileState, WorkspaceLink};
 use alcy_git::{WorkspaceRemote, init_workspace};
-use alcy_gitlab::GitlabClient;
-use alcy_platform::KeyringCredentialStore;
 use alcy_storage::{
-    DiskWorkspaceFiles, GitlabAccountsStore, LocalSecrets, SecuritySettingsStore,
-    SyncedWorkspaceFiles, WorkspaceLinkStore,
+    DiskWorkspaceFiles, LocalSecrets, SecuritySettingsStore, SyncedWorkspaceFiles,
+    WorkspaceLinkStore,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::execution_registry::ExecutionRegistry;
-use super::gitlab::find_account;
-use super::linked_remote::LinkedAccount;
-use super::local_git::{LocalGitProvider, prepare_shared_folder};
+use super::local_git::LocalGitProvider;
 
-/// Every git workspace starts on `main`: people sharing a folder meet on the
-/// same branch name without choosing it.
-const DEFAULT_GIT_BRANCH: &str = "main";
-use super::onedrive::{OnedriveProvider, find_onedrive_account};
+/// Branch of a repository created by Alcy.
+pub(super) const DEFAULT_GIT_BRANCH: &str = "main";
 use super::remote_command::{RemoteCommandError, cancellable};
 use super::remote_content_cache::{
     CachedRemoteRepository, VersionControlCaches, structured_cache_key,
@@ -58,30 +52,9 @@ impl From<FileState> for FileStateDto {
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(tag = "provider", rename_all = "camelCase")]
-pub enum WorkspaceLinkDto {
-    #[serde(rename_all = "camelCase")]
-    Gitlab {
-        account_id: String,
-        project_id: u64,
-        project_path: String,
-        branch: String,
-        directory: String,
-        include_environments: bool,
-    },
-    #[serde(rename_all = "camelCase")]
-    Onedrive {
-        account_id: String,
-        drive_id: String,
-        folder_id: String,
-        display_path: String,
-        include_environments: bool,
-    },
-    #[serde(rename_all = "camelCase")]
-    Git {
-        shared_folder: Option<String>,
-        include_environments: bool,
-    },
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceLinkDto {
+    pub include_environments: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -262,38 +235,8 @@ pub(super) fn structured_changes_dto(
 }
 
 pub(super) fn link_dto(link: &WorkspaceLink) -> WorkspaceLinkDto {
-    let include_environments = link.include_environments;
-    match &link.location {
-        RemoteLocation::Gitlab {
-            account_id,
-            project_id,
-            project_path,
-            branch,
-            directory,
-        } => WorkspaceLinkDto::Gitlab {
-            account_id: account_id.clone(),
-            project_id: *project_id,
-            project_path: project_path.clone(),
-            branch: branch.clone(),
-            directory: directory.clone(),
-            include_environments,
-        },
-        RemoteLocation::Onedrive {
-            account_id,
-            drive_id,
-            folder_id,
-            display_path,
-        } => WorkspaceLinkDto::Onedrive {
-            account_id: account_id.clone(),
-            drive_id: drive_id.clone(),
-            folder_id: folder_id.clone(),
-            display_path: display_path.clone(),
-            include_environments,
-        },
-        RemoteLocation::Git { shared_folder } => WorkspaceLinkDto::Git {
-            shared_folder: shared_folder.clone(),
-            include_environments,
-        },
+    WorkspaceLinkDto {
+        include_environments: link.include_environments,
     }
 }
 
@@ -393,39 +336,8 @@ pub struct OperationInput {
 pub struct LinkWorkspaceInput {
     pub root_path: String,
     pub operation_id: String,
-    #[serde(flatten)]
-    pub target: LinkTargetInput,
     #[serde(default)]
     pub include_environments: bool,
-}
-
-/// Where to link the workspace, by provider (ADR 0063).
-#[derive(Debug, Deserialize)]
-#[serde(tag = "provider", rename_all = "camelCase")]
-pub enum LinkTargetInput {
-    #[serde(rename_all = "camelCase")]
-    Gitlab {
-        account_id: String,
-        project_id: u64,
-        project_path: String,
-        branch: String,
-        #[serde(default)]
-        directory: String,
-    },
-    #[serde(rename_all = "camelCase")]
-    Onedrive {
-        account_id: String,
-        drive_id: String,
-        folder_id: String,
-    },
-    /// Git in the workspace folder: creates the repository on `main`, or
-    /// adopts the one already there (ADR 0074). With `shared_folder`, joins
-    /// that folder right away; the first sync brings the published work.
-    #[serde(rename_all = "camelCase")]
-    Git {
-        #[serde(default)]
-        shared_folder: Option<String>,
-    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -553,7 +465,7 @@ pub async fn unlink_workspace(
 }
 
 /// Estado dos arquivos rastreados só a partir do disco (hash local × base
-/// salva, sem chamar o GitLab) — usado para refletir uma edição local em
+/// salva, sem consultar o repositório) — usado para refletir uma edição local em
 /// "Alterações" na hora, sem esperar (nem gerar) uma consulta ao remoto. A
 /// checagem periódica/manual (`get_version_status`) continua sendo a única
 /// fonte de `remoteChanged`/`conflict`.
@@ -589,115 +501,59 @@ pub async fn get_local_version_status(
     crate::logging::logged("alcy::vc", "verificar status local", result)
 }
 
-/// Links the workspace to a remote location and computes the initial state
-/// (files identical on both sides start as synced). The location is checked
-/// again first: a GitLab branch must accept pushes and a OneDrive item must
-/// still be a reachable folder; git creates or adopts the repository in the
-/// workspace folder.
+/// Creates or adopts the git repository in the workspace folder and computes
+/// the initial state (files identical on both sides start as synced).
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub async fn link_workspace(
     input: LinkWorkspaceInput,
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<VersionStatusDto, RemoteCommandError> {
     let result: Result<VersionStatusDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.write(&root).await;
         let files = files_view.open(root.clone())?;
-        let include_environments = input.include_environments;
-        let status = match input.target {
-            LinkTargetInput::Gitlab {
-                account_id,
-                project_id,
-                project_path,
-                branch,
-                directory,
-            } => {
-                let account = find_account(&accounts, &account_id)?;
-                let link = WorkspaceLink::gitlab(
-                    account_id,
-                    project_id,
-                    project_path,
-                    branch.clone(),
-                    &directory,
-                    include_environments,
-                )?;
-                let session = client.session(&account, &*credentials);
-                cancellable(&registry, &input.operation_id, async {
-                    if !session.branch(project_id, &branch).await?.can_push {
-                        return Err(RemoteCommandError::BranchNotWritable);
-                    }
-                    let remote = session.repository(project_id, &branch);
-                    version_status(&files, &remote, &link)
-                        .await
-                        .map_err(RemoteCommandError::from)
-                })
-                .await?
-            }
-            LinkTargetInput::Onedrive {
-                account_id,
-                drive_id,
-                folder_id,
-            } => {
-                let account = find_onedrive_account(&onedrive.accounts, &account_id)?;
-                let session = onedrive.client.session(&account, &*credentials);
-                cancellable(&registry, &input.operation_id, async {
-                    let folder = session.folder(&drive_id, &folder_id).await?;
-                    let link = WorkspaceLink::onedrive(
-                        account_id,
-                        &folder.drive_id,
-                        &folder.id,
-                        folder.path,
-                        include_environments,
-                    )?;
-                    let remote = session.repository(&folder.drive_id, &folder.id);
-                    version_status(&files, &remote, &link)
-                        .await
-                        .map_err(RemoteCommandError::from)
-                })
-                .await?
-            }
-            LinkTargetInput::Git { shared_folder } => {
-                let link = WorkspaceLink::git(shared_folder.as_deref(), include_environments)?;
-                let tracked = link.tracked_files();
-                let repo_root = root.clone();
-                let shared = match &link.location {
-                    RemoteLocation::Git { shared_folder } => shared_folder.clone(),
-                    _ => None,
-                };
-                tauri::async_runtime::spawn_blocking(move || {
-                    if let Some(shared) = &shared {
-                        prepare_shared_folder(std::path::Path::new(shared))?;
-                    }
-                    init_workspace(&repo_root, DEFAULT_GIT_BRANCH, &tracked)
-                        .map_err(RemoteCommandError::from)
-                })
+        let link = WorkspaceLink::new(input.include_environments);
+        let tracked = link.tracked_files();
+        let repo_root = root.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            init_workspace(&repo_root, DEFAULT_GIT_BRANCH, &tracked)
+                .map_err(RemoteCommandError::from)
+        })
+        .await
+        .map_err(|error| RemoteCommandError::Files {
+            message: error.to_string(),
+        })??;
+        let remote = WorkspaceRemote::new(root.clone(), None, git.hashes.clone());
+        let status = cancellable(&registry, &input.operation_id, async {
+            version_status(&files, &remote, &link)
                 .await
-                .map_err(|error| RemoteCommandError::Files {
-                    message: error.to_string(),
-                })??;
-                let remote = WorkspaceRemote::new(root.clone(), None, git.hashes.clone());
-                cancellable(&registry, &input.operation_id, async {
-                    version_status(&files, &remote, &link)
-                        .await
-                        .map_err(RemoteCommandError::from)
-                })
-                .await?
-            }
-        };
+                .map_err(RemoteCommandError::from)
+        })
+        .await?;
 
         WorkspaceLinkStore::new(root).save(&status.link)?;
         Ok(status_dto(&status.link, status.files))
     }
     .await;
     crate::logging::logged("alcy::vc", "vincular workspace", result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelVersionControlOperationInput {
+    pub operation_id: String,
+}
+
+/// Cancels a version control operation in flight. Idempotent.
+#[tauri::command]
+pub fn cancel_version_control_operation(
+    input: CancelVersionControlOperationInput,
+    registry: State<'_, ExecutionRegistry>,
+) {
+    registry.cancel(&input.operation_id);
 }
 
 #[tauri::command]
@@ -707,10 +563,6 @@ pub async fn get_version_status(
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<VersionStatusDto, RemoteCommandError> {
     let result: Result<VersionStatusDto, RemoteCommandError> = async {
@@ -719,9 +571,8 @@ pub async fn get_version_status(
             let _workspace_guard = coordinator.read(&root).await;
             load_link(&WorkspaceLinkStore::new(root.clone()))?
         };
-        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
 
-        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
+        let remote = git.remote(&root)?;
         let files = files_view.open(root.clone())?;
         let status = cancellable(&registry, &input.operation_id, async {
             version_status(&files, &remote, &link)
@@ -754,19 +605,14 @@ pub async fn get_file_diff(
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
     caches: State<'_, VersionControlCaches>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<FileDiffDto, RemoteCommandError> {
     let root = PathBuf::from(&input.root_path);
     let _workspace_guard = coordinator.read(&root).await;
     let link = load_link(&WorkspaceLinkStore::new(root.clone()))?;
-    let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
-    let target_path = link.remote_path(&input.file_name);
+    let target_path = input.file_name.clone();
     let remote = CachedRemoteRepository::new(
-        account.remote(&link, &client, &onedrive.client, &*credentials)?,
+        git.remote(&root)?,
         &caches.remote,
         target_path,
         input.expected_remote_revision.clone(),
@@ -789,10 +635,6 @@ pub async fn get_structured_file_changes(
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
     caches: State<'_, VersionControlCaches>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<StructuredFileChangesDto, RemoteCommandError> {
     let root = PathBuf::from(&input.root_path);
@@ -810,12 +652,11 @@ pub async fn get_structured_file_changes(
         }
     }
 
-    let link = load_link(&WorkspaceLinkStore::new(root.clone()))?;
-    let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
-    let target_path = link.remote_path(&input.file_name);
+    load_link(&WorkspaceLinkStore::new(root.clone()))?;
+    let target_path = input.file_name.clone();
     let remote_path = target_path.clone();
     let remote = CachedRemoteRepository::new(
-        account.remote(&link, &client, &onedrive.client, &*credentials)?,
+        git.remote(&root)?,
         &caches.remote,
         target_path,
         input.expected_remote_revision.clone(),
@@ -868,10 +709,6 @@ pub async fn commit_and_push(
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
     usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<PushResultDto, RemoteCommandError> {
@@ -880,10 +717,9 @@ pub async fn commit_and_push(
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
-        account.require_commit_identity()?;
+        git.require_identity()?;
 
-        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
+        let remote = git.remote(&root)?;
         let files = files_view.open(root)?;
         let outcome = cancellable(&registry, &input.operation_id, async {
             let selections: Vec<_> = input
@@ -924,10 +760,6 @@ pub async fn preview_pull_changes(
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<PullPreviewDto, RemoteCommandError> {
     let result: Result<PullPreviewDto, RemoteCommandError> = async {
@@ -935,9 +767,8 @@ pub async fn preview_pull_changes(
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
 
-        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
+        let remote = git.remote(&root)?;
         let files = files_view.open(root)?;
         let preview = cancellable(&registry, &input.operation_id, async {
             run_preview_pull(&files, &remote, &link)
@@ -965,10 +796,6 @@ pub async fn pull_changes(
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
     usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<PullResultDto, RemoteCommandError> {
@@ -977,9 +804,8 @@ pub async fn pull_changes(
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
 
-        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
+        let remote = git.remote(&root)?;
         let files = files_view.open(root)?;
         let outcome = cancellable(&registry, &input.operation_id, async {
             run_pull(&files, &remote, &link)
@@ -1007,17 +833,12 @@ pub async fn preview_conflict_resolution(
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<ResolutionPreviewDto, RemoteCommandError> {
     let result: Result<ResolutionPreviewDto, RemoteCommandError> = async {
         let root = PathBuf::from(&input.root_path);
         let _workspace_guard = coordinator.read(&root).await;
         let link = load_link(&WorkspaceLinkStore::new(root.clone()))?;
-        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
         let items: Vec<_> = input
             .items
             .into_iter()
@@ -1029,7 +850,7 @@ pub async fn preview_conflict_resolution(
                 },
             })
             .collect();
-        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
+        let remote = git.remote(&root)?;
         let files = files_view.open(root)?;
         let preview = cancellable(&registry, &input.operation_id, async {
             run_resolution_preview(
@@ -1074,10 +895,6 @@ pub async fn resolve_conflict(
     coordinator: State<'_, WorkspaceOperationCoordinator>,
     files_view: State<'_, VersionControlFiles>,
     registry: State<'_, ExecutionRegistry>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    onedrive: State<'_, OnedriveProvider>,
     git: State<'_, LocalGitProvider>,
 ) -> Result<ResolveResultDto, RemoteCommandError> {
     let result: Result<ResolveResultDto, RemoteCommandError> = async {
@@ -1085,7 +902,6 @@ pub async fn resolve_conflict(
         let _workspace_guard = coordinator.write(&root).await;
         let link_store = WorkspaceLinkStore::new(root.clone());
         let link = load_link(&link_store)?;
-        let account = LinkedAccount::find(&link, &accounts, &onedrive.accounts, &git, &root)?;
         let resolution = match input.resolution {
             ResolutionDto::KeepLocal => Resolution::KeepLocal,
             ResolutionDto::KeepRemote => Resolution::KeepRemote,
@@ -1109,7 +925,7 @@ pub async fn resolve_conflict(
             },
         };
 
-        let remote = account.remote(&link, &client, &onedrive.client, &*credentials)?;
+        let remote = git.remote(&root)?;
         let files = files_view.open(root)?;
         let (updated_link, local_file_changed) =
             cancellable(&registry, &input.operation_id, async {
@@ -1132,7 +948,7 @@ mod tests {
 
     #[test]
     fn status_serializes_camel_case_with_state_names() {
-        let link = WorkspaceLink::gitlab("u@h", 7, "eq/proj", "main", "", false).unwrap();
+        let link = WorkspaceLink::new(false);
         let dto = status_dto(
             &link,
             vec![alcy_app::FileStatus {
@@ -1146,11 +962,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(dto).unwrap(),
             serde_json::json!({
-                "link": {
-                    "provider": "gitlab",
-                    "accountId": "u@h", "projectId": 7, "projectPath": "eq/proj",
-                    "branch": "main", "directory": "", "includeEnvironments": false
-                },
+                "link": { "includeEnvironments": false },
                 "files": [{
                     "name": "alcy-flows.json",
                     "state": "localModified",
@@ -1159,38 +971,6 @@ mod tests {
                 }]
             })
         );
-    }
-
-    #[test]
-    fn git_links_serialize_their_shared_folder() {
-        let folder = std::env::temp_dir().join("alcy-shared");
-        let link = WorkspaceLink::git(Some(&folder.to_string_lossy()), true).unwrap();
-        assert_eq!(
-            serde_json::to_value(link_dto(&link)).unwrap(),
-            serde_json::json!({
-                "provider": "git",
-                "sharedFolder": folder.to_string_lossy(),
-                "includeEnvironments": true
-            })
-        );
-        let input: LinkWorkspaceInput = serde_json::from_value(serde_json::json!({
-            "rootPath": "/w", "operationId": "o", "provider": "git"
-        }))
-        .unwrap();
-        assert!(matches!(
-            input.target,
-            LinkTargetInput::Git {
-                shared_folder: None
-            }
-        ));
-        let input: LinkWorkspaceInput = serde_json::from_value(serde_json::json!({
-            "rootPath": "/w", "operationId": "o", "provider": "git", "sharedFolder": "/team"
-        }))
-        .unwrap();
-        assert!(matches!(
-            input.target,
-            LinkTargetInput::Git { shared_folder: Some(ref folder) } if folder == "/team"
-        ));
     }
 
     #[test]

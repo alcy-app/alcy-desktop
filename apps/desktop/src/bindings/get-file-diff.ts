@@ -1,7 +1,7 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { FileDiffDto, GitlabCommandError } from './gitlab-types'
+import type { FileDiffDto, VersionControlCommandError } from './version-control-types'
 
-export type GetFileDiffResult = CommandResult<FileDiffDto, GitlabCommandError>
+export type GetFileDiffResult = CommandResult<FileDiffDto, VersionControlCommandError>
 
 /** Diff entre a versão remota (esquerda) e a local (direita); só os trechos alterados cruzam o IPC. */
 export function getFileDiff(

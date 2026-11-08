@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { cancelGitlabOperation } from '../../bindings/cancel-gitlab-operation'
-import type { ChangedItemDto, ResolutionPreviewDto, StructuredFileChangesDto } from '../../bindings/gitlab-types'
+import { cancelVersionControlOperation } from '../../bindings/cancel-version-control-operation'
+import type { ChangedItemDto, ResolutionPreviewDto, StructuredFileChangesDto } from '../../bindings/version-control-types'
 import { previewConflictResolution } from '../../bindings/preview-conflict-resolution'
-import { gitlabErrorMessage } from '../../shared/gitlab/gitlab-error-message'
+import { versionControlErrorMessage } from '../../shared/version-control-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
@@ -56,11 +56,11 @@ export function ConflictResolver({ rootPath, vc, target, onResolved }: ConflictR
     void previewConflictResolution(rootPath, operationId, target.fileName, resolutions, target.changes.localRevision, target.changes.remoteRevision, activeItem.id).then((result) => {
       if (cancelled) return
       if (result.ok) setPreview({ status: 'ready', value: result.value })
-      else setPreview({ status: 'error', message: result.error.kind === 'conflict' ? t('vc.resolve.stale') : gitlabErrorMessage(result.error, t), stale: result.error.kind === 'conflict' })
+      else setPreview({ status: 'error', message: result.error.kind === 'conflict' ? t('vc.resolve.stale') : versionControlErrorMessage(result.error, t), stale: result.error.kind === 'conflict' })
     })
     return () => {
       cancelled = true
-      void cancelGitlabOperation(operationId)
+      void cancelVersionControlOperation(operationId)
     }
   }, [activeItem, choices, complete, items, rootPath, structured, t, target.changes.localRevision, target.changes.remoteRevision, target.fileName])
 
@@ -89,7 +89,7 @@ export function ConflictResolver({ rootPath, vc, target, onResolved }: ConflictR
     } : choices['*'] === 'local' ? { kind: 'keepLocal' as const } : { kind: 'keepRemote' as const }
     const result = await vc.resolve(target.fileName, resolution)
     if (result.ok) onResolved()
-    else setSubmitError(result.error.kind === 'conflict' ? t('vc.resolve.stale') : gitlabErrorMessage(result.error, t))
+    else setSubmitError(result.error.kind === 'conflict' ? t('vc.resolve.stale') : versionControlErrorMessage(result.error, t))
   }
 
   return <section className="vc-review vc-conflict-resolver" aria-label={t('vc.resolve.title')}>

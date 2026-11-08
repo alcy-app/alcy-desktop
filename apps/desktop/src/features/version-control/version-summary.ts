@@ -1,4 +1,4 @@
-import type { FileStatusDto } from '../../bindings/gitlab-types'
+import type { FileStatusDto } from '../../bindings/version-control-types'
 
 export type VersionSummary = 'unlinked' | 'loading' | 'busy' | 'error' | 'clean' | 'changes' | 'remoteAhead' | 'conflict'
 

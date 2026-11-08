@@ -270,14 +270,14 @@
   font-size: var(--font-size-sm);
 }
 
-.settings-gitlab {
+.settings-git {
   --settings-label-width: 140px;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
 }
 
-.settings-gitlab-status-row {
+.settings-git-status-row {
   display: grid;
   grid-template-columns: var(--settings-label-width) minmax(0, 1fr);
   gap: var(--space-4);
@@ -295,7 +295,7 @@
   color: var(--success);
 }
 
-.settings-gitlab-form {
+.settings-git-form {
   display: grid;
   grid-template-columns: var(--settings-label-width) minmax(0, 1fr);
   gap: var(--space-3) var(--space-4);
@@ -303,25 +303,25 @@
 }
 
 /* Rótulos e controles compartilham as colunas do formulário desktop. */
-.settings-gitlab-form > .ui-field {
+.settings-git-form > .ui-field {
   display: contents;
 }
 
-.settings-gitlab-form .ui-field-label {
+.settings-git-form .ui-field-label {
   padding-top: var(--space-2);
   font-weight: var(--font-weight-normal);
 }
 
-.settings-gitlab-help {
+.settings-git-help {
   grid-column: 2;
 }
 
-.settings-gitlab-target,
-.settings-gitlab-permission {
+.settings-git-target,
+.settings-git-permission {
   grid-column: 2;
 }
 
-.settings-gitlab-permission {
+.settings-git-permission {
   margin: var(--space-3) 0 0;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -371,7 +371,7 @@
   margin-top: var(--space-2);
 }
 
-.settings-gitlab-authorize {
+.settings-git-authorize {
   grid-column: 2;
   display: flex;
   flex-direction: column;
@@ -380,14 +380,14 @@
   margin-top: var(--space-4);
 }
 
-.settings-gitlab-progress {
+.settings-git-progress {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
 }
 
-.settings-gitlab-waiting {
+.settings-git-waiting {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -396,21 +396,21 @@
   color: var(--text-muted);
 }
 
-.settings-gitlab-waiting svg {
+.settings-git-waiting svg {
   flex-shrink: 0;
 }
 
-.settings-gitlab-account {
+.settings-git-account {
   display: flex;
   align-items: center;
   gap: var(--space-4);
 }
 
-.settings-gitlab-account + .settings-gitlab-account {
+.settings-git-account + .settings-git-account {
   margin-top: var(--space-4);
 }
 
-.settings-gitlab-account-text {
+.settings-git-account-text {
   display: flex;
   flex: 1;
   min-width: 0;
@@ -421,7 +421,7 @@
   overflow-wrap: anywhere;
 }
 
-.settings-gitlab-account-text strong {
+.settings-git-account-text strong {
   color: var(--text);
   font-weight: var(--font-weight-medium);
 }
@@ -447,7 +447,7 @@
     gap: var(--space-3);
   }
 
-  .settings-gitlab {
+  .settings-git {
     --settings-label-width: 110px;
   }
 }
@@ -465,19 +465,19 @@
     display: none;
   }
 
-  .settings-gitlab-form,
-  .settings-gitlab-status-row {
+  .settings-git-form,
+  .settings-git-status-row {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .settings-gitlab-target,
-  .settings-gitlab-help,
-  .settings-gitlab-permission,
-  .settings-gitlab-authorize {
+  .settings-git-target,
+  .settings-git-help,
+  .settings-git-permission,
+  .settings-git-authorize {
     grid-column: 1;
   }
 
-  .settings-gitlab-account {
+  .settings-git-account {
     flex-wrap: wrap;
   }
 }

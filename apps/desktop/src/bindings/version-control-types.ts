@@ -1,5 +1,5 @@
-/** Erro comum aos commands de GitLab e de controle de versão (nunca carrega tokens). */
-export type GitlabCommandError =
+/** Error of the version control commands (never carries credentials). */
+export type VersionControlCommandError =
   | { kind: 'invalid'; message: string }
   | { kind: 'storage'; message: string }
   | { kind: 'credentials'; message: string }
@@ -14,78 +14,26 @@ export type GitlabCommandError =
   | { kind: 'nothingToCommit' }
   | { kind: 'emptyMessage' }
   | { kind: 'notLinked' }
-  | { kind: 'accountMissing' }
-  | { kind: 'branchNotWritable' }
-  | { kind: 'denied'; message: string }
-  | { kind: 'login'; message: string }
-  | { kind: 'timeout' }
-  | { kind: 'portBusy'; port: number }
-  | { kind: 'browser'; message: string }
   | { kind: 'cancelled' }
   | { kind: 'incompleteResolution'; file: string }
   | { kind: 'gitIdentityMissing' }
-  | { kind: 'gitNotBare' }
-  | { kind: 'gitNotRepository' }
   | { kind: 'gitUncommittedChanges'; files: string[] }
   | { kind: 'gitMergeInProgress' }
   | { kind: 'gitNoMergeInProgress' }
   | { kind: 'gitInvalidBranch'; name: string }
+  | { kind: 'gitInvalidRemote'; url: string }
+  | { kind: 'gitNoRemote' }
+  | { kind: 'gitNotInstalled' }
+  | { kind: 'gitAuthFailed'; message: string }
+  | { kind: 'gitPushRejected' }
+  | { kind: 'gitCommandFailed'; message: string }
+  | { kind: 'gitDestinationExists' }
+  | { kind: 'gitNotAWorkspace' }
 
-export interface GitlabAccountDto {
-  id: string
-  baseUrl: string
-  clientId: string
-  username: string
-  name: string
-}
-
-export interface GitlabProjectDto {
-  id: number
-  pathWithNamespace: string
-  defaultBranch: string | null
-}
-
-export interface GitlabBranchDto {
-  name: string
-  isDefault: boolean
-  canPush: boolean
-}
-
-export interface PageDto<T> {
-  items: T[]
-  nextPage: number | null
-}
-
-export interface GitlabWorkspaceLinkDto {
-  provider: 'gitlab'
-  accountId: string
-  projectId: number
-  projectPath: string
-  branch: string
-  directory: string
+/** The workspace's link to its git repository. */
+export interface WorkspaceLinkDto {
   includeEnvironments: boolean
 }
-
-export interface OnedriveWorkspaceLinkDto {
-  provider: 'onedrive'
-  accountId: string
-  driveId: string
-  folderId: string
-  /** Caminho exibido; os ids endereçam a pasta. */
-  displayPath: string
-  includeEnvironments: boolean
-}
-
-/** Git in the workspace folder; the branch lives in the repository's HEAD. */
-export interface GitWorkspaceLinkDto {
-  provider: 'git'
-  /** Folder (network or synced by OneDrive, Dropbox…) shared with others. */
-  sharedFolder: string | null
-  includeEnvironments: boolean
-}
-
-/** Vínculo do workspace com o remoto, por provider. */
-export type WorkspaceLinkDto = GitlabWorkspaceLinkDto | OnedriveWorkspaceLinkDto | GitWorkspaceLinkDto
 
 export type FileState = 'clean' | 'localAdded' | 'localModified' | 'localDeleted' | 'remoteChanged' | 'conflict'
 

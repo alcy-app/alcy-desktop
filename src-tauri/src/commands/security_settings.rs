@@ -6,7 +6,7 @@ use tauri::State;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SecuritySettingsDto {
-    /// Envia ao GitLab os valores de variáveis sensíveis (em texto claro).
+    /// Versiona os valores de variáveis sensíveis (em texto claro).
     pub sync_sensitive_values: bool,
 }
 

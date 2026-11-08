@@ -2,7 +2,7 @@ import { EXTENSION_SIDEBAR_MODULES } from '../../extensions/registry'
 import type { ExtensionId } from '../../extensions/types'
 
 // `agent` only shows while the agent chat is docked on the left (spec 0143).
-const BUILT_IN_SIDEBAR_MODULE_IDS = ['components', 'environments', 'monitors', 'history', 'documents', 'git', 'agent'] as const
+const BUILT_IN_SIDEBAR_MODULE_IDS = ['components', 'environments', 'monitors', 'git', 'history', 'documents', 'agent'] as const
 
 export type SidebarModuleId = (typeof BUILT_IN_SIDEBAR_MODULE_IDS)[number] | ExtensionId
 

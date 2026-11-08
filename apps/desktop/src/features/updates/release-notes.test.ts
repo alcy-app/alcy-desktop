@@ -38,7 +38,7 @@ Introdução.
 
 ## [0.1.0]
 
-[0.2.0]: https://gitlab.corp/alcy/-/releases/v0.2.0
+[0.2.0]: https://git.example.com/alcy/-/releases/v0.2.0
 `
 
 describe('extractReleaseNotes', () => {

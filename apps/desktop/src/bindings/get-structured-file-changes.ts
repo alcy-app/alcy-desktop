@@ -1,5 +1,5 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { GitlabCommandError, StructuredFileChangesDto } from './gitlab-types'
+import type { VersionControlCommandError, StructuredFileChangesDto } from './version-control-types'
 
 const PAGE_SIZE = 200
 
@@ -9,14 +9,14 @@ export async function getStructuredFileChanges(
   fileName: string,
   expectedRemoteRevision?: string | null,
   expectedLocalRevision?: string | null,
-): Promise<CommandResult<StructuredFileChangesDto, GitlabCommandError>> {
+): Promise<CommandResult<StructuredFileChangesDto, VersionControlCommandError>> {
   const items: StructuredFileChangesDto['items'] = []
   let offset = 0
   let localRevision = expectedLocalRevision
   let remoteRevision = expectedRemoteRevision
 
   while (true) {
-    const result = await invokeResult<StructuredFileChangesDto, GitlabCommandError>(
+    const result = await invokeResult<StructuredFileChangesDto, VersionControlCommandError>(
       'get_structured_file_changes',
       {
         input: {

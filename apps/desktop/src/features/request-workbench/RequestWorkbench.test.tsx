@@ -177,7 +177,7 @@ const getProxySettings = vi.fn()
 const onFileDrop = vi.fn()
 let persistedTabSession: unknown = null
 
-const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, gitlab: true, onedrive: false, localGit: false, notifications: true, webclientExport: true, loadTesting: false, agent: false }))
+const featureFlags = vi.hoisted(() => ({ updates: false, valueMonitors: true, localGit: false, notifications: true, webclientExport: true, loadTesting: false, agent: false }))
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: featureFlags }))
 
 // Starts empty, like the public build; the extension tests fill it in.
@@ -365,7 +365,7 @@ const defaultSnapshot = {
 
 beforeEach(() => {
   featureFlags.valueMonitors = true
-  featureFlags.gitlab = true
+  featureFlags.localGit = true
   featureFlags.notifications = true
   featureFlags.webclientExport = true
   getWorkspaceLink.mockReset()
@@ -5829,7 +5829,7 @@ describe('RequestWorkbench — feature flag do monitor de valores', () => {
   })
 })
 
-describe('RequestWorkbench — feature flag do GitLab', () => {
+describe('RequestWorkbench — feature flag do git', () => {
   it('ligada, mostra a aba de controle de versão e o indicador Git na barra de status', async () => {
     render()
     await screen.findByLabelText('Ambiente')
@@ -5840,7 +5840,7 @@ describe('RequestWorkbench — feature flag do GitLab', () => {
   })
 
   it('desligada, esconde a aba e o indicador e não consulta o vínculo do workspace', async () => {
-    featureFlags.gitlab = false
+    featureFlags.localGit = false
     render()
     await screen.findByLabelText('Ambiente')
 

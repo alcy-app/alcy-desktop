@@ -38,7 +38,7 @@ fn client_error(error: ProxyError) -> TlsSettingsCommandError {
 }
 
 /// Só os executores das chamadas do usuário (requisições, flows, runner,
-/// carga e introspecção) obedecem à preferência. Importação por URL, GitLab
+/// carga e introspecção) obedecem à preferência. Importação por URL
 /// e updater sempre verificam o certificado (ADR 0058).
 fn apply(
     settings: &TlsSettings,

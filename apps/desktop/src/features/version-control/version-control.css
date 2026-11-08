@@ -253,9 +253,6 @@
 .vc-icon-button, .vc-disclosure { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); }
 .vc-icon-button:hover, .vc-disclosure:hover:not(:disabled) { background: var(--surface-overlay); color: var(--text); }
 .vc-disclosure:disabled { opacity: .25; }
-.vc-more-menu { position: absolute; z-index: 4; top: 28px; right: 0; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-overlay); box-shadow: var(--shadow-md); }
-.vc-more-menu button { padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; }
-.vc-more-menu button:hover { background: var(--surface-raised); }
 .vc-primary-action { width: 100%; }
 .vc-commit-message { min-height: 30px; padding: 4px var(--space-2); font-size: var(--font-size-sm); }
 .vc-selection-summary { color: var(--text-muted); font-size: var(--font-size-xs); text-align: center; }
@@ -446,35 +443,68 @@
 }
 
 /* Git in the workspace (ADR 0074): branches, pending merge, shared folder, history. */
-.vc-git-branches { display: flex; flex-direction: column; gap: var(--space-2); }
-.vc-git-branch-row { display: flex; align-items: center; gap: var(--space-1); color: var(--text-muted); }
-.vc-git-branch-row .ui-select-wrapper { flex: 1; min-width: 0; }
-.vc-git-branch-form { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
-.vc-git-branch-form .vc-actions { margin-top: 0; }
+.vc-git-branch-host { display: flex; min-width: 0; }
+.vc-git-branch-label, .vc-git-branch-trigger { display: inline-flex; min-width: 0; max-width: 100%; height: 26px; align-items: center; gap: var(--space-1); padding: 0 var(--space-1); color: var(--text-muted); font: inherit; font-size: var(--font-size-sm); }
+.vc-git-branch-trigger { border: 0; border-radius: var(--radius-sm); background: transparent; }
+.vc-git-branch-trigger:hover, .vc-git-branch-trigger[aria-expanded="true"] { background: var(--surface-raised); }
+.vc-git-branch-name { overflow: hidden; color: var(--text); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.vc-git-branch-chevron { flex: none; transition: transform var(--duration-fast) var(--ease-out); }
+.vc-git-branch-trigger[aria-expanded="true"] .vc-git-branch-chevron { transform: rotate(180deg); }
+.vc-git-branch-menu { min-width: 200px; overflow-y: auto; }
+.vc-git-branch-picker-host { display: flex; width: 100%; }
+.vc-git-branch-picker { display: flex; width: 100%; height: 30px; align-items: center; gap: var(--space-1); padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--font-size-sm); }
+.vc-git-branch-picker:hover, .vc-git-branch-picker[aria-expanded="true"] { background: var(--surface-raised); }
+.vc-git-branch-picker .vc-git-branch-name { flex: 1; text-align: left; }
+.vc-git-branch-picker[aria-expanded="true"] .vc-git-branch-chevron { transform: rotate(180deg); }
+.vc-git-branch-picker-menu { min-width: 280px; }
+.vc-git-dialog { display: flex; flex-direction: column; gap: var(--space-2); }
+.vc-git-dialog .vc-actions { margin-top: 0; }
+.vc-git-dialog .vc-actions .ui-button { flex: none; white-space: nowrap; }
+/* The only button with a name in it: a very long branch is cut, never wrapped. */
+.vc-git-dialog .vc-actions .vc-git-merge-submit { flex: 0 1 auto; min-width: 0; }
+/* Button labels trim their box to the baseline; cutting the text clips to that
+   box, so the trim is undone here or the descenders would be cut off. */
+.vc-git-merge-submit .ui-button-label { overflow: hidden; text-box: normal; text-overflow: ellipsis; }
 .vc-git-merge { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border)); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--text); font-size: var(--font-size-sm); }
 .vc-git-merge .vc-actions { margin-top: 0; }
-.vc-git-shared { display: flex; flex-direction: column; gap: var(--space-2); }
-.vc-git-shared-path { display: flex; align-items: center; gap: var(--space-1); margin: 0; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--font-size-xs); }
-.vc-git-shared-path span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vc-git-peers { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.vc-git-peer { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) 0; border-bottom: 1px solid var(--border-subtle); font-size: var(--font-size-sm); }
-.vc-git-peer small { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
-.vc-git-peer[data-state="incoming"] small { color: var(--accent); }
-.vc-git-peer[data-state="syncing"] small { color: var(--warning); }
-.vc-git-peer-name { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 
 .vc-history-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.vc-history-commit { border-bottom: 1px solid var(--border-subtle); content-visibility: auto; contain-intrinsic-size: 56px; }
-.vc-history-toggle { display: flex; width: 100%; min-width: 0; flex-direction: column; gap: 2px; padding: var(--space-2) 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; }
-.vc-history-summary { overflow: hidden; color: var(--text); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
-.vc-history-merge { margin-right: var(--space-1); padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--surface-overlay); color: var(--text-muted); font-size: var(--font-size-xs); }
-.vc-history-meta { overflow: hidden; color: var(--text-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
-.vc-history-meta code { font-family: var(--font-mono); }
+.vc-history-list { flex: none; }
+.vc-history-commit { flex: none; content-visibility: auto; contain-intrinsic-size: 24px; }
+/* Paint containment would clip an open commit whose height was estimated. */
+.vc-history-commit[data-open="true"] { content-visibility: visible; }
+.vc-history-toggle { display: flex; width: 100%; min-width: 0; height: 24px; align-items: center; gap: var(--space-1); padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: left; }
+.vc-history-toggle:hover { background: var(--surface-raised); }
+.vc-history-summary { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
+.vc-history-author, .vc-history-time { flex: 0 1000 auto; min-width: 0; overflow: hidden; color: var(--text-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.vc-history-time { flex-shrink: 10000; margin-right: auto; }
+.vc-history-ref { flex: none; max-width: 40%; overflow: hidden; padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--surface-overlay); color: var(--text-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.vc-history-ref[data-kind="current"] { background: var(--accent); color: var(--on-accent); }
+.vc-history-ref[data-kind="remote"] { background: var(--warning); color: var(--on-accent); }
+.vc-graph-cell { flex: none; }
+.vc-graph-cell path { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.vc-graph-cell circle { fill: currentColor; }
+.vc-graph-lane-0 { color: var(--accent); }
+.vc-graph-lane-1 { color: var(--warning); }
+.vc-graph-lane-2 { color: var(--success); }
+.vc-graph-lane-3 { color: var(--info); }
+.vc-graph-lane-4 { color: var(--error); }
+.vc-graph-actions { display: flex; align-items: center; gap: 1px; }
+.vc-graph-tracking { margin-right: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; }
+.vc-linked-changes { display: flex; flex-direction: column; gap: var(--space-2); }
+.vc-history > .vc-section-header { min-height: 26px; }
+.vc-history > .vc-section-header > button:first-child { padding: 0; }
+/* In the sidebar, changes and graph are two panes that scroll on their own. */
+.vc-sidebar-panel .vc-linked-body--git { padding: 0; overflow: hidden; }
+.vc-sidebar-panel .vc-linked-body--git .vc-linked-changes { flex: 1 1 45%; min-height: 0; padding: 10px 12px 12px; overflow-y: auto; }
+.vc-sidebar-panel .vc-linked-body--git .vc-history { display: flex; flex: 1 1 55%; min-height: 0; flex-direction: column; padding: 0 12px var(--space-2); overflow-y: auto; }
+.vc-sidebar-panel .vc-linked-body--git .vc-history:has(> .vc-section-header [aria-expanded="false"]) { flex: none; padding-bottom: 0; }
+.vc-sidebar-panel .vc-linked-body--git .vc-history > .vc-section-header { position: sticky; z-index: var(--z-raised); top: 0; flex: none; background: var(--surface); }
 .vc-history-files { margin: 0 0 var(--space-2); padding: 0 0 0 var(--space-3); list-style: none; }
 .vc-history-file-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .vc-history-file-toggle { display: flex; min-width: 0; align-items: center; gap: var(--space-1); padding: 2px 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--font-size-sm); }
 .vc-history-items { margin: 0; padding: 0 0 var(--space-1) var(--space-4); list-style: none; }
 .vc-history-items li { display: flex; flex-direction: column; padding: 2px 0; font-size: var(--font-size-sm); }
+.vc-history-item { display: flex; width: 100%; flex-direction: column; padding: 2px var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: left; }
+.vc-history-item:hover { background: var(--surface-raised); }
 .vc-history-items small { color: var(--text-muted); font-size: var(--font-size-xs); }
-.vc-git-start { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-subtle); }
-.vc-git-start h4 { margin: 0; color: var(--text); font-size: var(--font-size-sm); }

@@ -1,18 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '../../test-utils'
-import type { WorkspaceLinkDto } from '../../bindings/gitlab-types'
+import type { WorkspaceLinkDto } from '../../bindings/version-control-types'
 import { GitStatusButton } from './GitStatusButton'
 import type { VersionSummary } from './version-summary'
 
-const link: WorkspaceLinkDto = {
-  provider: 'gitlab',
-  accountId: 'a',
-  projectId: 1,
-  projectPath: 'eq/proj',
-  branch: 'main',
-  directory: '',
-  includeEnvironments: false,
-}
+const link: WorkspaceLinkDto = { includeEnvironments: false }
 const counts = { local: 3, remote: 0, conflicts: 2 }
 
 const renderButton = (
@@ -26,10 +18,10 @@ describe('GitStatusButton', () => {
     ['loading', 'Verificando o estado…'],
     ['busy', 'Sincronizando…'],
     ['error', 'Não foi possível verificar o estado'],
-    ['clean', 'Sincronizado com main'],
-    ['changes', '3 alteração(ões) local(is) em main'],
-    ['remoteAhead', 'Há atualizações no remoto (main)'],
-    ['conflict', 'Conflito em main'],
+    ['clean', 'Sincronizado com Git'],
+    ['changes', '3 alteração(ões) local(is) em Git'],
+    ['remoteAhead', 'Há atualizações no remoto (Git)'],
+    ['conflict', 'Conflito em Git'],
   ] as const)('descreve o estado %s no rótulo acessível', (summary, description) => {
     renderButton(summary)
     expect(screen.getByRole('button', { name: `Controle de versão: ${description}. Abrir ações do Git` })).toHaveAttribute(

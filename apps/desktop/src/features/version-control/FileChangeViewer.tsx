@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { itemKindLabelKey } from './file-labels'
-import type { ChangedItemDto, StructuredFileChangesDto } from '../../bindings/gitlab-types'
+import type { ChangedItemDto, StructuredFileChangesDto } from '../../bindings/version-control-types'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { Tabs } from '../../shared/ui/Tabs'
@@ -15,10 +15,12 @@ interface FileChangeViewerProps {
   /** Quando informado, mostra só este item em vez de todos os itens alterados do arquivo. */
   item: ChangedItemDto | null
   direction?: 'outgoing' | 'incoming'
+  /** A past commit: the "Code" tab compares the working copy, so it is left out. */
+  historical?: boolean
 }
 
 /** Corpo com abas "Alterações" (diff semântico por item) e "Código" (diff bruto) de um arquivo. */
-export function FileChangeViewer({ rootPath, fileName, changes, item, direction = 'outgoing' }: FileChangeViewerProps) {
+export function FileChangeViewer({ rootPath, fileName, changes, item, direction = 'outgoing', historical = false }: FileChangeViewerProps) {
   const { t } = useLanguage()
   const [mode, setMode] = useState<'changes' | 'code'>('changes')
   const pageKey = `${changes.localRevision ?? ''}:${changes.remoteRevision ?? ''}:${item?.id ?? ''}`
@@ -28,7 +30,7 @@ export function FileChangeViewer({ rootPath, fileName, changes, item, direction 
   const visibleItems = items.slice(0, visibleCount)
 
   return <>
-    <Tabs tabs={[{ id: 'changes', label: t('vc.review.changes') }, { id: 'code', label: t('vc.review.code') }]} activeTab={mode} onChange={(id) => setMode(id as 'changes' | 'code')} ariaLabel={t('vc.review.mode')} idPrefix="vc-review-" />
+    {!historical && <Tabs tabs={[{ id: 'changes', label: t('vc.review.changes') }, { id: 'code', label: t('vc.review.code') }]} activeTab={mode} onChange={(id) => setMode(id as 'changes' | 'code')} ariaLabel={t('vc.review.mode')} idPrefix="vc-review-" />}
     {mode === 'code' ? <div key={mode} id="tabpanel-vc-review-code" role="tabpanel" aria-labelledby="tab-vc-review-code" className="vc-review-code ui-tabpanel-motion"><DiffView rootPath={rootPath} fileName={fileName} version={changes.localRevision} remoteRevision={changes.remoteRevision} direction={direction} /></div> :
       <div key={mode} id="tabpanel-vc-review-changes" role="tabpanel" aria-labelledby="tab-vc-review-changes" className="vc-semantic-diff ui-tabpanel-motion">
         {items.length === 0 ? <p className="vc-muted">{t('vc.review.fileOnly')}</p> : visibleItems.map((changedItem) => <article key={changedItem.id} className="vc-semantic-item">

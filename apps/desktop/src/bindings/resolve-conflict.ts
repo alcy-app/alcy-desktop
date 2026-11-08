@@ -1,11 +1,11 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { GitlabCommandError, ResolutionInput } from './gitlab-types'
+import type { VersionControlCommandError, ResolutionInput } from './version-control-types'
 
 export interface ResolveConflictResultDto {
   localFileChanged: boolean
 }
 
-export type ResolveConflictResult = CommandResult<ResolveConflictResultDto, GitlabCommandError>
+export type ResolveConflictResult = CommandResult<ResolveConflictResultDto, VersionControlCommandError>
 
 export function resolveConflict(
   rootPath: string,

@@ -82,11 +82,9 @@ dependencies = [
  "alcy-collection-import",
  "alcy-domain",
  "alcy-git",
- "alcy-gitlab",
  "alcy-graphql",
  "alcy-grpc",
  "alcy-http-proxy",
- "alcy-onedrive",
  "alcy-openapi",
  "alcy-platform",
  "alcy-rest",
@@ -138,26 +136,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
-]
-
-[[package]]
-name = "alcy-gitlab"
-version = "0.1.0"
-dependencies = [
- "alcy-app",
- "alcy-domain",
- "alcy-http-proxy",
- "base64 0.22.1",
- "getrandom 0.3.4",
- "percent-encoding",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "tokio",
- "url",
- "wiremock",
 ]
 
 [[package]]
@@ -246,26 +224,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alcy-onedrive"
-version = "0.1.0"
-dependencies = [
- "alcy-app",
- "alcy-domain",
- "alcy-http-proxy",
- "base64 0.22.1",
- "getrandom 0.3.4",
- "percent-encoding",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "tokio",
- "url",
- "wiremock",
-]
-
-[[package]]
 name = "alcy-openapi"
 version = "0.1.0"
 dependencies = [
@@ -282,9 +240,7 @@ version = "0.1.0"
 dependencies = [
  "alcy-app",
  "keyring",
- "thiserror 2.0.20",
  "tokio",
- "url",
 ]
 
 [[package]]
@@ -7563,6 +7519,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

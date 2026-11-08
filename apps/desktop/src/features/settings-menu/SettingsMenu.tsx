@@ -20,13 +20,11 @@ import { Modal } from '../../shared/ui/Modal'
 import { RangeSlider } from '../../shared/ui/RangeSlider'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Tooltip } from '../../shared/ui/Tooltip'
-import { AlertIcon, BranchIcon, CheckIcon, ComponentsIcon, EyeIcon, FolderIcon, GearIcon, GitIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
+import { AlertIcon, BranchIcon, CheckIcon, ComponentsIcon, EyeIcon, GearIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
 import { UpdatesSection } from '../updates/UpdatesSection'
 import { AgentSection } from './AgentSection'
 import { GeneralSection } from './GeneralSection'
 import { CustomCaCertificatesSection } from './CustomCaCertificatesSection'
-import { GitlabAccountSection } from './GitlabAccountSection'
-import { OnedriveAccountSection } from './OnedriveAccountSection'
 import { SensitiveSyncSection } from './SensitiveSyncSection'
 import { GitIdentitySection } from './GitIdentitySection'
 import { TlsVerificationSection } from './TlsVerificationSection'
@@ -191,17 +189,10 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
           <div id={`${id}-security`} hidden={category !== 'security'}><SecuritySection /></div>
           {FEATURE_FLAGS.usageEvents && <div id={`${id}-telemetry`} hidden={category !== 'telemetry'}><TelemetrySection /></div>}
           {FEATURE_FLAGS.agent && <div id={`${id}-agent`} hidden={category !== 'agent'}><AgentSection /></div>}
-          {FEATURE_FLAGS.gitlab && <div id={`${id}-gitlab`} hidden={category !== 'gitlab'}><GitlabAccountSection /></div>}
-          {FEATURE_FLAGS.onedrive && <div id={`${id}-onedrive`} hidden={category !== 'onedrive'}><OnedriveAccountSection /></div>}
           {FEATURE_FLAGS.localGit && <div id={`${id}-git`} hidden={category !== 'git'}><GitIdentitySection /></div>}
           {FEATURE_FLAGS.updates && (
             <div id={`${id}-updates`} hidden={category !== 'updates'}>
-              <UpdatesSection
-                onOpenGitlab={() => {
-                  setCategory('gitlab')
-                  if (contentRef.current) contentRef.current.scrollTop = 0
-                }}
-              />
+              <UpdatesSection />
             </div>
           )}
         </div>
@@ -251,18 +242,14 @@ const CATEGORIES = [
   { key: 'security', icon: LockIcon },
   { key: 'telemetry', icon: EyeIcon },
   { key: 'agent', icon: SparkleIcon },
-  { key: 'gitlab', icon: GitIcon },
-  { key: 'onedrive', icon: FolderIcon },
   { key: 'git', icon: BranchIcon },
   { key: 'updates', icon: RefreshIcon },
 ] as const
 
 export type SettingsCategory = (typeof CATEGORIES)[number]['key']
 
-/** Version control providers whose flag is off are left out of the menu. */
+/** Features whose flag is off are left out of the menu. */
 function isCategoryHidden(key: SettingsCategory): boolean {
-  if (key === 'gitlab') return !FEATURE_FLAGS.gitlab
-  if (key === 'onedrive') return !FEATURE_FLAGS.onedrive
   if (key === 'git') return !FEATURE_FLAGS.localGit
   if (key === 'agent') return !FEATURE_FLAGS.agent
   if (key === 'telemetry') return !FEATURE_FLAGS.usageEvents

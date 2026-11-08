@@ -1,23 +1,18 @@
-//! Pieces shared by the commands of every remote provider (GitLab,
-//! OneDrive, git folders) and by version control.
+//! Pieces shared by the version control commands.
 
 use std::future::Future;
 
 use alcy_agent::AgentHttpClient;
 use alcy_app::{RemoteError, VersionControlError};
-use alcy_domain::{GitIdentityError, WorkspaceLinkError};
-use alcy_gitlab::GitlabClient;
+use alcy_domain::GitIdentityError;
 use alcy_http_proxy::{ProxyError, ProxyPlan};
-use alcy_onedrive::OnedriveClient;
-use alcy_platform::CallbackError;
 use alcy_storage::StorageError;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
 use super::execution_registry::ExecutionRegistry;
 
-/// Error shared by the remote provider and version control commands. Never
-/// carries tokens, codes or authorization URLs.
+/// Error shared by the version control commands. Never carries credentials.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RemoteCommandError {
@@ -54,28 +49,9 @@ pub enum RemoteCommandError {
         file: String,
     },
     NotLinked,
-    AccountMissing,
-    BranchNotWritable,
-    Denied {
-        message: String,
-    },
-    Login {
-        message: String,
-    },
-    Timeout,
-    PortBusy {
-        port: u16,
-    },
-    Browser {
-        message: String,
-    },
     Cancelled,
     /// No git author: neither set in Alcy nor in the system's git config.
     GitIdentityMissing,
-    /// The chosen folder holds a repository with a working tree.
-    GitNotBare,
-    /// The chosen folder has other files and is not a git repository.
-    GitNotRepository,
     /// Files a git operation would overwrite have uncommitted changes.
     GitUncommittedChanges {
         files: Vec<String>,
@@ -86,6 +62,25 @@ pub enum RemoteCommandError {
     GitInvalidBranch {
         name: String,
     },
+    /// A remote URL git would not take, or would run as a command.
+    GitInvalidRemote {
+        url: String,
+    },
+    GitNoRemote,
+    /// The `git` program is needed for remotes and is not installed.
+    GitNotInstalled,
+    /// The remote refused the credentials, or none were available.
+    GitAuthFailed {
+        message: String,
+    },
+    /// The remote has commits this branch lacks: pull first.
+    GitPushRejected,
+    GitCommandFailed {
+        message: String,
+    },
+    GitDestinationExists,
+    /// The cloned repository holds no Alcy workspace.
+    GitNotAWorkspace,
 }
 
 impl From<StorageError> for RemoteCommandError {
@@ -96,10 +91,13 @@ impl From<StorageError> for RemoteCommandError {
     }
 }
 
-impl From<WorkspaceLinkError> for RemoteCommandError {
-    fn from(error: WorkspaceLinkError) -> Self {
-        Self::Invalid {
-            message: error.to_string(),
+impl From<super::workspaces::WorkspaceCommandError> for RemoteCommandError {
+    fn from(error: super::workspaces::WorkspaceCommandError) -> Self {
+        use super::workspaces::WorkspaceCommandError;
+        match error {
+            WorkspaceCommandError::Invalid { message } => Self::Invalid { message },
+            WorkspaceCommandError::NotAWorkspace { message }
+            | WorkspaceCommandError::Storage { message } => Self::Storage { message },
         }
     }
 }
@@ -124,8 +122,14 @@ impl From<alcy_git::GitError> for RemoteCommandError {
             GitError::NoMergeInProgress => Self::GitNoMergeInProgress,
             GitError::Conflicts(files) => Self::Conflicts { files },
             GitError::InvalidBranch(name) => Self::GitInvalidBranch { name },
-            GitError::NotBare => Self::GitNotBare,
-            GitError::NotARepository => Self::GitNotRepository,
+            GitError::InvalidRemote(url) => Self::GitInvalidRemote { url },
+            GitError::NoRemote => Self::GitNoRemote,
+            GitError::GitMissing => Self::GitNotInstalled,
+            GitError::Auth(message) => Self::GitAuthFailed { message },
+            GitError::PushRejected => Self::GitPushRejected,
+            GitError::Command(message) => Self::GitCommandFailed { message },
+            GitError::DestinationExists => Self::GitDestinationExists,
+            GitError::NotAWorkspace => Self::GitNotAWorkspace,
         }
     }
 }
@@ -165,43 +169,23 @@ impl From<VersionControlError> for RemoteCommandError {
     }
 }
 
-impl From<CallbackError> for RemoteCommandError {
-    fn from(error: CallbackError) -> Self {
-        match error {
-            CallbackError::PortBusy { port } => Self::PortBusy { port },
-            CallbackError::Denied(message) => Self::Denied { message },
-            CallbackError::Timeout => Self::Timeout,
-            other => Self::Login {
-                message: other.to_string(),
-            },
-        }
-    }
-}
-
-/// HTTP clients of the remote services (providers and the agent), which
-/// follow the app's proxy and custom CAs like the request executors.
+/// HTTP clients of the remote services (the agent), which follow the app's proxy and custom CAs like the request executors.
 #[derive(Clone, Copy)]
 pub struct RemoteHttpClients<'a> {
-    pub gitlab: &'a GitlabClient,
-    pub onedrive: &'a OnedriveClient,
     pub agent: &'a AgentHttpClient,
 }
 
 impl RemoteHttpClients<'_> {
     pub fn reconfigure_proxy(&self, plan: &ProxyPlan) -> Result<(), ProxyError> {
-        self.gitlab.reconfigure_proxy(plan)?;
-        self.onedrive.reconfigure_proxy(plan)?;
         self.agent.reconfigure_proxy(plan)
     }
 
     pub fn set_custom_ca_certificates(&self, certificates: &[String]) -> Result<(), ProxyError> {
-        self.gitlab.set_custom_ca_certificates(certificates)?;
-        self.onedrive.set_custom_ca_certificates(certificates)?;
         self.agent.set_custom_ca_certificates(certificates)
     }
 }
 
-/// Runs `future` to completion or until `cancel_gitlab_operation` is called
+/// Runs `future` to completion or until `cancel_version_control_operation` is called
 /// with the same `operation_id` (the operation in flight is dropped).
 pub async fn cancellable<T>(
     registry: &ExecutionRegistry,
@@ -227,14 +211,6 @@ mod tests {
         assert_eq!(
             serde_json::to_value(RemoteCommandError::Unauthorized).unwrap(),
             serde_json::json!({"kind": "unauthorized"})
-        );
-        assert_eq!(
-            serde_json::to_value(RemoteCommandError::PortBusy { port: 53682 }).unwrap(),
-            serde_json::json!({"kind": "portBusy", "port": 53682})
-        );
-        assert_eq!(
-            serde_json::to_value(RemoteCommandError::BranchNotWritable).unwrap(),
-            serde_json::json!({"kind": "branchNotWritable"})
         );
         assert_eq!(
             serde_json::to_value(RemoteCommandError::Conflicts {

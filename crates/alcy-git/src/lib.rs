@@ -1,34 +1,34 @@
-//! Git in the workspace folder, shared through a folder with one branch per
-//! person (ADR 0074).
+//! Git in the workspace folder, as in any git repository (ADR 0074).
 //!
 //! The repository lives at `<workspace>/.git`. Alcy builds commits from its
 //! own view of the workspace files and serves the committed state as the
-//! `RemoteRepository` of the provider-neutral sync use cases. Sharing goes
-//! through a bare repository in a folder (network share or a folder synced by
-//! OneDrive, Dropbox…): every installation writes only its own refs, so no
-//! file is ever written by two machines.
+//! `RemoteRepository` of the provider-neutral sync use cases. Local work
+//! (commits, branches, merges, history) runs in-process with `gix`; talking
+//! to the `origin` remote (clone, fetch, push) runs the system's git.
 
-mod folder;
+mod cli;
 mod history;
 mod identity;
 mod merge_state;
-mod objects;
 mod remote;
+mod remotes;
 mod repo;
-mod shared;
 mod workspace;
 
-pub use folder::{FolderKind, init_bare, inspect_folder};
+pub use cli::validate_remote_url;
 pub use history::{
     CommitSummary, FileVersions, HistoryPage, MAX_HISTORY_PAGE, file_versions, history,
 };
 pub use identity::{SystemIdentity, system_identity};
 pub use remote::{BlobHashCache, WorkspaceRemote};
+pub use remotes::{
+    REMOTE, Tracking, clone, discard_clone, fetch, merge_upstream, push, remote_url, set_remote,
+    versions_environments,
+};
 pub use repo::{GitState, MergeInfo, git_state, init_workspace, write_gitignore};
-pub use shared::{PeerState, PeerStatus, peer_statuses, publish};
 pub use workspace::{
-    Applied, Integration, SyncOutcome, abort_merge, checkout, create_branch, delete_branch,
-    finish_merge, merge_branch, restore_file, sync,
+    Applied, Integration, abort_merge, checkout, create_branch, delete_branch, finish_merge,
+    merge_branch, restore_file,
 };
 
 use std::path::Path;
@@ -57,18 +57,31 @@ pub enum GitError {
     Conflicts(Vec<String>),
     #[error("invalid branch: {0}")]
     InvalidBranch(String),
-    #[error("the folder holds a git repository with a working tree")]
-    NotBare,
-    #[error("the folder has other files and is not a git repository")]
-    NotARepository,
+    #[error("invalid remote: {0}")]
+    InvalidRemote(String),
+    #[error("no remote configured")]
+    NoRemote,
+    /// The `git` program is not installed (or not on `PATH`).
+    #[error("git is not installed")]
+    GitMissing,
+    /// The remote refused the credentials, or none were available.
+    #[error("authentication failed: {0}")]
+    Auth(String),
+    /// The remote has commits the branch lacks.
+    #[error("push rejected: pull first")]
+    PushRejected,
+    /// Any other failure reported by git.
+    #[error("git failed: {0}")]
+    Command(String),
+    #[error("the destination folder already exists")]
+    DestinationExists,
+    /// The cloned repository holds no Alcy workspace.
+    #[error("the repository has no Alcy workspace")]
+    NotAWorkspace,
 }
 
 fn rejected(error: impl std::fmt::Display) -> RemoteError {
     RemoteError::Rejected(error.to_string())
-}
-
-fn unavailable(path: &Path) -> RemoteError {
-    RemoteError::Network(format!("folder unavailable: {}", path.display()))
 }
 
 /// Opens without the user's or system's git configuration: behavior must not
@@ -77,20 +90,6 @@ fn unavailable(path: &Path) -> RemoteError {
 /// writes in non-bare repositories.
 fn open_options() -> gix::open::Options {
     gix::open::Options::isolated().config_overrides(["user.name=Alcy", "user.email=alcy@localhost"])
-}
-
-/// The bare repository in a shared folder.
-fn open_bare(path: &Path) -> Result<gix::Repository, RemoteError> {
-    if !path.is_dir() {
-        return Err(unavailable(path));
-    }
-    let repo = gix::open_opts(path, open_options()).map_err(rejected)?;
-    if !repo.is_bare() {
-        return Err(rejected(
-            "the shared folder holds a repository with a working tree",
-        ));
-    }
-    Ok(repo)
 }
 
 /// The repository whose working tree is the workspace folder.

@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '../../test-utils'
-import type { FileStatusDto } from '../../bindings/gitlab-types'
+import type { FileStatusDto } from '../../bindings/version-control-types'
 import { useChangedItemMarkers } from './use-changed-items'
 
 const getStructuredFileChanges = vi.fn()
-const cancelGitlabOperation = vi.fn()
+const cancelVersionControlOperation = vi.fn()
 
 vi.mock('../../bindings/get-structured-file-changes', () => ({
   getStructuredFileChanges: (...args: unknown[]) => getStructuredFileChanges(...args),
 }))
-vi.mock('../../bindings/cancel-gitlab-operation', () => ({
-  cancelGitlabOperation: (...args: unknown[]) => cancelGitlabOperation(...args),
+vi.mock('../../bindings/cancel-version-control-operation', () => ({
+  cancelVersionControlOperation: (...args: unknown[]) => cancelVersionControlOperation(...args),
 }))
 
 function Harness({ files }: { files: FileStatusDto[] }) {
@@ -26,7 +26,7 @@ function Harness({ files }: { files: FileStatusDto[] }) {
 
 beforeEach(() => {
   getStructuredFileChanges.mockReset()
-  cancelGitlabOperation.mockReset()
+  cancelVersionControlOperation.mockReset()
 })
 
 describe('useChangedItemMarkers', () => {

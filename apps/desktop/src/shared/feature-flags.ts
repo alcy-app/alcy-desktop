@@ -2,27 +2,14 @@
  * Enable or disable complete interface features without removing their code.
  * Disabling a flag hides the feature and prevents automatic execution.
  */
-export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'gitlab' | 'onedrive' | 'localGit' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent' | 'usageEvents' | 'documents', boolean>> = {
+export const FEATURE_FLAGS: Readonly<Record<'updates' | 'valueMonitors' | 'localGit' | 'notifications' | 'webclientExport' | 'loadTesting' | 'agent' | 'usageEvents' | 'documents', boolean>> = {
   /** Check for, download and install application updates. */
   updates: true,
   /**
-   * GitLab integration: sidebar versioning tab, status bar indicator,
-   * the visible but disabled GitLab settings category, and automatic
-   * checks for the linked workspace.
-   */
-  gitlab: false,
-  /**
-   * OneDrive/SharePoint as a version control provider (ADR 0063): the
-   * Microsoft accounts settings category and the OneDrive option when
-   * linking a workspace. The versioning tab appears when any version
-   * control provider is on (`isVersionControlEnabled`).
-   */
-  onedrive: false,
-  /**
    * Git in the workspace folder (ADR 0074): "Start git in the workspace",
-   * branches, merges, history, sharing through a folder with one branch per
-   * person, and the Git settings category (commit author). Needs no account
-   * and no git installation.
+   * branches, merges, history, the `origin` remote (fetch, pull, push),
+   * importing a workspace from a repository and the Git settings category
+   * (commit author). Remotes run the git installed on the computer.
    */
   localGit: true,
   /** Notification bell on the right side of the status bar. */

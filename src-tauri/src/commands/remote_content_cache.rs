@@ -44,7 +44,7 @@ struct MemoryState {
 }
 
 /// Cache descartável e limitado de conteúdo remoto, endereçado pelo SHA-256
-/// informado pelo GitLab. O hash é validado em toda leitura de disco, então
+/// informado pelo repositório. O hash é validado em toda leitura de disco, então
 /// corrupção do cache vira miss em vez de contaminar um diff ou resolução.
 pub struct RemoteContentCache {
     dir: PathBuf,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getGitIdentity, saveGitIdentity, type GitIdentityDto } from '../../bindings/local-git'
-import { gitlabErrorMessage } from '../../shared/gitlab/gitlab-error-message'
+import { versionControlErrorMessage } from '../../shared/version-control-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { Field } from '../../shared/ui/Field'
@@ -33,7 +33,7 @@ export function GitIdentitySection() {
     void getGitIdentity().then((result) => {
       if (cancelled) return
       if (result.ok) apply(result.value)
-      else setLoadError(gitlabErrorMessage(result.error, t))
+      else setLoadError(versionControlErrorMessage(result.error, t))
     })
     return () => {
       cancelled = true
@@ -50,7 +50,7 @@ export function GitIdentitySection() {
       apply(result.value)
       setSaved(true)
     } else {
-      setSaveError(gitlabErrorMessage(result.error, t))
+      setSaveError(versionControlErrorMessage(result.error, t))
     }
   }
 

@@ -189,6 +189,8 @@ describe('WorkspaceMenu', () => {
     openMenu()
 
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Importar workspace existente' }))
+    expect(await screen.findByRole('tab', { name: 'Repositório Git' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Escolher pasta…' }))
 
     await waitFor(() =>
       expect(onWorkspaceChange).toHaveBeenCalledWith({

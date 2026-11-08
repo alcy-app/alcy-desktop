@@ -6,20 +6,10 @@ const createWorkspace = vi.fn()
 const openWorkspace = vi.fn()
 const listRecentWorkspaces = vi.fn()
 const pickWorkspaceFolder = vi.fn()
-const listOnedriveAccounts = vi.fn()
-const listOnedriveTeams = vi.fn()
-const getOnedriveTeamCatalog = vi.fn()
-const listOnedriveFolders = vi.fn()
-const openOnedriveTeamWorkspace = vi.fn()
+const cloneGitWorkspace = vi.fn()
 
-vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { onedrive: true } }))
-vi.mock('../../bindings/list-onedrive-accounts', () => ({ listOnedriveAccounts: (...a: unknown[]) => listOnedriveAccounts(...a) }))
-vi.mock('../../bindings/list-onedrive-teams', () => ({ listOnedriveTeams: (...a: unknown[]) => listOnedriveTeams(...a) }))
-vi.mock('../../bindings/get-onedrive-team-catalog', () => ({ getOnedriveTeamCatalog: (...a: unknown[]) => getOnedriveTeamCatalog(...a) }))
-vi.mock('../../bindings/list-onedrive-folders', () => ({ listOnedriveFolders: (...a: unknown[]) => listOnedriveFolders(...a) }))
-vi.mock('../../bindings/open-onedrive-team-workspace', () => ({
-  openOnedriveTeamWorkspace: (...a: unknown[]) => openOnedriveTeamWorkspace(...a),
-}))
+vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { localGit: true } }))
+vi.mock('../../bindings/local-git', () => ({ cloneGitWorkspace: (...a: unknown[]) => cloneGitWorkspace(...a) }))
 
 vi.mock('../../bindings/create-workspace', () => ({
   createWorkspace: (...args: unknown[]) => createWorkspace(...args),
@@ -42,11 +32,8 @@ beforeEach(() => {
   openWorkspace.mockReset()
   listRecentWorkspaces.mockReset()
   pickWorkspaceFolder.mockReset()
-  for (const mock of [listOnedriveAccounts, listOnedriveTeams, getOnedriveTeamCatalog, listOnedriveFolders, openOnedriveTeamWorkspace]) {
-    mock.mockReset()
-  }
+  cloneGitWorkspace.mockReset()
   listRecentWorkspaces.mockResolvedValue({ ok: true, value: [] })
-  listOnedriveAccounts.mockResolvedValue({ ok: true, value: [] })
 })
 
 describe('StartScreen', () => {
@@ -106,6 +93,7 @@ describe('StartScreen', () => {
 
     render(<StartScreen onWorkspaceReady={onWorkspaceReady} />)
     fireEvent.click(screen.getByRole('button', { name: 'Abrir workspace existente' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Escolher pasta…' }))
 
     await waitFor(() =>
       expect(onWorkspaceReady).toHaveBeenCalledWith({ id: 'workspace-1', name: 'existing', rootPath: '/workspaces/existing' }),
@@ -121,6 +109,7 @@ describe('StartScreen', () => {
 
     render(<StartScreen onWorkspaceReady={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Abrir workspace existente' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Escolher pasta…' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Esta pasta não contém um workspace Alcy.')
   })
@@ -147,46 +136,27 @@ describe('StartScreen', () => {
   })
 })
 
-describe('StartScreen — workspaces do time', () => {
-  const account = { id: 'ana@contoso.com', tenant: 'common', clientId: 'cid', username: 'ana@contoso.com', name: 'Ana' }
-  const api = { driveId: 'b!team', id: 'W1', name: 'API', path: '/Alcy/API', childCount: 3 }
-
-  it('só aparece com uma conta Microsoft conectada', async () => {
-    render(<StartScreen onWorkspaceReady={vi.fn()} />)
-    await waitFor(() => expect(listOnedriveAccounts).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: 'Workspaces do time' })).not.toBeInTheDocument()
-  })
-
-  it('abre um workspace de um time da conta', async () => {
-    listOnedriveAccounts.mockResolvedValue({ ok: true, value: [account] })
-    listOnedriveTeams.mockResolvedValue({ ok: true, value: [{ id: 'T1', name: 'Pagamentos' }] })
-    getOnedriveTeamCatalog.mockResolvedValue({
-      ok: true,
-      value: { driveId: 'b!team', folder: { driveId: 'b!team', id: 'CAT', name: 'Alcy', path: '/Alcy', childCount: 1 } },
-    })
-    listOnedriveFolders.mockResolvedValue({ ok: true, value: { items: [api], nextLink: null } })
-    const workspace = { id: 'w1', name: 'API', rootPath: '/home/ana/Documents/Alcy Workspaces/API' }
-    openOnedriveTeamWorkspace.mockResolvedValue({ ok: true, value: workspace })
+describe('StartScreen — importar', () => {
+  it('importa um workspace de um repositório git', async () => {
     const onWorkspaceReady = vi.fn()
+    const workspace = { id: 'w', name: 'API', rootPath: '/docs/api' }
+    cloneGitWorkspace.mockResolvedValueOnce({ ok: false, error: { kind: 'gitNotAWorkspace' } })
+    cloneGitWorkspace.mockResolvedValueOnce({ ok: true, value: workspace })
     render(<StartScreen onWorkspaceReady={onWorkspaceReady} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Workspaces do time' }))
-    const open = await screen.findByRole('button', { name: 'Abrir' })
-    expect(open).toBeDisabled()
-    fireEvent.click(await screen.findByRole('button', { name: 'API' }))
-    fireEvent.click(open)
+    expect(screen.queryByRole('button', { name: 'Clonar repositório git' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir workspace existente' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Repositório Git' }))
+    const clone = screen.getByRole('button', { name: 'Clonar' })
+    expect(clone).toBeDisabled()
+    fireEvent.change(screen.getByRole('textbox', { name: 'URL do repositório Git' }), { target: { value: ' git@example.com:team/api.git ' } })
 
+    fireEvent.click(clone)
+    expect(await screen.findByText('Este repositório não tem um workspace do Alcy.')).toBeInTheDocument()
+    expect(onWorkspaceReady).not.toHaveBeenCalled()
+
+    fireEvent.click(clone)
     await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
-    expect(getOnedriveTeamCatalog).toHaveBeenCalledWith(expect.any(String), account.id, 'T1')
-    expect(openOnedriveTeamWorkspace).toHaveBeenCalledWith(expect.objectContaining({ accountId: account.id, driveId: 'b!team', folderId: 'W1' }))
-  })
-
-  it('avisa quando a conta não participa de times', async () => {
-    listOnedriveAccounts.mockResolvedValue({ ok: true, value: [account] })
-    listOnedriveTeams.mockResolvedValue({ ok: true, value: [] })
-    render(<StartScreen onWorkspaceReady={vi.fn()} />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Workspaces do time' }))
-    expect(await screen.findByText('Esta conta não participa de nenhum time do Teams.')).toBeInTheDocument()
+    expect(cloneGitWorkspace).toHaveBeenLastCalledWith({ operationId: expect.any(String), url: 'git@example.com:team/api.git' })
   })
 })

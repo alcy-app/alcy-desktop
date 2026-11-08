@@ -6,7 +6,7 @@ import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon } from '../../shared/ui/icons'
 
-/** Proteção de valores sensíveis na sincronização com o GitLab. Fica no
+/** Proteção de valores sensíveis na sincronização do workspace. Fica no
  * backend (é lida pelo controle de versão), então carrega e salva por IPC. */
 export function SensitiveSyncSection() {
   const { t } = useLanguage()

@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use crate::gitlab::normalize_instance_url;
-
 /// The app's update preferences. Where releases come from is not a
 /// preference: it is fixed in the build (`ALCY_UPDATE_PROVIDER`/`ALCY_UPDATE_URL`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,8 +34,6 @@ pub fn is_prerelease_tag(tag: &str) -> bool {
 /// distribui o Alcy; trocar de plataforma é só trocar a origem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateSource {
-    /// Projeto GitLab, inclusive privado (acesso pela conta conectada).
-    Gitlab { project_url: String },
     /// Repositório público do GitHub.
     Github { owner: String, repo: String },
     /// URL direta do manifesto do updater, em qualquer hospedagem.
@@ -48,12 +44,6 @@ pub enum UpdateSource {
 }
 
 impl UpdateSource {
-    pub fn gitlab(project_url: &str) -> Result<Self, UpdateSourceError> {
-        Ok(Self::Gitlab {
-            project_url: normalize_project_url(project_url)?,
-        })
-    }
-
     /// Aceita `owner/repo` ou a URL do repositório no GitHub.
     pub fn github(repository: &str) -> Result<Self, UpdateSourceError> {
         let trimmed = repository.trim();
@@ -114,10 +104,6 @@ fn is_http_url(url: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum UpdateSourceError {
-    #[error("a URL do projeto não pode ser vazia")]
-    EmptyProjectUrl,
-    #[error("a URL do projeto é inválida (ex.: https://gitlab.suaempresa.com/grupo/alcy)")]
-    InvalidProjectUrl,
     #[error("o repositório do GitHub deve estar no formato dono/repositorio")]
     InvalidRepository,
     #[error("a URL do manifesto deve começar com http:// ou https://")]
@@ -126,46 +112,6 @@ pub enum UpdateSourceError {
         "a URL do servidor de releases deve começar com http:// ou https:// e não ter query (ex.: http://alcy-releases.interno:32761)"
     )]
     InvalidReleaseServerUrl,
-}
-
-/// Normaliza a URL de um projeto: aceita também o que se copia do navegador
-/// (`/-/releases`, `.git`, barra final) e devolve só a raiz do projeto.
-pub fn normalize_project_url(input: &str) -> Result<String, UpdateSourceError> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err(UpdateSourceError::EmptyProjectUrl);
-    }
-    let valid =
-        normalize_instance_url(trimmed).map_err(|_| UpdateSourceError::InvalidProjectUrl)?;
-
-    let without_subpage = valid.split("/-/").next().unwrap_or_default();
-    let url = without_subpage
-        .trim_end_matches('/')
-        .trim_end_matches(".git")
-        .trim_end_matches('/');
-
-    let has_path = url
-        .split_once("://")
-        .and_then(|(_, rest)| rest.split_once('/'))
-        .is_some_and(|(_, path)| !path.is_empty());
-    if !has_path {
-        return Err(UpdateSourceError::InvalidProjectUrl);
-    }
-    Ok(url.to_string())
-}
-
-/// Caminho do projeto (`grupo/sub/projeto`) quando `project_url` pertence à
-/// instância `instance_url` — inclusive instâncias servidas em subcaminho.
-pub fn project_path_in_instance(project_url: &str, instance_url: &str) -> Option<String> {
-    let instance = instance_url.trim_end_matches('/');
-    let prefix_matches = project_url
-        .get(..instance.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(instance));
-    if !prefix_matches {
-        return None;
-    }
-    let path = project_url[instance.len()..].strip_prefix('/')?;
-    (!path.is_empty()).then(|| path.to_string())
 }
 
 #[cfg(test)]
@@ -179,12 +125,6 @@ mod tests {
 
     #[test]
     fn builds_each_kind_of_source() {
-        assert_eq!(
-            UpdateSource::gitlab("https://gitlab.corp/grupo/alcy/-/releases"),
-            Ok(UpdateSource::Gitlab {
-                project_url: "https://gitlab.corp/grupo/alcy".into()
-            })
-        );
         for repository in [
             "empresa/alcy",
             " https://github.com/empresa/alcy/ ",
@@ -276,23 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_urls_copied_from_the_browser() {
-        for input in [
-            "https://gitlab.corp/grupo/alcy",
-            " https://gitlab.corp/grupo/alcy/ ",
-            "https://gitlab.corp/grupo/alcy.git",
-            "https://gitlab.corp/grupo/alcy/-/releases",
-            "https://gitlab.corp/grupo/alcy/-/releases/v1.0.0",
-        ] {
-            assert_eq!(
-                normalize_project_url(input),
-                Ok("https://gitlab.corp/grupo/alcy".to_string()),
-                "{input}"
-            );
-        }
-    }
-
-    #[test]
     fn detects_pre_release_tags() {
         for tag in [
             "v0.9.0-preview01",
@@ -312,68 +235,5 @@ mod tests {
         ] {
             assert!(!is_prerelease_tag(tag), "{tag}");
         }
-    }
-
-    #[test]
-    fn rejects_empty_urls_and_urls_without_a_project() {
-        assert_eq!(
-            normalize_project_url("  "),
-            Err(UpdateSourceError::EmptyProjectUrl)
-        );
-        for input in [
-            "gitlab.corp/grupo/alcy",
-            "ftp://gitlab.corp/grupo/alcy",
-            "https://gitlab.corp",
-            "https://gitlab.corp/",
-            "https://gitlab.corp/grupo/alcy?tab=1",
-        ] {
-            assert_eq!(
-                normalize_project_url(input),
-                Err(UpdateSourceError::InvalidProjectUrl),
-                "{input}"
-            );
-        }
-    }
-
-    #[test]
-    fn extracts_the_project_path_relative_to_the_instance() {
-        assert_eq!(
-            project_path_in_instance("https://gitlab.corp/grupo/sub/alcy", "https://gitlab.corp"),
-            Some("grupo/sub/alcy".to_string())
-        );
-        assert_eq!(
-            project_path_in_instance(
-                "https://corp.com/gitlab/grupo/alcy",
-                "https://corp.com/gitlab"
-            ),
-            Some("grupo/alcy".to_string())
-        );
-        assert_eq!(
-            project_path_in_instance("https://GITLAB.corp/grupo/alcy", "https://gitlab.corp/"),
-            Some("grupo/alcy".to_string())
-        );
-    }
-
-    #[test]
-    fn does_not_match_other_instances() {
-        assert_eq!(
-            project_path_in_instance("https://gitlab.corp/grupo/alcy", "https://gitlab.com"),
-            None
-        );
-        assert_eq!(
-            project_path_in_instance(
-                "https://gitlab.corp.example/grupo/alcy",
-                "https://gitlab.corp"
-            ),
-            None
-        );
-        assert_eq!(
-            project_path_in_instance("http://gitlab.corp/grupo/alcy", "https://gitlab.corp"),
-            None
-        );
-        assert_eq!(
-            project_path_in_instance("https://gitlab.corp", "https://gitlab.corp"),
-            None
-        );
     }
 }

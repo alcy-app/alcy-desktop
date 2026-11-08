@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { DiffHunkDto, FileDiffDto, GitlabCommandError } from '../../bindings/gitlab-types'
+import type { DiffHunkDto, FileDiffDto, VersionControlCommandError } from '../../bindings/version-control-types'
 import { getFileDiff } from '../../bindings/get-file-diff'
-import { cancelGitlabOperation } from '../../bindings/cancel-gitlab-operation'
-import { gitlabErrorMessage } from '../../shared/gitlab/gitlab-error-message'
+import { cancelVersionControlOperation } from '../../bindings/cancel-version-control-operation'
+import { versionControlErrorMessage } from '../../shared/version-control-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
@@ -19,7 +19,7 @@ interface DiffViewProps {
   direction?: 'outgoing' | 'incoming'
 }
 
-type DiffState = { status: 'loading' } | { status: 'ready'; diff: FileDiffDto } | { status: 'error'; error: GitlabCommandError }
+type DiffState = { status: 'loading' } | { status: 'ready'; diff: FileDiffDto } | { status: 'error'; error: VersionControlCommandError }
 
 /** Diferenças entre a versão remota (esquerda, vermelho) e a local (direita, verde) de um arquivo. */
 export function DiffView({ rootPath, fileName, version, remoteRevision, onClose, direction = 'outgoing' }: DiffViewProps) {
@@ -36,7 +36,7 @@ export function DiffView({ rootPath, fileName, version, remoteRevision, onClose,
     })
     return () => {
       cancelled = true
-      void cancelGitlabOperation(operationId)
+      void cancelVersionControlOperation(operationId)
     }
   }, [rootPath, fileName, version, remoteRevision])
 
@@ -51,7 +51,7 @@ export function DiffView({ rootPath, fileName, version, remoteRevision, onClose,
           <Spinner size={14} /> {t('vc.diff.loading')}
         </p>
       )}
-      {state.status === 'error' && <InlineAlert>{gitlabErrorMessage(state.error, t)}</InlineAlert>}
+      {state.status === 'error' && <InlineAlert>{versionControlErrorMessage(state.error, t)}</InlineAlert>}
       {state.status === 'ready' && <DiffBody diff={state.diff} direction={direction} />}
     </section>
   )

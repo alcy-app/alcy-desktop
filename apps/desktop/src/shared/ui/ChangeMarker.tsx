@@ -1,4 +1,4 @@
-import type { ItemChangeKind } from '../../bindings/gitlab-types'
+import type { ItemChangeKind } from '../../bindings/version-control-types'
 import { useLanguage } from '../i18n/use-language'
 import './change-marker.css'
 

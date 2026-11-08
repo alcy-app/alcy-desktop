@@ -94,7 +94,6 @@ impl StatusClass {
 pub enum WorkspaceOpenKind {
     Opened,
     Created,
-    OnedriveTeam,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -302,7 +301,6 @@ impl UsageEvent {
                 "kind": match kind {
                     WorkspaceOpenKind::Opened => "opened",
                     WorkspaceOpenKind::Created => "created",
-                    WorkspaceOpenKind::OnedriveTeam => "onedriveTeam",
                 }
             }),
             Self::RequestExecuted(request) => json!({

@@ -1,7 +1,7 @@
 import { invokeResult, type CommandResult } from './invoke-result'
 
 export interface SecuritySettingsDto {
-  /** Envia ao GitLab os valores de variáveis sensíveis (em texto claro). */
+  /** Versiona os valores de variáveis sensíveis (em texto claro). */
   syncSensitiveValues: boolean
 }
 

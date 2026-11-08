@@ -1,5 +1,5 @@
 //! Git operations that change the workspace files: switching branches,
-//! merging, restoring, syncing with the shared folder. Files are read and
+//! merging, restoring. Files are read and
 //! written through `WorkspaceFiles` (the same view the sync use cases use),
 //! and the link's base follows every file rewritten here.
 
@@ -15,14 +15,12 @@ use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog};
 use gix::refs::{FullName, Target};
 
 use crate::merge_state::MergeState;
-use crate::objects::{copy_commits, missing_commits};
 use crate::remote::apply_actions;
 use crate::repo::{
-    blob_at, branch_exists, commit_tree, file_at, head, is_ancestor, move_branch, short_name,
-    write_commit, write_index,
+    blob_at, branch_exists, commit_tree, file_at, head, is_ancestor, move_branch, write_commit,
+    write_index,
 };
-use crate::shared::{PeerState, peer_heads, peer_state, publish};
-use crate::{GitError, branch_ref, open_bare, open_workspace, ref_target, rejected};
+use crate::{GitError, branch_ref, open_workspace, ref_target, rejected};
 
 /// Files rewritten on disk and the link with their new base.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,9 +119,9 @@ fn has_entries(value: &serde_json::Value) -> bool {
 }
 
 /// A workspace created moments ago: besides its manifest, every versioned
-/// file is missing or holds no entries. Joining a shared folder replaces it
-/// with the published work instead of asking to commit an empty workspace.
-fn is_fresh<F: WorkspaceFiles>(files: &F, tracked: &[&str]) -> Result<bool, GitError> {
+/// file is missing or holds no entries. A first pull replaces it with the remote's work instead of asking to
+/// commit an empty workspace.
+pub(crate) fn is_fresh<F: WorkspaceFiles>(files: &F, tracked: &[&str]) -> Result<bool, GitError> {
     for name in tracked {
         if *name == MANIFEST_FILE {
             continue;
@@ -139,7 +137,7 @@ fn is_fresh<F: WorkspaceFiles>(files: &F, tracked: &[&str]) -> Result<bool, GitE
     Ok(true)
 }
 
-fn ensure_no_merge(repo: &gix::Repository) -> Result<(), GitError> {
+pub(crate) fn ensure_no_merge(repo: &gix::Repository) -> Result<(), GitError> {
     if MergeState::load(repo.git_dir())?.is_some() {
         return Err(GitError::MergeInProgress);
     }
@@ -260,19 +258,19 @@ fn action_for(path: &str, exists: bool, content: Option<&[u8]>) -> Option<Commit
 }
 
 /// Work to bring into the current branch.
-struct Incoming<'a> {
-    commit: ObjectId,
-    /// Who or what it comes from (a person or a branch).
-    label: &'a str,
-    message: &'a str,
+pub(crate) struct Incoming<'a> {
+    pub commit: ObjectId,
+    /// Where it comes from (a branch or a remote-tracking branch).
+    pub label: &'a str,
+    pub message: &'a str,
     /// The local branch has no commits and the workspace is fresh: take the
     /// incoming work instead of protecting the local files.
-    adopt_fresh: bool,
+    pub adopt_fresh: bool,
 }
 
 /// Brings `theirs` into the current branch: nothing, a fast-forward, a merge
 /// commit, or a pending merge when items conflict.
-fn integrate<F: WorkspaceFiles>(
+pub(crate) fn integrate<F: WorkspaceFiles>(
     repo: &gix::Repository,
     files: &F,
     link: &WorkspaceLink,
@@ -311,7 +309,7 @@ fn integrate<F: WorkspaceFiles>(
     };
     if fast_forward {
         let changed = changed_between(repo, ours_tree, theirs_tree, &tracked)?;
-        // A fresh workspace with no commits takes the published work as is.
+        // A fresh workspace with no commits takes the incoming work as is.
         if !(adopt_fresh && ours.is_none()) {
             require_clean(repo, files, ours_tree, &changed)?;
         }
@@ -565,95 +563,4 @@ pub fn restore_file<F: WorkspaceFiles>(
         Some(bytes) => files.write(file, &bytes).map_err(GitError::Files),
         None => files.delete(file).map_err(GitError::Files),
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyncOutcome {
-    /// This installation's branch moved in the shared folder.
-    pub published: bool,
-    /// People whose work was integrated (fast-forward or merge).
-    pub integrated: Vec<String>,
-    /// People whose latest work is still being delivered by the sync client.
-    pub syncing: Vec<String>,
-    /// Whose work is waiting in a pending merge, with its conflicted files.
-    pub merging: Option<(String, Vec<String>)>,
-    pub files: Vec<String>,
-    pub link: WorkspaceLink,
-}
-
-/// Publishes the current branch, integrates everyone else's complete work on
-/// the same branch, and publishes the result. Stops at the first merge that
-/// needs decisions.
-pub fn sync<F: WorkspaceFiles>(
-    root: &Path,
-    files: &F,
-    link: &WorkspaceLink,
-    identity: Option<&GitIdentity>,
-    shared: &Path,
-    me: &str,
-) -> Result<SyncOutcome, GitError> {
-    let repo = open_workspace(root)?;
-    ensure_no_merge(&repo)?;
-    let mut published = publish(root, shared, me)?;
-    let remote = open_bare(shared)?;
-    let (name, local_head) = head(&repo)?;
-    let adopt_fresh = local_head.is_none() && is_fresh(files, &link.tracked_files())?;
-    let mut outcome = SyncOutcome {
-        published,
-        integrated: Vec::new(),
-        syncing: Vec::new(),
-        merging: None,
-        files: Vec::new(),
-        link: link.clone(),
-    };
-    for peer in peer_heads(&remote, me, &short_name(&name))? {
-        let (_, local_head) = head(&repo)?;
-        let label = match remote.find_commit(peer.head) {
-            Ok(commit) => commit
-                .author()
-                .map(|author| author.name.to_string())
-                .unwrap_or_else(|_| peer.peer.clone()),
-            Err(_) => peer.peer.clone(),
-        };
-        match peer_state(&repo, &remote, local_head, peer.head)? {
-            PeerState::UpToDate => continue,
-            PeerState::Syncing => {
-                outcome.syncing.push(label);
-                continue;
-            }
-            PeerState::Incoming => {}
-        }
-        if let Some(commits) = missing_commits(&remote, &repo, peer.head)? {
-            copy_commits(&remote, &repo, &commits)?;
-        }
-        let (integration, applied) = integrate(
-            &repo,
-            files,
-            &outcome.link,
-            identity,
-            Incoming {
-                commit: peer.head,
-                label: &label,
-                message: &format!("Merge changes from {label}"),
-                adopt_fresh,
-            },
-        )?;
-        outcome.link = applied.link;
-        outcome.files.extend(applied.files);
-        match integration {
-            Integration::UpToDate => {}
-            Integration::FastForward | Integration::Merged => outcome.integrated.push(label),
-            Integration::Conflicts(conflicts) => {
-                outcome.merging = Some((label, conflicts));
-                break;
-            }
-        }
-    }
-    if !outcome.integrated.is_empty() && outcome.merging.is_none() {
-        published |= publish(root, shared, me)?;
-        outcome.published = published;
-    }
-    outcome.files.sort();
-    outcome.files.dedup();
-    Ok(outcome)
 }

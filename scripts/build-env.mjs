@@ -3,10 +3,9 @@
 // CI) tem prioridade sobre o arquivo.
 //
 // Origem das atualizações (ADR 0051), embutida no binário por `option_env!`:
-// - ALCY_UPDATE_PROVIDER: gitlab, github, manifest, releaseServer ou none;
+// - ALCY_UPDATE_PROVIDER: github, manifest, releaseServer ou none;
 //   sem a variável, o build não tem atualizações pelo app.
-// - ALCY_UPDATE_URL: URL do projeto GitLab, `dono/repositorio` do GitHub,
-//   URL do manifesto ou URL base do serviço de releases.
+// - ALCY_UPDATE_URL: `dono/repositorio` do GitHub, URL do manifesto ou URL base do serviço de releases.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -15,7 +14,7 @@ import { parseEnv } from 'node:util'
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-export const UPDATE_PROVIDERS = ['gitlab', 'github', 'manifest', 'releaseServer']
+export const UPDATE_PROVIDERS = ['github', 'manifest', 'releaseServer']
 
 /** Carrega o `.env` sem sobrescrever variáveis já definidas. */
 export function loadDotEnv(path = join(ROOT, '.env')) {

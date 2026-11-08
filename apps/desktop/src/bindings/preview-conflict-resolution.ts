@@ -1,5 +1,5 @@
 import { invokeResult } from './invoke-result'
-import type { GitlabCommandError, ItemResolutionDto, ResolutionPreviewDto } from './gitlab-types'
+import type { VersionControlCommandError, ItemResolutionDto, ResolutionPreviewDto } from './version-control-types'
 
 export function previewConflictResolution(
   rootPath: string,
@@ -9,7 +9,7 @@ export function previewConflictResolution(
   expectedLocalRevision: string | null,
   expectedRemoteRevision: string | null,
   itemId: string,
-): Promise<{ ok: true; value: ResolutionPreviewDto } | { ok: false; error: GitlabCommandError }> {
+): Promise<{ ok: true; value: ResolutionPreviewDto } | { ok: false; error: VersionControlCommandError }> {
   return invokeResult('preview_conflict_resolution', {
     input: {
       rootPath,

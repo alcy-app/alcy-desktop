@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { GitlabCommandError } from '../../bindings/gitlab-types'
+import type { VersionControlCommandError } from '../../bindings/version-control-types'
 import { getGitState, type GitStateDto } from '../../bindings/local-git'
 
-/** Git state of the workspace (branch, branches, pending merge, shared
- * folder), reloaded whenever `reloadKey` changes. Keeps the last state
+/** Git state of the workspace (branch, branches, pending merge, remote),
+ * reloaded whenever `reloadKey` changes. Keeps the last state
  * while reloading. */
 export function useGitState(rootPath: string, enabled: boolean, reloadKey: string) {
-  const [entry, setEntry] = useState<{ state: GitStateDto | null; error: GitlabCommandError | null } | null>(null)
+  const [entry, setEntry] = useState<{ state: GitStateDto | null; error: VersionControlCommandError | null } | null>(null)
   useEffect(() => {
     if (!enabled) return
     let active = true

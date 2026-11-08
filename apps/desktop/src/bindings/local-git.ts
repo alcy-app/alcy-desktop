@@ -1,11 +1,12 @@
 import { invokeResult, type CommandResult } from './invoke-result'
-import type { GitlabCommandError, StructuredFileChangesDto, WorkspaceLinkDto } from './gitlab-types'
+import type { WorkspaceDto } from './create-workspace'
+import type { VersionControlCommandError, StructuredFileChangesDto } from './version-control-types'
 
-/** Git in the workspace folder, shared through a folder (ADR 0074). */
-type GitResult<T> = Promise<CommandResult<T, GitlabCommandError>>
+/** Git in the workspace folder, with an `origin` remote (ADR 0074). */
+type GitResult<T> = Promise<CommandResult<T, VersionControlCommandError>>
 
 export interface GitMergeDto {
-  /** Person or branch being merged. */
+  /** Branch or remote branch being merged. */
   label: string
   conflicts: string[]
 }
@@ -16,7 +17,10 @@ export interface GitStateDto {
   hasCommits: boolean
   /** A merge waiting for its conflicts to be resolved. */
   merge: GitMergeDto | null
-  sharedFolder: string | null
+  /** URL of `origin`. */
+  remote: string | null
+  /** Against `origin/<branch>` as of the last fetch; `null` while that branch does not exist there. */
+  tracking: { ahead: number; behind: number } | null
 }
 
 export function getGitState(rootPath: string): GitResult<GitStateDto> {
@@ -67,7 +71,10 @@ export interface GitCommitDto {
   summary: string
   /** Workspace files changed by the commit. */
   files: string[]
-  merge: boolean
+  /** First parent first; more than one is a merge. */
+  parents: string[]
+  /** Local and `origin/…` branches pointing at this commit. */
+  refs: string[]
 }
 
 export interface GitHistoryDto {
@@ -75,7 +82,7 @@ export interface GitHistoryDto {
   nextOffset: number | null
 }
 
-/** One page of the current branch's history, newest first. */
+/** One page of the current branch's history and its upstream, newest first. */
 export function getGitHistory(rootPath: string, operationId: string, offset: number): GitResult<GitHistoryDto> {
   return invokeResult('get_git_history', { input: { rootPath, operationId, offset } })
 }
@@ -90,36 +97,33 @@ export function restoreGitFile(rootPath: string, commit: string, fileName: strin
   return invokeResult('restore_git_file', { input: { rootPath, commit, fileName } })
 }
 
-/** `null` stops sharing; an empty folder gets a repository created. */
-export function setGitSharedFolder(rootPath: string, folder: string | null): GitResult<WorkspaceLinkDto> {
-  return invokeResult('set_git_shared_folder', { input: { rootPath, folder } })
+/** Adds, changes or (with `null`) removes `origin`. */
+export function setGitRemote(rootPath: string, url: string | null): GitResult<{ url: string | null }> {
+  return invokeResult('set_git_remote', { input: { rootPath, url } })
 }
 
-export interface GitPeerDto {
-  peer: string
-  /** Author of their latest commit (or their id while it is still syncing). */
-  name: string
-  time: number
-  state: 'upToDate' | 'incoming' | 'syncing'
+/** Downloads what `origin` has, without touching the workspace files. */
+export function fetchGitRemote(rootPath: string, operationId: string): GitResult<null> {
+  return invokeResult('fetch_git_remote', { input: { rootPath, operationId } })
 }
 
-export function getGitPeers(rootPath: string, operationId: string): GitResult<GitPeerDto[]> {
-  return invokeResult('get_git_peers', { input: { rootPath, operationId } })
+/** Fetches and merges `origin/<branch>` into the current branch. */
+export function pullGitRemote(rootPath: string, operationId: string): GitResult<GitMergeResultDto> {
+  return invokeResult('pull_git_remote', { input: { rootPath, operationId } })
 }
 
-export interface GitSyncDto {
-  published: boolean
-  /** People whose work was brought in. */
-  integrated: string[]
-  /** People whose latest work the sync client is still delivering. */
-  syncing: string[]
-  merge: GitMergeDto | null
-  files: string[]
+export function pushGitRemote(rootPath: string, operationId: string): GitResult<null> {
+  return invokeResult('push_git_remote', { input: { rootPath, operationId } })
 }
 
-/** Publishes this person's branch and brings in everyone else's. */
-export function syncGitSharedFolder(rootPath: string, operationId: string): GitResult<GitSyncDto> {
-  return invokeResult('sync_git_shared_folder', { input: { rootPath, operationId } })
+export interface CloneGitWorkspaceInput {
+  operationId: string
+  url: string
+}
+
+/** Clones a repository holding an Alcy workspace into the workspaces folder and opens it. */
+export function cloneGitWorkspace(input: CloneGitWorkspaceInput): GitResult<WorkspaceDto> {
+  return invokeResult('clone_git_workspace', { input })
 }
 
 export interface GitIdentityFieldsDto {

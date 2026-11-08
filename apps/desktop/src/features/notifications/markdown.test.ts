@@ -149,10 +149,10 @@ describe('parseInline', () => {
   })
 
   it('creates links only for http(s)', () => {
-    expect(parseInline('[MR **12**](https://gitlab.com/x/-/merge_requests/12 "título") e [local](/uploads/a.png)')).toEqual([
+    expect(parseInline('[MR **12**](https://git.example.com/x/-/merge_requests/12 "título") e [local](/uploads/a.png)')).toEqual([
       {
         type: 'link',
-        url: 'https://gitlab.com/x/-/merge_requests/12',
+        url: 'https://git.example.com/x/-/merge_requests/12',
         children: [text('MR '), { type: 'strong', children: [text('12')] }],
       },
       text(' e '),

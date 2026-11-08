@@ -2,7 +2,6 @@ use std::fs;
 use std::path::Path;
 
 use alcy_agent::AgentHttpClient;
-use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_http_proxy::ProxyError;
 use alcy_rest::ReqwestRestExecutor;
@@ -11,7 +10,6 @@ use serde::Serialize;
 use tauri::State;
 
 use super::import_fetcher::ImportFetcher;
-use super::onedrive::OnedriveProvider;
 use super::remote_command::RemoteHttpClients;
 
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
@@ -151,8 +149,6 @@ pub fn add_custom_ca_certificate(
     graphql: State<'_, ReqwestGraphqlExecutor>,
     rest: State<'_, ReqwestRestExecutor>,
     import_fetcher: State<'_, ImportFetcher>,
-    gitlab: State<'_, GitlabClient>,
-    onedrive: State<'_, OnedriveProvider>,
     agent: State<'_, AgentHttpClient>,
     usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
@@ -174,11 +170,7 @@ pub fn add_custom_ca_certificate(
             &graphql,
             &rest,
             &import_fetcher,
-            RemoteHttpClients {
-                gitlab: &gitlab,
-                onedrive: &onedrive.client,
-                agent: &agent,
-            },
+            RemoteHttpClients { agent: &agent },
         )
         .map_err(invalid)?;
         store.save(&certificates).map_err(storage_error)?;
@@ -201,8 +193,6 @@ pub fn remove_custom_ca_certificate(
     graphql: State<'_, ReqwestGraphqlExecutor>,
     rest: State<'_, ReqwestRestExecutor>,
     import_fetcher: State<'_, ImportFetcher>,
-    gitlab: State<'_, GitlabClient>,
-    onedrive: State<'_, OnedriveProvider>,
     agent: State<'_, AgentHttpClient>,
     usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
@@ -220,11 +210,7 @@ pub fn remove_custom_ca_certificate(
             &graphql,
             &rest,
             &import_fetcher,
-            RemoteHttpClients {
-                gitlab: &gitlab,
-                onedrive: &onedrive.client,
-                agent: &agent,
-            },
+            RemoteHttpClients { agent: &agent },
         )
         .map_err(invalid)?;
         store.save(&certificates).map_err(storage_error)?;

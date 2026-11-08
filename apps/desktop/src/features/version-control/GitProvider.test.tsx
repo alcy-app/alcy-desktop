@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '../../test-utils'
-import type { FileStatusDto, WorkspaceLinkDto } from '../../bindings/gitlab-types'
+import type { ChangedItemDto, FileStatusDto, WorkspaceLinkDto } from '../../bindings/version-control-types'
 import type { GitStateDto } from '../../bindings/local-git'
 import { useVersionControl } from './use-version-control'
-import { VersionControlPanel } from './VersionControlPanel'
+import { VersionControlPanel, type VersionReviewTarget } from './VersionControlPanel'
+import { VersionReview } from './VersionReview'
 
 const getWorkspaceLink = vi.fn()
 const getVersionStatus = vi.fn()
@@ -11,7 +12,7 @@ const getLocalVersionStatus = vi.fn()
 const linkWorkspace = vi.fn()
 const commitAndPush = vi.fn()
 const getStructuredFileChanges = vi.fn()
-const cancelGitlabOperation = vi.fn()
+const cancelVersionControlOperation = vi.fn()
 const pickWorkspaceFolder = vi.fn()
 const git = vi.hoisted(() => ({
   getGitState: vi.fn(),
@@ -24,22 +25,21 @@ const git = vi.hoisted(() => ({
   getGitHistory: vi.fn(),
   getGitCommitChanges: vi.fn(),
   restoreGitFile: vi.fn(),
-  setGitSharedFolder: vi.fn(),
-  getGitPeers: vi.fn(),
-  syncGitSharedFolder: vi.fn(),
+  setGitRemote: vi.fn(),
+  fetchGitRemote: vi.fn(),
+  pullGitRemote: vi.fn(),
+  pushGitRemote: vi.fn(),
   getGitIdentity: vi.fn(),
 }))
 
-vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { gitlab: false, onedrive: false, localGit: true } }))
-vi.mock('../../bindings/list-gitlab-accounts', () => ({ listGitlabAccounts: () => Promise.resolve({ ok: true, value: [] }) }))
-vi.mock('../../bindings/list-onedrive-accounts', () => ({ listOnedriveAccounts: () => Promise.resolve({ ok: true, value: [] }) }))
+vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { localGit: true } }))
 vi.mock('../../bindings/get-workspace-link', () => ({ getWorkspaceLink: (...a: unknown[]) => getWorkspaceLink(...a) }))
 vi.mock('../../bindings/get-version-status', () => ({ getVersionStatus: (...a: unknown[]) => getVersionStatus(...a) }))
 vi.mock('../../bindings/get-local-version-status', () => ({ getLocalVersionStatus: (...a: unknown[]) => getLocalVersionStatus(...a) }))
 vi.mock('../../bindings/link-workspace', () => ({ linkWorkspace: (...a: unknown[]) => linkWorkspace(...a) }))
 vi.mock('../../bindings/commit-and-push', () => ({ commitAndPush: (...a: unknown[]) => commitAndPush(...a) }))
 vi.mock('../../bindings/get-structured-file-changes', () => ({ getStructuredFileChanges: (...a: unknown[]) => getStructuredFileChanges(...a) }))
-vi.mock('../../bindings/cancel-gitlab-operation', () => ({ cancelGitlabOperation: (...a: unknown[]) => cancelGitlabOperation(...a) }))
+vi.mock('../../bindings/cancel-version-control-operation', () => ({ cancelVersionControlOperation: (...a: unknown[]) => cancelVersionControlOperation(...a) }))
 vi.mock('../../bindings/pick-workspace-folder', () => ({ pickWorkspaceFolder: (...a: unknown[]) => pickWorkspaceFolder(...a) }))
 vi.mock('../../bindings/local-git', () => Object.fromEntries(
   Object.keys(git).map((name) => [name, (...a: unknown[]) => git[name as keyof typeof git](...a)]),
@@ -47,28 +47,38 @@ vi.mock('../../bindings/local-git', () => Object.fromEntries(
 
 const ROOT = '/work/space'
 const COLLECTIONS = 'alcy-collections.json'
-const link: WorkspaceLinkDto = { provider: 'git', sharedFolder: null, includeEnvironments: false }
+const URL = 'git@example.com:team/api.git'
+const link: WorkspaceLinkDto = { includeEnvironments: false }
 const status = (files: FileStatusDto[], current: WorkspaceLinkDto = link) => ({ ok: true, value: { link: current, files } })
 const state = (overrides: Partial<GitStateDto> = {}) => ({
   ok: true,
-  value: { branch: 'main', branches: ['feature', 'main'], hasCommits: true, merge: null, sharedFolder: null, ...overrides },
+  value: { branch: 'main', branches: ['feature', 'main'], hasCommits: true, merge: null, remote: null, tracking: null, ...overrides },
 })
 const changed: FileStatusDto = { name: COLLECTIONS, state: 'localModified', localRevision: 'l', remoteRevision: 'r' }
 const conflict: FileStatusDto = { name: COLLECTIONS, state: 'conflict', localRevision: 'l', remoteRevision: 'r' }
 const onFilesChanged = vi.fn()
 const onOpenSettings = vi.fn()
 
-function Harness() {
+function Harness({ onReview }: { onReview?: (target: VersionReviewTarget) => void }) {
   const vc = useVersionControl(ROOT, onFilesChanged)
-  return <VersionControlPanel rootPath={ROOT} vc={vc} onOpenSettings={onOpenSettings} onPull={() => {}} onResolveConflict={() => {}} embedded />
+  return <VersionControlPanel rootPath={ROOT} vc={vc} onOpenSettings={onOpenSettings} onReview={onReview} onPull={() => {}} onResolveConflict={() => {}} embedded />
 }
 
-const commit = (id: string, summary: string, merge = false) => ({
-  id, authorName: 'Ana', authorEmail: 'ana@example.com', time: 1_700_000_000, summary, files: [COLLECTIONS], merge,
+const commit = (id: string, summary: string, refs: string[] = []) => ({
+  id, authorName: 'Ana', authorEmail: 'ana@example.com', time: 1_700_000_000, summary, files: [COLLECTIONS], parents: [], refs,
 })
+const openMenu = async () => {
+  // The git menu replaces the generic one once the git state has loaded.
+  await waitFor(() => expect(document.querySelector('.vc-git-branch-host, .vc-git-branch-label')).not.toBeNull())
+  fireEvent.click(screen.getByRole('button', { name: 'Mais ações do repositório' }))
+}
+const chooseAction = async (name: string) => {
+  await openMenu()
+  fireEvent.click(await screen.findByRole('menuitem', { name }))
+}
 
 beforeEach(() => {
-  for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelGitlabOperation, pickWorkspaceFolder, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
+  for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelVersionControlOperation, pickWorkspaceFolder, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
     mock.mockReset()
   }
   getWorkspaceLink.mockResolvedValue({ ok: true, value: link })
@@ -79,7 +89,6 @@ beforeEach(() => {
     value: { name, localRevision: 'local', remoteRevision: 'remote', supportsPartial: false, items: [] },
   }))
   git.getGitState.mockResolvedValue(state())
-  git.getGitPeers.mockResolvedValue({ ok: true, value: [] })
   git.getGitHistory.mockResolvedValue({ ok: true, value: { commits: [], nextOffset: null } })
   git.getGitIdentity.mockResolvedValue({
     ok: true,
@@ -92,40 +101,19 @@ describe('git in the workspace — starting', () => {
     getWorkspaceLink.mockResolvedValue({ ok: true, value: null })
   })
 
-  it('starts a new history on main without any account', async () => {
+  it('offers only starting git, without any account', async () => {
     linkWorkspace.mockResolvedValue(status([]))
     render(<Harness />)
 
-    expect(await screen.findByText('Git neste workspace')).toBeInTheDocument()
+    expect(await screen.findByText(/Este workspace ainda não usa Git/)).toBeInTheDocument()
     expect(screen.queryByText('Nenhuma conta conectada')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText(/Incluir ambientes/))
-    fireEvent.click(screen.getByRole('button', { name: 'Iniciar git' }))
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciar Git' }))
 
     await waitFor(() => expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({
-      rootPath: ROOT, provider: 'git', includeEnvironments: true,
+      rootPath: ROOT, includeEnvironments: false,
     })))
-    expect(linkWorkspace.mock.calls[0][0]).not.toHaveProperty('sharedFolder')
-    expect(git.syncGitSharedFolder).not.toHaveBeenCalled()
-  })
-
-  it('joins a shared workspace and brings in what was published', async () => {
-    const shared = { ...link, sharedFolder: '/OneDrive/Equipe/api' }
-    pickWorkspaceFolder.mockResolvedValue('/OneDrive/Equipe/api')
-    linkWorkspace.mockResolvedValue(status([], shared))
-    git.getGitState.mockResolvedValue(state({ sharedFolder: shared.sharedFolder, hasCommits: false, branches: [] }))
-    git.syncGitSharedFolder.mockResolvedValue({
-      ok: true,
-      value: { published: false, integrated: ['Ana'], syncing: [], merge: null, files: [COLLECTIONS, 'alcy-workspace.json'] },
-    })
-    render(<Harness />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Escolher pasta compartilhada…' }))
-    await waitFor(() => expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({
-      rootPath: ROOT, provider: 'git', sharedFolder: '/OneDrive/Equipe/api',
-    })))
-    await waitFor(() => expect(git.syncGitSharedFolder).toHaveBeenCalledWith(ROOT, expect.any(String)))
-    await waitFor(() => expect(onFilesChanged).toHaveBeenCalledWith([COLLECTIONS, 'alcy-workspace.json']))
-    expect(await screen.findByText('Alterações de Ana incorporadas.')).toBeInTheDocument()
+    expect(git.pullGitRemote).not.toHaveBeenCalled()
   })
 })
 
@@ -134,15 +122,15 @@ describe('git in the workspace — branches', () => {
     git.switchGitBranch.mockResolvedValue({ ok: true, value: { files: [COLLECTIONS] } })
     render(<Harness />)
 
-    const branch = await screen.findByRole('combobox', { name: 'Branch' })
-    expect(branch).toHaveValue('main')
+    const branch = await screen.findByRole('button', { name: 'Branch: main' })
     expect(screen.getByRole('button', { name: 'Commit' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Mensagem do commit' })).toBeInTheDocument()
 
-    fireEvent.change(branch, { target: { value: 'feature' } })
+    fireEvent.click(branch)
+    expect(await screen.findByRole('menuitemradio', { name: 'main' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'feature' }))
     await waitFor(() => expect(git.switchGitBranch).toHaveBeenCalledWith(ROOT, 'feature'))
     await waitFor(() => expect(onFilesChanged).toHaveBeenCalledWith([COLLECTIONS]))
-    expect(await screen.findByText('Agora em feature.')).toBeInTheDocument()
   })
 
   it('creates, merges and deletes branches', async () => {
@@ -151,7 +139,7 @@ describe('git in the workspace — branches', () => {
     git.deleteGitBranch.mockResolvedValue({ ok: true, value: null })
     render(<Harness />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Nova branch' }))
+    await chooseAction('Nova branch')
     const nameInput = screen.getByRole('textbox', { name: 'Nome da branch' })
     // Suggested from the git user and today's date.
     await waitFor(() => expect((nameInput as HTMLInputElement).value).toMatch(/^ana-lima-\d{4}-\d{2}-\d{2}$/))
@@ -160,26 +148,42 @@ describe('git in the workspace — branches', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
     await waitFor(() => expect(git.createGitBranch).toHaveBeenCalledWith(ROOT, 'teste-login', true))
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Mesclar uma branch' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Mesclar em main' }))
+    await chooseAction('Mesclar uma branch')
+    fireEvent.click(await screen.findByRole('button', { name: 'Mesclar em main' }))
     await waitFor(() => expect(git.mergeGitBranch).toHaveBeenCalledWith(ROOT, 'feature'))
-    expect(await screen.findByText('feature mesclada.')).toBeInTheDocument()
     expect(onFilesChanged).toHaveBeenCalledWith([COLLECTIONS])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Excluir uma branch' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Excluir' }))
+    await chooseAction('Excluir uma branch')
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(/Excluir a branch feature\?/)).toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Excluir' }))
     await waitFor(() => expect(git.deleteGitBranch).toHaveBeenCalledWith(ROOT, 'feature'))
   })
 
+  it('chooses the branch to merge from its menu, and Escape closes only the menu', async () => {
+    git.getGitState.mockResolvedValue(state({ branches: ['feature', 'hotfix', 'main'] }))
+    git.mergeGitBranch.mockResolvedValue({ ok: true, value: { outcome: 'merged', conflicts: [], files: [] } })
+    render(<Harness />)
+
+    await chooseAction('Mesclar uma branch')
+    fireEvent.click(await screen.findByRole('button', { name: 'Mesclar uma branch: feature' }))
+    expect(await screen.findByRole('menuitemradio', { name: 'hotfix' })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('menuitemradio', { name: 'hotfix' })).not.toBeInTheDocument())
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mesclar uma branch: feature' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'hotfix' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Mesclar em main' }))
+    await waitFor(() => expect(git.mergeGitBranch).toHaveBeenCalledWith(ROOT, 'hotfix'))
+  })
+
   it('asks for the first commit before creating branches', async () => {
     git.getGitState.mockResolvedValue(state({ hasCommits: false, branches: [] }))
     render(<Harness />)
 
-    expect(await screen.findByText('Faça o primeiro commit para criar branches.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Nova branch' })).toBeDisabled()
+    await openMenu()
+    expect(await screen.findByRole('menuitem', { name: 'Nova branch' })).toBeDisabled()
   })
 })
 
@@ -194,7 +198,8 @@ describe('git in the workspace — pending merge', () => {
     expect(await screen.findByText('1 arquivo(s) com conflito: resolva abaixo.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Commit' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Concluir mesclagem' })).toBeDisabled()
-    expect(screen.getByRole('combobox', { name: 'Branch' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Branch: main' })).not.toBeInTheDocument()
+    expect(screen.getByText('main')).toBeInTheDocument()
 
     getVersionStatus.mockResolvedValue(status([changed]))
     fireEvent.click(screen.getByRole('button', { name: 'Verificar' }))
@@ -217,52 +222,74 @@ describe('git in the workspace — pending merge', () => {
   })
 })
 
-describe('git in the workspace — shared folder', () => {
-  it('chooses a shared folder', async () => {
-    pickWorkspaceFolder.mockResolvedValue('/OneDrive/Equipe/api')
-    git.setGitSharedFolder.mockResolvedValue({ ok: true, value: { ...link, sharedFolder: '/OneDrive/Equipe/api' } })
+describe('git in the workspace — remote', () => {
+  it('adds the remote from the menu and offers no remote actions before it', async () => {
+    git.setGitRemote.mockResolvedValue({ ok: true, value: { url: URL } })
     render(<Harness />)
 
-    expect(await screen.findByText(/Para trabalhar com outras pessoas/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Escolher pasta…' }))
-    await waitFor(() => expect(git.setGitSharedFolder).toHaveBeenCalledWith(ROOT, '/OneDrive/Equipe/api'))
-    expect(await screen.findByText('Pasta compartilhada definida. Sincronize para publicar seus commits.')).toBeInTheDocument()
+    await openMenu()
+    expect(await screen.findByRole('menuitem', { name: 'Pull' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Push' })).toBeDisabled()
+    expect(screen.queryByRole('menuitem', { name: 'Remover remoto' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar remoto…' }))
+    fireEvent.change(await screen.findByRole('textbox', { name: 'URL do remoto' }), { target: { value: ` ${URL} ` } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(git.setGitRemote).toHaveBeenCalledWith(ROOT, URL))
   })
 
-  it('shows everyone and syncs', async () => {
-    const shared = { ...link, sharedFolder: '/OneDrive/Equipe/api' }
-    getWorkspaceLink.mockResolvedValue({ ok: true, value: shared })
-    getVersionStatus.mockResolvedValue(status([], shared))
-    git.getGitState.mockResolvedValue(state({ sharedFolder: shared.sharedFolder }))
-    git.getGitPeers.mockResolvedValue({
-      ok: true,
-      value: [
-        { peer: 'ana-1', name: 'Ana', time: 1_700_000_000, state: 'incoming' },
-        { peer: 'bia-2', name: 'bia-2', time: 0, state: 'syncing' },
-      ],
-    })
-    git.syncGitSharedFolder.mockResolvedValue({
-      ok: true,
-      value: { published: true, integrated: ['Ana'], syncing: ['bia-2'], merge: null, files: [COLLECTIONS] },
-    })
+  it('fetches, pulls and pushes from the graph, showing how far the branch is', async () => {
+    git.getGitState.mockResolvedValue(state({ remote: URL, tracking: { ahead: 2, behind: 1 } }))
+    git.fetchGitRemote.mockResolvedValue({ ok: true, value: null })
+    git.pullGitRemote.mockResolvedValue({ ok: true, value: { outcome: 'merged', conflicts: [], files: [COLLECTIONS] } })
+    git.pushGitRemote.mockResolvedValue({ ok: true, value: null })
     render(<Harness />)
 
-    const peers = await screen.findByRole('list', { name: 'Pessoas na pasta compartilhada' })
-    expect(within(peers).getByText('Ana')).toBeInTheDocument()
-    expect(within(peers).getByText(/alterações novas/)).toBeInTheDocument()
-    expect(within(peers).getByText(/ainda sincronizando/)).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Fetch' }))
+    await waitFor(() => expect(git.fetchGitRemote).toHaveBeenCalledWith(ROOT, expect.any(String)))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sincronizar (1 com alterações)' }))
-    await waitFor(() => expect(git.syncGitSharedFolder).toHaveBeenCalledWith(ROOT, expect.any(String)))
-    expect(await screen.findByText(/Alterações de Ana incorporadas\. Aguardando o app de sincronização trazer as alterações de bia-2\./)).toBeInTheDocument()
-    expect(onFilesChanged).toHaveBeenCalledWith([COLLECTIONS])
+    const pull = await screen.findByRole('button', { name: 'Pull (1)' })
+    await waitFor(() => expect(pull).toBeEnabled())
+    fireEvent.click(pull)
+    await waitFor(() => expect(git.pullGitRemote).toHaveBeenCalledWith(ROOT, expect.any(String)))
+    await waitFor(() => expect(onFilesChanged).toHaveBeenCalledWith([COLLECTIONS]))
+
+    const push = await screen.findByRole('button', { name: 'Push (2)' })
+    await waitFor(() => expect(push).toBeEnabled())
+    fireEvent.click(push)
+    await waitFor(() => expect(git.pushGitRemote).toHaveBeenCalledWith(ROOT, expect.any(String)))
+  })
+
+  it('tells to pull when the push is rejected', async () => {
+    git.getGitState.mockResolvedValue(state({ remote: URL }))
+    git.pushGitRemote.mockResolvedValue({ ok: false, error: { kind: 'gitPushRejected' } })
+    render(<Harness />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Push' }))
+    expect(await screen.findByText(/Faça pull e envie de novo/)).toBeInTheDocument()
+  })
+
+  it('changes and removes the remote, and locks remote actions during a merge', async () => {
+    git.getGitState.mockResolvedValue(state({ remote: URL, merge: { label: 'origin/main', conflicts: [COLLECTIONS] } }))
+    git.setGitRemote.mockResolvedValue({ ok: true, value: { url: null } })
+    render(<Harness />)
+
+    expect(await screen.findByRole('button', { name: 'Pull' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Push' })).toBeDisabled()
+    await chooseAction('Alterar remoto…')
+    expect(await screen.findByRole('textbox', { name: 'URL do remoto' })).toHaveValue(URL)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancelar' }).at(-1)!)
+
+    await chooseAction('Remover remoto')
+    const dialog = await screen.findByRole('dialog', { name: 'Remover remoto' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remover remoto' }))
+    await waitFor(() => expect(git.setGitRemote).toHaveBeenCalledWith(ROOT, null))
   })
 })
 
 describe('git in the workspace — history', () => {
   it('pages, opens a commit per item and restores a file', async () => {
     git.getGitHistory
-      .mockResolvedValueOnce({ ok: true, value: { commits: [commit('a'.repeat(40), 'Merge changes from Bia', true)], nextOffset: 1 } })
+      .mockResolvedValueOnce({ ok: true, value: { commits: [commit('a'.repeat(40), 'Merge changes from Bia', ['main', 'origin/main'])], nextOffset: 1 } })
       .mockResolvedValueOnce({ ok: true, value: { commits: [commit('b'.repeat(40), 'Initial workspace')], nextOffset: null } })
     git.getGitCommitChanges.mockResolvedValue({
       ok: true,
@@ -274,9 +301,9 @@ describe('git in the workspace — history', () => {
     git.restoreGitFile.mockResolvedValue({ ok: true, value: { files: [COLLECTIONS] } })
     render(<Harness />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Histórico' }))
     expect(await screen.findByText('Merge changes from Bia')).toBeInTheDocument()
-    expect(screen.getByText('mesclagem')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Grafo' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('origin/main')).toBeInTheDocument()
     expect(git.getGitHistory).toHaveBeenLastCalledWith(ROOT, expect.any(String), 0)
 
     fireEvent.click(screen.getByRole('button', { name: 'Carregar commits anteriores' }))
@@ -296,7 +323,51 @@ describe('git in the workspace — history', () => {
   })
 })
 
+describe('git in the workspace — commit details', () => {
+  const item: ChangedItemDto = { id: 'request:r1', parentId: null, label: 'Login', itemKind: 'request', changeKind: 'modified', fields: [{ name: 'url', remote: '/old', local: '/new' }], dependencies: [] }
+  const changes = { name: COLLECTIONS, localRevision: 'x', remoteRevision: 'y', supportsPartial: true, items: [item] }
+
+  it('opens what an item changed in a past commit', async () => {
+    const onReview = vi.fn()
+    git.getGitHistory.mockResolvedValue({ ok: true, value: { commits: [commit('c'.repeat(40), 'Edit login')], nextOffset: null } })
+    git.getGitCommitChanges.mockResolvedValue({ ok: true, value: changes })
+    render(<Harness onReview={onReview} />)
+
+    fireEvent.click(await screen.findByText('Edit login'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Coleções' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Login/ }))
+
+    expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ fileName: COLLECTIONS, item, changes, historical: true }))
+  })
+
+  it('compares a past commit with its parent, without the working copy tab', () => {
+    render(<VersionReview rootPath={ROOT} target={{ fileName: COLLECTIONS, fileLabel: 'Coleções', changes, item, historical: true }} />)
+
+    expect(screen.getByText('Antes')).toBeInTheDocument()
+    expect(screen.getByText('Depois')).toBeInTheDocument()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(screen.getByText('/old')).toBeInTheDocument()
+    expect(screen.getByText('/new')).toBeInTheDocument()
+  })
+})
+
 describe('git in the workspace — author', () => {
+  it('commits without a status message', async () => {
+    getVersionStatus.mockResolvedValue(status([changed]))
+    getLocalVersionStatus.mockResolvedValue({ ok: true, value: [changed] })
+    commitAndPush.mockResolvedValue({ ok: true, value: { pushed: [COLLECTIONS] } })
+    render(<Harness />)
+
+    fireEvent.click(await screen.findByRole('button', { name: `Preparar todo o arquivo ${COLLECTIONS}` }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Mensagem do commit' }), { target: { value: 'Update' } })
+    const commitButton = screen.getByRole('button', { name: 'Commit' })
+    await waitFor(() => expect(commitButton).toBeEnabled())
+    fireEvent.click(commitButton)
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Mensagem do commit' })).toHaveValue(''))
+    expect(screen.queryByText(/Enviado/)).not.toBeInTheDocument()
+  })
+
   it('points to the git settings when no author is configured', async () => {
     getVersionStatus.mockResolvedValue(status([changed]))
     getLocalVersionStatus.mockResolvedValue({ ok: true, value: [changed] })

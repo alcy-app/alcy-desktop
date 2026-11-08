@@ -9,23 +9,18 @@ import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon, CheckIcon, DownloadIcon, RefreshIcon, Spinner } from '../../shared/ui/icons'
 import { useToast } from '../../shared/ui/use-toast'
 import type { SettingsResult, UpdatePhase } from './update-context'
-import { needsGitlabAccount, updateErrorMessage } from './update-error-message'
+import { updateErrorMessage } from './update-error-message'
 import { isSourceReady } from './update-source'
 import { downloadPercent, formatCheckTime, formatMegabytes, formatReleaseDate } from './update-format'
 import { useUpdates } from './use-updates'
 import './updates.css'
 
-interface UpdatesSectionProps {
-  /** Leva o usuário à aba GitLab para conectar (ou reconectar) uma conta. */
-  onOpenGitlab: () => void
-}
-
 /** "Updates" tab: installed version status, release source, automatic check and preview versions. */
-export function UpdatesSection({ onOpenGitlab }: UpdatesSectionProps) {
+export function UpdatesSection() {
   return (
     <div className="updates" data-testid="update-settings">
-      <UpdateStatusCard onOpenGitlab={onOpenGitlab} />
-      <UpdateSourceInfo onOpenGitlab={onOpenGitlab} />
+      <UpdateStatusCard />
+      <UpdateSourceInfo />
       <StartupCheckSection />
       <PreviewVersionsSection />
     </div>
@@ -34,7 +29,7 @@ export function UpdatesSection({ onOpenGitlab }: UpdatesSectionProps) {
 
 type Tone = 'neutral' | 'success' | 'accent' | 'error'
 
-function UpdateStatusCard({ onOpenGitlab }: UpdatesSectionProps) {
+function UpdateStatusCard() {
   const { language, t } = useLanguage()
   const { settings, phase, error, checkedAt, check, download, cancel, restart } = useUpdates()
   const [confirmingRestart, setConfirmingRestart] = useState(false)
@@ -102,7 +97,7 @@ function UpdateStatusCard({ onOpenGitlab }: UpdatesSectionProps) {
 
       {phase.kind === 'downloading' && <DownloadProgress downloaded={phase.downloaded} total={phase.total} />}
 
-      {error && error.kind !== 'cancelled' && <UpdateErrorAlert error={error} onOpenGitlab={onOpenGitlab} />}
+      {error && error.kind !== 'cancelled' && <UpdateErrorAlert error={error} />}
 
       {release && <ReleaseDetails release={release} />}
 
@@ -145,7 +140,7 @@ function describeStatus(phase: UpdatePhase, context: StatusContext): { title: st
         title: installed,
         detail: !source
           ? t('updates.notConfigured')
-          : isSourceReady(source) ? t('updates.idle') : t('updates.needsAccount', { host: source.host }),
+          : t('updates.idle'),
         tone: 'neutral',
       }
     case 'checking':
@@ -217,14 +212,11 @@ function DownloadProgress({ downloaded, total }: { downloaded: number; total: nu
   )
 }
 
-function UpdateErrorAlert({ error, onOpenGitlab }: { error: UpdateCommandError; onOpenGitlab: () => void }) {
+function UpdateErrorAlert({ error }: { error: UpdateCommandError }) {
   const { t } = useLanguage()
   return (
     <div className="updates-alert">
       <InlineAlert>{updateErrorMessage(error, t)}</InlineAlert>
-      {needsGitlabAccount(error) && (
-        <Button variant="ghost" onClick={onOpenGitlab}>{t('updates.openGitlab')}</Button>
-      )}
     </div>
   )
 }
@@ -272,7 +264,7 @@ function ReleaseLinkButton({ release, variant }: { release: ReleaseDto; variant:
 }
 
 /** Origem das releases: fixa no build, só informativa aqui. */
-function UpdateSourceInfo({ onOpenGitlab }: UpdatesSectionProps) {
+function UpdateSourceInfo() {
   const { t } = useLanguage()
   const { settings } = useUpdates()
   if (!settings) return null
@@ -288,15 +280,6 @@ function UpdateSourceInfo({ onOpenGitlab }: UpdatesSectionProps) {
           <>
             <p className="updates-source-provider">{t(`updates.provider.${source.provider}`)}</p>
             <p className="updates-source-url">{source.location}</p>
-            {source.requiresAccount &&
-              (source.accountId ? (
-                <p className="updates-source-meta">{t('updates.sourceAccount', { account: source.accountId })}</p>
-              ) : (
-                <div className="updates-alert">
-                  <InlineAlert>{t('updates.error.noAccount', { host: source.host })}</InlineAlert>
-                  <Button variant="ghost" onClick={onOpenGitlab}>{t('updates.openGitlab')}</Button>
-                </div>
-              ))}
           </>
         ) : (
           <p className="updates-source-meta">{t('updates.sourceMissing')}</p>

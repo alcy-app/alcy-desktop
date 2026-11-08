@@ -149,7 +149,7 @@
   box-sizing: border-box;
 }
 
-/* Detalhes da release disponível: nome, data e notas publicadas no GitLab. */
+/* Detalhes da release disponível: nome, data e notas publicadas na origem. */
 .updates-release {
   display: flex;
   flex-direction: column;

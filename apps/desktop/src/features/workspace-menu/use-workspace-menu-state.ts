@@ -7,6 +7,7 @@ import { openWorkspace } from '../../bindings/open-workspace'
 import { pickWorkspaceFolder } from '../../bindings/pick-workspace-folder'
 import { removeWorkspace } from '../../bindings/remove-workspace'
 import { renameWorkspace } from '../../bindings/rename-workspace'
+import { FEATURE_FLAGS } from '../../shared/feature-flags'
 
 export type WorkspaceMenuBusyState = 'idle' | 'creating' | 'switching' | 'importing' | 'removing' | 'renaming'
 
@@ -31,6 +32,7 @@ export function useWorkspaceMenuState({
   const [error, setError] = useState<WorkspaceCommandError | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<RecentWorkspaceDto | null>(null)
   const [renamingRootPath, setRenamingRootPath] = useState<string | null>(null)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     const result = await listRecentWorkspaces()
@@ -96,10 +98,25 @@ export function useWorkspaceMenuState({
   }, [close, onWorkspaceChange])
 
   const importExisting = useCallback(async () => {
+    if (FEATURE_FLAGS.localGit) {
+      close()
+      setImportDialogOpen(true)
+      return
+    }
     const rootPath = await pickWorkspaceFolder()
     if (rootPath === null) return
     await switchTo(rootPath, 'importing')
-  }, [switchTo])
+  }, [close, switchTo])
+
+  const closeImportDialog = useCallback(() => setImportDialogOpen(false), [])
+
+  const finishImport = useCallback(
+    (workspace: WorkspaceDto) => {
+      setImportDialogOpen(false)
+      if (workspace.rootPath !== currentWorkspace.rootPath) onWorkspaceChange(workspace)
+    },
+    [currentWorkspace.rootPath, onWorkspaceChange],
+  )
 
   const startRename = useCallback((rootPath: string) => {
     setError(null)
@@ -200,6 +217,9 @@ export function useWorkspaceMenuState({
     switchToRecent,
     create,
     importExisting,
+    importDialogOpen,
+    closeImportDialog,
+    finishImport,
     renamingRootPath,
     startRename,
     cancelRename,

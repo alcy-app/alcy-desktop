@@ -9,6 +9,7 @@ use gix::refs::transaction::{PreviousValue, RefEdit};
 use gix::refs::{FullName, Target};
 
 use crate::merge_state::MergeState;
+use crate::remotes::{Tracking, remote_url, tracking};
 use crate::{GitError, branch_ref, open_workspace, ref_target, rejected};
 
 /// First line of the `.gitignore` Alcy manages; a file without it is the
@@ -52,7 +53,9 @@ pub fn init_workspace(root: &Path, branch: &str, tracked: &[&str]) -> Result<(),
     if root.join(".git").exists() {
         let repo = open_workspace(root)?;
         if repo.is_bare() || repo.workdir().is_none() {
-            return Err(GitError::NotBare);
+            return Err(
+                rejected("the workspace folder holds a repository without a working tree").into(),
+            );
         }
     } else {
         gix::init(root).map_err(rejected)?;
@@ -223,6 +226,10 @@ pub struct GitState {
     /// The current branch has at least one commit.
     pub has_commits: bool,
     pub merge: Option<MergeInfo>,
+    /// URL of `origin`.
+    pub remote: Option<String>,
+    /// Against `origin/<branch>` as of the last fetch.
+    pub tracking: Option<Tracking>,
 }
 
 pub fn git_state(root: &Path) -> Result<GitState, GitError> {
@@ -232,10 +239,18 @@ pub fn git_state(root: &Path) -> Result<GitState, GitError> {
         label: state.label,
         conflicts: state.conflicts,
     });
+    let branch = short_name(&name);
+    let remote = remote_url(root)?;
+    let tracking = match remote {
+        Some(_) => tracking(&repo, &branch, head)?,
+        None => None,
+    };
     Ok(GitState {
-        branch: short_name(&name),
+        tracking,
+        remote,
         branches: local_branches(&repo)?,
         has_commits: head.is_some(),
+        branch,
         merge,
     })
 }

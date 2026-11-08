@@ -1,11 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use alcy_app::RemoteError;
 use gix::ObjectId;
 
-use crate::repo::{commit_tree, file_at, head};
-use crate::{GitError, open_workspace, rejected};
+use crate::remotes::remote_branch_ref;
+use crate::repo::{commit_tree, file_at, head, short_name};
+use crate::{GitError, open_workspace, ref_target, rejected};
 
 /// Largest page served at once (invariant 8: never the whole log).
 pub const MAX_HISTORY_PAGE: usize = 50;
@@ -21,8 +22,10 @@ pub struct CommitSummary {
     pub summary: String,
     /// Root files added, changed or removed against the first parent.
     pub files: Vec<String>,
-    /// More than one parent: a merge.
-    pub merge: bool,
+    /// Full ids, first parent first; more than one is a merge.
+    pub parents: Vec<String>,
+    /// Local branches and `origin/…` branches pointing at this commit.
+    pub refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,19 +35,45 @@ pub struct HistoryPage {
     pub next_offset: Option<usize>,
 }
 
-/// Commits reachable from `HEAD`, newest first by commit time.
+/// Branch names by the commit they point at.
+fn refs_by_commit(repo: &gix::Repository) -> Result<HashMap<ObjectId, Vec<String>>, RemoteError> {
+    let platform = repo.references().map_err(rejected)?;
+    let mut refs: HashMap<ObjectId, Vec<String>> = HashMap::new();
+    let local = platform.local_branches().map_err(rejected)?;
+    let remote = platform.remote_branches().map_err(rejected)?;
+    for reference in local.chain(remote) {
+        let mut reference = reference.map_err(rejected)?;
+        let name = reference.name().shorten().to_string();
+        // `origin/HEAD` only says which branch is the default one.
+        if name.ends_with("/HEAD") {
+            continue;
+        }
+        let id = reference.peel_to_id().map_err(rejected)?.detach();
+        refs.entry(id).or_default().push(name);
+    }
+    for names in refs.values_mut() {
+        names.sort();
+    }
+    Ok(refs)
+}
+
+/// Commits reachable from `HEAD` and from `origin/<branch>` (so what a fetch
+/// brought shows up before it is pulled), newest first by commit time.
 pub fn history(root: &Path, offset: usize, limit: usize) -> Result<HistoryPage, GitError> {
     let repo = open_workspace(root)?;
-    let (_, head) = head(&repo)?;
-    let Some(head) = head else {
+    let (name, head) = head(&repo)?;
+    let upstream = ref_target(&repo, &remote_branch_ref(&short_name(&name))?)?;
+    let tips: Vec<ObjectId> = head.into_iter().chain(upstream).collect();
+    if tips.is_empty() {
         return Ok(HistoryPage {
             commits: Vec::new(),
             next_offset: None,
         });
-    };
+    }
+    let refs = refs_by_commit(&repo)?;
     let limit = limit.clamp(1, MAX_HISTORY_PAGE);
     let walk = repo
-        .rev_walk([head])
+        .rev_walk(tips)
         .sorting(gix::revision::walk::Sorting::ByCommitTime(
             Default::default(),
         ))
@@ -61,7 +90,7 @@ pub fn history(root: &Path, offset: usize, limit: usize) -> Result<HistoryPage, 
             break;
         }
         let id = info.map_err(rejected)?.id;
-        commits.push(summary(&repo, id)?);
+        commits.push(summary(&repo, id, &refs)?);
     }
     Ok(HistoryPage {
         next_offset: more.then_some(offset + commits.len()),
@@ -69,7 +98,11 @@ pub fn history(root: &Path, offset: usize, limit: usize) -> Result<HistoryPage, 
     })
 }
 
-fn summary(repo: &gix::Repository, id: ObjectId) -> Result<CommitSummary, RemoteError> {
+fn summary(
+    repo: &gix::Repository,
+    id: ObjectId,
+    refs: &HashMap<ObjectId, Vec<String>>,
+) -> Result<CommitSummary, RemoteError> {
     let commit = repo.find_commit(id).map_err(rejected)?;
     let author = commit.author().map_err(rejected)?;
     let time = author.time().map(|time| time.seconds).unwrap_or_default();
@@ -87,7 +120,8 @@ fn summary(repo: &gix::Repository, id: ObjectId) -> Result<CommitSummary, Remote
         time,
         summary,
         files: changed_root_entries(repo, parent_tree, tree)?,
-        merge: parents.len() > 1,
+        parents: parents.iter().map(ObjectId::to_string).collect(),
+        refs: refs.get(&id).cloned().unwrap_or_default(),
     })
 }
 

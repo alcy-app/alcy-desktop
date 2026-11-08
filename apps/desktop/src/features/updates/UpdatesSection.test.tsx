@@ -43,11 +43,9 @@ vi.mock('../../bindings/open-external-url', () => ({
 }))
 
 const SOURCE: UpdateSourceDto = {
-  provider: 'gitlab',
-  location: 'https://gitlab.corp/grupo/alcy',
-  host: 'gitlab.corp',
-  requiresAccount: true,
-  accountId: 'u@gitlab.corp',
+  provider: 'releaseServer',
+  location: 'https://updates.example.com',
+  host: 'updates.example.com',
 }
 
 function settings(overrides: Partial<UpdateSettingsDto> = {}): UpdateSettingsDto {
@@ -59,7 +57,7 @@ const RELEASE: ReleaseDto = {
   name: 'Alcy 0.2.0',
   notes: '- Atualizações pelo app',
   publishedAt: '2026-09-01T12:00:00Z',
-  webUrl: 'https://gitlab.corp/grupo/alcy/-/releases/v0.2.0',
+  webUrl: 'https://updates.example.com/releases/v0.2.0',
   installable: true,
 }
 
@@ -87,10 +85,10 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-const renderSection = (onOpenGitlab = vi.fn()) =>
+const renderSection = () =>
   render(
     <>
-      <UpdatesSection onOpenGitlab={onOpenGitlab} />
+      <UpdatesSection />
       <UpdateStatusIndicator onOpen={() => {}} />
     </>,
   )
@@ -106,45 +104,30 @@ describe('UpdatesSection — origem', () => {
     expect(screen.getByRole('button', { name: 'Verificar atualizações' })).toBeDisabled()
   })
 
-  it('mostra a origem do build e a conta GitLab usada, sem permitir editar', async () => {
+  it('mostra a origem do build, sem permitir editar', async () => {
     renderSection()
 
-    expect(await screen.findByText('https://gitlab.corp/grupo/alcy')).toBeInTheDocument()
-    expect(screen.getByText('GitLab')).toBeInTheDocument()
-    expect(screen.getByText('Acessado pela conta u@gitlab.corp')).toBeInTheDocument()
+    expect(await screen.findByText('https://updates.example.com')).toBeInTheDocument()
+    expect(screen.getByText('Servidor de releases')).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Verificar atualizações' })).toBeEnabled()
   })
 
-  it('sem conta GitLab na instância, oferece abrir as contas e não permite verificar', async () => {
-    getUpdateSettings.mockResolvedValue({ ok: true, value: settings({ source: { ...SOURCE, accountId: null } }) })
-    const onOpenGitlab = vi.fn()
-    renderSection(onOpenGitlab)
-
-    expect(await screen.findByText('Conecte uma conta GitLab de gitlab.corp para verificar atualizações.')).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('Nenhuma conta GitLab conectada para gitlab.corp')
-    expect(screen.getByRole('button', { name: 'Verificar atualizações' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Abrir contas GitLab' }))
-    expect(onOpenGitlab).toHaveBeenCalledTimes(1)
-  })
-
-  it('origens públicas (GitHub) não pedem conta', async () => {
+  it('mostra uma origem do GitHub', async () => {
     getUpdateSettings.mockResolvedValue({
       ok: true,
       value: settings({
-        source: { provider: 'github', location: 'empresa/alcy', host: 'github.com', requiresAccount: false, accountId: null },
-      }),
+        source: { provider: 'github', location: 'empresa/alcy', host: 'github.com' } }),
     })
     renderSection()
 
     expect(await screen.findByText('empresa/alcy')).toBeInTheDocument()
     expect(screen.getByText('GitHub')).toBeInTheDocument()
-    expect(screen.queryByText(/Acessado pela conta/)).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Verificar atualizações' })).toBeEnabled()
   })
 
-  it('o servidor de releases não pede conta', async () => {
+  it('mostra o servidor de releases', async () => {
     getUpdateSettings.mockResolvedValue({
       ok: true,
       value: settings({
@@ -152,8 +135,6 @@ describe('UpdatesSection — origem', () => {
           provider: 'releaseServer',
           location: 'http://alcy-releases.interno:32761',
           host: 'alcy-releases.interno',
-          requiresAccount: false,
-          accountId: null,
         },
       }),
     })
@@ -275,7 +256,7 @@ describe('UpdatesSection — verificação automática', () => {
     checkForUpdate.mockResolvedValue({ ok: true, value: { currentVersion: '0.1.0', release: RELEASE } })
     renderSection()
 
-    await screen.findByText('Acessado pela conta u@gitlab.corp')
+    await screen.findByText('https://updates.example.com')
     expect(checkForUpdate).not.toHaveBeenCalled()
 
     await act(async () => {
@@ -290,7 +271,7 @@ describe('UpdatesSection — verificação automática', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     renderSection()
 
-    await screen.findByText('Acessado pela conta u@gitlab.corp')
+    await screen.findByText('https://updates.example.com')
     await act(async () => {
       await vi.advanceTimersByTimeAsync(STARTUP_CHECK_DELAY_MS * 2)
     })
@@ -345,7 +326,7 @@ describe('UpdatesSection — verificação automática', () => {
   it('desativa as versões Preview quando a origem é um manifesto único', async () => {
     getUpdateSettings.mockResolvedValue({
       ok: true,
-      value: settings({ source: { ...SOURCE, provider: 'manifest', requiresAccount: false, accountId: null } }),
+      value: settings({ source: { ...SOURCE, provider: 'manifest' } }),
     })
     renderSection()
 

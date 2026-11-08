@@ -13,7 +13,7 @@ pub enum CredentialError {
 ///
 /// Implementada sobre o chaveiro do sistema operacional. A porta não faz
 /// fallback para arquivo: se o chaveiro não existe, o erro sobe a quem chamou
-/// (tokens do GitLab levam o erro até o usuário; a chave local de
+/// (credenciais levam o erro até o usuário; a chave local de
 /// `alcy-storage::LocalSecrets` usa um arquivo reserva, ver ADR 0030).
 pub trait CredentialStore: Send + Sync {
     fn load(&self, key: &str) -> Result<Option<String>, CredentialError>;

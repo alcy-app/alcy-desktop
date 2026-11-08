@@ -2,8 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { ChevronDownIcon, GitIcon, GitPullIcon, GitPushIcon, RefreshIcon, Spinner } from '../../shared/ui/icons'
 import { OptionsMenu } from '../../shared/ui/Menu'
-import type { WorkspaceLinkDto } from '../../bindings/gitlab-types'
-import { remoteLabel } from './remote-label'
+import type { WorkspaceLinkDto } from '../../bindings/version-control-types'
 import type { VersionCounts, VersionSummary } from './version-summary'
 import type { VersionBusy } from './use-version-control'
 
@@ -22,7 +21,7 @@ interface GitStatusButtonProps {
 export function GitStatusButton({ summary, counts, link, checking, busy, onOpenPanel, onPull, onRefresh }: GitStatusButtonProps) {
   const { t } = useLanguage()
   const [open, setOpen] = useState(false)
-  const branch = remoteLabel(link)
+  const branch = link === null ? '' : 'Git'
 
   const description = (() => {
     switch (summary) {

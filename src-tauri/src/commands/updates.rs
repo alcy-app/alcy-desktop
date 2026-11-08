@@ -2,28 +2,19 @@
 //!
 //! A origem das releases vem fixa no build (`ALCY_UPDATE_PROVIDER` e
 //! `ALCY_UPDATE_URL`, lidas do `.env` pelos scripts), definida por quem
-//! distribui o app: um projeto GitLab, um repositório do
-//! GitHub, o serviço de releases (ADR 0051) ou a URL direta do manifesto.
+//! distribui o app: um repositório do GitHub, o serviço de releases
+//! (ADR 0051) ou a URL direta do manifesto.
 //! Todas levam ao manifesto
 //! `latest.json` do `tauri-plugin-updater`, que baixa o pacote e verifica a
-//! assinatura contra a chave pública embutida no build. No GitLab o
-//! manifesto é baixado com o token da conta, que só vai para a instância.
+//! assinatura contra a chave pública embutida no build.
 
 use std::future::Future;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
-use alcy_app::{CredentialStore, RemoteError};
-use alcy_domain::{
-    GitlabAccount, UpdateSettings, UpdateSource, UpdateSourceError, project_path_in_instance,
-};
-use alcy_gitlab::{GitlabClient, GitlabRelease, UPDATE_MANIFEST_ASSET, is_instance_url};
+use alcy_domain::{UpdateSettings, UpdateSource, UpdateSourceError};
 use alcy_http_proxy::ProxyPlan;
-use alcy_platform::KeyringCredentialStore;
-use alcy_storage::{
-    GitlabAccountsStore, RecentWorkspacesStore, StorageError, UpdateSettingsStore,
-    backup_workspaces,
-};
+use alcy_storage::{RecentWorkspacesStore, StorageError, UpdateSettingsStore, backup_workspaces};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
@@ -39,6 +30,9 @@ use super::proxy_settings::ProxyApplyState;
 /// `ALCY_UPDATE_PROVIDER` (ou com `none`), o app não se atualiza sozinho.
 const UPDATE_PROVIDER: Option<&str> = option_env!("ALCY_UPDATE_PROVIDER");
 const UPDATE_URL: Option<&str> = option_env!("ALCY_UPDATE_URL");
+
+/// Asset que aponta para os pacotes de cada plataforma.
+const UPDATE_MANIFEST_ASSET: &str = "latest.json";
 
 /// Só a conexão tem prazo: o download de um instalador em rede lenta pode
 /// levar minutos e é cancelável pelo usuário.
@@ -61,11 +55,6 @@ pub enum UpdateCommandError {
     Invalid {
         message: String,
     },
-    /// Nenhuma conta GitLab conectada para a instância do projeto.
-    NoAccount {
-        host: String,
-    },
-    Unauthorized,
     NotFound {
         message: String,
     },
@@ -73,8 +62,6 @@ pub enum UpdateCommandError {
     NoManifest {
         tag: String,
     },
-    /// O manifesto ou o pacote apontam para fora da instância.
-    OriginMismatch,
     /// O build não tem chave pública de atualização.
     MissingPublicKey,
     Signature {
@@ -84,9 +71,6 @@ pub enum UpdateCommandError {
         message: String,
     },
     Rejected {
-        message: String,
-    },
-    Credentials {
         message: String,
     },
     Storage {
@@ -121,21 +105,6 @@ impl From<UpdateSourceError> for UpdateCommandError {
     }
 }
 
-impl From<RemoteError> for UpdateCommandError {
-    fn from(error: RemoteError) -> Self {
-        match error {
-            RemoteError::Unauthorized => Self::Unauthorized,
-            RemoteError::NotFound(message) => Self::NotFound { message },
-            RemoteError::Network(message) => Self::Network { message },
-            RemoteError::Credentials(message) => Self::Credentials { message },
-            RemoteError::Rejected(message) => Self::Rejected { message },
-            RemoteError::Conflict | RemoteError::TooLarge => Self::Rejected {
-                message: error.to_string(),
-            },
-        }
-    }
-}
-
 impl From<tauri_plugin_updater::Error> for UpdateCommandError {
     fn from(error: tauri_plugin_updater::Error) -> Self {
         use tauri_plugin_updater::Error;
@@ -159,7 +128,6 @@ impl From<tauri_plugin_updater::Error> for UpdateCommandError {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum UpdateProviderDto {
-    Gitlab,
     Github,
     Manifest,
     ReleaseServer,
@@ -173,10 +141,6 @@ pub struct UpdateSourceDto {
     /// do serviço de releases.
     pub location: String,
     pub host: String,
-    /// Só o GitLab exige uma conta conectada na instância.
-    pub requires_account: bool,
-    /// Conta usada para acessar a origem; `None` sem conta (ou sem exigência).
-    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -340,14 +304,13 @@ fn configured_source(
             message: format!("defina ALCY_UPDATE_URL para o provedor {provider}"),
         })?;
     let source = match provider {
-        "gitlab" => UpdateSource::gitlab(url)?,
         "github" => UpdateSource::github(url)?,
         "manifest" => UpdateSource::manifest(url)?,
         "releaseServer" => UpdateSource::release_server(url)?,
         other => {
             return Err(UpdateCommandError::Invalid {
                 message: format!(
-                    "ALCY_UPDATE_PROVIDER inválido: {other} (use gitlab, github, manifest, releaseServer ou none)"
+                    "ALCY_UPDATE_PROVIDER inválido: {other} (use github, manifest, releaseServer ou none)"
                 ),
             });
         }
@@ -363,53 +326,26 @@ fn required_source() -> Result<UpdateSource, UpdateCommandError> {
     build_source()?.ok_or(UpdateCommandError::NotConfigured)
 }
 
-/// Conta conectada na instância do projeto (a de URL base mais específica
-/// vence, o que cobre instâncias em subcaminho) e o caminho do projeto nela.
-fn account_for<'a>(
-    project_url: &str,
-    accounts: &'a [GitlabAccount],
-) -> Option<(&'a GitlabAccount, String)> {
-    accounts
-        .iter()
-        .filter_map(|account| {
-            project_path_in_instance(project_url, &account.base_url).map(|path| (account, path))
-        })
-        .max_by_key(|(account, _)| account.base_url.len())
-}
-
 fn github_repository_url(owner: &str, repo: &str) -> String {
     format!("https://github.com/{owner}/{repo}")
 }
 
-fn source_dto(source: &UpdateSource, accounts: &[GitlabAccount]) -> UpdateSourceDto {
+fn source_dto(source: &UpdateSource) -> UpdateSourceDto {
     match source {
-        UpdateSource::Gitlab { project_url } => UpdateSourceDto {
-            provider: UpdateProviderDto::Gitlab,
-            location: project_url.clone(),
-            host: host_of(project_url),
-            requires_account: true,
-            account_id: account_for(project_url, accounts).map(|(account, _)| account.id.clone()),
-        },
         UpdateSource::Github { owner, repo } => UpdateSourceDto {
             provider: UpdateProviderDto::Github,
             location: format!("{owner}/{repo}"),
             host: "github.com".into(),
-            requires_account: false,
-            account_id: None,
         },
         UpdateSource::Manifest { url } => UpdateSourceDto {
             provider: UpdateProviderDto::Manifest,
             location: url.clone(),
             host: host_of(url),
-            requires_account: false,
-            account_id: None,
         },
         UpdateSource::ReleaseServer { base_url } => UpdateSourceDto {
             provider: UpdateProviderDto::ReleaseServer,
             location: base_url.clone(),
             host: host_of(base_url),
-            requires_account: false,
-            account_id: None,
         },
     }
 }
@@ -417,18 +353,17 @@ fn source_dto(source: &UpdateSource, accounts: &[GitlabAccount]) -> UpdateSource
 fn settings_dto(
     settings: &UpdateSettings,
     source: Option<&UpdateSource>,
-    accounts: &[GitlabAccount],
     current_version: String,
 ) -> UpdateSettingsDto {
     UpdateSettingsDto {
         current_version,
         check_on_startup: settings.check_on_startup,
         include_prereleases: settings.include_prereleases,
-        source: source.map(|source| source_dto(source, accounts)),
+        source: source.map(source_dto),
     }
 }
 
-/// Dados da release que o manifesto do updater não traz (GitLab).
+/// Dados da release que o manifesto do updater não traz.
 #[derive(Default)]
 struct ReleaseInfo {
     name: Option<String>,
@@ -437,68 +372,10 @@ struct ReleaseInfo {
     web_url: Option<String>,
 }
 
-/// Cabeçalho de autorização e a única origem para a qual ele pode ir.
-struct SourceAuth {
-    instance_url: String,
-    token: String,
-}
-
 /// O que o updater precisa para consultar a origem.
 struct ResolvedSource {
     manifest_url: Url,
-    auth: Option<SourceAuth>,
     info: ReleaseInfo,
-}
-
-/// GitLab: a release publicada mais recente aponta para o manifesto (asset
-/// link `latest.json`), baixado com o token da conta da instância.
-async fn resolve_gitlab(
-    project_url: &str,
-    include_prereleases: bool,
-    accounts: &[GitlabAccount],
-    client: &GitlabClient,
-    credentials: &dyn CredentialStore,
-) -> Result<ResolvedSource, UpdateCommandError> {
-    let (account, path) =
-        account_for(project_url, accounts).ok_or_else(|| UpdateCommandError::NoAccount {
-            host: host_of(project_url),
-        })?;
-    let session = client.session(account, credentials);
-    let project = session.project_by_path(&path).await?;
-    let release = session
-        .latest_release(project.id, include_prereleases)
-        .await?
-        .ok_or(UpdateCommandError::NoReleases)?;
-
-    let manifest_url = release
-        .manifest_url()
-        .ok_or_else(|| UpdateCommandError::NoManifest {
-            tag: release.tag_name.clone(),
-        })?;
-    if !is_instance_url(&account.base_url, manifest_url) {
-        return Err(UpdateCommandError::OriginMismatch);
-    }
-    let manifest_url = Url::parse(manifest_url).map_err(|_| UpdateCommandError::OriginMismatch)?;
-    // Token renovado a cada consulta: o download pode acontecer bem depois.
-    let token = session.access_token().await?;
-
-    Ok(ResolvedSource {
-        manifest_url,
-        auth: Some(SourceAuth {
-            instance_url: account.base_url.clone(),
-            token,
-        }),
-        info: release_info(release),
-    })
-}
-
-fn release_info(release: GitlabRelease) -> ReleaseInfo {
-    ReleaseInfo {
-        name: release.name,
-        notes: release.description,
-        published_at: release.released_at,
-        web_url: release.web_url,
-    }
 }
 
 fn invalid_url(error: url::ParseError) -> UpdateCommandError {
@@ -507,30 +384,15 @@ fn invalid_url(error: url::ParseError) -> UpdateCommandError {
     }
 }
 
-/// Resolves the source down to the updater manifest. Only GitLab queries an
-/// API with credentials; the other sources are unauthenticated addresses.
-/// With `include_prereleases`, GitHub and the release server list their
+/// Resolves the source down to the updater manifest. With `include_prereleases`, GitHub and the release server list their
 /// releases to find the newest one, preview or not; a direct manifest is a
 /// single version and ignores it.
 async fn resolve_source(
     source: &UpdateSource,
     include_prereleases: bool,
-    accounts: &[GitlabAccount],
-    client: &GitlabClient,
-    credentials: &dyn CredentialStore,
     proxy: Option<&ProxyPlan>,
 ) -> Result<ResolvedSource, UpdateCommandError> {
     match source {
-        UpdateSource::Gitlab { project_url } => {
-            resolve_gitlab(
-                project_url,
-                include_prereleases,
-                accounts,
-                client,
-                credentials,
-            )
-            .await
-        }
         UpdateSource::Github { owner, repo } if include_prereleases => {
             resolve_github_newest(GITHUB_API, owner, repo, proxy).await
         }
@@ -541,7 +403,6 @@ async fn resolve_source(
                     "{repository}/releases/latest/download/{UPDATE_MANIFEST_ASSET}"
                 ))
                 .map_err(invalid_url)?,
-                auth: None,
                 info: ReleaseInfo {
                     web_url: Some(format!("{repository}/releases/latest")),
                     ..ReleaseInfo::default()
@@ -550,7 +411,6 @@ async fn resolve_source(
         }
         UpdateSource::Manifest { url } => Ok(ResolvedSource {
             manifest_url: Url::parse(url).map_err(invalid_url)?,
-            auth: None,
             info: ReleaseInfo::default(),
         }),
         UpdateSource::ReleaseServer { base_url } if include_prereleases => {
@@ -563,7 +423,6 @@ async fn resolve_source(
                 "{base_url}/v1/releases/latest/{UPDATE_MANIFEST_ASSET}"
             ))
             .map_err(invalid_url)?,
-            auth: None,
             info: ReleaseInfo {
                 web_url: Some(format!("{base_url}/")),
                 ..ReleaseInfo::default()
@@ -689,7 +548,7 @@ async fn resolve_github_newest(
     )?;
     Ok(ResolvedSource {
         manifest_url,
-        auth: None,
+
         info: ReleaseInfo {
             name: release.name,
             notes: release.body,
@@ -727,7 +586,7 @@ async fn resolve_release_server_newest(
                 UPDATE_MANIFEST_ASSET,
             ],
         )?,
-        auth: None,
+
         info: ReleaseInfo {
             web_url: Some(format!("{base_url}/")),
             ..ReleaseInfo::default()
@@ -759,31 +618,17 @@ async fn find_update(
     app: &AppHandle,
     source: &UpdateSource,
     include_prereleases: bool,
-    accounts: &[GitlabAccount],
-    client: &GitlabClient,
-    credentials: &dyn CredentialStore,
     proxy: Option<&ProxyPlan>,
 ) -> Result<Option<(Update, ReleaseInfo)>, UpdateCommandError> {
     if public_key(app).is_none() {
         return Err(UpdateCommandError::MissingPublicKey);
     }
-    let resolved = resolve_source(
-        source,
-        include_prereleases,
-        accounts,
-        client,
-        credentials,
-        proxy,
-    )
-    .await?;
+    let resolved = resolve_source(source, include_prereleases, proxy).await?;
 
     let mut builder = app
         .updater_builder()
         .endpoints(vec![resolved.manifest_url.clone()])?
         .configure_client(|builder| builder.connect_timeout(CONNECT_TIMEOUT));
-    if let Some(auth) = &resolved.auth {
-        builder = builder.header("Authorization", format!("Bearer {}", auth.token))?;
-    }
     builder = match updater_proxy(proxy, &resolved.manifest_url) {
         UpdaterProxy::Direct => builder.no_proxy(),
         UpdaterProxy::System => builder,
@@ -793,13 +638,6 @@ async fn find_update(
     let Some(update) = builder.build()?.check().await? else {
         return Ok(None);
     };
-    // Com credenciais, o pacote é baixado com o mesmo cabeçalho de
-    // autorização: só pode estar na instância.
-    if let Some(auth) = &resolved.auth {
-        if !is_instance_url(&auth.instance_url, update.download_url.as_str()) {
-            return Err(UpdateCommandError::OriginMismatch);
-        }
-    }
     Ok(Some((update, resolved.info)))
 }
 
@@ -856,7 +694,6 @@ impl ProgressReporter<'_> {
 fn view(
     app: &AppHandle,
     settings: &UpdateSettings,
-    accounts: &GitlabAccountsStore,
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
     let source = build_source().unwrap_or_else(|error| {
         log::warn!(target: "alcy::updates", "origem de atualizações inválida no build: {error:?}");
@@ -865,7 +702,6 @@ fn view(
     Ok(settings_dto(
         settings,
         source.as_ref(),
-        &accounts.load()?,
         current_version(app),
     ))
 }
@@ -874,9 +710,8 @@ fn view(
 pub fn get_update_settings(
     app: AppHandle,
     store: State<'_, UpdateSettingsStore>,
-    accounts: State<'_, GitlabAccountsStore>,
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
-    view(&app, &store.load()?, &accounts)
+    view(&app, &store.load()?)
 }
 
 /// Saves one preference and keeps the others. An unreadable file is
@@ -884,7 +719,6 @@ pub fn get_update_settings(
 fn save_preference(
     app: &AppHandle,
     store: &UpdateSettingsStore,
-    accounts: &GitlabAccountsStore,
     change: impl FnOnce(&mut UpdateSettings),
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
     crate::logging::logged_with(
@@ -894,7 +728,7 @@ fn save_preference(
             let mut settings = store.load().unwrap_or_default();
             change(&mut settings);
             store.save(&settings)?;
-            view(app, &settings, accounts)
+            view(app, &settings)
         },
     )
 }
@@ -913,10 +747,9 @@ pub fn set_update_check_on_startup(
     input: UpdatePreferenceInput,
     app: AppHandle,
     store: State<'_, UpdateSettingsStore>,
-    accounts: State<'_, GitlabAccountsStore>,
     usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
-    let result = save_preference(&app, &store, &accounts, |settings| {
+    let result = save_preference(&app, &store, |settings| {
         settings.check_on_startup = input.enabled;
     });
     crate::commands::usage_events::record_setting(
@@ -933,10 +766,9 @@ pub fn set_update_include_prereleases(
     input: UpdatePreferenceInput,
     app: AppHandle,
     store: State<'_, UpdateSettingsStore>,
-    accounts: State<'_, GitlabAccountsStore>,
     usage: State<'_, alcy_app::UsageHub>,
 ) -> Result<UpdateSettingsDto, UpdateCommandError> {
-    let result = save_preference(&app, &store, &accounts, |settings| {
+    let result = save_preference(&app, &store, |settings| {
         settings.include_prereleases = input.enabled;
     });
     crate::commands::usage_events::record_setting(
@@ -955,23 +787,11 @@ pub async fn check_for_update(
     app: AppHandle,
     registry: State<'_, ExecutionRegistry>,
     settings: State<'_, UpdateSettingsStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
     proxy: State<'_, ProxyApplyState>,
 ) -> Result<UpdateCheckDto, UpdateCommandError> {
     let source = required_source()?;
-    let accounts = accounts.load()?;
     let plan = proxy.plan();
-    let check = find_update(
-        &app,
-        &source,
-        include_prereleases(&settings),
-        &accounts,
-        &client,
-        &*credentials,
-        plan.as_ref(),
-    );
+    let check = find_update(&app, &source, include_prereleases(&settings), plan.as_ref());
     let found = crate::logging::logged(
         "alcy::updates",
         "verificar atualização",
@@ -998,30 +818,18 @@ pub async fn download_update(
     app: AppHandle,
     registry: State<'_, ExecutionRegistry>,
     settings: State<'_, UpdateSettingsStore>,
-    accounts: State<'_, GitlabAccountsStore>,
-    client: State<'_, GitlabClient>,
-    credentials: State<'_, KeyringCredentialStore>,
     proxy: State<'_, ProxyApplyState>,
     pending: State<'_, PendingUpdate>,
 ) -> Result<ReleaseDto, UpdateCommandError> {
     let source = required_source()?;
-    let accounts = accounts.load()?;
     let plan = proxy.plan();
     let include_prereleases = include_prereleases(&settings);
     pending.replace(None);
 
     let download = async {
-        let (update, info) = find_update(
-            &app,
-            &source,
-            include_prereleases,
-            &accounts,
-            &client,
-            &*credentials,
-            plan.as_ref(),
-        )
-        .await?
-        .ok_or(UpdateCommandError::NotAvailable)?;
+        let (update, info) = find_update(&app, &source, include_prereleases, plan.as_ref())
+            .await?
+            .ok_or(UpdateCommandError::NotAvailable)?;
 
         let mut progress = ProgressReporter {
             channel: &on_progress,
@@ -1126,10 +934,6 @@ fn backup_before_update(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    use alcy_app::CredentialError;
-    use alcy_gitlab::{TokenSet, save_tokens};
 
     #[test]
     fn macos_updates_need_a_writable_app_bundle() {
@@ -1149,99 +953,6 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[derive(Default)]
-    struct MemoryCredentials(Mutex<HashMap<String, String>>);
-
-    impl CredentialStore for MemoryCredentials {
-        fn load(&self, key: &str) -> Result<Option<String>, CredentialError> {
-            Ok(self.0.lock().unwrap().get(key).cloned())
-        }
-        fn save(&self, key: &str, secret: &str) -> Result<(), CredentialError> {
-            self.0.lock().unwrap().insert(key.into(), secret.into());
-            Ok(())
-        }
-        fn delete(&self, key: &str) -> Result<(), CredentialError> {
-            self.0.lock().unwrap().remove(key);
-            Ok(())
-        }
-    }
-
-    fn account(base_url: &str, username: &str) -> GitlabAccount {
-        GitlabAccount::new(
-            format!("{username}@{}", host_of(base_url)),
-            base_url,
-            "cid",
-            username,
-            username,
-        )
-        .unwrap()
-    }
-
-    fn credentials_for(accounts: &[GitlabAccount]) -> MemoryCredentials {
-        let credentials = MemoryCredentials::default();
-        for account in accounts {
-            save_tokens(
-                &credentials,
-                &account.id,
-                &TokenSet {
-                    access_token: "t".into(),
-                    refresh_token: None,
-                    expires_at: None,
-                },
-            )
-            .unwrap();
-        }
-        credentials
-    }
-
-    fn project_url(account: &GitlabAccount) -> String {
-        format!("{}/grupo/alcy", account.base_url)
-    }
-
-    async fn mount_project(server: &MockServer) {
-        Mock::given(method("GET"))
-            .and(path("/api/v4/projects/grupo%2Falcy"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id": 42,
-                "name": "Alcy",
-                "path_with_namespace": "grupo/alcy",
-                "web_url": format!("{}/grupo/alcy", server.uri())
-            })))
-            .mount(server)
-            .await;
-    }
-
-    async fn mount_releases(server: &MockServer, links: serde_json::Value) {
-        mount_project(server).await;
-        Mock::given(method("GET"))
-            .and(path("/api/v4/projects/42/releases"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!([{
-                    "tag_name": "v0.2.0",
-                    "name": "Alcy 0.2.0",
-                    "released_at": "2026-09-01T12:00:00Z",
-                    "assets": { "links": links }
-                }])),
-            )
-            .mount(server)
-            .await;
-    }
-
-    async fn resolve(server: &MockServer) -> Result<ResolvedSource, UpdateCommandError> {
-        let accounts = [account(&server.uri(), "u")];
-        resolve_source(
-            &UpdateSource::Gitlab {
-                project_url: project_url(&accounts[0]),
-            },
-            false,
-            &accounts,
-            &GitlabClient::new(),
-            &credentials_for(&accounts),
-            None,
-        )
-        .await
-    }
-
     async fn resolve_public(source: UpdateSource) -> ResolvedSource {
         try_resolve_public(source, false).await.unwrap()
     }
@@ -1250,15 +961,7 @@ mod tests {
         source: UpdateSource,
         include_prereleases: bool,
     ) -> Result<ResolvedSource, UpdateCommandError> {
-        resolve_source(
-            &source,
-            include_prereleases,
-            &[],
-            &GitlabClient::new(),
-            &credentials_for(&[]),
-            None,
-        )
-        .await
+        resolve_source(&source, include_prereleases, None).await
     }
 
     #[test]
@@ -1268,12 +971,6 @@ mod tests {
 
     #[test]
     fn reads_every_provider_from_the_build_env() {
-        assert_eq!(
-            configured_source(Some("gitlab"), Some("https://gitlab.corp/grupo/alcy/")),
-            Ok(Some(UpdateSource::Gitlab {
-                project_url: "https://gitlab.corp/grupo/alcy".into()
-            }))
-        );
         assert_eq!(
             configured_source(Some("github"), Some("empresa/alcy")),
             Ok(Some(UpdateSource::Github {
@@ -1313,9 +1010,6 @@ mod tests {
     fn rejects_an_invalid_build_env() {
         for (provider, url) in [
             ("bitbucket", Some("http://srv")),
-            ("gitlab", None),
-            ("gitlab", Some("  ")),
-            ("gitlab", Some("gitlab.corp")),
             ("github", Some("alcy")),
             ("releaseServer", None),
             ("releaseServer", Some("alcy-releases:32761")),
@@ -1333,80 +1027,38 @@ mod tests {
     #[test]
     fn errors_serialize_with_a_kind_tag() {
         assert_eq!(
-            serde_json::to_value(UpdateCommandError::NoAccount {
-                host: "gitlab.corp".into()
-            })
-            .unwrap(),
-            serde_json::json!({"kind": "noAccount", "host": "gitlab.corp"})
-        );
-        assert_eq!(
             serde_json::to_value(UpdateCommandError::MissingPublicKey).unwrap(),
             serde_json::json!({"kind": "missingPublicKey"})
         );
     }
 
     #[test]
-    fn settings_dto_shows_the_account_used_by_gitlab() {
-        let settings = UpdateSettings::default();
-        let source = UpdateSource::Gitlab {
-            project_url: "https://gitlab.corp/grupo/alcy".into(),
-        };
-        let accounts = [
-            account("https://gitlab.com", "outra"),
-            account("https://gitlab.corp", "u"),
-        ];
-
-        let dto = settings_dto(&settings, Some(&source), &accounts, "0.1.0".into());
-        assert_eq!(dto.current_version, "0.1.0");
-        assert_eq!(
-            dto.source,
-            Some(UpdateSourceDto {
-                provider: UpdateProviderDto::Gitlab,
-                location: "https://gitlab.corp/grupo/alcy".into(),
-                host: "gitlab.corp".into(),
-                requires_account: true,
-                account_id: Some("u@gitlab.corp".into()),
-            })
-        );
-
-        let dto = settings_dto(&settings, Some(&source), &accounts[..1], "0.1.0".into());
-        assert_eq!(dto.source.unwrap().account_id, None);
-
-        let dto = settings_dto(&settings, None, &accounts, "0.1.0".into());
-        assert_eq!(dto.source, None);
-    }
-
-    #[test]
-    fn public_providers_need_no_account() {
+    fn sources_are_described_for_the_interface() {
         let github = UpdateSource::Github {
             owner: "empresa".into(),
             repo: "alcy".into(),
         };
         assert_eq!(
-            source_dto(&github, &[]),
+            source_dto(&github),
             UpdateSourceDto {
                 provider: UpdateProviderDto::Github,
                 location: "empresa/alcy".into(),
                 host: "github.com".into(),
-                requires_account: false,
-                account_id: None,
             }
         );
         let manifest = UpdateSource::Manifest {
             url: "https://cdn.corp/alcy/latest.json".into(),
         };
-        assert!(!source_dto(&manifest, &[]).requires_account);
+        assert_eq!(source_dto(&manifest).host, "cdn.corp");
         let server = UpdateSource::ReleaseServer {
             base_url: "http://alcy-releases.interno:32761".into(),
         };
         assert_eq!(
-            source_dto(&server, &[]),
+            source_dto(&server),
             UpdateSourceDto {
                 provider: UpdateProviderDto::ReleaseServer,
                 location: "http://alcy-releases.interno:32761".into(),
                 host: "alcy-releases.interno".into(),
-                requires_account: false,
-                account_id: None,
             }
         );
     }
@@ -1423,7 +1075,6 @@ mod tests {
             resolved.manifest_url.as_str(),
             "https://github.com/empresa/alcy/releases/latest/download/latest.json"
         );
-        assert!(resolved.auth.is_none());
         assert_eq!(
             resolved.info.web_url.as_deref(),
             Some("https://github.com/empresa/alcy/releases/latest")
@@ -1441,7 +1092,6 @@ mod tests {
             resolved.manifest_url.as_str(),
             "https://cdn.corp/alcy/latest.json"
         );
-        assert!(resolved.auth.is_none());
     }
 
     #[tokio::test]
@@ -1462,7 +1112,6 @@ mod tests {
             .await;
 
             assert_eq!(resolved.manifest_url.as_str(), expected);
-            assert!(resolved.auth.is_none());
             assert_eq!(resolved.info.web_url, Some(format!("{base_url}/")));
         }
     }
@@ -1520,7 +1169,6 @@ mod tests {
             resolved.manifest_url.as_str(),
             "https://github.com/empresa/alcy/releases/download/v0.9.1-preview02/latest.json"
         );
-        assert!(resolved.auth.is_none());
         assert_eq!(resolved.info.name.as_deref(), Some("Alcy 0.9.1 preview 2"));
         assert_eq!(resolved.info.notes.as_deref(), Some("- Novidades"));
         assert_eq!(
@@ -1608,116 +1256,8 @@ mod tests {
     }
 
     #[test]
-    fn the_most_specific_account_wins() {
-        let accounts = [
-            account("https://corp.com", "raiz"),
-            account("https://corp.com/gitlab", "sub"),
-        ];
-
-        let (chosen, path) = account_for("https://corp.com/gitlab/grupo/alcy", &accounts).unwrap();
-
-        assert_eq!(chosen.id, accounts[1].id);
-        assert_eq!(path, "grupo/alcy");
-    }
-
-    #[tokio::test]
-    async fn a_release_requires_an_account_for_the_instance() {
-        let accounts = [account("https://gitlab.com", "u")];
-        let result = resolve_gitlab(
-            "https://gitlab.corp/grupo/alcy",
-            false,
-            &accounts,
-            &GitlabClient::new(),
-            &credentials_for(&accounts),
-        )
-        .await;
-
-        assert!(matches!(
-            result,
-            Err(UpdateCommandError::NoAccount { host }) if host == "gitlab.corp"
-        ));
-    }
-
-    #[tokio::test]
-    async fn a_missing_project_is_not_found() {
-        let server = MockServer::start().await;
-
-        let result = resolve(&server).await;
-
-        assert!(matches!(result, Err(UpdateCommandError::NotFound { .. })));
-    }
-
-    #[tokio::test]
-    async fn a_release_without_the_manifest_is_reported_by_tag() {
-        let server = MockServer::start().await;
-        mount_releases(
-            &server,
-            serde_json::json!([{ "name": "Alcy.exe", "url": format!("{}/a.exe", server.uri()) }]),
-        )
-        .await;
-
-        let result = resolve(&server).await;
-
-        assert!(matches!(
-            result,
-            Err(UpdateCommandError::NoManifest { tag }) if tag == "v0.2.0"
-        ));
-    }
-
-    #[tokio::test]
-    async fn a_manifest_outside_the_instance_is_rejected() {
-        let server = MockServer::start().await;
-        mount_releases(
-            &server,
-            serde_json::json!([{ "name": "latest.json", "url": "https://evil.example/latest.json" }]),
-        )
-        .await;
-
-        let result = resolve(&server).await;
-
-        assert!(matches!(result, Err(UpdateCommandError::OriginMismatch)));
-    }
-
-    #[tokio::test]
-    async fn a_project_without_releases_is_reported() {
-        let server = MockServer::start().await;
-        mount_project(&server).await;
-        Mock::given(method("GET"))
-            .and(path("/api/v4/projects/42/releases"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-            .mount(&server)
-            .await;
-
-        let result = resolve(&server).await;
-
-        assert!(matches!(result, Err(UpdateCommandError::NoReleases)));
-    }
-
-    #[tokio::test]
-    async fn resolves_the_manifest_of_the_latest_release() {
-        let server = MockServer::start().await;
-        let manifest = format!(
-            "{}/api/v4/projects/42/packages/generic/alcy/0.2.0/latest.json",
-            server.uri()
-        );
-        mount_releases(
-            &server,
-            serde_json::json!([{ "name": "latest.json", "url": manifest }]),
-        )
-        .await;
-
-        let resolved = resolve(&server).await.unwrap();
-
-        assert_eq!(resolved.manifest_url.as_str(), manifest);
-        assert_eq!(resolved.info.name.as_deref(), Some("Alcy 0.2.0"));
-        let auth = resolved.auth.unwrap();
-        assert_eq!(auth.instance_url, server.uri());
-        assert_eq!(auth.token, "t");
-    }
-
-    #[test]
     fn the_updater_follows_the_applied_proxy_plan() {
-        let target = Url::parse("https://gitlab.corp/latest.json").unwrap();
+        let target = Url::parse("https://updates.corp/latest.json").unwrap();
         assert!(matches!(updater_proxy(None, &target), UpdaterProxy::Direct));
         assert!(matches!(
             updater_proxy(Some(&ProxyPlan::Disabled), &target),
@@ -1730,7 +1270,7 @@ mod tests {
 
         let script = alcy_http_proxy::PacScript::new(
             r#"function FindProxyForURL(url, host) {
-                return host === "gitlab.corp" ? "PROXY proxy.corp:3128" : "DIRECT";
+                return host === "updates.corp" ? "PROXY proxy.corp:3128" : "DIRECT";
             }"#,
         )
         .unwrap();

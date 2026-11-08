@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { cancelGitlabOperation } from '../../bindings/cancel-gitlab-operation'
+import { cancelVersionControlOperation } from '../../bindings/cancel-version-control-operation'
 import { getStructuredFileChanges } from '../../bindings/get-structured-file-changes'
-import type { FileStatusDto, ItemChangeKind } from '../../bindings/gitlab-types'
+import type { FileStatusDto, ItemChangeKind } from '../../bindings/version-control-types'
 
 /**
  * Mapa id do item (sem o prefixo `kind:` de `ChangedItemDto.id`) → tipo de
@@ -50,7 +50,7 @@ export function useChangedItemMarkers(rootPath: string, files: FileStatusDto[]):
 
     return () => {
       cancelled = true
-      operationIds.forEach((id) => void cancelGitlabOperation(id))
+      operationIds.forEach((id) => void cancelVersionControlOperation(id))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `changedFiles` é recriado a cada render; `key` já resume o que importa (nomes + estados).
   }, [rootPath, key])

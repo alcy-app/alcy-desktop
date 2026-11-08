@@ -5,16 +5,16 @@ import { PullReviewModal } from './PullReviewModal'
 
 const previewPullChanges = vi.fn()
 const getStructuredFileChanges = vi.fn()
-const cancelGitlabOperation = vi.fn()
+const cancelVersionControlOperation = vi.fn()
 
 vi.mock('../../bindings/preview-pull-changes', () => ({ previewPullChanges: (...a: unknown[]) => previewPullChanges(...a) }))
 vi.mock('../../bindings/get-structured-file-changes', () => ({ getStructuredFileChanges: (...a: unknown[]) => getStructuredFileChanges(...a) }))
-vi.mock('../../bindings/cancel-gitlab-operation', () => ({ cancelGitlabOperation: (...a: unknown[]) => cancelGitlabOperation(...a) }))
+vi.mock('../../bindings/cancel-version-control-operation', () => ({ cancelVersionControlOperation: (...a: unknown[]) => cancelVersionControlOperation(...a) }))
 
 const ROOT = '/work/space'
 
 beforeEach(() => {
-  for (const mock of [previewPullChanges, getStructuredFileChanges, cancelGitlabOperation]) mock.mockReset()
+  for (const mock of [previewPullChanges, getStructuredFileChanges, cancelVersionControlOperation]) mock.mockReset()
   getStructuredFileChanges.mockResolvedValue({
     ok: true,
     value: { name: 'alcy-collections.json', localRevision: 'l', remoteRevision: 'r', supportsPartial: true, items: [] },

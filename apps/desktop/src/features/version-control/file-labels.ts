@@ -1,4 +1,4 @@
-import type { ChangedItemDto } from '../../bindings/gitlab-types'
+import type { ChangedItemDto } from '../../bindings/version-control-types'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
 import type { TranslationKey } from '../../shared/i18n/translations'
 

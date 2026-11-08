@@ -7,7 +7,7 @@ const RELEASE: ReleaseDto = {
   name: null,
   notes: null,
   publishedAt: '2026-09-01T12:00:00Z',
-  webUrl: 'https://gitlab.corp/grupo/alcy/-/releases/v0.2.0',
+  webUrl: 'https://git.example.com/grupo/alcy/-/releases/v0.2.0',
   installable: true,
 }
 

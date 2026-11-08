@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { WorkspaceDto } from '../../bindings/create-workspace'
 import type { RecentWorkspaceDto } from '../../bindings/list-recent-workspaces'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { ImportWorkspaceDialog } from '../../shared/workspace-import/ImportWorkspaceDialog'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
@@ -41,6 +42,7 @@ export function WorkspaceMenu({
   }, [state.isOpen, state.pendingRemoval])
 
   return (
+    <>
     <OptionsMenu
       label={t('workspaceMenu.triggerAria', { name: currentWorkspace.name, scope: scopeLabel })}
       isOpen={state.isOpen}
@@ -71,6 +73,8 @@ export function WorkspaceMenu({
         )}
       </div>
     </OptionsMenu>
+    {state.importDialogOpen && <ImportWorkspaceDialog onClose={state.closeImportDialog} onWorkspaceReady={state.finishImport} />}
+    </>
   )
 }
 

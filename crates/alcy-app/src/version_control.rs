@@ -296,7 +296,7 @@ where
 {
     let names = link.tracked_files();
     let metas = try_join_all(names.iter().map(|name| {
-        let path = link.remote_path(name);
+        let path = name.to_string();
         async move { remote.file_meta(&path).await }
     }))
     .await?;
@@ -583,7 +583,7 @@ where
         return Err(VersionControlError::NotTracked(name.to_string()));
     }
     let local = files.read(name).map_err(VersionControlError::Files)?;
-    let remote_bytes = remote.read_file(&link.remote_path(name)).await?;
+    let remote_bytes = remote.read_file(name).await?;
     structured_file_changes_from_content(name, local, remote_bytes)
 }
 
@@ -968,7 +968,7 @@ where
         {
             return Err(VersionControlError::StaleSelection);
         }
-        let remote_content = remote.read_file(&link.remote_path(entry.name)).await?;
+        let remote_content = remote.read_file(entry.name).await?;
         if remote_content.as_deref().map(content_hash) != entry.remote.sha256 {
             return Err(VersionControlError::StaleSelection);
         }
@@ -978,7 +978,7 @@ where
             entry.local.as_deref(),
             selection,
         )?;
-        let path = link.remote_path(entry.name);
+        let path = entry.name.to_string();
         let last_commit_id = entry.remote.last_commit_id.clone();
         let action = match (&entry.remote.sha256, &content) {
             (None, Some(content)) => CommitAction::Create {
@@ -1121,7 +1121,7 @@ where
         match entry.state(&link) {
             FileState::Conflict => conflicts.push(entry.name.to_string()),
             FileState::RemoteChanged => {
-                let path = link.remote_path(entry.name);
+                let path = entry.name.to_string();
                 match &entry.remote.sha256 {
                     None if entry.name == MANIFEST_FILE => skipped.push(entry.name.to_string()),
                     None => {
@@ -1215,7 +1215,7 @@ where
     {
         return Err(VersionControlError::StaleSelection);
     }
-    let remote_bytes = remote.read_file(&healed_link.remote_path(name)).await?;
+    let remote_bytes = remote.read_file(name).await?;
     if remote_bytes.as_deref().map(content_hash) != entry.remote.sha256 {
         return Err(VersionControlError::StaleSelection);
     }
@@ -1309,7 +1309,7 @@ where
             }
             Some(_) => {
                 let bytes = remote
-                    .read_file(&link.remote_path(name))
+                    .read_file(name)
                     .await?
                     .ok_or_else(|| RemoteError::NotFound(name.to_string()))?;
                 files
@@ -1340,7 +1340,7 @@ where
             {
                 return Err(VersionControlError::StaleSelection);
             }
-            let remote_bytes = remote.read_file(&link.remote_path(name)).await?;
+            let remote_bytes = remote.read_file(name).await?;
             if remote_bytes.as_deref().map(content_hash) != entry.remote.sha256 {
                 return Err(VersionControlError::StaleSelection);
             }
@@ -1405,7 +1405,7 @@ where
     }
 
     let local = files.read(name).map_err(VersionControlError::Files)?;
-    let remote_bytes = remote.read_file(&link.remote_path(name)).await?;
+    let remote_bytes = remote.read_file(name).await?;
 
     let mut diff = FileDiff {
         name: name.to_string(),
@@ -1670,7 +1670,7 @@ mod tests {
         }
     }
 
-    /// Remote without multi-file transactions (OneDrive, ADR 0063): applies
+    /// Remote without multi-file transactions: applies
     /// the first action and then fails, like a connection drop mid-push.
     struct NonAtomicRemote(FakeRemote);
 
@@ -1694,7 +1694,7 @@ mod tests {
     }
 
     fn link() -> WorkspaceLink {
-        WorkspaceLink::gitlab("acc", 1, "eq/proj", "main", "", false).unwrap()
+        WorkspaceLink::new(false)
     }
 
     fn states(status: &VersionStatus) -> Vec<(String, FileState)> {

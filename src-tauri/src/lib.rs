@@ -5,16 +5,13 @@ mod window_state;
 
 use alcy_agent::AgentHttpClient;
 use alcy_app::UsageHub;
-use alcy_gitlab::GitlabClient;
 use alcy_graphql::ReqwestGraphqlExecutor;
-use alcy_onedrive::OnedriveClient;
 use alcy_platform::KeyringCredentialStore;
 use alcy_rest::ReqwestRestExecutor;
 use alcy_storage::{
-    ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitIdentityStore, GitPeerStore,
-    GitlabAccountsStore, LocalSecrets, OnedriveAccountsStore, ProxySettingsStore,
-    RecentWorkspacesStore, SchemaStore, SecuritySettingsStore, TlsSettingsStore,
-    UpdateSettingsStore, UsagePreferencesStore,
+    ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitIdentityStore, LocalSecrets,
+    ProxySettingsStore, RecentWorkspacesStore, SchemaStore, SecuritySettingsStore,
+    TlsSettingsStore, UpdateSettingsStore, UsagePreferencesStore,
 };
 use commands::agent::{
     AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, compact_agent_session,
@@ -63,10 +60,6 @@ use commands::general_settings::{
     is_previous_install, save_general_settings,
 };
 use commands::get_load_run_history::{get_load_run_history, get_load_run_samples};
-use commands::gitlab::{
-    begin_gitlab_login, cancel_gitlab_operation, list_gitlab_accounts, list_gitlab_branches,
-    list_gitlab_projects, logout_gitlab, test_gitlab_connection,
-};
 use commands::grpc::{
     GrpcCalls, GrpcSchemaCache, close_grpc_send, execute_grpc_request, load_grpc_schema,
     send_grpc_message,
@@ -84,21 +77,16 @@ use commands::load_dataset_assets::copy_load_dataset_asset;
 use commands::load_schema::load_schema;
 use commands::load_test_import::{analyze_load_test_import, commit_load_test_import};
 use commands::local_git::{
-    LocalGitProvider, abort_git_merge, create_git_branch, delete_git_branch, finish_git_merge,
-    get_git_commit_changes, get_git_history, get_git_identity, get_git_peers, get_git_state,
-    merge_git_branch, restore_git_file, save_git_identity, set_git_shared_folder,
-    switch_git_branch, sync_git_shared_folder,
+    LocalGitProvider, abort_git_merge, clone_git_workspace, create_git_branch, delete_git_branch,
+    fetch_git_remote, finish_git_merge, get_git_commit_changes, get_git_history, get_git_identity,
+    get_git_state, merge_git_branch, pull_git_remote, push_git_remote, restore_git_file,
+    save_git_identity, set_git_remote, switch_git_branch,
 };
 use commands::mock_servers::{
     MockServerRuntime, clear_mock_calls, delete_mock_server, get_mock_server, list_mock_calls,
     list_mock_servers, save_mock_server, start_mock_server, stop_mock_server, validate_mock_server,
 };
 use commands::notify_when_unfocused::notify_when_unfocused;
-use commands::onedrive::{
-    OnedriveProvider, begin_onedrive_login, create_onedrive_team_workspace, get_onedrive_root,
-    get_onedrive_team_catalog, list_onedrive_accounts, list_onedrive_folders, list_onedrive_teams,
-    logout_onedrive, resolve_onedrive_share_link,
-};
 use commands::open_external_url::open_external_url;
 use commands::preview_load_flow::preview_load_flow;
 use commands::proxy_settings::{
@@ -117,7 +105,6 @@ use commands::session_cookies::{
     SessionCookies, clear_session_cookies, delete_session_cookie, list_session_cookies,
 };
 use commands::tab_session::{load_tab_session, save_tab_session};
-use commands::team_workspaces::open_onedrive_team_workspace;
 use commands::tls_settings::{apply_saved_tls_settings, get_tls_settings, save_tls_settings};
 use commands::updates::{
     PendingUpdate, cancel_update_operation, check_for_update, download_update, get_update_settings,
@@ -129,10 +116,10 @@ use commands::usage_events::{
 };
 use commands::value_monitors::{evaluate_value_monitors, list_value_monitors, save_value_monitors};
 use commands::version_control::{
-    VersionControlFiles, commit_and_push, get_file_diff, get_local_version_status,
-    get_structured_file_changes, get_version_status, get_workspace_link, link_workspace,
-    preview_conflict_resolution, preview_pull_changes, pull_changes, resolve_conflict,
-    unlink_workspace,
+    VersionControlFiles, cancel_version_control_operation, commit_and_push, get_file_diff,
+    get_local_version_status, get_structured_file_changes, get_version_status, get_workspace_link,
+    link_workspace, preview_conflict_resolution, preview_pull_changes, pull_changes,
+    resolve_conflict, unlink_workspace,
 };
 use commands::websocket::{
     WebSocketSessions, close_websocket, execute_websocket_request, send_websocket_message,
@@ -276,7 +263,6 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(ImportFetcher::new())
         .manage(PreparedImports::default())
         .manage(ApiDocsStore::new())
-        .manage(GitlabClient::new())
         .manage(KeyringCredentialStore::new("alcy"))
         .manage(AgentHttpClient::new())
         .manage(AgentRuns::default())
@@ -328,7 +314,7 @@ pub fn run_with(extensions: Vec<Extension>) {
             commands::scripting::init_script_packages(app_data_dir.join("script-packages"));
             app.manage(SchemaStore::new(app_data_dir.join("schema-cache")));
             app.manage(VersionControlCaches::new(
-                app_data_dir.join("gitlab-content-cache"),
+                app_data_dir.join("version-control-cache"),
             ));
             app.manage(RecentWorkspacesStore::new(
                 app_data_dir.join("recent-workspaces.json"),
@@ -336,17 +322,9 @@ pub fn run_with(extensions: Vec<Extension>) {
             app.manage(ProxySettingsStore::new(
                 app_data_dir.join("proxy-settings.json"),
             ));
-            app.manage(GitlabAccountsStore::new(
-                app_data_dir.join("gitlab-accounts.json"),
-            ));
-            app.manage(LocalGitProvider::new(
-                GitIdentityStore::new(app_data_dir.join("git-identity.json")),
-                GitPeerStore::new(app_data_dir.join("git-peer-id")),
-            ));
-            app.manage(OnedriveProvider {
-                client: OnedriveClient::new(),
-                accounts: OnedriveAccountsStore::new(app_data_dir.join("onedrive-accounts.json")),
-            });
+            app.manage(LocalGitProvider::new(GitIdentityStore::new(
+                app_data_dir.join("git-identity.json"),
+            )));
             app.manage(AgentPaths {
                 settings: app_data_dir.join("agent-settings.json"),
                 sessions: app_data_dir.join("agent-sessions"),
@@ -373,8 +351,6 @@ pub fn run_with(extensions: Vec<Extension>) {
                 &app.state::<ReqwestRestExecutor>(),
                 &app.state::<ImportFetcher>(),
                 RemoteHttpClients {
-                    gitlab: &app.state::<GitlabClient>(),
-                    onedrive: &app.state::<OnedriveProvider>().client,
                     agent: &app.state::<AgentHttpClient>(),
                 },
             );
@@ -423,8 +399,6 @@ pub fn run_with(extensions: Vec<Extension>) {
                     &handle.state::<ReqwestRestExecutor>(),
                     &handle.state::<ImportFetcher>(),
                     RemoteHttpClients {
-                        gitlab: &handle.state::<GitlabClient>(),
-                        onedrive: &handle.state::<OnedriveProvider>().client,
                         agent: &handle.state::<AgentHttpClient>(),
                     },
                 )
@@ -537,23 +511,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 save_general_settings,
                 get_security_settings,
                 save_security_settings,
-                list_gitlab_accounts,
-                begin_gitlab_login,
-                cancel_gitlab_operation,
-                logout_gitlab,
-                test_gitlab_connection,
-                list_gitlab_projects,
-                list_gitlab_branches,
-                list_onedrive_accounts,
-                begin_onedrive_login,
-                logout_onedrive,
-                get_onedrive_root,
-                list_onedrive_folders,
-                resolve_onedrive_share_link,
-                list_onedrive_teams,
-                get_onedrive_team_catalog,
-                create_onedrive_team_workspace,
-                open_onedrive_team_workspace,
+                cancel_version_control_operation,
                 get_workspace_link,
                 link_workspace,
                 unlink_workspace,
@@ -576,9 +534,11 @@ pub fn run_with(extensions: Vec<Extension>) {
                 get_git_history,
                 get_git_commit_changes,
                 restore_git_file,
-                set_git_shared_folder,
-                get_git_peers,
-                sync_git_shared_folder,
+                set_git_remote,
+                fetch_git_remote,
+                pull_git_remote,
+                push_git_remote,
+                clone_git_workspace,
                 get_git_identity,
                 save_git_identity,
                 list_collections,

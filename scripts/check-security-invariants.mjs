@@ -2,8 +2,8 @@
 // Sensor offline das garantias de segurança e privacidade do Alcy: falha se
 // uma mudança abrir a WebView para a rede, ampliar as permissões do Tauri,
 // introduzir SDK de telemetria, dependência fora dos registros oficiais,
-// script de instalação, build script novo, execução de processos ou
-// desativação de TLS fora do ponto revisado. Cada
+// script de instalação, build script novo, execução de processos fora do
+// ponto revisado ou desativação de TLS fora do ponto revisado. Cada
 // exceção precisa de revisão e de atualização deste arquivo.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
@@ -273,14 +273,30 @@ for (const entry of readdirSync(join(ROOT, 'crates'))) {
 const FORBIDDEN_RUST = [
   [/\b(std::process::Command|tokio::process|process::Command)\b/, 'execução de processos'],
 ]
+// Single reviewed exception (ADR 0074): the system's `git`, for the
+// operations that talk to a remote. One use, in this file, with the
+// arguments built as a vector and the `ext::`/`fd::` transports disabled.
+// A second use, or any other file, needs a new review.
+const PROCESS_EXCEPTION = 'crates/alcy-git/src/cli.rs'
 for (const file of rustRoots.flatMap((dir) => collectFiles(dir, (name) => name.endsWith('.rs')))) {
+  const path = relative(ROOT, file).split(sep).join('/')
+  let allowed = path === PROCESS_EXCEPTION ? 1 : 0
   const lines = readFileSync(file, 'utf8').split('\n')
   lines.forEach((line, index) => {
     if (line.trimStart().startsWith('//')) return
     for (const [pattern, reason] of FORBIDDEN_RUST) {
-      if (pattern.test(line)) fail(`${relative(ROOT, file)}:${index + 1}: ${reason} exige revisão de segurança.`)
+      if (!pattern.test(line)) continue
+      if (allowed > 0) {
+        allowed -= 1
+        continue
+      }
+      fail(`${path}:${index + 1}: ${reason} exige revisão de segurança.`)
     }
   })
+}
+const processException = readFileSync(join(ROOT, PROCESS_EXCEPTION), 'utf8')
+for (const guard of ['protocol.ext.allow=never', 'protocol.fd.allow=never', 'GIT_TERMINAL_PROMPT', 'kill_on_drop(true)', 'Stdio::null()']) {
+  if (!processException.includes(guard)) fail(`${PROCESS_EXCEPTION}: perdeu a proteção \`${guard}\` da execução do git (ADR 0074).`)
 }
 
 // A verificação de certificado só pode ser desligada num ponto revisado: o
