@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "alcy-desktop"
-version = "0.10.0-preview01"
+version = "0.10.0"
 dependencies = [
  "alcy-agent",
  "alcy-app",

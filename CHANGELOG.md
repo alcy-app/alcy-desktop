@@ -6,11 +6,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## Unreleased
 
-### Added
-
-- **Versão para macOS**: o Alcy passa a ter instalador `.dmg` para Macs com Apple Silicon e Intel (macOS 13.3 ou mais recente), com atualização automática pelo app. Como o app ainda não é assinado pela Apple, na primeira instalação é preciso liberá-lo uma vez no Terminal.
-
-## [0.10.0-preview01]
+## [0.10.0]
 
 ### Added
 
