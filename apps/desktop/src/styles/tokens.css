@@ -15,15 +15,16 @@
   --accent-strong: #4a3bc0;
   --on-accent: #fff;
   --caret: #14171f;
-  --backdrop: rgba(20, 23, 31, 0.4);
+  --backdrop: rgba(20, 23, 31, 0.24);
   --preview-bg: #fff;
   --success: #15803d;
   --warning: #b45309;
   --error: #dc2626;
   --info: #2563eb;
-  --shadow-sm: 0 2px 8px rgba(20, 23, 31, 0.08);
-  --shadow-md: 0 8px 24px rgba(20, 23, 31, 0.12);
-  --shadow-lg: 0 16px 44px rgba(20, 23, 31, 0.18);
+  /* One layer with no offset, so the shadow is even on all four sides. */
+  --shadow-sm: 0 0 4px rgba(20, 23, 31, 0.08);
+  --shadow-md: 0 0 12px rgba(20, 23, 31, 0.1);
+  --shadow-lg: 0 0 20px rgba(20, 23, 31, 0.12);
 
   /* Colors: derived. */
   --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
