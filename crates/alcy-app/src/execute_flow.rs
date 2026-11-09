@@ -219,6 +219,12 @@ where
 
     loop {
         while let Some(work) = scheduler.next_work() {
+            // Scripts may change the environment while a request is in flight.
+            // Refresh before dispatch, including reevaluation of a completed loop body.
+            let current_environment = executor.environment_snapshot();
+            let environment_variables = current_environment
+                .as_deref()
+                .unwrap_or(environment_variables);
             let node_id = match work {
                 Work::Node(node_id) => node_id,
                 Work::LoopCheck(while_id) => {
@@ -3805,6 +3811,84 @@ mod tests {
         assert_eq!(
             outcome_of(&events, "after"),
             vec!["Completed { message: Some(\"fim 3\") }"]
+        );
+    }
+
+    #[tokio::test]
+    async fn request_environment_writes_reach_loop_checks_and_subsequent_nodes() {
+        struct UpdatingExecutor {
+            index: Mutex<u32>,
+        }
+
+        impl RequestExecutor for UpdatingExecutor {
+            fn environment_snapshot(&self) -> Option<Vec<EnvironmentVariable>> {
+                Some(vec![
+                    EnvironmentVariable::new(
+                        "index",
+                        self.index.lock().unwrap().to_string(),
+                        false,
+                    )
+                    .unwrap(),
+                ])
+            }
+
+            async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {
+                let mut index = self.index.lock().unwrap();
+                assert_eq!(
+                    request.endpoint.url(),
+                    format!("https://api.example.com/{index}")
+                );
+                *index += 1;
+                Ok(Response::new(
+                    200,
+                    0,
+                    "{}",
+                    vec![],
+                    ResponseMetadata::default(),
+                ))
+            }
+        }
+
+        let flow = build_flow(
+            vec![
+                node("start", FlowNodeKind::Start),
+                while_node("while", "{{index}}", ComparisonOperator::LessThan, "3", 5),
+                inline_request_node(
+                    "req",
+                    "https://api.example.com/{{index}}",
+                    Authentication::None,
+                ),
+                log_node("log", "{{index}}"),
+                if_node("after", "{{index}}", ComparisonOperator::Equals, "3"),
+            ],
+            vec![
+                edge("e1", "start", "while"),
+                handled_edge("e2", "while", "req", "loop"),
+                handled_edge("e3", "req", "log", "success"),
+                handled_edge("e4", "while", "after", "done"),
+            ],
+        );
+        let executor = UpdatingExecutor {
+            index: Mutex::new(0),
+        };
+        let events = run(&flow, &[], &executor).await;
+
+        assert_eq!(*executor.index.lock().unwrap(), 3);
+        assert_eq!(
+            outcome_of(&events, "while").last().unwrap(),
+            "LoopFinished { iterations: 3 }"
+        );
+        assert_eq!(
+            outcome_of(&events, "log"),
+            vec![
+                "Completed { message: Some(\"1\") }",
+                "Completed { message: Some(\"2\") }",
+                "Completed { message: Some(\"3\") }",
+            ]
+        );
+        assert_eq!(
+            outcome_of(&events, "after"),
+            vec!["Branched { result: true, message: None }"]
         );
     }
 

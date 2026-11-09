@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use alcy_app::RequestExecutor;
 use alcy_domain::{
-    BodyEncoding, Collection, Endpoint, ExecutionError, HeaderEntry, HttpMethod, Request, Response,
-    ScopedVariableChange, VariableScope, VariableScopeKind, apply_scoped_changes,
-    record_scoped_change, variable_scopes,
+    BodyEncoding, Collection, Endpoint, EnvironmentVariable, ExecutionError, HeaderEntry,
+    HttpMethod, Request, Response, ScopedVariableChange, VariableScope, VariableScopeKind,
+    apply_scoped_changes, record_scoped_change, variable_scopes,
 };
 use alcy_script_packages::{
     PackageCache, PackageError, esm_sh_client, fetch_from_esm_sh, resolve_packages,
@@ -620,7 +620,8 @@ pub(crate) async fn run_post_response_in(
     Ok(())
 }
 
-/// Flow scripts wrap already-resolved requests. Accumulate writes for later scripts and return effects at run end; template interpolation retains existing flow environment semantics.
+/// Flow scripts wrap resolved requests and expose their updated environment to the scheduler.
+/// Accumulated effects are still returned at run end for persistence and presentation.
 pub(crate) struct ScriptingExecutor<'a> {
     inner: ProtocolDispatchingExecutor<'a>,
     /// Collections provide saved-request collection/folder script scopes.
@@ -662,7 +663,7 @@ impl<'a> ScriptingExecutor<'a> {
             .unwrap_or_default()
     }
 
-    fn environment_snapshot(&self) -> Vec<EnvironmentVariableDto> {
+    fn script_environment_snapshot(&self) -> Vec<EnvironmentVariableDto> {
         self.environment
             .lock()
             .map(|environment| environment.clone())
@@ -724,7 +725,7 @@ impl<'a> ScriptingExecutor<'a> {
             return self.inner.execute(request).await;
         }
 
-        let mut environment = self.environment_snapshot();
+        let mut environment = self.script_environment_snapshot();
         let mut scopes = self.scopes_snapshot(request_id);
         let mut local = ScriptEffects {
             runtime_variables: self.runtime_snapshot(),
@@ -773,6 +774,18 @@ pub(crate) fn script_failure(error: ScriptErrorOutput) -> ExecutionError {
 }
 
 impl RequestExecutor for ScriptingExecutor<'_> {
+    fn environment_snapshot(&self) -> Option<Vec<EnvironmentVariable>> {
+        self.environment.lock().ok().map(|environment| {
+            environment
+                .iter()
+                .filter_map(|variable| {
+                    EnvironmentVariable::new(&variable.name, &variable.value, variable.sensitive)
+                        .ok()
+                })
+                .collect()
+        })
+    }
+
     async fn execute(&self, request: &Request) -> Result<Response, ExecutionError> {
         self.run_with_scripts(None, request).await
     }
@@ -845,6 +858,60 @@ mod tests {
                 value: Some("t".to_string()),
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn exposes_script_environment_updates_and_removals_to_flow_dispatch() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let graphql = ReqwestGraphqlExecutor::new();
+        let rest = ReqwestRestExecutor::new();
+        let executor = ScriptingExecutor::new(
+            ProtocolDispatchingExecutor {
+                app: None,
+                graphql: &graphql,
+                rest: &rest,
+                workspace_root: std::path::Path::new(""),
+            },
+            &[],
+            vec![
+                EnvironmentVariableDto {
+                    name: "index".into(),
+                    value: "0".into(),
+                    sensitive: true,
+                },
+                EnvironmentVariableDto {
+                    name: "removed".into(),
+                    value: "old".into(),
+                    sensitive: false,
+                },
+            ],
+        );
+        executor.execute(&rest_request(
+            &server.uri(),
+            "",
+            "al.environment.set('index', Number(al.environment.get('index')) + 1); al.environment.unset('removed'); al.environment.set('created', 'new');",
+        )).await.unwrap();
+
+        let variables = RequestExecutor::environment_snapshot(&executor).unwrap();
+        assert_eq!(variables.len(), 2);
+        let index = variables.iter().find(|v| v.name() == "index").unwrap();
+        assert_eq!(index.value(), "1");
+        assert!(index.sensitive);
+        assert_eq!(
+            variables
+                .iter()
+                .find(|v| v.name() == "created")
+                .unwrap()
+                .value(),
+            "new"
+        );
+        // Reading the live snapshot must not consume effects needed at run end.
+        assert_eq!(executor.take_effects().environment_changes.len(), 3);
     }
 
     #[tokio::test]

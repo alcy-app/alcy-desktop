@@ -134,6 +134,14 @@ Flows control mock servers through the `MockServerControl` port in `alcy-app`, i
 
 ### Flow editing and output inspection
 
+Standard flow dispatch reads the current environment through the optional
+`RequestExecutor::environment_snapshot` port, implemented by the scripting
+adapter. Script writes and removals are visible to subsequent nodes and While
+condition checks in the same run. Stateless executors keep the initial snapshot;
+collection/folder precedence and flow-local variable overrides remain unchanged.
+Independent branches have no ordering guarantee beyond their graph dependencies.
+Environment persistence still uses the accumulated script effects at run end.
+
 Flow export is a local native operation. React captures the current editor graph
 and active environment, requests a bounded dependency summary, and offers to keep
 references or embed linked requests and external variables. The pure `alcy-app`

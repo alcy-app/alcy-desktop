@@ -1,10 +1,10 @@
 use std::future::Future;
 use std::time::Duration;
 
-use alcy_domain::{ExecutionError, Request, Response};
+use alcy_domain::{EnvironmentVariable, ExecutionError, Request, Response};
 
-/// Fases que um executor HTTP conseguiu observar. A ausência de uma fase não
-/// representa duração zero: só significa que o transporte não a expõe.
+/// Transport phases observed by an HTTP executor. An absent phase means the
+/// transport does not expose it, rather than a zero duration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RequestExecutionTimings {
     pub dns: Option<Duration>,
@@ -15,33 +15,30 @@ pub struct RequestExecutionTimings {
     pub receiving: Option<Duration>,
 }
 
-/// Resposta opcionalmente instrumentada. Mantém a porta de requests genérica:
-/// consumidores sem interesse nas fases continuam chamando `execute`.
+/// A response with optional transport telemetry. Consumers without timing
+/// requirements can keep calling `execute`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentedResponse {
     pub response: Response,
     pub timings: RequestExecutionTimings,
 }
 
-/// Porta para executar uma requisição contra um servidor, independente do
-/// protocolo (`Request.document.protocol` diz qual é).
-///
-/// Implementada por um adapter de infraestrutura por protocolo (ex.:
-/// `alcy-graphql`, `alcy-rest`). O caso de uso depende só desta abstração,
-/// não de um cliente HTTP concreto.
-///
-/// Usa `-> impl Future + Send` em vez de `async fn` porque commands Tauri
-/// rodam em um runtime multi-thread; `async fn` em trait não permite
-/// declarar esse bound (`Send`) na assinatura.
+/// Protocol-independent request execution, implemented by infrastructure adapters.
+/// Application use cases depend on this port rather than a concrete HTTP client.
+/// Futures explicitly require Send because native commands use a multithreaded runtime.
 pub trait RequestExecutor {
+    /// Current run environment, including script writes and removals. Stateless
+    /// executors return None so callers retain their initial environment.
+    fn environment_snapshot(&self) -> Option<Vec<EnvironmentVariable>> {
+        None
+    }
+
     fn execute(
         &self,
         request: &Request,
     ) -> impl Future<Output = Result<Response, ExecutionError>> + Send;
 
-    /// Variante que permite ao adapter HTTP expor telemetria sem obrigar os
-    /// demais executores a instrumentar suas respostas. A implementação
-    /// padrão preserva a compatibilidade de todos os adaptadores existentes.
+    /// Optional transport telemetry with a default for uninstrumented adapters.
     fn execute_instrumented(
         &self,
         request: &Request,
@@ -59,9 +56,7 @@ pub trait RequestExecutor {
         }
     }
 
-    /// Como `execute`, sabendo de qual requisição salva `request` veio —
-    /// para executores que precisam do contexto dela na coleção (ex.:
-    /// scripts com `al.collection`/`al.folder`, ADR 0031).
+    /// Execute with saved-request identity for collection/folder script scopes (ADR 0031).
     fn execute_saved(
         &self,
         request_id: &str,
