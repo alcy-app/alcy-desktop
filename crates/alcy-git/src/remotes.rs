@@ -14,6 +14,7 @@ use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
 use gix::refs::{FullName, Target};
 
 use crate::cli::{git, validate_remote_url};
+use crate::ownership::CLONED_COPY_KEY;
 use crate::repo::{blob_at, commit_tree, head, short_name};
 use crate::workspace::{Applied, Incoming, Integration, ensure_no_merge, integrate, is_fresh};
 use crate::{GitError, open_workspace, ref_target, rejected};
@@ -248,7 +249,8 @@ pub async fn clone(url: &str, destination: &Path) -> Result<(), GitError> {
     if destination.exists() {
         return Err(GitError::DestinationExists);
     }
-    let mut command = args(["clone", "--"]);
+    let marker = format!("{CLONED_COPY_KEY}=true");
+    let mut command = args(["clone", "--config", &marker, "--"]);
     command.push(OsString::from(&url));
     command.push(destination.as_os_str().to_owned());
     git(None, &command).await?;

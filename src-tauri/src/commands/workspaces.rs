@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use alcy_domain::Workspace;
+use alcy_domain::{GitIdentity, Workspace};
+use alcy_git::{FileDeletion, file_deletion};
 use alcy_storage::{
     RecentWorkspaceEntry, RecentWorkspacesStore, StorageError, WorkspaceLinkStore, WorkspaceStore,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+
+use super::local_git::LocalGitProvider;
 
 pub(super) const WORKSPACES_FOLDER_NAME: &str = "Alcy Workspaces";
 const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
@@ -100,11 +103,26 @@ pub struct RemoveWorkspaceInput {
     pub delete_files: bool,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRemovalOptionsInput {
+    pub root_path: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRemovalOptionsDto {
+    pub can_delete_files: bool,
+    /// Who can, when this person cannot.
+    pub owner_name: Option<String>,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum WorkspaceCommandError {
     Invalid { message: String },
     NotAWorkspace { message: String },
+    NotOwner { message: String },
     Storage { message: String },
 }
 
@@ -306,14 +324,72 @@ fn rename_workspace_inner(
 pub async fn remove_workspace(
     input: RemoveWorkspaceInput,
     recent_store: tauri::State<'_, RecentWorkspacesStore>,
+    git: tauri::State<'_, LocalGitProvider>,
 ) -> Result<Vec<RecentWorkspaceDto>, WorkspaceCommandError> {
     let recent_store = RecentWorkspacesStore::clone(&recent_store);
-    let result = run_blocking(move || remove_workspace_inner(input, &recent_store)).await;
+    let result = match current_identity(&git, input.delete_files) {
+        Ok(identity) => {
+            run_blocking(move || remove_workspace_inner(input, identity, &recent_store)).await
+        }
+        Err(error) => Err(error),
+    };
     crate::logging::logged("alcy::workspace", "remover workspace", result)
+}
+
+/// The git user, read only when deleting files needs it: taking a workspace
+/// off the list must keep working whatever state that setting is in.
+fn current_identity(
+    git: &LocalGitProvider,
+    needed: bool,
+) -> Result<Option<GitIdentity>, WorkspaceCommandError> {
+    if !needed {
+        return Ok(None);
+    }
+    git.resolved_identity().map_err(storage_error)
+}
+
+fn file_deletion_of(
+    root_path: &std::path::Path,
+    identity: Option<&GitIdentity>,
+) -> Result<FileDeletion, WorkspaceCommandError> {
+    file_deletion(root_path, identity).map_err(|error| WorkspaceCommandError::Storage {
+        message: error.to_string(),
+    })
+}
+
+/// What removing this workspace can do for the current git user, asked when
+/// the confirmation opens (the walk to the first commit stays out of the list
+/// of recent workspaces).
+#[tauri::command]
+pub async fn get_workspace_removal_options(
+    input: WorkspaceRemovalOptionsInput,
+    git: tauri::State<'_, LocalGitProvider>,
+) -> Result<WorkspaceRemovalOptionsDto, WorkspaceCommandError> {
+    let result = match current_identity(&git, true) {
+        Ok(identity) => {
+            run_blocking(move || {
+                let root_path = PathBuf::from(input.root_path);
+                Ok(match file_deletion_of(&root_path, identity.as_ref())? {
+                    FileDeletion::Allowed => WorkspaceRemovalOptionsDto {
+                        can_delete_files: true,
+                        owner_name: None,
+                    },
+                    FileDeletion::OwnerOnly(owner) => WorkspaceRemovalOptionsDto {
+                        can_delete_files: false,
+                        owner_name: Some(owner.name),
+                    },
+                })
+            })
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    crate::logging::logged("alcy::workspace", "ler opções de remoção", result)
 }
 
 fn remove_workspace_inner(
     input: RemoveWorkspaceInput,
+    identity: Option<GitIdentity>,
     recent_store: &RecentWorkspacesStore,
 ) -> Result<Vec<RecentWorkspaceDto>, WorkspaceCommandError> {
     let root_path = PathBuf::from(&input.root_path);
@@ -328,6 +404,12 @@ fn remove_workspace_inner(
                 StorageError::NotFound(message) => WorkspaceCommandError::NotAWorkspace { message },
                 other => storage_error(other),
             })?;
+
+        if let FileDeletion::OwnerOnly(owner) = file_deletion_of(&root_path, identity.as_ref())? {
+            return Err(WorkspaceCommandError::NotOwner {
+                message: owner.name,
+            });
+        }
 
         std::fs::remove_dir_all(&root_path).map_err(|error| WorkspaceCommandError::Storage {
             message: error.to_string(),
@@ -662,6 +744,7 @@ mod tests {
                 root_path: created.root_path.clone(),
                 delete_files: false,
             },
+            None,
             &recent_store,
         )
         .unwrap();
@@ -692,6 +775,7 @@ mod tests {
                 root_path: created.root_path.clone(),
                 delete_files: true,
             },
+            None,
             &recent_store,
         )
         .unwrap();
@@ -714,6 +798,7 @@ mod tests {
                 root_path: root.to_string_lossy().to_string(),
                 delete_files: true,
             },
+            None,
             &recent_store,
         )
         .unwrap_err();
@@ -723,5 +808,74 @@ mod tests {
 
         fs::remove_dir_all(&root).ok();
         fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+    }
+
+    /// A repository in `root` whose first commit is by Ana.
+    fn commit_as_ana(root: &std::path::Path) {
+        let link = alcy_domain::WorkspaceLink::new(false);
+        alcy_git::init_workspace(root, "main", &link.tracked_files()).unwrap();
+        let files = alcy_storage::DiskWorkspaceFiles::new(root.to_path_buf());
+        let remote = alcy_git::WorkspaceRemote::new(
+            root.to_path_buf(),
+            Some(GitIdentity::new("Ana", "ana@example.com").unwrap()),
+            alcy_git::BlobHashCache::default(),
+        );
+        tauri::async_runtime::block_on(async {
+            let status = alcy_app::version_status(&files, &remote, &link)
+                .await
+                .unwrap();
+            alcy_app::push_changes(&files, &remote, &status.link, "Initial")
+                .await
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn only_the_repository_owner_deletes_the_files() {
+        let documents_dir = temp_dir("remove-owner-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let created = create_workspace_inner(
+            CreateWorkspaceInput {
+                id: "workspace-1".to_string(),
+            },
+            documents_dir.clone(),
+            &recent_store,
+        )
+        .unwrap();
+        let root = PathBuf::from(&created.root_path);
+        commit_as_ana(&root);
+        let input = || RemoveWorkspaceInput {
+            root_path: created.root_path.clone(),
+            delete_files: true,
+        };
+
+        let refused = remove_workspace_inner(
+            input(),
+            Some(GitIdentity::new("Bia", "bia@example.com").unwrap()),
+            &recent_store,
+        );
+        let kept_on_disk = root.exists();
+        let kept_on_list = list_recent_workspaces_inner(&recent_store).unwrap().len();
+
+        let allowed = remove_workspace_inner(
+            input(),
+            Some(GitIdentity::new("Ana", "ANA@example.com").unwrap()),
+            &recent_store,
+        );
+        let deleted = !root.exists();
+
+        fs::remove_dir_all(&documents_dir).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+
+        assert_eq!(
+            refused,
+            Err(WorkspaceCommandError::NotOwner {
+                message: "Ana".to_string()
+            })
+        );
+        assert!(kept_on_disk);
+        assert_eq!(kept_on_list, 1);
+        assert_eq!(allowed, Ok(Vec::new()));
+        assert!(deleted);
     }
 }

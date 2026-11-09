@@ -8,6 +8,11 @@ const listRecentWorkspaces = vi.fn()
 const pickWorkspaceFolder = vi.fn()
 const removeWorkspace = vi.fn()
 const renameWorkspace = vi.fn()
+const getWorkspaceRemovalOptions = vi.fn()
+
+vi.mock('../../bindings/get-workspace-removal-options', () => ({
+  getWorkspaceRemovalOptions: (...args: unknown[]) => getWorkspaceRemovalOptions(...args),
+}))
 
 vi.mock('../../bindings/create-workspace', () => ({
   createWorkspace: (...args: unknown[]) => createWorkspace(...args),
@@ -42,6 +47,8 @@ beforeEach(() => {
   pickWorkspaceFolder.mockReset()
   removeWorkspace.mockReset()
   renameWorkspace.mockReset()
+  getWorkspaceRemovalOptions.mockReset()
+  getWorkspaceRemovalOptions.mockResolvedValue({ ok: true, value: { canDeleteFiles: true, ownerName: null } })
   listRecentWorkspaces.mockResolvedValue({ ok: true, value: [{ rootPath: currentWorkspace.rootPath, name: 'Current' }] })
 })
 
@@ -352,5 +359,47 @@ describe('WorkspaceMenu', () => {
       expect(removeWorkspace).toHaveBeenCalledWith({ rootPath: currentWorkspace.rootPath, deleteFiles: true }),
     )
     await waitFor(() => expect(onExitToStartScreen).toHaveBeenCalled())
+  })
+
+  function renderAndAskToRemoveCurrent() {
+    render(
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={vi.fn()} onExitToStartScreen={vi.fn()} />,
+    )
+    openMenu()
+    return screen.findByRole('button', { name: 'Remover workspace Current' }).then((button) => fireEvent.click(button))
+  }
+
+  it('só oferece remover da lista a quem não é o dono do repositório', async () => {
+    getWorkspaceRemovalOptions.mockResolvedValue({ ok: true, value: { canDeleteFiles: false, ownerName: 'Ana' } })
+    removeWorkspace.mockResolvedValue({ ok: true, value: [] })
+
+    await renderAndAskToRemoveCurrent()
+
+    expect(await screen.findByText(/Só Ana, quem iniciou o Git/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Apagar também os arquivos' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remover apenas da lista' }))
+
+    await waitFor(() =>
+      expect(removeWorkspace).toHaveBeenCalledWith({ rootPath: currentWorkspace.rootPath, deleteFiles: false }),
+    )
+  })
+
+  it('não deixa apagar os arquivos enquanto verifica o dono', async () => {
+    getWorkspaceRemovalOptions.mockReturnValue(new Promise(() => {}))
+
+    await renderAndAskToRemoveCurrent()
+
+    expect(await screen.findByRole('button', { name: 'Apagar também os arquivos' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remover apenas da lista' })).toBeEnabled()
+  })
+
+  it('mantém os arquivos quando não consegue verificar o dono', async () => {
+    getWorkspaceRemovalOptions.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'broken' } })
+
+    await renderAndAskToRemoveCurrent()
+
+    expect(await screen.findByText(/Não foi possível confirmar quem iniciou o Git/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Apagar também os arquivos' })).not.toBeInTheDocument()
   })
 })

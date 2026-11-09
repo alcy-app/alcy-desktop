@@ -2262,6 +2262,9 @@ const ptBR = {
   'workspaceMenu.confirmForgetOnlyHint': 'Os arquivos continuam em {path}. Você pode importar este workspace de novo depois.',
   'workspaceMenu.confirmDeleteFiles': 'Apagar também os arquivos',
   'workspaceMenu.confirmDeleteFilesHint': 'Apaga a pasta e todo o conteúdo do disco. Esta ação não pode ser desfeita.',
+  'workspaceMenu.confirmOwnerOnly': 'Só {owner}, quem iniciou o Git, pode apagar os arquivos. Remover da lista não afeta as outras pessoas.',
+  'workspaceMenu.confirmOwnerUnknown': 'Não foi possível confirmar quem iniciou o Git, então os arquivos não podem ser apagados agora. Remover da lista não afeta as outras pessoas.',
+  'workspaceMenu.errorNotOwner': 'Só {message}, quem iniciou o Git, pode apagar os arquivos deste workspace.',
   'workspaceMenu.removing': 'Removendo…',
 
   // titlebar (single bar merged with the window, replaces the OS decoration)

@@ -9,7 +9,9 @@ use alcy_domain::{GitIdentity, GitIdentitySettings, WorkspaceLink};
 use alcy_git::{
     Applied, BlobHashCache, HistoryPage, Integration, MAX_HISTORY_PAGE, Tracking, WorkspaceRemote,
 };
-use alcy_storage::{GitIdentityStore, RecentWorkspacesStore, WorkspaceLinkStore, WorkspaceStore};
+use alcy_storage::{
+    GitIdentityStore, RecentWorkspacesStore, StorageError, WorkspaceLinkStore, WorkspaceStore,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
@@ -58,6 +60,10 @@ impl LocalGitProvider {
     /// Author for the next commit: the Alcy override, field by field over the
     /// system's git config.
     pub fn identity(&self) -> Result<Option<GitIdentity>, RemoteCommandError> {
+        Ok(self.resolved_identity()?)
+    }
+
+    pub(super) fn resolved_identity(&self) -> Result<Option<GitIdentity>, StorageError> {
         let settings = self.identity.load()?;
         let system = alcy_git::system_identity();
         Ok(settings.resolve(system.name.as_deref(), system.email.as_deref()))

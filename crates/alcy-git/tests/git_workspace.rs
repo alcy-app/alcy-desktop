@@ -9,10 +9,10 @@ use alcy_app::{
 };
 use alcy_domain::{FileState, GitIdentity, WorkspaceLink};
 use alcy_git::{
-    BlobHashCache, GitError, Integration, Tracking, WorkspaceRemote, abort_merge, checkout, clone,
-    create_branch, delete_branch, fetch, file_versions, finish_merge, git_state, history,
-    init_workspace, merge_branch, merge_upstream, push, restore_file, set_remote,
-    versions_environments,
+    BlobHashCache, FileDeletion, GitError, Integration, RepositoryOwner, Tracking, WorkspaceRemote,
+    abort_merge, checkout, clone, create_branch, delete_branch, fetch, file_deletion,
+    file_versions, finish_merge, git_state, history, init_workspace, merge_branch, merge_upstream,
+    push, restore_file, set_remote, versions_environments,
 };
 use serde_json::{Value, json};
 
@@ -601,4 +601,79 @@ async fn clone_needs_a_new_folder_and_an_alcy_workspace() {
         clone(&missing.to_string_lossy(), &parent.path().join("x")).await,
         Err(GitError::Command(_))
     ));
+}
+
+fn owner_only_ana() -> FileDeletion {
+    FileDeletion::OwnerOnly(RepositoryOwner {
+        name: "Ana".to_string(),
+        email: "ana@example.com".to_string(),
+    })
+}
+
+#[tokio::test]
+async fn only_the_first_author_may_delete_a_folder_everyone_shares() {
+    let mut workspace = seeded("Ana");
+    let ana = workspace.identity.clone();
+    let bia = GitIdentity::new("Bia", "bia@example.com").unwrap();
+
+    // Without commits there is no owner yet.
+    assert_eq!(
+        file_deletion(&workspace.root, Some(&bia)).unwrap(),
+        FileDeletion::Allowed
+    );
+
+    workspace.commit("Initial").await;
+    assert_eq!(
+        file_deletion(&workspace.root, Some(&ana)).unwrap(),
+        FileDeletion::Allowed
+    );
+    assert_eq!(
+        file_deletion(&workspace.root, Some(&bia)).unwrap(),
+        owner_only_ana()
+    );
+    assert_eq!(
+        file_deletion(&workspace.root, None).unwrap(),
+        owner_only_ana()
+    );
+
+    // Committing later does not make someone else the owner.
+    workspace.identity = bia.clone();
+    workspace.write(
+        COLLECTIONS,
+        &collections(json!([{ "id": "r1", "name": "Login", "url": "/v2/login" }])),
+    );
+    workspace.commit("Bia's change").await;
+    assert_eq!(
+        file_deletion(&workspace.root, Some(&bia)).unwrap(),
+        owner_only_ana()
+    );
+}
+
+#[tokio::test]
+async fn a_cloned_copy_can_be_deleted_by_whoever_made_it() {
+    let origin = origin("main");
+    let url = origin.path().to_string_lossy().to_string();
+    let mut ana = seeded("Ana");
+    ana.commit("Initial").await;
+    set_remote(&ana.root, Some(&url)).await.unwrap();
+    push(&ana.root).await.unwrap();
+
+    let bia = Workspace::cloned("Bia", origin.path()).await;
+
+    assert_eq!(
+        file_deletion(&bia.root, Some(&bia.identity)).unwrap(),
+        FileDeletion::Allowed
+    );
+}
+
+#[test]
+fn a_folder_without_a_repository_has_no_owner_and_a_broken_one_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        file_deletion(dir.path(), None).unwrap(),
+        FileDeletion::Allowed
+    );
+
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    assert!(file_deletion(dir.path(), None).is_err());
 }

@@ -108,7 +108,7 @@ function WorkspaceListView({ currentWorkspace, state, busy }: WorkspaceListViewP
               onStartRename={() => state.startRename(entry.rootPath)}
               onCommitRename={(draft) => void state.commitRename(entry, draft)}
               onCancelRename={state.cancelRename}
-              onRemove={() => state.requestRemoval(entry)}
+              onRemove={() => void state.requestRemoval(entry)}
             />
           ))}
         </ul>
@@ -249,6 +249,7 @@ interface RemovalConfirmViewProps {
 function RemovalConfirmView({ entry, state }: RemovalConfirmViewProps) {
   const { t } = useLanguage()
   const busy = state.busy !== 'idle'
+  const options = state.removalOptions
   const forgetHintId = useId()
   const deleteHintId = useId()
 
@@ -278,21 +279,29 @@ function RemovalConfirmView({ entry, state }: RemovalConfirmViewProps) {
         </span>
       </button>
 
-      <button
-        type="button"
-        className="ws-menu-confirm-option ws-menu-confirm-option--danger"
-        onClick={() => void state.confirmRemoval(true)}
-        aria-label={t('workspaceMenu.confirmDeleteFiles')}
-        aria-describedby={deleteHintId}
-        disabled={busy}
-      >
-        <span className="ws-menu-confirm-option-label" aria-hidden="true">
-          {t('workspaceMenu.confirmDeleteFiles')}
-        </span>
-        <span className="ws-menu-confirm-option-hint" id={deleteHintId}>
-          {t('workspaceMenu.confirmDeleteFilesHint')}
-        </span>
-      </button>
+      {options === null || options.canDeleteFiles ? (
+        <button
+          type="button"
+          className="ws-menu-confirm-option ws-menu-confirm-option--danger"
+          onClick={() => void state.confirmRemoval(true)}
+          aria-label={t('workspaceMenu.confirmDeleteFiles')}
+          aria-describedby={deleteHintId}
+          disabled={busy || options === null}
+        >
+          <span className="ws-menu-confirm-option-label" aria-hidden="true">
+            {t('workspaceMenu.confirmDeleteFiles')}
+          </span>
+          <span className="ws-menu-confirm-option-hint" id={deleteHintId}>
+            {t('workspaceMenu.confirmDeleteFilesHint')}
+          </span>
+        </button>
+      ) : (
+        <p className="ws-menu-confirm-hint">
+          {options.ownerName === null
+            ? t('workspaceMenu.confirmOwnerUnknown')
+            : t('workspaceMenu.confirmOwnerOnly', { owner: options.ownerName })}
+        </p>
+      )}
 
       <Button variant="ghost" onClick={state.cancelRemoval} disabled={busy}>
         {t('common.cancel')}

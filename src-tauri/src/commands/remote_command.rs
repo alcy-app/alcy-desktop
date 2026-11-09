@@ -97,6 +97,7 @@ impl From<super::workspaces::WorkspaceCommandError> for RemoteCommandError {
         match error {
             WorkspaceCommandError::Invalid { message } => Self::Invalid { message },
             WorkspaceCommandError::NotAWorkspace { message }
+            | WorkspaceCommandError::NotOwner { message }
             | WorkspaceCommandError::Storage { message } => Self::Storage { message },
         }
     }

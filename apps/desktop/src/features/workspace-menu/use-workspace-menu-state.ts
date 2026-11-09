@@ -1,6 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { createWorkspace } from '../../bindings/create-workspace'
 import type { WorkspaceCommandError, WorkspaceDto } from '../../bindings/create-workspace'
+import { getWorkspaceRemovalOptions } from '../../bindings/get-workspace-removal-options'
+import type { WorkspaceRemovalOptionsDto } from '../../bindings/get-workspace-removal-options'
 import { listRecentWorkspaces } from '../../bindings/list-recent-workspaces'
 import type { RecentWorkspaceDto } from '../../bindings/list-recent-workspaces'
 import { openWorkspace } from '../../bindings/open-workspace'
@@ -31,6 +33,9 @@ export function useWorkspaceMenuState({
   const [busy, setBusy] = useState<WorkspaceMenuBusyState>('idle')
   const [error, setError] = useState<WorkspaceCommandError | null>(null)
   const [pendingRemoval, setPendingRemoval] = useState<RecentWorkspaceDto | null>(null)
+  /** `null` while still checking who may delete the files. */
+  const [removalOptions, setRemovalOptions] = useState<WorkspaceRemovalOptionsDto | null>(null)
+  const removalRequestRef = useRef(0)
   const [renamingRootPath, setRenamingRootPath] = useState<string | null>(null)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
 
@@ -157,9 +162,15 @@ export function useWorkspaceMenuState({
     [currentWorkspace.rootPath, onLocalChange, onWorkspaceChange],
   )
 
-  const requestRemoval = useCallback((entry: RecentWorkspaceDto) => {
+  const requestRemoval = useCallback(async (entry: RecentWorkspaceDto) => {
+    const request = ++removalRequestRef.current
     setError(null)
     setPendingRemoval(entry)
+    setRemovalOptions(null)
+    const result = await getWorkspaceRemovalOptions({ rootPath: entry.rootPath })
+    if (request !== removalRequestRef.current) return
+    // A repository that cannot be read (mid-sync, say) keeps its files.
+    setRemovalOptions(result.ok ? result.value : { canDeleteFiles: false, ownerName: null })
   }, [])
 
   const cancelRemoval = useCallback(() => {
@@ -214,6 +225,7 @@ export function useWorkspaceMenuState({
     busy,
     error,
     pendingRemoval,
+    removalOptions,
     switchToRecent,
     create,
     importExisting,

@@ -5,6 +5,8 @@ export function workspaceErrorMessageKey(error: WorkspaceCommandError): Translat
   switch (error.kind) {
     case 'notAWorkspace':
       return 'startScreen.errorNotAWorkspace'
+    case 'notOwner':
+      return 'workspaceMenu.errorNotOwner'
     case 'invalid':
       return 'startScreen.errorInvalid'
     case 'storage':

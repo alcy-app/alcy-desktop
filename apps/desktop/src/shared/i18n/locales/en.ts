@@ -2268,6 +2268,9 @@ const en: Record<TranslationKey, string> = {
   'workspaceMenu.confirmForgetOnlyHint': 'The files stay at {path}. You can import this workspace again later.',
   'workspaceMenu.confirmDeleteFiles': 'Also delete the files',
   'workspaceMenu.confirmDeleteFilesHint': 'Deletes the folder and all its contents from disk. This cannot be undone.',
+  'workspaceMenu.confirmOwnerOnly': 'Only {owner}, who started Git here, can delete the files. Removing it from the list does not affect anyone else.',
+  'workspaceMenu.confirmOwnerUnknown': 'Could not confirm who started Git here, so the files cannot be deleted right now. Removing it from the list does not affect anyone else.',
+  'workspaceMenu.errorNotOwner': 'Only {message}, who started Git here, can delete the files of this workspace.',
   'workspaceMenu.removing': 'Removing…',
 
   // titlebar (single bar merged with the window, replaces the OS decoration)

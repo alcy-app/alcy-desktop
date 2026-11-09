@@ -10,6 +10,7 @@ mod cli;
 mod history;
 mod identity;
 mod merge_state;
+mod ownership;
 mod remote;
 mod remotes;
 mod repo;
@@ -20,6 +21,7 @@ pub use history::{
     CommitSummary, FileVersions, HistoryPage, MAX_HISTORY_PAGE, file_versions, history,
 };
 pub use identity::{SystemIdentity, system_identity};
+pub use ownership::{FileDeletion, RepositoryOwner, file_deletion};
 pub use remote::{BlobHashCache, WorkspaceRemote};
 pub use remotes::{
     REMOTE, Tracking, clone, discard_clone, fetch, merge_upstream, push, remote_url, set_remote,

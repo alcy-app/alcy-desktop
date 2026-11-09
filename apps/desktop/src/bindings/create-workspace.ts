@@ -9,6 +9,7 @@ export interface WorkspaceDto {
 export type WorkspaceCommandError =
   | { kind: 'invalid'; message: string }
   | { kind: 'notAWorkspace'; message: string }
+  | { kind: 'notOwner'; message: string }
   | { kind: 'storage'; message: string }
 
 export interface CreateWorkspaceInput {
