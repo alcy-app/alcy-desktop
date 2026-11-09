@@ -1,16 +1,21 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use alcy_domain::{GitIdentity, Workspace, WorkspaceLink};
+use alcy_domain::{GitIdentity, Workspace, WorkspaceLink, validate_workspace_folder_name};
 use alcy_git::{FileDeletion, file_deletion};
 use alcy_storage::{
-    DiskWorkspaceFiles, RecentWorkspaceEntry, RecentWorkspacesStore, StorageError,
-    WorkspaceLinkStore, WorkspaceStore,
+    AgentSessionStore, DiskWorkspaceFiles, RecentWorkspaceEntry, RecentWorkspacesStore,
+    StorageError, WorkspaceLinkStore, WorkspaceStore,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
+use super::agent::{AgentPaths, AgentRuns};
+use super::execution_registry::ExecutionRegistry;
+use super::flow_execution_registry::FlowExecutionRegistry;
 use super::local_git::LocalGitProvider;
+use super::workspace_operation_coordinator::WorkspaceOperationCoordinator;
 
 pub(super) const WORKSPACES_FOLDER_NAME: &str = "Alcy Workspaces";
 const DEFAULT_WORKSPACE_NAME: &str = "Workspace";
@@ -99,6 +104,19 @@ pub struct RenameWorkspaceInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RenameWorkspaceFolderInput {
+    pub root_path: String,
+    pub folder_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenWorkspaceFolderInput {
+    pub root_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoveWorkspaceInput {
     pub root_path: String,
     pub delete_files: bool,
@@ -124,6 +142,10 @@ pub enum WorkspaceCommandError {
     Invalid { message: String },
     NotAWorkspace { message: String },
     NotOwner { message: String },
+    InvalidFolderName { message: String },
+    FolderExists { message: String },
+    FolderInUse { message: String },
+    WorkspaceBusy { message: String },
     Storage { message: String },
 }
 
@@ -292,8 +314,8 @@ pub async fn rename_workspace(
     crate::logging::logged("alcy::workspace", "renomear workspace", result)
 }
 
-/// Troca só o nome gravado no manifesto — a pasta continua onde está, já
-/// que a raiz é a identidade do workspace (abas, vínculo Git, recentes).
+/// Changes only the name stored in the manifest. Moving the folder is
+/// `rename_workspace_folder`, since the root path changes with it.
 fn rename_workspace_inner(
     input: RenameWorkspaceInput,
     recent_store: &RecentWorkspacesStore,
@@ -317,6 +339,158 @@ fn rename_workspace_inner(
         .map_err(storage_error)?;
 
     Ok(workspace_to_dto(&workspace, input.root_path))
+}
+
+/// Renames the workspace folder on disk, which changes its root path. Git
+/// operations on the workspace finish first, and anything still running is
+/// refused: it would write to the old path when it ends and bring that folder
+/// back.
+#[tauri::command]
+pub async fn rename_workspace_folder(
+    input: RenameWorkspaceFolderInput,
+    recent_store: tauri::State<'_, RecentWorkspacesStore>,
+    agent_paths: tauri::State<'_, AgentPaths>,
+    coordinator: tauri::State<'_, WorkspaceOperationCoordinator>,
+    executions: tauri::State<'_, ExecutionRegistry>,
+    flows: tauri::State<'_, FlowExecutionRegistry>,
+    agents: tauri::State<'_, AgentRuns>,
+) -> Result<WorkspaceDto, WorkspaceCommandError> {
+    let recent_store = RecentWorkspacesStore::clone(&recent_store);
+    let sessions = AgentSessionStore::new(agent_paths.sessions.clone());
+    let root_path = PathBuf::from(&input.root_path);
+    let _workspace_guard = coordinator.write(&root_path).await;
+
+    let result = if executions.has_active() || flows.has_active() || agents.has_active() {
+        Err(WorkspaceCommandError::WorkspaceBusy {
+            message: input.root_path,
+        })
+    } else {
+        run_blocking(move || rename_workspace_folder_inner(input, &recent_store, &sessions)).await
+    };
+    crate::logging::logged("alcy::workspace", "renomear pasta do workspace", result)
+}
+
+fn rename_workspace_folder_inner(
+    input: RenameWorkspaceFolderInput,
+    recent_store: &RecentWorkspacesStore,
+    sessions: &AgentSessionStore,
+) -> Result<WorkspaceDto, WorkspaceCommandError> {
+    let old_root = PathBuf::from(&input.root_path);
+    let workspace = WorkspaceStore::new(old_root.clone())
+        .load()
+        .map_err(|error| match error {
+            StorageError::NotFound(message) => WorkspaceCommandError::NotAWorkspace { message },
+            other => storage_error(other),
+        })?;
+
+    let invalid_name = || WorkspaceCommandError::InvalidFolderName {
+        message: input.folder_name.clone(),
+    };
+    let folder_name =
+        validate_workspace_folder_name(&input.folder_name).map_err(|_| invalid_name())?;
+    let new_root = old_root
+        .parent()
+        .ok_or_else(invalid_name)?
+        .join(folder_name);
+
+    if new_root == old_root {
+        return Ok(workspace_to_dto(&workspace, input.root_path));
+    }
+    if is_taken_by_another_folder(&old_root, &new_root) {
+        return Err(WorkspaceCommandError::FolderExists {
+            message: folder_name.to_string(),
+        });
+    }
+
+    std::fs::rename(&old_root, &new_root).map_err(folder_rename_error)?;
+
+    // The list is what reopens the workspace, so a failure here undoes the move.
+    if let Err(error) = recent_store.relocate(&old_root, &new_root) {
+        let _ = std::fs::rename(&new_root, &old_root);
+        return Err(storage_error(error));
+    }
+
+    let new_root = new_root.to_string_lossy().to_string();
+    // The folder has moved by now: losing the link to old chats does not undo it.
+    if let Err(error) = sessions.relocate_workspace(&input.root_path, &new_root) {
+        log::warn!(target: "alcy::workspace", "agent chats did not follow the folder: {error}");
+    }
+
+    Ok(workspace_to_dto(&workspace, new_root))
+}
+
+/// `std::fs::rename` silently replaces an empty folder on Unix, so the
+/// destination is checked first. On a case-insensitive filesystem a change of
+/// case alone finds the workspace's own folder, which is not a conflict.
+fn is_taken_by_another_folder(old_root: &std::path::Path, new_root: &std::path::Path) -> bool {
+    if std::fs::symlink_metadata(new_root).is_err() {
+        return false;
+    }
+    match (old_root.canonicalize(), new_root.canonicalize()) {
+        (Ok(old), Ok(new)) => old != new,
+        _ => true,
+    }
+}
+
+/// Windows refuses to rename a folder while any program has a file open in it.
+fn folder_rename_error(error: std::io::Error) -> WorkspaceCommandError {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    let in_use = matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ResourceBusy
+    ) || (cfg!(windows) && error.raw_os_error() == Some(ERROR_SHARING_VIOLATION));
+
+    if in_use {
+        WorkspaceCommandError::FolderInUse {
+            message: error.to_string(),
+        }
+    } else {
+        WorkspaceCommandError::Storage {
+            message: error.to_string(),
+        }
+    }
+}
+
+/// Opens the workspace folder in the system file manager. Limited to folders
+/// on the list of recent workspaces, so the interface cannot use it to launch
+/// an arbitrary path.
+#[tauri::command]
+pub async fn open_workspace_folder(
+    input: OpenWorkspaceFolderInput,
+    app: tauri::AppHandle,
+    recent_store: tauri::State<'_, RecentWorkspacesStore>,
+) -> Result<(), WorkspaceCommandError> {
+    let recent_store = RecentWorkspacesStore::clone(&recent_store);
+    let result = run_blocking(move || {
+        let root_path = known_workspace_folder(&input.root_path, &recent_store)?;
+        app.opener()
+            .open_path(root_path.to_string_lossy(), None::<&str>)
+            .map_err(|error| WorkspaceCommandError::Storage {
+                message: error.to_string(),
+            })
+    })
+    .await;
+    crate::logging::logged("alcy::workspace", "abrir pasta do workspace", result)
+}
+
+fn known_workspace_folder(
+    root_path: &str,
+    recent_store: &RecentWorkspacesStore,
+) -> Result<PathBuf, WorkspaceCommandError> {
+    let path = PathBuf::from(root_path);
+    let is_recent = recent_store
+        .load()
+        .map_err(storage_error)?
+        .iter()
+        .any(|entry| entry.root_path == path);
+
+    if is_recent && path.is_dir() {
+        Ok(path)
+    } else {
+        Err(WorkspaceCommandError::NotAWorkspace {
+            message: root_path.to_string(),
+        })
+    }
 }
 
 /// Apagar a pasta (`remove_dir_all`) pode levar segundos num workspace com
@@ -765,6 +939,207 @@ mod tests {
         assert!(!root.exists());
 
         fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+    }
+
+    fn temp_sessions() -> (AgentSessionStore, PathBuf) {
+        let root = temp_dir("agent-sessions");
+        (AgentSessionStore::new(root.clone()), root)
+    }
+
+    fn folder_input(root_path: &str, folder_name: &str) -> RenameWorkspaceFolderInput {
+        RenameWorkspaceFolderInput {
+            root_path: root_path.to_string(),
+            folder_name: folder_name.to_string(),
+        }
+    }
+
+    #[test]
+    fn renaming_the_folder_moves_it_and_keeps_the_alias_and_the_list_position() {
+        let documents_dir = temp_dir("folder-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let (sessions, sessions_root) = temp_sessions();
+        let input = || CreateWorkspaceInput {
+            id: "workspace-1".to_string(),
+        };
+        let first = create_workspace_inner(input(), documents_dir.clone(), &recent_store).unwrap();
+        create_workspace_inner(input(), documents_dir.clone(), &recent_store).unwrap();
+
+        let renamed = rename_workspace_folder_inner(
+            folder_input(&first.root_path, "  payments  "),
+            &recent_store,
+            &sessions,
+        );
+        let recents = list_recent_workspaces_inner(&recent_store);
+        let old_exists = PathBuf::from(&first.root_path).exists();
+        let new_root = PathBuf::from(&first.root_path)
+            .parent()
+            .unwrap()
+            .join("payments");
+        let reopened = WorkspaceStore::new(new_root.clone()).load();
+
+        fs::remove_dir_all(&documents_dir).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+        fs::remove_dir_all(&sessions_root).ok();
+
+        let renamed = renamed.unwrap();
+        assert_eq!(renamed.name, "Workspace");
+        assert_eq!(renamed.root_path, new_root.to_string_lossy());
+        assert!(!old_exists);
+        assert_eq!(reopened.unwrap().name(), "Workspace");
+        assert_eq!(recents.unwrap()[1].root_path, renamed.root_path);
+    }
+
+    #[test]
+    fn renaming_the_folder_never_replaces_another_folder() {
+        let documents_dir = temp_dir("folder-taken-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let (sessions, sessions_root) = temp_sessions();
+        let created = create_workspace_inner(
+            CreateWorkspaceInput {
+                id: "workspace-1".to_string(),
+            },
+            documents_dir.clone(),
+            &recent_store,
+        )
+        .unwrap();
+        let taken = PathBuf::from(&created.root_path)
+            .parent()
+            .unwrap()
+            .join("taken");
+        fs::create_dir_all(&taken).unwrap();
+
+        let error = rename_workspace_folder_inner(
+            folder_input(&created.root_path, "taken"),
+            &recent_store,
+            &sessions,
+        );
+        let still_there = PathBuf::from(&created.root_path).exists();
+
+        fs::remove_dir_all(&documents_dir).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+        fs::remove_dir_all(&sessions_root).ok();
+
+        assert!(matches!(
+            error,
+            Err(WorkspaceCommandError::FolderExists { .. })
+        ));
+        assert!(still_there);
+    }
+
+    #[test]
+    fn renaming_the_folder_to_its_current_name_changes_nothing() {
+        let documents_dir = temp_dir("folder-same-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let (sessions, sessions_root) = temp_sessions();
+        let created = create_workspace_inner(
+            CreateWorkspaceInput {
+                id: "workspace-1".to_string(),
+            },
+            documents_dir.clone(),
+            &recent_store,
+        )
+        .unwrap();
+
+        let renamed = rename_workspace_folder_inner(
+            folder_input(&created.root_path, "Workspace"),
+            &recent_store,
+            &sessions,
+        );
+        let still_there = PathBuf::from(&created.root_path).exists();
+
+        fs::remove_dir_all(&documents_dir).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+        fs::remove_dir_all(&sessions_root).ok();
+
+        assert_eq!(renamed.unwrap().root_path, created.root_path);
+        assert!(still_there);
+    }
+
+    #[test]
+    fn renaming_the_folder_refuses_a_name_that_leaves_the_parent_folder() {
+        let documents_dir = temp_dir("folder-invalid-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let (sessions, sessions_root) = temp_sessions();
+        let created = create_workspace_inner(
+            CreateWorkspaceInput {
+                id: "workspace-1".to_string(),
+            },
+            documents_dir.clone(),
+            &recent_store,
+        )
+        .unwrap();
+
+        let error = rename_workspace_folder_inner(
+            folder_input(&created.root_path, "../escaped"),
+            &recent_store,
+            &sessions,
+        );
+        let still_there = PathBuf::from(&created.root_path).exists();
+
+        fs::remove_dir_all(&documents_dir).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+        fs::remove_dir_all(&sessions_root).ok();
+
+        assert!(matches!(
+            error,
+            Err(WorkspaceCommandError::InvalidFolderName { .. })
+        ));
+        assert!(still_there);
+    }
+
+    #[test]
+    fn renaming_the_folder_fails_when_it_is_not_a_workspace() {
+        let root = temp_dir("folder-not-a-workspace");
+        let (recent_store, recent_path) = temp_recent_store();
+        let (sessions, sessions_root) = temp_sessions();
+        fs::create_dir_all(&root).unwrap();
+
+        let error = rename_workspace_folder_inner(
+            folder_input(&root.to_string_lossy(), "other"),
+            &recent_store,
+            &sessions,
+        );
+
+        assert!(matches!(
+            error,
+            Err(WorkspaceCommandError::NotAWorkspace { .. })
+        ));
+        assert!(root.exists());
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+        fs::remove_dir_all(&sessions_root).ok();
+    }
+
+    #[test]
+    fn only_a_recent_workspace_folder_that_exists_can_be_opened() {
+        let documents_dir = temp_dir("open-folder-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let created = create_workspace_inner(
+            CreateWorkspaceInput {
+                id: "workspace-1".to_string(),
+            },
+            documents_dir.clone(),
+            &recent_store,
+        )
+        .unwrap();
+        let unknown = documents_dir.to_string_lossy().to_string();
+
+        let allowed = known_workspace_folder(&created.root_path, &recent_store);
+        let refused = known_workspace_folder(&unknown, &recent_store);
+        fs::remove_dir_all(&documents_dir).ok();
+        let missing = known_workspace_folder(&created.root_path, &recent_store);
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+
+        assert_eq!(allowed, Ok(PathBuf::from(&created.root_path)));
+        assert!(matches!(
+            refused,
+            Err(WorkspaceCommandError::NotAWorkspace { .. })
+        ));
+        assert!(matches!(
+            missing,
+            Err(WorkspaceCommandError::NotAWorkspace { .. })
+        ));
     }
 
     #[test]

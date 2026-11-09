@@ -67,6 +67,12 @@ pub struct AgentRuns {
     sequence: AtomicU64,
 }
 
+impl AgentRuns {
+    pub fn has_active(&self) -> bool {
+        !lock(&self.busy_sessions).is_empty()
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()

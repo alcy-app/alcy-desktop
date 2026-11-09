@@ -98,6 +98,10 @@ impl From<super::workspaces::WorkspaceCommandError> for RemoteCommandError {
             WorkspaceCommandError::Invalid { message } => Self::Invalid { message },
             WorkspaceCommandError::NotAWorkspace { message }
             | WorkspaceCommandError::NotOwner { message }
+            | WorkspaceCommandError::InvalidFolderName { message }
+            | WorkspaceCommandError::FolderExists { message }
+            | WorkspaceCommandError::FolderInUse { message }
+            | WorkspaceCommandError::WorkspaceBusy { message }
             | WorkspaceCommandError::Storage { message } => Self::Storage { message },
         }
     }

@@ -13,6 +13,40 @@ pub struct Workspace {
 pub enum WorkspaceError {
     #[error("nome do workspace não pode ser vazio")]
     EmptyName,
+    #[error("invalid workspace folder name")]
+    InvalidFolderName,
+}
+
+/// Longest folder name the common filesystems accept, in bytes.
+const MAX_FOLDER_NAME_BYTES: usize = 255;
+const FORBIDDEN_FOLDER_NAME_CHARS: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+const RESERVED_FOLDER_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// The folder name to use for `raw`, without surrounding spaces. The Windows
+/// rules apply on every platform because a workspace can be shared through
+/// Git or a network folder.
+pub fn validate_workspace_folder_name(raw: &str) -> Result<&str, WorkspaceError> {
+    let name = raw.trim();
+    let stem = name.split('.').next().unwrap_or(name);
+    let is_valid = !name.is_empty()
+        && name.len() <= MAX_FOLDER_NAME_BYTES
+        // Also rules out "." and "..".
+        && !name.ends_with('.')
+        && !name
+            .chars()
+            .any(|c| c.is_control() || FORBIDDEN_FOLDER_NAME_CHARS.contains(&c))
+        && !RESERVED_FOLDER_NAMES
+            .iter()
+            .any(|reserved| stem.eq_ignore_ascii_case(reserved));
+
+    if is_valid {
+        Ok(name)
+    } else {
+        Err(WorkspaceError::InvalidFolderName)
+    }
 }
 
 impl Workspace {
@@ -68,6 +102,48 @@ mod tests {
             Workspace::new("workspace-1", "   "),
             Err(WorkspaceError::EmptyName)
         );
+    }
+
+    #[test]
+    fn accepts_a_folder_name_without_its_surrounding_spaces() {
+        assert_eq!(
+            validate_workspace_folder_name("  Payments API v1.2  "),
+            Ok("Payments API v1.2")
+        );
+    }
+
+    #[test]
+    fn rejects_folder_names_that_would_escape_or_break_a_filesystem() {
+        let too_long = "a".repeat(256);
+        for name in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "trailing.",
+            "a/b",
+            "a\\b",
+            "a:b",
+            "what?",
+            "tab\tname",
+            "CON",
+            "nul.txt",
+            "Lpt9",
+            too_long.as_str(),
+        ] {
+            assert_eq!(
+                validate_workspace_folder_name(name),
+                Err(WorkspaceError::InvalidFolderName),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_folder_names_that_only_resemble_a_reserved_one() {
+        for name in ["Console", "COM10", ".hidden"] {
+            assert_eq!(validate_workspace_folder_name(name), Ok(name));
+        }
     }
 
     #[test]

@@ -8,10 +8,23 @@ import type { RecentWorkspaceDto } from '../../bindings/list-recent-workspaces'
 import { openWorkspace } from '../../bindings/open-workspace'
 import { pickWorkspaceFolder } from '../../bindings/pick-workspace-folder'
 import { removeWorkspace } from '../../bindings/remove-workspace'
+import { openWorkspaceFolder } from '../../bindings/open-workspace-folder'
 import { renameWorkspace } from '../../bindings/rename-workspace'
+import { renameWorkspaceFolder } from '../../bindings/rename-workspace-folder'
+import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
+import { moveCollectionFavorites } from '../request-workbench/use-collection-favorites'
+import { folderNameOf } from './workspace-folder'
 
 export type WorkspaceMenuBusyState = 'idle' | 'creating' | 'switching' | 'importing' | 'removing' | 'renaming'
+
+export type WorkspaceRenameTarget = 'alias' | 'folder'
+
+interface PendingRename {
+  entry: RecentWorkspaceDto
+  /** `null` while still asking what to rename. */
+  target: WorkspaceRenameTarget | null
+}
 
 interface UseWorkspaceMenuStateArgs {
   currentWorkspace: WorkspaceDto
@@ -36,7 +49,7 @@ export function useWorkspaceMenuState({
   /** `null` while still checking who may delete the files. */
   const [removalOptions, setRemovalOptions] = useState<WorkspaceRemovalOptionsDto | null>(null)
   const removalRequestRef = useRef(0)
-  const [renamingRootPath, setRenamingRootPath] = useState<string | null>(null)
+  const [pendingRename, setPendingRename] = useState<PendingRename | null>(null)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -49,14 +62,14 @@ export function useWorkspaceMenuState({
     setIsOpen(true)
     setError(null)
     setPendingRemoval(null)
-    setRenamingRootPath(null)
+    setPendingRename(null)
     void refresh()
   }, [refresh])
 
   const close = useCallback(() => {
     setIsOpen(false)
     setPendingRemoval(null)
-    setRenamingRootPath(null)
+    setPendingRename(null)
   }, [])
 
   const switchTo = useCallback(
@@ -123,43 +136,94 @@ export function useWorkspaceMenuState({
     [currentWorkspace.rootPath, onWorkspaceChange],
   )
 
-  const startRename = useCallback((rootPath: string) => {
+  const openFolder = useCallback(
+    async (rootPath: string) => {
+      setError(null)
+      const result = await openWorkspaceFolder({ rootPath })
+      if (result.ok) close()
+      else setError(result.error)
+    },
+    [close],
+  )
+
+  const startRename = useCallback((entry: RecentWorkspaceDto) => {
     setError(null)
-    setRenamingRootPath(rootPath)
+    setPendingRename({ entry, target: null })
+  }, [])
+
+  const chooseRenameTarget = useCallback((target: WorkspaceRenameTarget) => {
+    setError(null)
+    setPendingRename((current) => (current ? { ...current, target } : current))
+  }, [])
+
+  const backToRenameChoice = useCallback(() => {
+    setError(null)
+    setPendingRename((current) => (current ? { ...current, target: null } : current))
   }, [])
 
   const cancelRename = useCallback(() => {
-    setRenamingRootPath(null)
+    setError(null)
+    setPendingRename(null)
   }, [])
 
-  /** Nome vazio ou igual ao atual só encerra a edição, sem gravar nada. */
-  const commitRename = useCallback(
-    async (entry: RecentWorkspaceDto, draft: string) => {
-      setRenamingRootPath(null)
-      const name = draft.trim()
-      if (name === '' || name === entry.name) return
-
-      setBusy('renaming')
-      setError(null)
+  const commitAliasRename = useCallback(
+    async (entry: RecentWorkspaceDto, name: string) => {
       const result = await renameWorkspace({ rootPath: entry.rootPath, name })
-      setBusy('idle')
-
-      if (!result.ok) {
-        setError(result.error)
-        return
-      }
+      if (!result.ok) return result.error
 
       const renamed = result.value
       setRecents((current) =>
         current.map((recent) => (recent.rootPath === renamed.rootPath ? { ...recent, name: renamed.name } : recent)),
       )
-
       if (renamed.rootPath === currentWorkspace.rootPath) {
         onWorkspaceChange(renamed)
         onLocalChange?.()
       }
+      return null
     },
     [currentWorkspace.rootPath, onLocalChange, onWorkspaceChange],
+  )
+
+  const commitFolderRename = useCallback(
+    async (entry: RecentWorkspaceDto, folderName: string) => {
+      const isCurrent = entry.rootPath === currentWorkspace.rootPath
+      // Edits waiting to be saved would otherwise land on the old path.
+      if (isCurrent) await runBeforeExit()
+
+      const result = await renameWorkspaceFolder({ rootPath: entry.rootPath, folderName })
+      if (!result.ok) return result.error
+
+      const renamed = result.value
+      moveCollectionFavorites(entry.rootPath, renamed.rootPath)
+      setRecents((current) =>
+        current.map((recent) => (recent.rootPath === entry.rootPath ? { ...recent, rootPath: renamed.rootPath } : recent)),
+      )
+      if (isCurrent) onWorkspaceChange(renamed)
+      return null
+    },
+    [currentWorkspace.rootPath, onWorkspaceChange],
+  )
+
+  /** A blank or unchanged name just leaves the panel; a failure keeps it open with the draft. */
+  const commitRename = useCallback(
+    async (draft: string) => {
+      if (!pendingRename?.target) return
+      const { entry, target } = pendingRename
+      const name = draft.trim()
+      if (name === '' || name === (target === 'alias' ? entry.name : folderNameOf(entry.rootPath))) {
+        setPendingRename(null)
+        return
+      }
+
+      setBusy('renaming')
+      setError(null)
+      const failure = await (target === 'alias' ? commitAliasRename(entry, name) : commitFolderRename(entry, name))
+      setBusy('idle')
+
+      if (failure) setError(failure)
+      else setPendingRename(null)
+    },
+    [commitAliasRename, commitFolderRename, pendingRename],
   )
 
   const requestRemoval = useCallback(async (entry: RecentWorkspaceDto) => {
@@ -232,8 +296,11 @@ export function useWorkspaceMenuState({
     importDialogOpen,
     closeImportDialog,
     finishImport,
-    renamingRootPath,
+    openFolder,
+    pendingRename,
     startRename,
+    chooseRenameTarget,
+    backToRenameChoice,
     cancelRename,
     commitRename,
     requestRemoval,

@@ -111,6 +111,32 @@ impl RecentWorkspacesStore {
         Ok(entries)
     }
 
+    /// Points the entry at `from` to `to`, keeping its position. An entry
+    /// already at `to` is stale (its folder was gone, or the rename would not
+    /// have been possible) and is dropped so the list has no duplicate.
+    pub fn relocate(
+        &self,
+        from: &std::path::Path,
+        to: &std::path::Path,
+    ) -> Result<Vec<RecentWorkspaceEntry>, StorageError> {
+        let mut entries = self.load()?;
+        entries.retain(|existing| existing.root_path != to);
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|existing| existing.root_path == from)
+        else {
+            return Ok(entries);
+        };
+        entry.root_path = to.to_path_buf();
+
+        self.write_file(&PersistedFile {
+            version: CURRENT_VERSION,
+            entries: entries.clone(),
+        })?;
+
+        Ok(entries)
+    }
+
     fn load_file(&self) -> Result<PersistedFile, StorageError> {
         if !self.path.exists() {
             return Ok(PersistedFile::default());
@@ -320,6 +346,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(entries, vec![entry("/workspaces/a", "A")]);
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn relocate_changes_the_path_keeping_the_position_and_the_name() {
+        let path = temp_path();
+        let store = RecentWorkspacesStore::new(path.clone());
+
+        store.record(entry("/workspaces/a", "A")).unwrap();
+        store.record(entry("/workspaces/b", "B")).unwrap();
+        let entries = store
+            .relocate(
+                &PathBuf::from("/workspaces/a"),
+                &PathBuf::from("/workspaces/c"),
+            )
+            .unwrap();
+
+        let expected = vec![entry("/workspaces/b", "B"), entry("/workspaces/c", "A")];
+        assert_eq!(entries, expected);
+        assert_eq!(store.load().unwrap(), expected);
+
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn relocate_replaces_a_stale_entry_at_the_destination() {
+        let path = temp_path();
+        let store = RecentWorkspacesStore::new(path.clone());
+
+        store.record(entry("/workspaces/old", "Old")).unwrap();
+        store.record(entry("/workspaces/a", "A")).unwrap();
+        let entries = store
+            .relocate(
+                &PathBuf::from("/workspaces/a"),
+                &PathBuf::from("/workspaces/old"),
+            )
+            .unwrap();
+
+        assert_eq!(entries, vec![entry("/workspaces/old", "A")]);
 
         fs::remove_file(&path).ok();
     }

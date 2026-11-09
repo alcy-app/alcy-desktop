@@ -16,6 +16,9 @@ impl FlowExecutionRegistry {
     pub fn is_running(&self, flow_execution_id: &str) -> bool {
         self.lock_senders().contains_key(flow_execution_id)
     }
+    pub fn has_active(&self) -> bool {
+        !self.lock_senders().is_empty()
+    }
     pub fn register(&self, flow_execution_id: String, sender: watch::Sender<bool>) {
         self.lock_senders().insert(flow_execution_id, sender);
     }

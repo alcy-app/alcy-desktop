@@ -7,6 +7,14 @@ export function workspaceErrorMessageKey(error: WorkspaceCommandError): Translat
       return 'startScreen.errorNotAWorkspace'
     case 'notOwner':
       return 'workspaceMenu.errorNotOwner'
+    case 'invalidFolderName':
+      return 'workspaceMenu.errorInvalidFolderName'
+    case 'folderExists':
+      return 'workspaceMenu.errorFolderExists'
+    case 'folderInUse':
+      return 'workspaceMenu.errorFolderInUse'
+    case 'workspaceBusy':
+      return 'workspaceMenu.errorWorkspaceBusy'
     case 'invalid':
       return 'startScreen.errorInvalid'
     case 'storage':

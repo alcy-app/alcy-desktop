@@ -127,7 +127,8 @@ use commands::websocket::{
 use commands::workspace_operation_coordinator::WorkspaceOperationCoordinator;
 use commands::workspaces::{
     create_workspace, get_workspace_file_stamps, get_workspace_removal_options,
-    list_recent_workspaces, open_workspace, remove_workspace, rename_workspace,
+    list_recent_workspaces, open_workspace, open_workspace_folder, remove_workspace,
+    rename_workspace, rename_workspace_folder,
 };
 use tauri::Manager;
 
@@ -501,6 +502,8 @@ pub fn run_with(extensions: Vec<Extension>) {
                 get_workspace_removal_options,
                 get_workspace_file_stamps,
                 rename_workspace,
+                rename_workspace_folder,
+                open_workspace_folder,
                 list_recent_workspaces,
                 get_proxy_settings,
                 save_proxy_settings,

@@ -25,6 +25,10 @@ impl ExecutionRegistry {
         }
     }
 
+    pub fn has_active(&self) -> bool {
+        !self.lock_senders().is_empty()
+    }
+
     fn lock_senders(&self) -> MutexGuard<'_, HashMap<String, oneshot::Sender<()>>> {
         self.senders
             .lock()

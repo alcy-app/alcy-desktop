@@ -103,7 +103,7 @@ pub use variable_scope::{
     record_scoped_change, variable_scopes,
 };
 pub use websocket_call::{WebSocketCall, WebSocketCollect, WebSocketMessageFormat};
-pub use workspace::{Workspace, WorkspaceError};
+pub use workspace::{Workspace, WorkspaceError, validate_workspace_folder_name};
 pub use workspace_link::{
     API_DOCS_FILE, ENVIRONMENTS_FILE, FileState, MANIFEST_FILE, VALUE_MONITORS_FILE,
     VERSIONED_FILES, WorkspaceLink, classify, is_valid_branch_name,

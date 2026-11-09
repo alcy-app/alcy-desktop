@@ -8,6 +8,9 @@ const listRecentWorkspaces = vi.fn()
 const pickWorkspaceFolder = vi.fn()
 const removeWorkspace = vi.fn()
 const renameWorkspace = vi.fn()
+const renameWorkspaceFolder = vi.fn()
+const openWorkspaceFolder = vi.fn()
+const runBeforeExit = vi.fn()
 const getWorkspaceRemovalOptions = vi.fn()
 
 vi.mock('../../bindings/get-workspace-removal-options', () => ({
@@ -38,6 +41,19 @@ vi.mock('../../bindings/rename-workspace', () => ({
   renameWorkspace: (...args: unknown[]) => renameWorkspace(...args),
 }))
 
+vi.mock('../../bindings/rename-workspace-folder', () => ({
+  renameWorkspaceFolder: (...args: unknown[]) => renameWorkspaceFolder(...args),
+}))
+
+vi.mock('../../bindings/open-workspace-folder', () => ({
+  openWorkspaceFolder: (...args: unknown[]) => openWorkspaceFolder(...args),
+}))
+
+vi.mock('../../shared/app-lifecycle/before-exit', () => ({
+  runBeforeExit: (...args: unknown[]) => runBeforeExit(...args),
+  registerBeforeExit: () => () => undefined,
+}))
+
 const currentWorkspace = { id: 'workspace-1', name: 'Current', rootPath: '/workspaces/current' }
 
 beforeEach(() => {
@@ -47,6 +63,10 @@ beforeEach(() => {
   pickWorkspaceFolder.mockReset()
   removeWorkspace.mockReset()
   renameWorkspace.mockReset()
+  renameWorkspaceFolder.mockReset()
+  openWorkspaceFolder.mockReset()
+  runBeforeExit.mockReset()
+  runBeforeExit.mockResolvedValue(undefined)
   getWorkspaceRemovalOptions.mockReset()
   getWorkspaceRemovalOptions.mockResolvedValue({ ok: true, value: { canDeleteFiles: true, ownerName: null } })
   listRecentWorkspaces.mockResolvedValue({ ok: true, value: [{ rootPath: currentWorkspace.rootPath, name: 'Current' }] })
@@ -54,6 +74,15 @@ beforeEach(() => {
 
 function openMenu() {
   fireEvent.click(screen.getByRole('button', { name: /Current/ }))
+}
+
+async function chooseRenameTarget(workspaceName: string, target: 'Alias' | 'Nome da pasta') {
+  fireEvent.click(await screen.findByRole('button', { name: `Renomear workspace ${workspaceName}` }))
+  fireEvent.click(screen.getByRole('button', { name: target }))
+}
+
+function submitRename() {
+  fireEvent.click(screen.getByRole('button', { name: 'Renomear' }))
 }
 
 describe('WorkspaceMenu', () => {
@@ -87,7 +116,8 @@ describe('WorkspaceMenu', () => {
     const menu = await screen.findByRole('menu')
     const currentItem = within(menu).getByRole('button', { current: true })
     expect(currentItem).toHaveTextContent('Current')
-    expect(within(menu).getByText('/workspaces/other')).toBeInTheDocument()
+    expect(within(menu).getByRole('button', { name: 'Abrir a pasta other no gerenciador de arquivos' })).toHaveTextContent('other')
+    expect(within(menu).queryByText('/workspaces/other')).not.toBeInTheDocument()
   })
 
   it('mostra o símbolo de Git só nos workspaces recentes vinculados a um repositório remoto', async () => {
@@ -208,7 +238,7 @@ describe('WorkspaceMenu', () => {
     )
   })
 
-  it('renomeia o workspace atual e avisa o workbench e o controle de versão', async () => {
+  it('renomeia o alias do workspace atual e avisa o workbench e o controle de versão', async () => {
     renameWorkspace.mockResolvedValue({ ok: true, value: { ...currentWorkspace, name: 'Payments API' } })
     const onWorkspaceChange = vi.fn()
     const onLocalChange = vi.fn()
@@ -224,21 +254,22 @@ describe('WorkspaceMenu', () => {
     )
     openMenu()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Renomear workspace Current' }))
-    const input = screen.getByRole('textbox', { name: 'Nome do workspace' })
+    await chooseRenameTarget('Current', 'Alias')
+    const input = screen.getByRole('textbox', { name: 'Novo alias' })
     expect(input).toHaveValue('Current')
     fireEvent.change(input, { target: { value: '  Payments API  ' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    submitRename()
 
     await waitFor(() =>
       expect(renameWorkspace).toHaveBeenCalledWith({ rootPath: currentWorkspace.rootPath, name: 'Payments API' }),
     )
     await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith({ ...currentWorkspace, name: 'Payments API' }))
     expect(onLocalChange).toHaveBeenCalled()
-    expect(within(screen.getByRole('menu')).getByText('Payments API')).toBeInTheDocument()
+    expect(renameWorkspaceFolder).not.toHaveBeenCalled()
+    expect(await within(screen.getByRole('menu')).findByText('Payments API')).toBeInTheDocument()
   })
 
-  it('renomeia outro workspace sem trocar o atual', async () => {
+  it('renomeia o alias de outro workspace sem trocar o atual', async () => {
     listRecentWorkspaces.mockResolvedValue({
       ok: true,
       value: [
@@ -261,10 +292,9 @@ describe('WorkspaceMenu', () => {
     )
     openMenu()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Renomear workspace Other' }))
-    const input = screen.getByRole('textbox', { name: 'Nome do workspace' })
-    fireEvent.change(input, { target: { value: 'Renamed' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    await chooseRenameTarget('Other', 'Alias')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Novo alias' }), { target: { value: 'Renamed' } })
+    submitRename()
 
     expect(await within(screen.getByRole('menu')).findByText('Renamed')).toBeInTheDocument()
     expect(renameWorkspace).toHaveBeenCalledWith({ rootPath: '/workspaces/other', name: 'Renamed' })
@@ -272,44 +302,153 @@ describe('WorkspaceMenu', () => {
     expect(onLocalChange).not.toHaveBeenCalled()
   })
 
-  it('confirma o novo nome ao clicar fora do menu, que fecha junto', async () => {
-    renameWorkspace.mockResolvedValue({ ok: true, value: { ...currentWorkspace, name: 'Outside' } })
+  it('renomeia a pasta de outro workspace sem recarregar o atual', async () => {
+    listRecentWorkspaces.mockResolvedValue({
+      ok: true,
+      value: [
+        { rootPath: currentWorkspace.rootPath, name: 'Current' },
+        { rootPath: '/workspaces/other', name: 'Other' },
+      ],
+    })
+    renameWorkspaceFolder.mockResolvedValue({ ok: true, value: { id: 'workspace-2', name: 'Other', rootPath: '/workspaces/payments' } })
+    window.localStorage.setItem('alcy:collections:favorites:/workspaces/other', '["c1"]')
+    const onWorkspaceChange = vi.fn()
 
     render(
-      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={vi.fn()} onExitToStartScreen={vi.fn()} />,
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={onWorkspaceChange} onExitToStartScreen={vi.fn()} />,
     )
     openMenu()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Renomear workspace Current' }))
-    const input = screen.getByRole('textbox', { name: 'Nome do workspace' })
-    fireEvent.change(input, { target: { value: 'Outside' } })
-    fireEvent.blur(input)
+    await chooseRenameTarget('Other', 'Nome da pasta')
+    const input = screen.getByRole('textbox', { name: 'Novo nome da pasta' })
+    expect(input).toHaveValue('other')
+    fireEvent.change(input, { target: { value: ' payments ' } })
+    expect(screen.getByText('/workspaces/payments')).toBeInTheDocument()
+    submitRename()
 
-    await waitFor(() => expect(renameWorkspace).toHaveBeenCalledWith({ rootPath: currentWorkspace.rootPath, name: 'Outside' }))
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(
+      await within(screen.getByRole('menu')).findByRole('button', { name: 'Abrir a pasta payments no gerenciador de arquivos' }),
+    ).toBeInTheDocument()
+    expect(renameWorkspaceFolder).toHaveBeenCalledWith({ rootPath: '/workspaces/other', folderName: 'payments' })
+    expect(renameWorkspace).not.toHaveBeenCalled()
+    expect(runBeforeExit).not.toHaveBeenCalled()
+    expect(onWorkspaceChange).not.toHaveBeenCalled()
+    expect(window.localStorage.getItem('alcy:collections:favorites:/workspaces/payments')).toBe('["c1"]')
+    expect(window.localStorage.getItem('alcy:collections:favorites:/workspaces/other')).toBeNull()
+    window.localStorage.removeItem('alcy:collections:favorites:/workspaces/payments')
   })
 
-  it('não grava nada ao cancelar com Escape, nem com nome vazio', async () => {
+  it('salva o que está pendente antes de renomear a pasta do workspace aberto e o recarrega', async () => {
+    const order: string[] = []
+    runBeforeExit.mockImplementation(async () => {
+      order.push('flush')
+    })
+    renameWorkspaceFolder.mockImplementation(async () => {
+      order.push('rename')
+      return { ok: true, value: { ...currentWorkspace, rootPath: '/workspaces/renamed' } }
+    })
+    const onWorkspaceChange = vi.fn()
+
+    render(
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={onWorkspaceChange} onExitToStartScreen={vi.fn()} />,
+    )
+    openMenu()
+
+    await chooseRenameTarget('Current', 'Nome da pasta')
+    expect(screen.getByText('Este workspace está aberto e será recarregado na nova pasta.')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Novo nome da pasta' }), { target: { value: 'renamed' } })
+    submitRename()
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith({ ...currentWorkspace, rootPath: '/workspaces/renamed' }))
+    expect(order).toEqual(['flush', 'rename'])
+  })
+
+  it('mantém o painel e o nome digitado quando a pasta não pode ser renomeada', async () => {
+    renameWorkspaceFolder.mockResolvedValue({ ok: false, error: { kind: 'folderExists', message: 'taken' } })
+    const onWorkspaceChange = vi.fn()
+
+    render(
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={onWorkspaceChange} onExitToStartScreen={vi.fn()} />,
+    )
+    openMenu()
+
+    await chooseRenameTarget('Current', 'Nome da pasta')
+    const input = screen.getByRole('textbox', { name: 'Novo nome da pasta' })
+    fireEvent.change(input, { target: { value: 'taken' } })
+    submitRename()
+
+    expect(await screen.findByText('Já existe uma pasta chamada "taken" neste local.')).toBeInTheDocument()
+    expect(input).toHaveValue('taken')
+    expect(onWorkspaceChange).not.toHaveBeenCalled()
+  })
+
+  it('volta um passo com Escape sem fechar o menu e não grava nada', async () => {
     render(
       <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={vi.fn()} onExitToStartScreen={vi.fn()} />,
     )
     openMenu()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Renomear workspace Current' }))
-    let input = screen.getByRole('textbox', { name: 'Nome do workspace' })
+    await chooseRenameTarget('Current', 'Alias')
+    const input = screen.getByRole('textbox', { name: 'Novo alias' })
     fireEvent.change(input, { target: { value: 'Discarded' } })
     fireEvent.keyDown(input, { key: 'Escape' })
 
+    const aliasOption = screen.getByRole('button', { name: 'Alias' })
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(aliasOption, { key: 'Escape' })
+
     expect(screen.getByRole('menu')).toBeInTheDocument()
-    expect(screen.queryByRole('textbox', { name: 'Nome do workspace' })).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Renomear workspace Current' }))
-    input = screen.getByRole('textbox', { name: 'Nome do workspace' })
-    fireEvent.change(input, { target: { value: '   ' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-
+    expect(screen.queryByRole('button', { name: 'Alias' })).not.toBeInTheDocument()
     expect(within(screen.getByRole('menu')).getByText('Current')).toBeInTheDocument()
     expect(renameWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('só habilita Renomear quando o nome mudou e não está vazio', async () => {
+    render(
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={vi.fn()} onExitToStartScreen={vi.fn()} />,
+    )
+    openMenu()
+
+    await chooseRenameTarget('Current', 'Alias')
+    const submit = screen.getByRole('button', { name: 'Renomear' })
+    expect(submit).toBeDisabled()
+
+    const input = screen.getByRole('textbox', { name: 'Novo alias' })
+    fireEvent.change(input, { target: { value: '   ' } })
+    expect(submit).toBeDisabled()
+
+    fireEvent.change(input, { target: { value: 'Other' } })
+    expect(submit).toBeEnabled()
+  })
+
+  it('abre a pasta do workspace ao clicar no nome dela, sem trocar de workspace', async () => {
+    openWorkspaceFolder.mockResolvedValue({ ok: true })
+
+    render(
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={vi.fn()} onExitToStartScreen={vi.fn()} />,
+    )
+    openMenu()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Abrir a pasta current no gerenciador de arquivos' }))
+
+    await waitFor(() => expect(openWorkspaceFolder).toHaveBeenCalledWith({ rootPath: currentWorkspace.rootPath }))
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    expect(openWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('mostra o erro e continua aberto quando a pasta não pode ser aberta', async () => {
+    openWorkspaceFolder.mockResolvedValue({ ok: false, error: { kind: 'notAWorkspace', message: '/workspaces/current' } })
+
+    render(
+      <WorkspaceMenu currentWorkspace={currentWorkspace} remoteLinked={false} onWorkspaceChange={vi.fn()} onExitToStartScreen={vi.fn()} />,
+    )
+    openMenu()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Abrir a pasta current no gerenciador de arquivos' }))
+
+    expect(await screen.findByText('Esta pasta não contém um workspace Alcy.')).toBeInTheDocument()
+    expect(screen.getByRole('menu')).toBeInTheDocument()
   })
 
   it('pede confirmação antes de remover e apenas esquece o workspace quando essa opção é escolhida', async () => {

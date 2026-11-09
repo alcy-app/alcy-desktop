@@ -258,6 +258,26 @@ impl AgentSessionStore {
         Ok(())
     }
 
+    /// Carries a workspace's chats over when its folder gets a new path, since
+    /// they are stored by path. Moves file by file so that leftovers of an
+    /// earlier workspace at `to` do not get in the way.
+    pub fn relocate_workspace(&self, from: &str, to: &str) -> Result<(), StorageError> {
+        let source = self.workspace_dir(from);
+        let entries = match fs::read_dir(&source) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(StorageError::Read(error.to_string())),
+        };
+        let target = self.workspace_dir(to);
+        fs::create_dir_all(&target).map_err(|error| StorageError::Write(error.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| StorageError::Read(error.to_string()))?;
+            fs::rename(entry.path(), target.join(entry.file_name()))
+                .map_err(|error| StorageError::Write(error.to_string()))?;
+        }
+        fs::remove_dir(&source).map_err(|error| StorageError::Write(error.to_string()))
+    }
+
     fn workspace_dir(&self, workspace: &str) -> PathBuf {
         let digest = ring::digest::digest(&ring::digest::SHA256, workspace.as_bytes());
         let name: String = digest.as_ref()[..12]
@@ -450,6 +470,29 @@ mod tests {
         assert!(loaded.turn_tokens.is_empty());
         assert!(loaded.total_tokens.is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relocating_a_workspace_carries_its_chats_to_the_new_path() {
+        let (store, root) = temp_store();
+        store.save("/old", &session("kept", 1)).unwrap();
+        store.save("/new", &session("leftover", 2)).unwrap();
+        store.save("/other", &session("untouched", 3)).unwrap();
+
+        store.relocate_workspace("/old", "/new").unwrap();
+
+        assert!(store.list("/old").unwrap().is_empty());
+        let moved: Vec<String> = store
+            .list("/new")
+            .unwrap()
+            .into_iter()
+            .map(|summary| summary.id)
+            .collect();
+        assert_eq!(moved, vec!["leftover".to_string(), "kept".to_string()]);
+        assert_eq!(store.list("/other").unwrap().len(), 1);
+        store.relocate_workspace("/never-used", "/new").unwrap();
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

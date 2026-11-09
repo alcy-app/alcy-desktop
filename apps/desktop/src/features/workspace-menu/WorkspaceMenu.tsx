@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import type { WorkspaceDto } from '../../bindings/create-workspace'
 import type { RecentWorkspaceDto } from '../../bindings/list-recent-workspaces'
 import { useLanguage } from '../../shared/i18n/use-language'
@@ -6,11 +6,13 @@ import { ImportWorkspaceDialog } from '../../shared/workspace-import/ImportWorks
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
-import { InlineEditInput } from '../../shared/ui/InlineEditInput'
 import { MenuItem, OptionsMenu } from '../../shared/ui/Menu'
-import { ChevronDownIcon, CloseIcon, GitIcon, LockIcon, PencilIcon, WorkspaceIcon } from '../../shared/ui/icons'
+import { ChevronDownIcon, CloseIcon, FolderIcon, GitIcon, LockIcon, PencilIcon, WorkspaceIcon } from '../../shared/ui/icons'
+import { useTooltip } from '../../shared/ui/use-tooltip'
 import { workspaceErrorMessageKey } from '../../shared/workspace-command-error'
 import { useWorkspaceMenuState } from './use-workspace-menu-state'
+import { folderNameOf } from './workspace-folder'
+import { WorkspaceRenamePanel } from './WorkspaceRenamePanel'
 import './workspace-menu.css'
 
 interface WorkspaceMenuProps {
@@ -34,12 +36,14 @@ export function WorkspaceMenu({
   const contentRef = useRef<HTMLDivElement>(null)
   const scopeLabel = t(remoteLinked === null ? 'workspaceMenu.scope.loading' : remoteLinked ? 'workspaceMenu.scope.remote' : 'workspaceMenu.scope.local')
 
+  const renameStep = state.pendingRename ? (state.pendingRename.target ?? 'choose') : null
+
   useEffect(() => {
     if (!state.isOpen) return
     const activeItem = contentRef.current?.querySelector<HTMLElement>('[aria-current="true"]')
-    const firstFocusable = contentRef.current?.querySelector<HTMLElement>('button:not(:disabled)')
+    const firstFocusable = contentRef.current?.querySelector<HTMLElement>('input, button:not(:disabled)')
     ;(activeItem ?? firstFocusable)?.focus()
-  }, [state.isOpen, state.pendingRemoval])
+  }, [state.isOpen, state.pendingRemoval, renameStep])
 
   return (
     <>
@@ -66,7 +70,19 @@ export function WorkspaceMenu({
     >
       <div ref={contentRef}>
         <p className="ws-menu-dropdown-title">{t('workspaceMenu.modalTitle')}</p>
-        {state.pendingRemoval ? (
+        {state.pendingRename ? (
+          <WorkspaceRenamePanel
+            entry={state.pendingRename.entry}
+            target={state.pendingRename.target}
+            isCurrent={state.pendingRename.entry.rootPath === currentWorkspace.rootPath}
+            isSubmitting={state.busy === 'renaming'}
+            error={state.error}
+            onChooseTarget={state.chooseRenameTarget}
+            onBack={state.backToRenameChoice}
+            onCancel={state.cancelRename}
+            onSubmit={(draft) => void state.commitRename(draft)}
+          />
+        ) : state.pendingRemoval ? (
           <RemovalConfirmView entry={state.pendingRemoval} state={state} />
         ) : (
           <WorkspaceListView currentWorkspace={currentWorkspace} state={state} busy={state.busy !== 'idle'} />
@@ -102,12 +118,10 @@ function WorkspaceListView({ currentWorkspace, state, busy }: WorkspaceListViewP
               key={entry.rootPath}
               entry={entry}
               isCurrent={entry.rootPath === currentWorkspace.rootPath}
-              isRenaming={entry.rootPath === state.renamingRootPath}
               busy={busy}
               onSwitch={() => void state.switchToRecent(entry.rootPath)}
-              onStartRename={() => state.startRename(entry.rootPath)}
-              onCommitRename={(draft) => void state.commitRename(entry, draft)}
-              onCancelRename={state.cancelRename}
+              onOpenFolder={() => void state.openFolder(entry.rootPath)}
+              onStartRename={() => state.startRename(entry)}
               onRemove={() => void state.requestRemoval(entry)}
             />
           ))}
@@ -135,97 +149,54 @@ function WorkspaceListView({ currentWorkspace, state, busy }: WorkspaceListViewP
 interface WorkspaceListItemProps {
   entry: RecentWorkspaceDto
   isCurrent: boolean
-  isRenaming: boolean
   busy: boolean
   onSwitch: () => void
+  onOpenFolder: () => void
   onStartRename: () => void
-  onCommitRename: (draft: string) => void
-  onCancelRename: () => void
   onRemove: () => void
 }
 
-function WorkspaceListItem({
-  entry,
-  isCurrent,
-  isRenaming,
-  busy,
-  onSwitch,
-  onStartRename,
-  onCommitRename,
-  onCancelRename,
-  onRemove,
-}: WorkspaceListItemProps) {
+function WorkspaceListItem({ entry, isCurrent, busy, onSwitch, onOpenFolder, onStartRename, onRemove }: WorkspaceListItemProps) {
   const { t } = useLanguage()
-  const [draft, setDraft] = useState(entry.name)
-  const renameButtonRef = useRef<HTMLButtonElement>(null)
-  const cancelledRef = useRef(false)
-
-  const startRename = () => {
-    setDraft(entry.name)
-    cancelledRef.current = false
-    onStartRename()
-  }
-
-  // Enter e Escape devolvem o foco ao lápis em vez de desmontar o input
-  // focado: o foco continua dentro do menu (que fecha ao perder o foco) e o
-  // blur resultante é o único ponto que encerra a edição.
-  const finishRename = () => {
-    if (cancelledRef.current) {
-      onCancelRename()
-    } else {
-      onCommitRename(draft)
-    }
-  }
+  const folderName = folderNameOf(entry.rootPath)
+  const { triggerProps: folderTooltipProps, tooltip: folderTooltip } = useTooltip(entry.rootPath)
+  const cardClassName = [
+    'ws-menu-item-card',
+    isCurrent ? 'ws-menu-item-card--active' : null,
+    busy ? 'ws-menu-item-card--busy' : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   return (
     <li className="ws-menu-item">
-      {isRenaming ? (
-        // Fora de um <button>: clicar num input aninhado em botão move o foco para o botão e encerra a edição.
-        <div className="ws-menu-item-button ws-menu-item-button--renaming" aria-current={isCurrent}>
-          <InlineEditInput
-            value={draft}
-            autoFocus
-            aria-label={t('workspaceMenu.nameInputAria')}
-            onFocus={(event) => event.currentTarget.select()}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={finishRename}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                renameButtonRef.current?.focus()
-              } else if (event.key === 'Escape') {
-                // Sem isso o Escape chegaria ao menu e o fecharia junto.
-                event.stopPropagation()
-                cancelledRef.current = true
-                renameButtonRef.current?.focus()
-              }
-            }}
-          />
-          <span className="ws-menu-item-path">{entry.rootPath}</span>
-        </div>
-      ) : (
+      {/* Two sibling buttons: the switch one stretches over the card, the folder one sits above it. */}
+      <div className={cardClassName}>
+        <button type="button" className="ws-menu-item-button" onClick={onSwitch} disabled={busy} aria-current={isCurrent}>
+          {entry.linked && (
+            <span className="ws-menu-item-git" title={t('workspaceMenu.scope.remote')}>
+              <GitIcon size={11} />
+            </span>
+          )}
+          <span className="ws-menu-item-name">{entry.name}</span>
+        </button>
         <button
           type="button"
-          className={isCurrent ? 'ws-menu-item-button ws-menu-item-button--active' : 'ws-menu-item-button'}
-          onClick={onSwitch}
+          className="ws-menu-item-folder"
+          onClick={onOpenFolder}
           disabled={busy}
-          aria-current={isCurrent}
+          aria-label={t('workspaceMenu.openFolderAria', { folder: folderName })}
+          {...folderTooltipProps}
         >
-          <span className="ws-menu-item-name-row">
-            {entry.linked && (
-              <span className="ws-menu-item-git" title={t('workspaceMenu.scope.remote')}>
-                <GitIcon size={11} />
-              </span>
-            )}
-            <span className="ws-menu-item-name">{entry.name}</span>
-          </span>
-          <span className="ws-menu-item-path">{entry.rootPath}</span>
+          <FolderIcon size={11} />
+          <span className="ws-menu-item-folder-name">{folderName}</span>
         </button>
-      )}
+        {folderTooltip}
+      </div>
       <div className="ws-menu-item-actions">
         <IconButton
-          ref={renameButtonRef}
           icon={<PencilIcon size={12} />}
-          onClick={isRenaming ? undefined : startRename}
+          onClick={onStartRename}
           disabled={busy}
           label={t('workspaceMenu.renameAria', { name: entry.name })}
         />
@@ -233,7 +204,7 @@ function WorkspaceListItem({
           variant="danger"
           icon={<CloseIcon size={12} />}
           onClick={onRemove}
-          disabled={busy || isRenaming}
+          disabled={busy}
           label={t('workspaceMenu.removeAria', { name: entry.name })}
         />
       </div>

@@ -18,6 +18,18 @@ export function loadCollectionFavorites(workspaceRootPath: string): Set<string> 
   }
 }
 
+/** Favorites are stored by path, so they have to follow a workspace folder that gets renamed. */
+export function moveCollectionFavorites(fromRootPath: string, toRootPath: string): void {
+  try {
+    const raw = window.localStorage.getItem(collectionFavoritesStorageKey(fromRootPath))
+    if (raw === null) return
+    window.localStorage.setItem(collectionFavoritesStorageKey(toRootPath), raw)
+    window.localStorage.removeItem(collectionFavoritesStorageKey(fromRootPath))
+  } catch {
+    // localStorage unavailable: there is nothing to carry over.
+  }
+}
+
 function persistCollectionFavorites(workspaceRootPath: string, favoriteIds: ReadonlySet<string>) {
   try {
     window.localStorage.setItem(collectionFavoritesStorageKey(workspaceRootPath), JSON.stringify([...favoriteIds]))
