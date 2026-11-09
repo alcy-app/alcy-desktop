@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use alcy_domain::{GitIdentity, Workspace};
+use alcy_domain::{GitIdentity, Workspace, WorkspaceLink};
 use alcy_git::{FileDeletion, file_deletion};
 use alcy_storage::{
-    RecentWorkspaceEntry, RecentWorkspacesStore, StorageError, WorkspaceLinkStore, WorkspaceStore,
+    DiskWorkspaceFiles, RecentWorkspaceEntry, RecentWorkspacesStore, StorageError,
+    WorkspaceLinkStore, WorkspaceStore,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -419,6 +420,47 @@ fn remove_workspace_inner(
     let entries = recent_store.remove(&root_path).map_err(storage_error)?;
 
     Ok(entries.into_iter().map(recent_dto).collect())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileStampsInput {
+    pub root_path: String,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileStampDto {
+    pub name: String,
+    pub stamp: String,
+}
+
+/// Size and modification time of the shared workspace files, so the interface
+/// notices what a sync tool delivered without reading any of them.
+#[tauri::command]
+pub async fn get_workspace_file_stamps(
+    input: WorkspaceFileStampsInput,
+) -> Result<Vec<WorkspaceFileStampDto>, WorkspaceCommandError> {
+    run_blocking(move || workspace_file_stamps(PathBuf::from(input.root_path))).await
+}
+
+fn workspace_file_stamps(
+    root_path: PathBuf,
+) -> Result<Vec<WorkspaceFileStampDto>, WorkspaceCommandError> {
+    let files = DiskWorkspaceFiles::new(root_path);
+    let mut stamps = Vec::new();
+    for name in WorkspaceLink::new(true).tracked_files() {
+        let stamp = files
+            .stamp(name)
+            .map_err(|message| WorkspaceCommandError::Storage { message })?;
+        if let Some(stamp) = stamp {
+            stamps.push(WorkspaceFileStampDto {
+                name: name.to_string(),
+                stamp,
+            });
+        }
+    }
+    Ok(stamps)
 }
 
 #[tauri::command]

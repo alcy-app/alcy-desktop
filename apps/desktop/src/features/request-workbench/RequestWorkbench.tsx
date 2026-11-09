@@ -129,6 +129,7 @@ import { parameterNameSuggestions, parameterValueSuggestions } from './schema-co
 import type { BodySchema } from './schema-completions'
 import type { VariableDoc } from './components/VariablePreviewCard'
 import { API_DOCS_FILE, VALUE_MONITORS_FILE } from '../version-control/version-summary'
+import { COLLECTIONS_FILE, ENVIRONMENTS_FILE, FLOWS_FILE, useExternalFileChanges } from './use-external-file-changes'
 import { buildHar } from './har'
 import { harRedactionContext, redactRecordedEntry } from './har-redaction'
 import { applyRouteParamValues } from './query-params'
@@ -352,11 +353,21 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   // Autosave must notify useVersionControl, declared below. A ref breaks the cycle without changing callback identity or restarting the save debounce.
   const notifyLocalChangeRef = useRef<() => void>(() => {})
   const notifyLocalChange = useCallback(() => notifyLocalChangeRef.current(), [])
-  const environments = useEnvironmentsState(workspace.rootPath, notifyLocalChange)
+  // The same cycle: autosaves report their own writes to a hook declared below.
+  const markOwnWriteRef = useRef<(name: string) => void>(() => {})
+  const markSaved = useCallback((name: string) => {
+    markOwnWriteRef.current(name)
+    notifyLocalChangeRef.current()
+  }, [])
+  const onCollectionsSaved = useCallback(() => markSaved(COLLECTIONS_FILE), [markSaved])
+  const onEnvironmentsSaved = useCallback(() => markSaved(ENVIRONMENTS_FILE), [markSaved])
+  const onFlowsSaved = useCallback(() => markSaved(FLOWS_FILE), [markSaved])
+  const onValueMonitorsSaved = useCallback(() => markSaved(VALUE_MONITORS_FILE), [markSaved])
+  const environments = useEnvironmentsState(workspace.rootPath, onEnvironmentsSaved)
   // Exclude unnamed environment rows still being edited from execution and schema loading.
   const activeEnvironmentRows = environments.activeEnvironment?.variables ?? NO_ENVIRONMENT_VARIABLES
   const activeEnvironmentVariables = useMemo(() => definedVariables(activeEnvironmentRows), [activeEnvironmentRows])
-  const collections = useCollectionsState(workspace.rootPath, environments.importEnvironments, notifyLocalChange)
+  const collections = useCollectionsState(workspace.rootPath, environments.importEnvironments, onCollectionsSaved)
   const importEnvironmentTargets = useMemo(
     () => environments.environments.map((environment) => ({ id: environment.id, name: environment.name, variableNames: environment.variables.map((variable) => variable.name) })),
     [environments.environments],
@@ -386,8 +397,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     () => ({ rootPath: workspace.rootPath, requestId: activeRequestId, tabId: activeTabId }),
     [workspace.rootPath, activeRequestId, activeTabId],
   )
-  const flows = useFlowsState(workspace.rootPath, notifyLocalChange)
-  const valueMonitors = useValueMonitorsState(workspace.rootPath, notifyLocalChange, FEATURE_FLAGS.valueMonitors)
+  const flows = useFlowsState(workspace.rootPath, onFlowsSaved)
+  const valueMonitors = useValueMonitorsState(workspace.rootPath, onValueMonitorsSaved, FEATURE_FLAGS.valueMonitors)
   const [valueMonitorEnabled, setValueMonitorEnabled] = useState(loadPersistedValueMonitorEnabled)
   const openTabs = useOpenTabs(workbench, flows)
   const tabGroups = useTabGroups(openTabs.descriptors, openTabs.pinOpenTab)
@@ -520,9 +531,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   // Reload in-memory data after repository updates so autosave does not overwrite updated files.
   const handleWorkspaceFilesChanged = useCallback(
     (names: string[]) => {
-      if (names.includes('alcy-collections.json')) reloadCollections()
-      if (names.includes('alcy-environments.json')) reloadEnvironments()
-      if (names.includes('alcy-flows.json')) reloadFlows()
+      if (names.includes(COLLECTIONS_FILE)) reloadCollections()
+      if (names.includes(ENVIRONMENTS_FILE)) reloadEnvironments()
+      if (names.includes(FLOWS_FILE)) reloadFlows()
       if (names.includes(VALUE_MONITORS_FILE)) reloadValueMonitors()
       if (names.includes(API_DOCS_FILE)) setDocsRevision((revision) => revision + 1)
     },
@@ -532,6 +543,29 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   useEffect(() => {
     notifyLocalChangeRef.current = versionControl.notifyLocalChange
   }, [versionControl.notifyLocalChange])
+  const { hasPendingSave: collectionsPendingSave } = collections
+  const { hasPendingSave: environmentsPendingSave } = environments
+  const { hasPendingSave: flowsPendingSave } = flows
+  const { hasPendingSave: valueMonitorsPendingSave } = valueMonitors
+  const hasPendingSave = useCallback(
+    (name: string) =>
+      (name === COLLECTIONS_FILE && collectionsPendingSave()) ||
+      (name === ENVIRONMENTS_FILE && environmentsPendingSave()) ||
+      (name === FLOWS_FILE && flowsPendingSave()) ||
+      (name === VALUE_MONITORS_FILE && valueMonitorsPendingSave()),
+    [collectionsPendingSave, environmentsPendingSave, flowsPendingSave, valueMonitorsPendingSave],
+  )
+  const handleExternalFilesChanged = useCallback(
+    (names: string[]) => {
+      handleWorkspaceFilesChanged(names)
+      notifyLocalChange()
+    },
+    [handleWorkspaceFilesChanged, notifyLocalChange],
+  )
+  const { markOwnWrite } = useExternalFileChanges(workspace.rootPath, hasPendingSave, handleExternalFilesChanged)
+  useEffect(() => {
+    markOwnWriteRef.current = markOwnWrite
+  }, [markOwnWrite])
   // Track change markers without requiring the Git sidebar to be opened first.
   const changeMarkers = useChangedItemMarkers(workspace.rootPath, versionControl.files)
   const proxy = useProxy()

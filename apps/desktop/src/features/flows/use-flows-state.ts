@@ -184,6 +184,9 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     foldersRef.current = folders
   }, [flows, folders])
 
+  /** An edit still waiting for its autosave; reloading now would discard it. */
+  const hasPendingSave = useCallback(() => saveTimeoutRef.current !== null, [])
+
   /** Reload from disk and cancel pending saves that could overwrite externally updated content. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
@@ -457,6 +460,7 @@ export function useFlowsState(workspaceRootPath: string, onSaved?: () => void) {
     loadError,
     loaded,
     reload,
+    hasPendingSave,
     addFlow,
     addLoadFlow,
     addFlowFromRequests,

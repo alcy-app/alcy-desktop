@@ -25,6 +25,9 @@ export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () =>
   // Loading changes monitors and loaded together; skip persistence until an actual edit occurs.
   const skipNextSaveRef = useRef(false)
 
+  /** An edit still waiting for its autosave; reloading now would discard it. */
+  const hasPendingSave = useCallback(() => saveTimeoutRef.current !== null, [])
+
   /** Reload from disk and discard pending saves that could overwrite external changes. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
@@ -161,6 +164,7 @@ export function useValueMonitorsState(workspaceRootPath: string, onSaved?: () =>
     loadError,
     error,
     reload,
+    hasPendingSave,
     addMonitor,
     removeMonitor,
     renameMonitor,

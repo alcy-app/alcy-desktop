@@ -248,6 +248,9 @@ export function useCollectionsState(
   // Loading collections and the loaded flag together must not cause redundant persistence or false change markers.
   const skipNextSaveRef = useRef(false)
 
+  /** An edit still waiting for its autosave; reloading now would discard it. */
+  const hasPendingSave = useCallback(() => saveTimeoutRef.current !== null, [])
+
   /** Reload from disk and cancel pending saves that could overwrite externally updated content. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
@@ -697,6 +700,7 @@ export function useCollectionsState(
     loaded,
     loadError,
     reload,
+    hasPendingSave,
     expandedIds,
     toggleExpanded,
     collapseAll,

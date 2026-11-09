@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
 use alcy_app::WorkspaceFiles;
 
@@ -23,6 +24,23 @@ impl DiskWorkspaceFiles {
         } else {
             Err(format!("nome de arquivo inválido: {name}"))
         }
+    }
+
+    /// Modification time and size of a root file, to notice that it changed
+    /// without reading it. `None` while the file does not exist.
+    pub fn stamp(&self, name: &str) -> Result<Option<String>, String> {
+        let metadata = match fs::metadata(self.path_of(name)?) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        let modified = metadata
+            .modified()
+            .map_err(|error| error.to_string())?
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        Ok(Some(format!("{modified}:{}", metadata.len())))
     }
 }
 
@@ -84,6 +102,24 @@ mod tests {
         files.delete("a.json").unwrap();
         assert_eq!(files.read("a.json").unwrap(), None);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stamps_change_with_the_file_and_are_absent_without_it() {
+        let root = temp_root();
+        let files = DiskWorkspaceFiles::new(root.clone());
+        assert_eq!(files.stamp("a.json"), Ok(None));
+
+        files.write("a.json", b"1").unwrap();
+        let first = files.stamp("a.json").unwrap();
+        files.write("a.json", b"22").unwrap();
+        let second = files.stamp("a.json").unwrap();
+
+        fs::remove_dir_all(&root).ok();
+
+        assert!(first.is_some());
+        assert_ne!(first, second);
+        assert!(files.stamp("../a.json").is_err());
     }
 
     #[test]

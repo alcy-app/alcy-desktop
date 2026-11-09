@@ -51,6 +51,9 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
   // Loading changes environments and loaded together; skip persistence until an actual edit occurs.
   const skipNextSaveRef = useRef(false)
 
+  /** An edit still waiting for its autosave; reloading now would discard it. */
+  const hasPendingSave = useCallback(() => saveTimeoutRef.current !== null, [])
+
   /** Reload from disk and discard pending saves that could overwrite external changes. */
   const reload = useCallback(() => {
     if (saveTimeoutRef.current !== null) {
@@ -333,6 +336,7 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     loadError,
     unreadableSecrets,
     reload,
+    hasPendingSave,
     activeEnvironmentId,
     activeEnvironment,
     setActiveEnvironmentId: selectActiveEnvironment,
