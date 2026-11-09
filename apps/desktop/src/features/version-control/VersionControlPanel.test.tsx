@@ -39,7 +39,7 @@ vi.mock('../../bindings/get-proxy-settings', () => ({
 }))
 
 const link: WorkspaceLinkDto = { includeEnvironments: false }
-const gitState = { branch: 'main', branches: ['main'], hasCommits: true, merge: null, remote: null, tracking: null }
+const gitState = { branch: 'main', branches: ['main'], hasCommits: true, merge: null, remote: 'git@example.com:team/api.git', tracking: null }
 const status = (files: FileStatusDto[]) => ({ ok: true, value: { link, files } })
 const ROOT = '/work/space'
 

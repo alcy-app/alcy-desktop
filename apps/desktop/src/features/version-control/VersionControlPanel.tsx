@@ -12,7 +12,7 @@ import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Modal } from '../../shared/ui/Modal'
 import { useTooltip } from '../../shared/ui/use-tooltip'
 import { GitHistory } from './GitHistory'
-import { GitActionsMenu, GitBranchSelect, GitMergeBanner } from './GitWorkspace'
+import { GitActionsMenu, GitAddRemoteButton, GitBranchSelect, GitMergeBanner } from './GitWorkspace'
 import { useGitState } from './use-git-state'
 import { GitLinkForm } from './GitLinkForm'
 import { DiffView } from './DiffView'
@@ -213,7 +213,8 @@ function LinkedView({ rootPath, vc, onOpenSettings, onReview, onPull, onResolveC
     <div className="vc-repository">
       {gitState ? <GitBranchSelect rootPath={rootPath} vc={vc} state={gitState} /> : <div className="vc-repository-name"><GitIcon size={15} /><span>Git</span></div>}
       <div className="vc-repository-actions">
-        <IconButton icon={vc.checking ? <Spinner size={13} /> : <RefreshIcon size={13} />} label={t('vc.action.refresh')} disabled={working} onClick={() => void vc.refresh()} />
+        {gitState?.remote !== null && <IconButton icon={vc.checking ? <Spinner size={13} /> : <RefreshIcon size={13} />} label={t('vc.action.refresh')} disabled={working} onClick={() => void vc.refresh()} />}
+        {gitState?.remote === null && <GitAddRemoteButton rootPath={rootPath} vc={vc} state={gitState} />}
         {gitState && <GitActionsMenu rootPath={rootPath} vc={vc} state={gitState} label={t('vc.action.more')} onUnlink={() => void vc.unlink()} />}
       </div>
     </div>

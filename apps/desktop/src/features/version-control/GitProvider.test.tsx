@@ -76,6 +76,11 @@ const chooseAction = async (name: string) => {
   await openMenu()
   fireEvent.click(await screen.findByRole('menuitem', { name }))
 }
+const panelHeader = async () => within(await waitFor(() => {
+  const element = document.querySelector<HTMLElement>('.vc-repository-actions')
+  expect(element).not.toBeNull()
+  return element!
+}))
 
 beforeEach(() => {
   for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelVersionControlOperation, pickWorkspaceFolder, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
@@ -189,7 +194,7 @@ describe('git in the workspace — branches', () => {
 
 describe('git in the workspace — pending merge', () => {
   it('replaces the commit with finishing the merge once conflicts are resolved', async () => {
-    git.getGitState.mockResolvedValue(state({ merge: { label: 'Bia', conflicts: [COLLECTIONS] } }))
+    git.getGitState.mockResolvedValue(state({ remote: URL, merge: { label: 'Bia', conflicts: [COLLECTIONS] } }))
     getVersionStatus.mockResolvedValue(status([conflict]))
     git.finishGitMerge.mockResolvedValue({ ok: true, value: { commitId: 'abc' } })
     render(<Harness />)
@@ -257,6 +262,23 @@ describe('git in the workspace — remote', () => {
     await waitFor(() => expect(push).toBeEnabled())
     fireEvent.click(push)
     await waitFor(() => expect(git.pushGitRemote).toHaveBeenCalledWith(ROOT, expect.any(String)))
+  })
+
+  it('shows only the add-remote button in the header without a remote', async () => {
+    git.getGitState.mockResolvedValue(state({ hasCommits: false, branches: [] }))
+    git.setGitRemote.mockResolvedValue({ ok: true, value: { url: URL } })
+    render(<Harness />)
+
+    const header = await panelHeader()
+    const add = await header.findByRole('button', { name: 'Adicionar remoto…' })
+    for (const name of ['Verificar', 'Pull', 'Push']) expect(header.queryByRole('button', { name })).not.toBeInTheDocument()
+
+    fireEvent.click(add)
+    const dialog = await screen.findByRole('dialog', { name: 'Adicionar remoto…' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'URL do remoto' }), { target: { value: URL } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(git.setGitRemote).toHaveBeenCalledWith(ROOT, URL))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   it('tells to pull when the push is rejected', async () => {

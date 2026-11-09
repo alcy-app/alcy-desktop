@@ -20,7 +20,7 @@ import { IconButton } from '../../shared/ui/IconButton'
 import { Input } from '../../shared/ui/Input'
 import { MenuItem, MenuSeparator, OptionsMenu } from '../../shared/ui/Menu'
 import { Modal } from '../../shared/ui/Modal'
-import { BranchIcon, ChevronDownIcon, DownloadIcon, GitPullIcon, GitPushIcon, Spinner } from '../../shared/ui/icons'
+import { BranchIcon, ChevronDownIcon, DownloadIcon, GitPullIcon, GitPushIcon, PlusIcon, Spinner } from '../../shared/ui/icons'
 import { suggestBranchName, toBranchName } from './branch-name'
 import { pullFromRemote } from './git-remote'
 import type { VersionControl } from './use-version-control'
@@ -117,6 +117,16 @@ export function GitActionsMenu({ rootPath, vc, state, label, onUnlink }: GitProp
       }}
       tone="primary"
     />}
+  </>
+}
+
+/** The panel header's way to add `origin` while there is none. */
+export function GitAddRemoteButton({ rootPath, vc, state }: GitProps) {
+  const { t } = useLanguage()
+  const [open, setOpen] = useState(false)
+  return <>
+    <Button variant="ghost" disabled={vc.busy !== null} onClick={() => setOpen(true)}><PlusIcon size={13} />{t('vc.git.addRemote')}</Button>
+    {open && <RemoteDialog rootPath={rootPath} vc={vc} state={state} onClose={() => setOpen(false)} />}
   </>
 }
 
