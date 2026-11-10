@@ -49,8 +49,9 @@ pub use body_payload::{
     resolve_file_path,
 };
 pub use collection::{
-    Collection, CollectionError, CollectionLabel, CollectionLabelError, Folder, FolderError,
-    LabelColor, SavedRequest, SavedRequestError, effective_authentication, find_saved_request,
+    Collection, CollectionError, CollectionLabel, CollectionLabelError, ExampleResponse,
+    ExampleResponseHeader, Folder, FolderError, LabelColor, RequestExample, SavedRequest,
+    SavedRequestError, effective_authentication, find_saved_request,
 };
 pub use collection_run::{
     CollectionRunOptions, CollectionRunOptionsError, MAX_RUN_DELAY_MS, MAX_RUN_ITERATIONS,

@@ -15,7 +15,7 @@ import type { ExecuteWebSocketRequestOutput } from '../../bindings/execute-webso
 import type { ExecuteGrpcRequestOutput } from '../../bindings/execute-grpc-request'
 import type { GrpcCommandError, GrpcSchemaSummary } from '../../bindings/load-grpc-schema'
 import type { LoadSchemaError, LoadSchemaOutput } from '../../bindings/load-schema'
-import type { GrpcCallState, RequestContent, WebSocketCallState } from './collection-tree'
+import type { ExampleResponse, GrpcCallState, RequestContent, WebSocketCallState } from './collection-tree'
 
 export type { HttpMethodInput, RawBodyLanguage }
 
@@ -137,6 +137,11 @@ export function graphqlErrorsOf(result: ExecutionSuccess | null | undefined): Gr
   return result.graphqlErrors
 }
 
+/** The saved request whose collection and folders apply to a tab, if any. */
+export function scopeRequestIdOf(tab: Pick<WorkbenchTab, 'requestId' | 'scopeRequestId'>): string | null {
+  return tab.requestId ?? tab.scopeRequestId ?? null
+}
+
 export type ExecutionState =
   | { status: 'idle' }
   /** Date.now() at send time, used by the live response timer. */
@@ -164,9 +169,21 @@ export interface FlowNodeRef {
   nodeId: string
 }
 
+/** Example edited in a tab (spec 0156): the response next to its saved snapshot for dirty checks. */
+export interface ExampleTabState {
+  exampleId: string
+  response: ExampleResponse
+  savedResponse: ExampleResponse
+}
+
 export interface WorkbenchTab {
   id: string
   requestId: string | null
+  /** Saved request lending its variables and inherited authentication to a tab
+   * that is not that request: an example, or the draft that tries one. */
+  scopeRequestId?: string
+  /** Set while the tab edits a request example; Save writes to the example. */
+  example?: ExampleTabState
   /** Inline flow request destination: Save writes to the node rather than a collection. */
   flowNodeRef?: FlowNodeRef
   name: string

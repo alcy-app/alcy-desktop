@@ -23,7 +23,7 @@ import { MentionInChatMenuItem } from '../../agent/MentionInChatMenuItem'
 import { DiscardTabModal } from './DiscardTabModal'
 import { OpenTabsOverflowMenu } from './OpenTabsOverflowMenu'
 import { EnvironmentSelect } from './EnvironmentSelect'
-import { RequestMethodBadge } from './RequestMethodBadge'
+import { ExampleBadge, RequestMethodBadge } from './RequestMethodBadge'
 import './open-tabs-bar.css'
 
 interface OpenTabsBarProps {
@@ -519,7 +519,9 @@ export const OpenTabsBar = memo(function OpenTabsBar({
                 {tab.fixed && (
                   <PinIcon size={11} className="rw-open-tab-pin" />
                 )}
-                {tab.request && (
+                {tab.request?.example ? (
+                  <ExampleBadge className="rw-open-tab-method" aria-hidden />
+                ) : tab.request && (
                   <RequestMethodBadge
                     protocol={tab.request.protocol}
                     method={tab.request.method}

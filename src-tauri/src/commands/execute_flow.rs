@@ -1451,6 +1451,7 @@ mod tests {
                             docs_ref: None,
                             grpc: None,
                             websocket: None,
+                            examples: vec![],
                         }),
                     },
                 ),

@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use alcy_domain::{
     Authentication, BodyPayload, Collection, CollectionLabel, DocsRef, Endpoint,
-    EnvironmentVariable, Folder, FormDataField, FormDataFieldValue, GrpcCall, GrpcSchemaSource,
-    HeaderEntry, HttpMethod, LabelColor, ProtocolId, RawBodyLanguage, Request, RequestDocument,
-    RouteParameter, SavedRequest, UrlEncodedField, WebSocketCall, WebSocketCollect,
-    WebSocketMessageFormat,
+    EnvironmentVariable, ExampleResponse, ExampleResponseHeader, Folder, FormDataField,
+    FormDataFieldValue, GrpcCall, GrpcSchemaSource, HeaderEntry, HttpMethod, LabelColor,
+    ProtocolId, RawBodyLanguage, Request, RequestDocument, RequestExample, RouteParameter,
+    SavedRequest, UrlEncodedField, WebSocketCall, WebSocketCollect, WebSocketMessageFormat,
 };
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +105,31 @@ pub(crate) struct PersistedRequest {
     /// Additive (spec 0140): only WebSocket requests write it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     websocket: Option<PersistedWebSocketCall>,
+    /// Additive (spec 0156): omitted when empty, so requests without examples
+    /// do not change on disk.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    examples: Vec<PersistedExample>,
+}
+
+/// A named call of a request: a copy of the request (with the example's id
+/// and name) and the response it documents (spec 0156).
+#[derive(Serialize, Deserialize)]
+struct PersistedExample {
+    request: PersistedRequest,
+    response: PersistedExampleResponse,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedExampleResponse {
+    status_code: u16,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    headers: Vec<PersistedHeader>,
+    #[serde(default)]
+    body: String,
+    /// An unknown value reads as text so a newer format never makes a
+    /// collection unreadable.
+    #[serde(default = "default_persisted_raw_language")]
+    language: String,
 }
 
 /// Also stored in history details (`history_store.rs`).
@@ -585,10 +610,57 @@ fn persisted_from_body_payload(payload: &BodyPayload) -> PersistedBodyFields {
     }
 }
 
+fn example_from_persisted(persisted: PersistedExample) -> Result<RequestExample, StorageError> {
+    let response = persisted.response;
+    Ok(RequestExample {
+        request: request_from_persisted(persisted.request)?,
+        response: ExampleResponse {
+            status_code: response.status_code,
+            headers: response
+                .headers
+                .into_iter()
+                .map(|header| ExampleResponseHeader {
+                    name: header.name,
+                    value: header.value,
+                    enabled: header.enabled,
+                })
+                .collect(),
+            body: response.body,
+            language: raw_language_from_str(&response.language).unwrap_or(RawBodyLanguage::Text),
+        },
+    })
+}
+
+fn persisted_from_example(example: &RequestExample) -> PersistedExample {
+    PersistedExample {
+        request: persisted_from_request(&example.request),
+        response: PersistedExampleResponse {
+            status_code: example.response.status_code,
+            headers: example
+                .response
+                .headers
+                .iter()
+                .map(|header| PersistedHeader {
+                    name: header.name.clone(),
+                    value: header.value.clone(),
+                    enabled: header.enabled,
+                })
+                .collect(),
+            body: example.response.body.clone(),
+            language: raw_language_to_str(example.response.language).to_string(),
+        },
+    }
+}
+
 pub(crate) fn request_from_persisted(
     persisted: PersistedRequest,
 ) -> Result<SavedRequest, StorageError> {
     let body_payload = body_payload_from_persisted(&persisted)?;
+    let examples = persisted
+        .examples
+        .into_iter()
+        .map(example_from_persisted)
+        .collect::<Result<Vec<_>, StorageError>>()?;
     let protocol = protocol_from_str(&persisted.protocol)?;
     let endpoint = Endpoint::saved(persisted.endpoint);
     let document = RequestDocument::new(protocol, persisted.body);
@@ -632,7 +704,8 @@ pub(crate) fn request_from_persisted(
     );
 
     let saved = SavedRequest::new(persisted.id, persisted.name, request)
-        .map_err(|error| StorageError::Corrupted(error.to_string()))?;
+        .map_err(|error| StorageError::Corrupted(error.to_string()))?
+        .with_examples(examples);
     Ok(match persisted.docs_ref {
         Some(docs_ref) => saved.with_docs_ref(DocsRef {
             source_id: docs_ref.source_id,
@@ -689,6 +762,11 @@ pub(crate) fn persisted_from_request(request: &SavedRequest) -> PersistedRequest
             .then(|| persisted_from_grpc(&request.request.grpc)),
         websocket: (request.request.document.protocol == ProtocolId::WebSocket)
             .then(|| persisted_from_websocket(&request.request.websocket)),
+        examples: request
+            .examples()
+            .iter()
+            .map(persisted_from_example)
+            .collect(),
     }
 }
 
@@ -1296,6 +1374,51 @@ mod tests {
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
         assert_eq!(raw.matches("docs_ref").count(), 1);
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_then_load_round_trips_examples_and_omits_them_when_absent() {
+        let root = temp_root();
+        let store = CollectionsStore::new(root.clone());
+        let example = RequestExample {
+            request: SavedRequest::new("example-1", "Not found", sample_request("")).unwrap(),
+            response: ExampleResponse {
+                status_code: 404,
+                headers: vec![ExampleResponseHeader {
+                    name: String::new(),
+                    value: "row still being typed".to_string(),
+                    enabled: false,
+                }],
+                body: "{\"error\":true}".to_string(),
+                language: RawBodyLanguage::Html,
+            },
+        };
+        let with_example = SavedRequest::new("request-1", "Get pet", sample_request(""))
+            .unwrap()
+            .with_examples(vec![example]);
+        let plain = SavedRequest::new("request-2", "Ping", sample_request("")).unwrap();
+        let collections = vec![
+            Collection::new("collection-1", "Pets", vec![], vec![with_example, plain]).unwrap(),
+        ];
+
+        store.save(&collections).unwrap();
+
+        assert_eq!(store.load().unwrap(), collections);
+        let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert_eq!(raw.matches("\"examples\"").count(), 1);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_example_with_an_unknown_language_loads_as_text() {
+        let raw = r#"{"version": 1, "collections": [{"id": "c", "name": "API", "folders": [], "requests": [{"id": "r", "name": "Ping", "protocol": "rest", "endpoint": "https://api.example.com", "body": "", "variables": "", "headers": [], "authentication": {"type": "none"}, "examples": [{"request": {"id": "e", "name": "Ok", "protocol": "rest", "endpoint": "https://api.example.com", "body": "", "variables": "", "headers": [], "authentication": {"type": "inherit"}}, "response": {"status_code": 200, "language": "yaml"}}]}]}]}"#;
+
+        let collections = import_collections_from_str(raw).unwrap();
+
+        let example = &collections[0].requests()[0].examples()[0];
+        assert_eq!(example.request.name(), "Ok");
+        assert_eq!(example.response.status_code, 200);
+        assert_eq!(example.response.language, RawBodyLanguage::Text);
     }
 
     #[test]

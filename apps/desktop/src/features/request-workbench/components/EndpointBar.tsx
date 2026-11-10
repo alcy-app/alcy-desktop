@@ -44,6 +44,8 @@ interface EndpointBarProps {
   websocketOpen?: boolean
   /** WebSocket only: closes the open connection normally. */
   onDisconnect?: () => void
+  /** Replaces the Send label and its options, for tabs whose action is not a plain send. */
+  actionLabel?: string
 }
 
 export function EndpointBar({
@@ -66,6 +68,7 @@ export function EndpointBar({
   grpcSchemaControls,
   websocketOpen = false,
   onDisconnect,
+  actionLabel,
 }: EndpointBarProps) {
   const { t } = useLanguage()
   const methodClass =
@@ -75,7 +78,7 @@ export function EndpointBar({
         ? 'rw-endpoint-method--websocket'
         : 'rw-endpoint-method--graphql'
   // HTTP options (save the response to a file) do not apply to gRPC or WebSocket.
-  const sendOnly = protocol === 'grpc' || protocol === 'websocket'
+  const sendOnly = protocol === 'grpc' || protocol === 'websocket' || actionLabel !== undefined
 
   // Import only when pasting would replace the entire URL (empty or fully selected).
   const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
@@ -151,7 +154,7 @@ export function EndpointBar({
       ) : (
         <div className={`rw-endpoint-send-group${sendOnly ? ' rw-endpoint-send-group--grpc' : ''}`}>
           <Button className={`rw-endpoint-action${sendOnly ? '' : ' rw-endpoint-action--split'}`} variant="primary" size="sm" onClick={onSend} disabled={isImportingCommand}>
-            {protocol === 'websocket' ? t('websocket.connect') : t('endpointBar.send')}
+            {actionLabel ?? (protocol === 'websocket' ? t('websocket.connect') : t('endpointBar.send'))}
           </Button>
           {/* Saving the response to a file is an HTTP option. */}
           {!sendOnly && <SendOptionsMenu onSendAndDownload={onSendAndDownload} disabled={isImportingCommand} />}

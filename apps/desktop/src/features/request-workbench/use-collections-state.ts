@@ -36,10 +36,14 @@ import {
   sortNodeChildren,
   topLevelSelection,
   duplicateRequest as duplicateRequestInTree,
+  createExample,
+  emptyExampleResponse,
   emptyRequestContent,
   findAncestorIds,
+  findExample,
   findNode,
   findRequest,
+  insertExample,
   insertFolder,
   insertRequest,
   kindOf,
@@ -57,10 +61,12 @@ import {
   reorderFolder as reorderFolderInTree,
   reorderRequest as reorderRequestInTree,
   uniqueChildName,
+  uniqueExampleName,
   uniqueSiblingName,
+  updateExample as updateExampleInTree,
   updateRequestContent as updateRequestContentInTree,
 } from './collection-tree'
-import type { RequestContent, RequestProtocol, RequestSummary, TreeNode } from './collection-tree'
+import type { ExampleResponse, RequestContent, RequestExample, RequestProtocol, RequestSummary, TreeNode } from './collection-tree'
 import type { AlphabeticalSortDirection } from './collection-tree'
 import { emptyGrpcCall, websocketCallDto, websocketFromDto, websocketOf } from './collection-tree'
 
@@ -82,6 +88,16 @@ export function requestFromDto(dto: SavedRequestDto): RequestSummary {
     name: dto.name,
     protocol,
     ...(dto.docsRef ? { docsRef: dto.docsRef } : {}),
+    ...(dto.examples?.length
+      ? {
+          examples: dto.examples.map((example) => ({
+            id: example.request.id,
+            name: example.request.name,
+            content: requestFromDto(example.request).content,
+            response: example.response,
+          })),
+        }
+      : {}),
     content:
       protocol === 'websocket'
         ? {
@@ -183,6 +199,14 @@ export function requestToDto(request: RequestSummary): SavedRequestDto {
     postResponseScript: request.content.postResponseScript,
     routeParams: request.content.routeParams,
     ...(request.docsRef ? { docsRef: request.docsRef } : {}),
+    ...(request.examples?.length
+      ? {
+          examples: request.examples.map((example) => ({
+            request: requestToDto({ id: example.id, name: example.name, protocol: example.content.protocol, content: example.content }),
+            response: example.response,
+          })),
+        }
+      : {}),
     ...(request.content.protocol === 'grpc'
       ? {
           grpc: {
@@ -438,6 +462,35 @@ export function useCollectionsState(
     },
     [collections, t, showToast],
   )
+
+  /** Add an example under a request and show it in the tree. Content defaults to the saved request's. */
+  const addExample = useCallback(
+    (requestId: string, content?: RequestContent, response: ExampleResponse = emptyExampleResponse): RequestExample | null => {
+      const request = findRequest(collections, requestId)
+      if (!request) return null
+      const example = createExample(crypto.randomUUID(), uniqueExampleName(request, request.name), content ?? request.content, response)
+      setCollections((current) => insertExample(current, requestId, example))
+      expand(requestId)
+      return example
+    },
+    [collections, expand],
+  )
+
+  const duplicateExample = useCallback(
+    (id: string): { requestId: string; example: RequestExample } | null => {
+      const found = findExample(collections, id)
+      if (!found) return null
+      const name = uniqueExampleName(found.request, `${found.example.name} ${t('collections.copySuffix')}`)
+      const example = { ...found.example, id: crypto.randomUUID(), name }
+      setCollections((current) => insertExample(current, found.request.id, example, id))
+      return { requestId: found.request.id, example }
+    },
+    [collections, t],
+  )
+
+  const updateExample = useCallback((example: RequestExample) => {
+    setCollections((current) => updateExampleInTree(current, example))
+  }, [])
 
   const moveRequest = useCallback(
     (id: string, targetParentId: string) => {
@@ -710,6 +763,9 @@ export function useCollectionsState(
     addFolder,
     addRequest,
     duplicateRequest,
+    addExample,
+    duplicateExample,
+    updateExample,
     moveRequest,
     reorderRequest,
     moveFolder,

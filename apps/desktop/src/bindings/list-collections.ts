@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { GrpcCallDto } from './grpc-call'
 import type { WebSocketCallDto } from './websocket-call'
 import type { AuthenticationInput, HeaderInput } from './execute-graphql-request'
-import type { HttpMethodInput, RestBodyInput } from './execute-rest-request'
+import type { HttpMethodInput, RawBodyLanguage, RestBodyInput } from './execute-rest-request'
 
 export interface RouteParameterDto {
   name: string
@@ -32,6 +32,21 @@ export interface SavedRequestDto {
   grpc?: GrpcCallDto | null
   /** WebSocket call options (spec 0140); absent for other protocols. */
   websocket?: WebSocketCallDto | null
+  /** Named calls saved under this request (spec 0156); absent in older DTOs. */
+  examples?: RequestExampleDto[]
+}
+
+export interface ExampleResponseDto {
+  statusCode: number
+  headers: HeaderInput[]
+  body: string
+  language: RawBodyLanguage
+}
+
+/** The example's own copy of the request carries the example's id and name. */
+export interface RequestExampleDto {
+  request: SavedRequestDto
+  response: ExampleResponseDto
 }
 
 /** Aponta para uma operação em `alcy-api-docs.json` — não usa o id da requisição. */

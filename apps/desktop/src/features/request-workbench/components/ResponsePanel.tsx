@@ -9,7 +9,7 @@ import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
 import { readResponseBodyChunk } from '../../../bindings/read-response-body-chunk'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
-import { CopyIcon, MonitorIcon, PanelBottomIcon, PanelRightIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
+import { CopyIcon, MonitorIcon, PanelBottomIcon, PanelRightIcon, SaveIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
 import { IconButton } from '../../../shared/ui/IconButton'
 import { LoadingBar } from '../../../shared/ui/LoadingBar'
 import { Tooltip } from '../../../shared/ui/Tooltip'
@@ -73,6 +73,8 @@ interface ResponsePanelProps {
   onOpenHistorySettings?: () => void
   /** Share lines selected in the current response body as an image. */
   onShareSelection?: (excerpt: ResponseExcerpt) => void
+  /** Saves the current response as an example of the tab's saved request; absent when the tab has none. */
+  onSaveAsExample?: () => void
 }
 
 export interface ResponseMonitorControl {
@@ -115,6 +117,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   monitor,
   onOpenHistorySettings,
   onShareSelection,
+  onSaveAsExample,
 }: ResponsePanelProps) {
   const { t, language } = useLanguage()
   const { showToast } = useToast()
@@ -303,6 +306,14 @@ export const ResponsePanel = memo(function ResponsePanel({
           )}
         </div>
         <div className="rw-response-toolbar-actions">
+          {onSaveAsExample && (
+            <IconButton
+              icon={<SaveIcon size={14} />}
+              label={t('response.saveAsExampleAria')}
+              onClick={onSaveAsExample}
+              disabled={view.kind !== 'current' || !success || notStored}
+            />
+          )}
           <IconButton
             icon={<CopyIcon size={14} />}
             label={t('response.copyAria')}

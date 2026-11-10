@@ -6,7 +6,7 @@ import type {
 } from '../../bindings/execute-graphql-request'
 import type { CollectionLabelDto, DocsRefDto, ScopedVariableDto } from '../../bindings/list-collections'
 import type { EnvironmentVariableDto } from '../../bindings/list-environments'
-import type { HttpMethodInput, RestBodyInput } from '../../bindings/execute-rest-request'
+import type { HttpMethodInput, RawBodyLanguage, RestBodyInput } from '../../bindings/execute-rest-request'
 import type { GrpcSchemaSourceDto } from '../../bindings/grpc-call'
 import type { WebSocketCallDto, WebSocketMessageFormat } from '../../bindings/websocket-call'
 import type { ItemChangeKind } from '../../bindings/version-control-types'
@@ -139,6 +139,50 @@ export interface RequestSummary {
   /** Documentação importada (ADR 0035). Fica fora de `content` porque salvar
    * a aba substitui o conteúdo inteiro, e a referência não é editável. */
   docsRef?: DocsRefDto | null
+  /** Named calls saved under this request (spec 0156); absent when there are none. */
+  examples?: RequestExample[]
+}
+
+/** The response an example documents. */
+export interface ExampleResponse {
+  statusCode: number
+  headers: HeaderInput[]
+  body: string
+  language: RawBodyLanguage
+}
+
+/** A named call of a request: its own copy of the content and the response it
+ * documents. Authentication and scripts stay on the request (spec 0156). */
+export interface RequestExample {
+  id: string
+  name: string
+  content: RequestContent
+  response: ExampleResponse
+}
+
+export const emptyExampleResponse: ExampleResponse = { statusCode: 200, headers: [], body: '', language: 'json' }
+
+export function sameExampleResponse(a: ExampleResponse, b: ExampleResponse): boolean {
+  return (
+    a.statusCode === b.statusCode &&
+    a.body === b.body &&
+    a.language === b.language &&
+    a.headers.length === b.headers.length &&
+    a.headers.every((header, index) => {
+      const other = b.headers[index]
+      return header.name === other.name && header.value === other.value && header.enabled === other.enabled
+    })
+  )
+}
+
+/** Examples document HTTP-shaped responses, so only REST and GraphQL requests have them. */
+export function supportsExamples(request: Pick<RequestSummary, 'protocol'>): boolean {
+  return request.protocol === 'rest' || request.protocol === 'graphql'
+}
+
+/** Build an example from request content, leaving out what stays on the request, such as credentials. */
+export function createExample(id: string, name: string, content: RequestContent, response: ExampleResponse): RequestExample {
+  return { id, name, content: { ...content, authentication: { type: 'inherit' }, preRequestScript: '', postResponseScript: '' }, response }
 }
 
 /** A request's method as labels show it: the HTTP method, or the protocol
@@ -265,6 +309,56 @@ export function findNode(nodes: TreeNode[], id: string): TreeNode | null {
   return null
 }
 
+/** Find an example and the request that owns it, wherever the request is in the tree. */
+export function findExample(nodes: TreeNode[], id: string): { request: RequestSummary; example: RequestExample } | null {
+  for (const node of nodes) {
+    for (const request of node.requests) {
+      const example = request.examples?.find((candidate) => candidate.id === id)
+      if (example) return { request, example }
+    }
+    const inChild = findExample(node.folders, id)
+    if (inChild) return inChild
+  }
+  return null
+}
+
+function mapRequests(nodes: TreeNode[], fn: (request: RequestSummary) => RequestSummary): TreeNode[] {
+  return nodes.map((node) => ({ ...node, folders: mapRequests(node.folders, fn), requests: node.requests.map(fn) }))
+}
+
+/** Insert an example right after `afterId`, or last when it is absent. */
+export function insertExample(nodes: TreeNode[], requestId: string, example: RequestExample, afterId?: string): TreeNode[] {
+  return mapRequests(nodes, (request) => {
+    if (request.id !== requestId) return request
+    const examples = [...(request.examples ?? [])]
+    const index = afterId === undefined ? -1 : examples.findIndex((candidate) => candidate.id === afterId)
+    examples.splice(index === -1 ? examples.length : index + 1, 0, example)
+    return { ...request, examples }
+  })
+}
+
+export function updateExample(nodes: TreeNode[], example: RequestExample): TreeNode[] {
+  return mapRequests(nodes, (request) =>
+    request.examples?.some((candidate) => candidate.id === example.id)
+      ? { ...request, examples: request.examples.map((candidate) => (candidate.id === example.id ? example : candidate)) }
+      : request,
+  )
+}
+
+export function uniqueExampleName(request: RequestSummary, base: string): string {
+  return uniqueAmong(base, (request.examples ?? []).map((example) => example.name))
+}
+
+/** Requests that can expand to show examples, which search reveals along with folders. */
+export function requestIdsWithExamples(nodes: TreeNode[]): Set<string> {
+  const ids = new Set<string>()
+  for (const node of nodes) {
+    for (const request of node.requests) if (request.examples?.length) ids.add(request.id)
+    for (const id of requestIdsWithExamples(node.folders)) ids.add(id)
+  }
+  return ids
+}
+
 export function findRequest(nodes: TreeNode[], id: string): RequestSummary | null {
   for (const node of nodes) {
     const found = node.requests.find((request) => request.id === id)
@@ -364,7 +458,12 @@ export function renameNode(nodes: TreeNode[], id: string, name: string): TreeNod
     return {
       ...node,
       folders: renameNode(node.folders, id, name),
-      requests: node.requests.map((request) => (request.id === id ? { ...request, name } : request)),
+      requests: node.requests.map((request) => {
+        if (request.id === id) return { ...request, name }
+        return request.examples?.some((example) => example.id === id)
+          ? { ...request, examples: request.examples.map((example) => (example.id === id ? { ...example, name } : example)) }
+          : request
+      }),
     }
   })
 }
@@ -375,7 +474,13 @@ export function removeNode(nodes: TreeNode[], id: string): TreeNode[] {
     .map((node) => ({
       ...node,
       folders: removeNode(node.folders, id),
-      requests: node.requests.filter((request) => request.id !== id),
+      requests: node.requests
+        .filter((request) => request.id !== id)
+        .map((request) =>
+          request.examples?.some((example) => example.id === id)
+            ? { ...request, examples: request.examples.filter((example) => example.id !== id) }
+            : request,
+        ),
     }))
 }
 
@@ -521,7 +626,7 @@ export function duplicateRequest(nodes: TreeNode[], id: string, newId: string, n
     ...node,
     folders: duplicateRequest(node.folders, id, newId, name),
     requests: node.requests.flatMap((request) =>
-      request.id === id ? [request, { ...request, id: newId, name }] : [request],
+      request.id === id ? [request, { ...withNewExampleIds(request, () => crypto.randomUUID()), id: newId, name }] : [request],
     ),
   }))
 }
@@ -663,12 +768,20 @@ export function regenerateIds(node: TreeNode, newId: () => string = () => crypto
     ...node,
     id: newId(),
     folders: node.folders.map((folder) => regenerateIds(folder, newId)),
-    requests: node.requests.map((request) => ({ ...request, id: newId() })),
+    requests: node.requests.map((request) => ({ ...withNewExampleIds(request, newId), id: newId() })),
   }
 }
 
+function withNewExampleIds(request: RequestSummary, newId: () => string): RequestSummary {
+  return request.examples ? { ...request, examples: request.examples.map((example) => ({ ...example, id: newId() })) } : request
+}
+
 function requestMatches(request: RequestSummary, query: string): boolean {
-  return request.name.toLowerCase().includes(query) || request.content.endpointUrl.toLowerCase().includes(query)
+  return (
+    request.name.toLowerCase().includes(query) ||
+    request.content.endpointUrl.toLowerCase().includes(query) ||
+    (request.examples ?? []).some((example) => example.name.toLowerCase().includes(query))
+  )
 }
 
 /** Se o próprio nome de `node` casar com a busca, mantém a subárvore inteira (sem filtrar) — do

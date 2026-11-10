@@ -44,6 +44,11 @@ function panelProps(
     collections,
     expandedIds,
     openRequestId: null,
+    openExampleId: null,
+    onAddExample: noop,
+    onOpenExample: noop,
+    onPinExample: noop,
+    onDuplicateExample: noop,
     changeMarkers,
     onToggleExpanded: noop,
     onCollapseAll: noop,
@@ -855,7 +860,7 @@ describe('CollectionsPanel — grupos do menu de contexto', () => {
 
     fireEvent.contextMenu(screen.getByText('Listar'))
 
-    expect(menuGroups()).toEqual([['Gerar flow', 'Mencionar no chat'], ['RenomearF2', 'DuplicarCtrl+D'], ['Mover para...', 'Selecionar'], ['RemoverDelete']])
+    expect(menuGroups()).toEqual([['Adicionar exemplo'], ['Gerar flow', 'Mencionar no chat'], ['RenomearF2', 'DuplicarCtrl+D'], ['Mover para...', 'Selecionar'], ['RemoverDelete']])
   })
 
   it('agrupa as ações da collection por função, com favoritas e rótulos num grupo próprio', () => {
@@ -900,5 +905,66 @@ describe('CollectionsPanel — pinned toolbar', () => {
 
     expect(toolbar()).toContainElement(screen.getByRole('button', { name: 'Buscar requisições' }))
     expect(scrollBody()).toContainElement(screen.getByText('Nenhuma Collection ainda.'))
+  })
+})
+
+describe('CollectionsPanel — exemplos de requisição', () => {
+  const content = { ...emptyContent(), protocol: 'rest' as const }
+  const withExamples: RequestSummary = {
+    id: 'r1',
+    name: 'Get Models',
+    protocol: 'rest',
+    content,
+    examples: [{ id: 'e1', name: 'Sucesso', content, response: { statusCode: 200, headers: [], body: '', language: 'json' } }],
+  }
+
+  it('adiciona um exemplo pelo menu da requisição', () => {
+    const onAddExample = vi.fn()
+    renderPanel([node('c1', 'API', [], [withExamples])], new Map(), new Set(['c1']), noop, noop, { onAddExample })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Get Models' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Adicionar exemplo' }))
+
+    expect(onAddExample).toHaveBeenCalledWith('r1')
+  })
+
+  it('não oferece exemplos para protocolos sem resposta HTTP', () => {
+    const grpc: RequestSummary = { ...request('r2', 'Call'), protocol: 'grpc' }
+    renderPanel([node('c1', 'API', [], [grpc])], new Map(), new Set(['c1']))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Call' }))
+
+    expect(screen.queryByRole('menuitem', { name: 'Adicionar exemplo' })).not.toBeInTheDocument()
+  })
+
+  it('mostra os exemplos só com a requisição expandida e os abre com a requisição dona', () => {
+    const onOpenExample = vi.fn()
+    const onToggleExpanded = vi.fn()
+    const overrides = { onOpenExample, onToggleExpanded }
+    const collections = [node('c1', 'API', [], [withExamples])]
+    const { unmount } = renderPanel(collections, new Map(), new Set(['c1']), noop, noop, overrides)
+
+    expect(screen.queryByLabelText('Abrir exemplo Sucesso')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar ou ocultar os exemplos de Get Models' }))
+    expect(onToggleExpanded).toHaveBeenCalledWith('r1')
+    unmount()
+
+    renderPanel(collections, new Map(), new Set(['c1', 'r1']), noop, noop, overrides)
+    fireEvent.click(screen.getByLabelText('Abrir exemplo Sucesso'))
+
+    expect(onOpenExample).toHaveBeenCalledWith('r1', withExamples.examples![0])
+  })
+
+  it('confirma antes de remover um exemplo', () => {
+    const onRemove = vi.fn()
+    renderPanel([node('c1', 'API', [], [withExamples])], new Map(), new Set(['c1', 'r1']), noop, noop, { onRemove })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mais opções de Sucesso' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Remover/ }))
+    expect(screen.getByText('Remover exemplo?')).toBeInTheDocument()
+    expect(onRemove).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Remover' }))
+
+    expect(onRemove).toHaveBeenCalledWith('e1')
   })
 })

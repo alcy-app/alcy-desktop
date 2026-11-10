@@ -1,9 +1,9 @@
 import { parseTabGroups } from './tab-groups'
 import type { TabGroup } from './tab-groups'
 import type { TabSessionEnvelope } from '../../bindings/save-tab-session'
-import { emptyRequestContent, findRequest } from './collection-tree'
-import type { RequestContent, TreeNode } from './collection-tree'
-import type { WorkbenchTab } from './request-workbench.types'
+import { emptyRequestContent, findExample, findRequest } from './collection-tree'
+import type { ExampleResponse, RequestContent, TreeNode } from './collection-tree'
+import type { ExampleTabState, WorkbenchTab } from './request-workbench.types'
 
 /** A saved session tab (ADR 0039). Drafts contain unsaved edits; clean requests reload from their collection. */
 export interface PersistedTab {
@@ -12,6 +12,8 @@ export interface PersistedTab {
   name: string
   draft: RequestContent | null
   fixed?: boolean
+  /** Example the tab edits; `response` holds unsaved edits and is null when there are none. */
+  example?: { exampleId: string; response: ExampleResponse | null }
 }
 
 export interface TabSession {
@@ -28,12 +30,13 @@ export interface RestoredTab {
   content: RequestContent
   savedContent: RequestContent
   fixed: boolean
+  example?: { requestId: string; state: ExampleTabState }
 }
 
 /** Recover request tabs; history previews are ephemeral and inline requests belong to their flow. */
 function isRecoverable(tab: WorkbenchTab): boolean {
   if (tab.flowNodeRef) return false
-  return tab.pinned || tab.requestId !== null
+  return tab.pinned || tab.requestId !== null || tab.example !== undefined
 }
 
 export function snapshotTabSession(
@@ -53,8 +56,9 @@ export function snapshotTabSession(
         requestId: tab.requestId,
         name: tab.name,
         // Tabs without a saved request need a content snapshot even when promoted from a clean preview.
-        draft: tab.dirty || tab.requestId === null ? contentOf(tab) : null,
+        draft: tab.dirty || (tab.requestId === null && !tab.example) ? contentOf(tab) : null,
         ...(tab.fixed ? { fixed: true } : {}),
+        ...(tab.example ? { example: { exampleId: tab.example.exampleId, response: tab.dirty ? tab.example.response : null } } : {}),
       }),
     ),
     ...(persistedGroups.length ? { groups: persistedGroups } : {}),
@@ -178,17 +182,35 @@ function parseContent(raw: unknown): RequestContent | null {
   }
 }
 
+function parseExampleResponse(raw: unknown): ExampleResponse | null {
+  if (!isRecord(raw) || !hasStrings(raw, ['body', 'language']) || typeof raw.statusCode !== 'number') return null
+  if (!RAW_LANGUAGES.has(raw.language as string) || !isNameValueList(raw.headers, ['value'])) return null
+  if (!(raw.headers as Record<string, unknown>[]).every((header) => typeof header.enabled === 'boolean')) return null
+  return raw as unknown as ExampleResponse
+}
+
+/** An example reference; a malformed one makes the tab unrecoverable rather than a plain draft. */
+function parseExampleRef(raw: unknown): PersistedTab['example'] | null {
+  if (!isRecord(raw) || typeof raw.exampleId !== 'string' || raw.exampleId === '') return null
+  if (raw.response === null || raw.response === undefined) return { exampleId: raw.exampleId, response: null }
+  const response = parseExampleResponse(raw.response)
+  return response === null ? null : { exampleId: raw.exampleId, response }
+}
+
 function parseTab(raw: unknown): PersistedTab | null {
   if (!isRecord(raw) || typeof raw.id !== 'string' || raw.id === '') return null
   const requestId = typeof raw.requestId === 'string' && raw.requestId !== '' ? raw.requestId : null
   const name = typeof raw.name === 'string' ? raw.name : ''
   const fixed = raw.fixed === true ? { fixed: true } : {}
+  const parsedExample = raw.example === undefined ? undefined : parseExampleRef(raw.example)
+  if (parsedExample === null) return null
+  const extras = { ...fixed, ...(parsedExample ? { example: parsedExample } : {}) }
   if (raw.draft === null || raw.draft === undefined) {
-    // Only saved requests can reload content without a draft.
-    return requestId === null ? null : { id: raw.id, requestId, name, draft: null, ...fixed }
+    // Only saved requests and examples can reload content without a draft.
+    return requestId === null && !parsedExample ? null : { id: raw.id, requestId, name, draft: null, ...extras }
   }
   const draft = parseContent(raw.draft)
-  return draft === null ? null : { id: raw.id, requestId, name, draft, ...fixed }
+  return draft === null ? null : { id: raw.id, requestId, name, draft, ...extras }
 }
 
 /** Parse native session data, discarding invalid or duplicate tabs independently. */
@@ -210,6 +232,27 @@ export function parseTabSession(raw: unknown): TabSession | null {
 /** Resolve against current collections; retain edits to removed requests as independent drafts. */
 export function resolveTabSession(session: TabSession, collections: TreeNode[]): RestoredTab[] {
   return session.tabs.flatMap((tab): RestoredTab[] => {
+    if (tab.example) {
+      const found = findExample(collections, tab.example.exampleId)
+      if (!found) return []
+      const { exampleId } = tab.example
+      const savedResponse = found.example.response
+      return [
+        {
+          id: tab.id,
+          requestId: null,
+          name: found.example.name,
+          content: tab.draft ?? found.example.content,
+          savedContent: found.example.content,
+          fixed: tab.fixed === true,
+          example: {
+            requestId: found.request.id,
+            state: { exampleId, response: tab.example.response ?? savedResponse, savedResponse },
+          },
+        },
+      ]
+    }
+
     const saved = tab.requestId === null ? null : findRequest(collections, tab.requestId)
 
     if (saved) {

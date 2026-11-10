@@ -9,7 +9,7 @@ import { Modal } from '../../../shared/ui/Modal'
 import './remove-node-modal.css'
 
 interface RemoveNodeModalProps {
-  kind: 'collection' | 'folder' | 'request'
+  kind: 'collection' | 'folder' | 'request' | 'example'
   name: string
   folderCount?: number
   requestCount?: number
@@ -32,6 +32,20 @@ export function RemoveNodeModal({
   const { t } = useLanguage()
   const inputId = useId()
   const [confirmation, setConfirmation] = useState('')
+
+  if (kind === 'example') {
+    return (
+      <ConfirmDialog
+        title={t('collections.removeExampleModalTitle')}
+        description={t('collections.removeExampleModalDescription', { name: truncateMiddle(name) })}
+        confirmLabel={t('common.remove')}
+        cancelLabel={t('common.cancel')}
+        closeAriaLabel={t('collections.closeModalAria')}
+        onConfirm={onRemove}
+        onCancel={onCancel}
+      />
+    )
+  }
 
   if (kind === 'request') {
     return (

@@ -29,6 +29,7 @@ import {
   emptyWebSocketCall,
   mergeScopedVariables,
   sameGrpcCall,
+  sameExampleResponse,
   sameWebSocketCall,
   variableScopesFor,
   websocketCallDto,
@@ -40,7 +41,7 @@ import {
   toAuthenticationInput,
   toAuthorizationState,
 } from './authorization-state'
-import type { GrpcCallState, RequestContent, RequestProtocol, TreeNode, WebSocketCallState } from './collection-tree'
+import type { ExampleResponse, GrpcCallState, RequestContent, RequestExample, RequestProtocol, TreeNode, WebSocketCallState } from './collection-tree'
 import { createEmptyQuery, ensureFieldPath, parseQuery, setFieldArgument, toggleField } from './graphql-query-tree'
 import {
   buildUrlWithParams,
@@ -64,6 +65,7 @@ import type {
   UrlEncodedEntry,
   WorkbenchTab,
 } from './request-workbench.types'
+import { scopeRequestIdOf } from './request-workbench.types'
 import type { RestoredTab } from './tab-session'
 import { internSchema } from './schema-registry'
 import { renameNodeReferences } from '../flows/node-identifiers'
@@ -231,12 +233,13 @@ function contentDiffersFromSaved(tab: WorkbenchTab): boolean {
     !sameRouteParams(tab.routeParams, saved.routeParams) ||
     !sameAuthentication(toAuthenticationInput(tab.authorization), saved.authentication) ||
     !sameGrpcCall(tab.grpc, saved.grpc) ||
-    (tab.protocol === 'websocket' && !sameWebSocketCall(tab.websocket, websocketOf(saved)))
+    (tab.protocol === 'websocket' && !sameWebSocketCall(tab.websocket, websocketOf(saved))) ||
+    (tab.example !== undefined && !sameExampleResponse(tab.example.response, tab.example.savedResponse))
   )
 }
 
 function computeDirty(tab: WorkbenchTab): boolean {
-  return (tab.requestId === null && !tab.flowNodeRef) || contentDiffersFromSaved(tab)
+  return (tab.requestId === null && !tab.flowNodeRef && !tab.scopeRequestId) || contentDiffersFromSaved(tab)
 }
 
 /** Whether the tab changed since loading or saving, for the OpenTabsBar indicator. */
@@ -267,8 +270,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
 
   const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? state.tabs[0] ?? EMPTY_TAB
   const effectiveVariables = useMemo(
-    () => mergeScopedVariables(environmentVariables, collections, activeTab.requestId),
-    [environmentVariables, collections, activeTab.requestId],
+    () => mergeScopedVariables(environmentVariables, collections, scopeRequestIdOf(activeTab)),
+    [environmentVariables, collections, activeTab],
   )
 
   const updateTab = useCallback((tabId: string | null, patch: TabPatch) => {
@@ -305,7 +308,8 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     const headers = tab.headers.map((header) => ({ name: header.name, value: header.value, enabled: header.enabled }))
     const authentication = toAuthenticationInput(tab.authorization)
     const environmentVariablesInput = environmentVariables.map(({ name, value, sensitive }) => ({ name, value, sensitive }))
-    const variableScopes = variableScopesFor(collections, tab.requestId)
+    const scopeRequestId = scopeRequestIdOf(tab)
+    const variableScopes = variableScopesFor(collections, scopeRequestId)
 
     const result =
       tab.protocol === 'rest'
@@ -318,7 +322,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
             body: toRestBodyInput(tab.body),
             headers,
             authentication,
-            requestId: tab.requestId,
+            requestId: scopeRequestId,
             tabId,
             environmentVariables: environmentVariablesInput,
             variableScopes,
@@ -334,7 +338,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
             variables: tab.variables,
             headers,
             authentication,
-            requestId: tab.requestId,
+            requestId: scopeRequestId,
             tabId,
             environmentVariables: environmentVariablesInput,
             variableScopes,
@@ -506,9 +510,9 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
         headers: tab.headers.map((header) => ({ name: header.name, value: header.value, enabled: header.enabled })),
         authentication: toAuthenticationInput(tab.authorization),
         rootPath,
-        requestId: tab.requestId,
+        requestId: scopeRequestIdOf(tab),
         environmentVariables: environmentVariables.map(({ name, value, sensitive }) => ({ name, value, sensitive })),
-        variableScopes: variableScopesFor(collections, tab.requestId),
+        variableScopes: variableScopesFor(collections, scopeRequestIdOf(tab)),
         forceRefresh,
       })
 
@@ -744,6 +748,52 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [],
   )
 
+  /** Open or activate an example tab, as a preview like saved requests unless pinned on open. */
+  const openExample = useCallback((requestId: string, example: RequestExample, preview = true) => {
+    const isOpen = (tab: WorkbenchTab) => tab.example?.exampleId === example.id
+    const snapshot = stateRef.current
+    if (!snapshot.tabs.some(isOpen) && preview) {
+      const replacedPreview = snapshot.tabs.find((candidate) => !candidate.pinned)
+      if (replacedPreview) releaseIfWindowed(replacedPreview.execution)
+    }
+
+    setState((current) => {
+      const existing = current.tabs.find(isOpen)
+      if (existing) return { ...current, activeTabId: existing.id }
+
+      const tab: WorkbenchTab = {
+        ...tabFromContent(null, example.name, example.content),
+        scopeRequestId: requestId,
+        example: { exampleId: example.id, response: example.response, savedResponse: example.response },
+        dirty: false,
+        pinned: !preview,
+      }
+      const previewIndex = preview ? current.tabs.findIndex((candidate) => !candidate.pinned) : -1
+      if (previewIndex === -1) return { tabs: [...current.tabs, tab], activeTabId: tab.id }
+      const tabs = [...current.tabs]
+      tabs[previewIndex] = tab
+      return { tabs, activeTabId: tab.id }
+    })
+  }, [])
+
+  /** Open the draft that tries an example, reusing the previous try's tab. Returns its ID, or null while that tab is still sending. */
+  const openTriedExample = useCallback((exampleId: string, requestId: string, name: string, content: RequestContent): string | null => {
+    const tabId = `example-try:${exampleId}`
+    const previous = stateRef.current.tabs.find((tab) => tab.id === tabId)
+    if (previous?.execution.status === 'loading') {
+      setState((current) => ({ ...current, activeTabId: tabId }))
+      return null
+    }
+    if (previous) releaseIfWindowed(previous.execution)
+
+    setState((current) => {
+      const tab: WorkbenchTab = { ...tabFromContent(null, name, content), id: tabId, scopeRequestId: requestId, dirty: false, pinned: true }
+      const exists = current.tabs.some((candidate) => candidate.id === tabId)
+      return { tabs: exists ? current.tabs.map((candidate) => (candidate.id === tabId ? tab : candidate)) : [...current.tabs, tab], activeTabId: tabId }
+    })
+    return tabId
+  }, [])
+
   /** Open a history entry as an editable preview that another request can replace until pinned. */
   const openHistoryEntry = useCallback(
     (historyId: string, name: string, content: RequestContent, execution: ExecutionState) => {
@@ -783,6 +833,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
           savedContent: entry.savedContent,
           pinned: true,
           fixed: entry.fixed,
+          ...(entry.example ? { scopeRequestId: entry.example.requestId, example: entry.example.state } : {}),
         }
         return { ...tab, dirty: computeDirty(tab) }
       })
@@ -868,6 +919,14 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   const pinRequest = useCallback(
     (requestId: string) => {
       const tab = stateRef.current.tabs.find((candidate) => candidate.requestId === requestId)
+      if (tab && !tab.pinned) updateTab(tab.id, { pinned: true })
+    },
+    [updateTab],
+  )
+
+  const pinExample = useCallback(
+    (exampleId: string) => {
+      const tab = stateRef.current.tabs.find((candidate) => candidate.example?.exampleId === exampleId)
       if (tab && !tab.pinned) updateTab(tab.id, { pinned: true })
     },
     [updateTab],
@@ -1002,6 +1061,24 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     [updateTab],
   )
 
+  /** Mark an example tab's content and response as saved. */
+  const markExampleSaved = useCallback(
+    (tabId: string) => {
+      updateTab(tabId, (tab) => ({
+        savedContent: contentOf(tab),
+        ...(tab.example ? { example: { ...tab.example, savedResponse: tab.example.response } } : {}),
+      }))
+    },
+    [updateTab],
+  )
+
+  const updateExampleResponse = useCallback(
+    (patch: Partial<ExampleResponse>) => {
+      updateActiveTab((tab) => (tab.example ? { example: { ...tab.example, response: { ...tab.example.response, ...patch } } } : {}))
+    },
+    [updateActiveTab],
+  )
+
   const renameTab = useCallback(
     (tabId: string, name: string) => {
       updateTab(tabId, { name })
@@ -1012,7 +1089,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
   /** Detach a removed saved request into a dirty draft so Save cannot write to a missing item. */
   const detachRequest = useCallback(
     (tabId: string) => {
-      updateTab(tabId, { requestId: null, flowNodeRef: undefined, pinned: true })
+      updateTab(tabId, { requestId: null, flowNodeRef: undefined, scopeRequestId: undefined, example: undefined, pinned: true })
     },
     [updateTab],
   )
@@ -1159,6 +1236,11 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
     closeAllTabs,
     closeOtherTabs,
     closeTabsWhere,
+    openExample,
+    openTriedExample,
+    pinExample,
+    markExampleSaved,
+    updateExampleResponse,
     toggleFixTab,
     markSaved,
     markContentSaved,

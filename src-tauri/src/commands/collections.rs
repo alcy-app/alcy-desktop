@@ -7,17 +7,17 @@ use std::{collections::HashMap, time::SystemTime};
 use alcy_app::{ImportSource, UsageEvent, UsageHub, UsageIdentifier, UsageOutcome};
 use alcy_domain::{
     ApiDocsSourceKind, Authentication, BodyPayload, Collection, CollectionError, CollectionLabel,
-    DocsRef, Endpoint, EnvironmentVariable, EnvironmentVariableError, Folder, FolderError,
-    GrpcCall, GrpcSchemaSource, HeaderEntry, HeaderError, LabelColor, ProtocolId, Request,
-    RequestDocument, RouteParameter, SavedRequest, SavedRequestError, WebSocketCall,
-    WebSocketCollect, WebSocketMessageFormat,
+    DocsRef, Endpoint, EnvironmentVariable, EnvironmentVariableError, ExampleResponse,
+    ExampleResponseHeader, Folder, FolderError, GrpcCall, GrpcSchemaSource, HeaderEntry,
+    HeaderError, LabelColor, ProtocolId, Request, RequestDocument, RequestExample, RouteParameter,
+    SavedRequest, SavedRequestError, WebSocketCall, WebSocketCollect, WebSocketMessageFormat,
 };
 use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, StorageError};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::environments::{EnvironmentDto, EnvironmentVariableDto, environment_to_dto};
 use crate::commands::execute_rest_request::{
-    BodyInput, HttpMethodInput, body_input_from_domain, body_to_domain,
+    BodyInput, HttpMethodInput, RawBodyLanguageInput, body_input_from_domain, body_to_domain,
 };
 use crate::commands::import_fetcher::ImportFetcher;
 use crate::commands::ordered_save::OrderedSaves;
@@ -104,6 +104,26 @@ pub struct SavedRequestDto {
     /// (spec 0140); absent for the other protocols and in older DTOs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub websocket: Option<WebSocketCallDto>,
+    /// Named calls saved under this request (spec 0156); absent in older DTOs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<RequestExampleDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestExampleDto {
+    /// The example's own copy of the request, with the example's id and name.
+    pub request: SavedRequestDto,
+    pub response: ExampleResponseDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleResponseDto {
+    pub status_code: u16,
+    pub headers: Vec<SavedRequestHeaderDto>,
+    pub body: String,
+    pub language: RawBodyLanguageInput,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -479,7 +499,50 @@ pub(crate) fn request_to_dto(request: &SavedRequest) -> SavedRequestDto {
             .then(|| GrpcCallDto::from(&request.request.grpc)),
         websocket: (request.request.document.protocol == ProtocolId::WebSocket)
             .then(|| WebSocketCallDto::from(&request.request.websocket)),
+        examples: request.examples().iter().map(example_to_dto).collect(),
     }
+}
+
+fn example_to_dto(example: &RequestExample) -> RequestExampleDto {
+    RequestExampleDto {
+        request: request_to_dto(&example.request),
+        response: ExampleResponseDto {
+            status_code: example.response.status_code,
+            headers: example
+                .response
+                .headers
+                .iter()
+                .map(|header| SavedRequestHeaderDto {
+                    name: header.name.clone(),
+                    value: header.value.clone(),
+                    enabled: header.enabled,
+                })
+                .collect(),
+            body: example.response.body.clone(),
+            language: example.response.language.into(),
+        },
+    }
+}
+
+fn example_from_dto(dto: RequestExampleDto) -> Result<RequestExample, CollectionsCommandError> {
+    Ok(RequestExample {
+        request: request_from_dto(dto.request)?,
+        response: ExampleResponse {
+            status_code: dto.response.status_code,
+            headers: dto
+                .response
+                .headers
+                .into_iter()
+                .map(|header| ExampleResponseHeader {
+                    name: header.name,
+                    value: header.value,
+                    enabled: header.enabled,
+                })
+                .collect(),
+            body: dto.response.body,
+            language: dto.response.language.into(),
+        },
+    })
 }
 
 pub(crate) fn request_from_dto(
@@ -520,8 +583,14 @@ pub(crate) fn request_from_dto(
         .with_grpc(dto.grpc.map(GrpcCall::from).unwrap_or_default())
         .with_websocket(dto.websocket.map(WebSocketCall::from).unwrap_or_default());
 
+    let examples = dto
+        .examples
+        .into_iter()
+        .map(example_from_dto)
+        .collect::<Result<Vec<_>, _>>()?;
     let saved = SavedRequest::new(dto.id, dto.name, request)
-        .map_err(|error: SavedRequestError| invalid(error))?;
+        .map_err(|error: SavedRequestError| invalid(error))?
+        .with_examples(examples);
     Ok(match dto.docs_ref {
         Some(docs_ref) => saved.with_docs_ref(DocsRef {
             source_id: docs_ref.source_id,
@@ -1777,6 +1846,7 @@ mod tests {
             docs_ref: None,
             grpc: None,
             websocket: None,
+            examples: vec![],
         }
     }
 
@@ -1825,6 +1895,41 @@ mod tests {
         let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
 
         assert_eq!(collections, sample_collections());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn save_then_list_round_trips_a_request_with_examples() {
+        let root = temp_root();
+        let mut request = sample_saved_request("request-1", "Get models");
+        request.examples = vec![RequestExampleDto {
+            request: sample_saved_request("example-1", "Not found"),
+            response: ExampleResponseDto {
+                status_code: 404,
+                headers: vec![SavedRequestHeaderDto {
+                    name: "X-Trace".to_string(),
+                    value: "abc".to_string(),
+                    enabled: true,
+                }],
+                body: "{}".to_string(),
+                language: RawBodyLanguageInput::Json,
+            },
+        }];
+        let dtos = vec![CollectionDto {
+            variables: vec![],
+            labels: vec![],
+            authentication: SavedRequestAuthenticationDto::Inherit,
+            id: "collection-1".to_string(),
+            name: "Customer API".to_string(),
+            folders: vec![],
+            requests: vec![request],
+        }];
+
+        save_collections_inner(root.clone(), dtos.clone()).unwrap();
+        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+
+        assert_eq!(collections, dtos);
 
         fs::remove_dir_all(&root).ok();
     }

@@ -4,7 +4,7 @@ import { ChevronDownIcon, PinIcon } from '../../../shared/ui/icons'
 import { IconButton } from '../../../shared/ui/IconButton'
 import { Input } from '../../../shared/ui/Input'
 import type { OpenTabDescriptor } from '../use-open-tabs'
-import { RequestMethodBadge } from './RequestMethodBadge'
+import { ExampleBadge, RequestMethodBadge } from './RequestMethodBadge'
 import { TabMenuSurface } from './TabMenuSurface'
 
 const MENU_WIDTH = 300
@@ -77,7 +77,9 @@ export function OpenTabsOverflowMenu({ tabs, activeTabId, onSelect }: {
                     onClick={() => select(tab.id)}
                   >
                     {tab.fixed && <PinIcon size={11} className="rw-open-tab-pin" />}
-                    {tab.request && (
+                    {tab.request?.example ? (
+                      <ExampleBadge className="rw-open-tab-method" aria-hidden />
+                    ) : tab.request && (
                       <RequestMethodBadge protocol={tab.request.protocol} method={tab.request.method} className="rw-open-tab-method" aria-hidden />
                     )}
                     <span className={`ui-menu-item-label${tab.preview ? ' rw-open-tabs-overflow-preview' : ''}`}>{tab.label}</span>

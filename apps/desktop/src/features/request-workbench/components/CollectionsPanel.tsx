@@ -44,6 +44,8 @@ import { usePointerDrag } from '../../../shared/use-pointer-drag'
 import type { DragRef, DropEdge, SiblingEdge } from '../../../shared/use-pointer-drag'
 import {
   allFolderIds,
+  requestIdsWithExamples,
+  supportsExamples,
   emptyRequestContent,
   filterTree,
   findAncestorIds,
@@ -58,7 +60,7 @@ import {
   visibleItemIds,
   withDescendants,
 } from '../collection-tree'
-import type { RequestContent, RequestProtocol, RequestSummary, TreeNode } from '../collection-tree'
+import type { RequestContent, RequestExample, RequestProtocol, RequestSummary, TreeNode } from '../collection-tree'
 import type { AlphabeticalSortDirection } from '../collection-tree'
 import type { ImportOutcome } from '../use-collections-state'
 import {
@@ -78,7 +80,7 @@ import { MoveRequestModal } from './MoveRequestModal'
 import { NewRequestPopover } from './NewRequestPopover'
 import { NodeSettingsModal } from './NodeSettingsModal'
 import { RemoveNodeModal } from './RemoveNodeModal'
-import { RequestMethodBadge } from './RequestMethodBadge'
+import { ExampleBadge, RequestMethodBadge } from './RequestMethodBadge'
 import './collections-panel.css'
 import './collection-labels.css'
 
@@ -86,7 +88,7 @@ import './collection-labels.css'
 const ImportCollectionModal = lazy(() => import('./ImportCollectionModal').then((module) => ({ default: module.ImportCollectionModal })))
 
 /** A collection is a root folder; dragging onto it reorders collections rather than nesting a folder. */
-type NodeKind = 'request' | 'folder' | 'collection'
+type NodeKind = 'request' | 'folder' | 'collection' | 'example'
 
 /** Drop targets are tree rows or the open flow canvas, marked with data-drop-kind="flow" (spec 0095). */
 type DropTargetKind = NodeKind | 'flow'
@@ -153,6 +155,11 @@ interface CollectionsPanelProps {
   /** Move selected folders and requests to targetParentId together (spec 0104). */
   onMoveMany: (ids: string[], targetParentId: string) => void
   onDuplicateRequest: (id: string) => { id: string; name: string; content: RequestContent }
+  openExampleId: string | null
+  onAddExample: (requestId: string) => void
+  onOpenExample: (requestId: string, example: RequestExample) => void
+  onPinExample: (exampleId: string) => void
+  onDuplicateExample: (exampleId: string) => void
   onMoveRequest: (id: string, targetParentId: string) => void
   onReorderRequest: (id: string, targetId: string, edge: SiblingEdge) => void
   onMoveFolder: (id: string, targetParentId: string) => void
@@ -237,10 +244,138 @@ function ChevronIcon({ expanded }: { expanded: boolean }) {
   )
 }
 
+/** What the rows of a request's examples need from the panel (spec 0156). */
+interface ExampleActions {
+  openExampleId: string | null
+  onAdd: (requestId: string) => void
+  onOpen: (requestId: string, example: RequestExample) => void
+  onPin: (exampleId: string) => void
+  onDuplicate: (exampleId: string) => void
+}
+
+interface ExampleRowProps {
+  requestId: string
+  example: RequestExample
+  depth: number
+  actions: ExampleActions
+  renamingId: string | null
+  menuOpenId: string | null
+  onStartRename: (id: string) => void
+  onCommitRename: (id: string, name: string) => void
+  onRemove: (id: string, kind: NodeKind, label: string) => void
+  onToggleMenu: (id: string) => void
+  onOpenMenu: (id: string) => void
+  onCloseMenu: () => void
+}
+
+function ExampleRow({
+  requestId,
+  example,
+  depth,
+  actions,
+  renamingId,
+  menuOpenId,
+  onStartRename,
+  onCommitRename,
+  onRemove,
+  onToggleMenu,
+  onOpenMenu,
+  onCloseMenu,
+}: ExampleRowProps) {
+  const { t } = useLanguage()
+  const [draftName, setDraftName] = useState(example.name)
+  const isOpen = actions.openExampleId === example.id
+  const label = example.name || t('common.unnamed')
+
+  const startRename = () => {
+    setDraftName(example.name)
+    onStartRename(example.id)
+    onCloseMenu()
+  }
+  const commit = () => onCommitRename(example.id, draftName)
+  const handleItemShortcut = useItemShortcuts({
+    rename: startRename,
+    remove: () => onRemove(example.id, 'example', label),
+    duplicate: () => actions.onDuplicate(example.id),
+  })
+
+  return (
+    <li className="collections-node">
+      <div
+        className={isOpen ? 'collections-row collections-row--open' : 'collections-row'}
+        style={{ paddingLeft: `${depth * 12 + 12}px` }}
+        tabIndex={-1}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          onOpenMenu(example.id)
+        }}
+        onClick={() => actions.onOpen(requestId, example)}
+        onDoubleClick={() => actions.onPin(example.id)}
+        onKeyDown={handleItemShortcut}
+      >
+        <ExampleBadge className="collections-method-badge" />
+        {renamingId === example.id ? (
+          <InlineEditInput
+            className="collections-name-input"
+            value={draftName}
+            autoFocus
+            aria-label={t('common.name')}
+            onChange={(event) => setDraftName(event.target.value)}
+            onBlur={commit}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commit()
+            }}
+          />
+        ) : (
+          <span className="collections-node-name" aria-current={isOpen} aria-label={t('collections.openExampleAria', { name: label })}>
+            {label}
+          </span>
+        )}
+        <div className="collections-row-actions">
+          <OptionsMenu
+            label={t('collections.moreOptionsAria', { name: label })}
+            wrapperClassName="collections-menu-wrapper"
+            menuClassName="collections-menu"
+            menuPlacement="auto"
+            menuPortal
+            isOpen={menuOpenId === example.id}
+            onToggle={() => onToggleMenu(example.id)}
+            onClose={onCloseMenu}
+          >
+            <MenuItem label={t('collections.renameMenuItem')} shortcutAction="renameItem" onSelect={startRename} />
+            <MenuItem
+              label={t('collections.duplicateMenuItem')}
+              shortcutAction="duplicateItem"
+              onSelect={() => {
+                actions.onDuplicate(example.id)
+                onCloseMenu()
+              }}
+            />
+            <MenuSeparator />
+            <MenuItem
+              label={t('common.remove')}
+              shortcutAction="deleteItem"
+              danger
+              onSelect={() => {
+                onRemove(example.id, 'example', label)
+                onCloseMenu()
+              }}
+            />
+          </OptionsMenu>
+        </div>
+      </div>
+    </li>
+  )
+}
+
 interface RequestRowProps {
   request: RequestSummary
   depth: number
   isOpen: boolean
+  isExpanded: boolean
+  exampleActions: ExampleActions
+  onToggleExpanded: (id: string) => void
   isDragging: boolean
   isSelected: boolean
   selectionJoin: SelectionJoin | undefined
@@ -298,6 +433,9 @@ function RequestRow({
   request,
   depth,
   isOpen,
+  isExpanded,
+  exampleActions,
+  onToggleExpanded,
   isDragging,
   isSelected,
   selectionJoin,
@@ -327,6 +465,7 @@ function RequestRow({
   const isRenaming = renamingId === request.id
   const isMenuOpen = menuOpenId === request.id
   const label = request.name || t('common.unnamed')
+  const examples = request.examples ?? []
 
   const commit = () => onCommitRename(request.id, draftName)
   const startRename = () => {
@@ -373,6 +512,21 @@ function RequestRow({
         onKeyDown={handleItemShortcut}
       >
         {selectionMode && <RowCheckbox checked={isSelected} label={label} />}
+        {examples.length > 0 && (
+          <button
+            type="button"
+            className="collections-toggle collections-request-toggle"
+            aria-label={t('collections.toggleExamplesAria', { name: label })}
+            aria-expanded={isExpanded}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleExpanded(request.id)
+            }}
+          >
+            <ChevronIcon expanded={isExpanded} />
+          </button>
+        )}
         <RequestMethodBadge protocol={request.protocol} method={request.content.method} className="collections-method-badge" />
 
         {isRenaming ? (
@@ -412,7 +566,19 @@ function RequestRow({
             onToggle={() => onToggleMenu(request.id)}
             onClose={onCloseMenu}
           >
-            {/* Group menu actions with separators: generate, edit, organize, then remove. */}
+            {/* Group menu actions with separators: examples, generate, edit, organize, then remove. */}
+            {supportsExamples(request) && (
+              <>
+                <MenuItem
+                  label={t('collections.addExampleMenuItem')}
+                  onSelect={() => {
+                    exampleActions.onAdd(request.id)
+                    onCloseMenu()
+                  }}
+                />
+                <MenuSeparator />
+              </>
+            )}
             <MenuItem
               label={t('collections.generateFlowMenuItem')}
               onSelect={() => {
@@ -459,6 +625,27 @@ function RequestRow({
           </OptionsMenu>
         </div>
       </div>
+      {isExpanded && examples.length > 0 && (
+        <ul className="collections-children">
+          {examples.map((example) => (
+            <ExampleRow
+              key={example.id}
+              requestId={request.id}
+              example={example}
+              depth={depth + 1}
+              actions={exampleActions}
+              renamingId={renamingId}
+              menuOpenId={menuOpenId}
+              onStartRename={onStartRename}
+              onCommitRename={onCommitRename}
+              onRemove={onRemove}
+              onToggleMenu={onToggleMenu}
+              onOpenMenu={onOpenMenu}
+              onCloseMenu={onCloseMenu}
+            />
+          ))}
+        </ul>
+      )}
     </li>
   )
 }
@@ -468,6 +655,7 @@ interface FolderRowProps {
   depth: number
   expandedIds: Set<string>
   openRequestId: string | null
+  exampleActions: ExampleActions
   renamingId: string | null
   menuOpenId: string | null
   changeMarkers: Map<string, ItemChangeKind>
@@ -539,6 +727,7 @@ function FolderRow({
   depth,
   expandedIds,
   openRequestId,
+  exampleActions,
   renamingId,
   menuOpenId,
   changeMarkers,
@@ -856,6 +1045,7 @@ function FolderRow({
               depth={depth + 1}
               expandedIds={expandedIds}
               openRequestId={openRequestId}
+              exampleActions={exampleActions}
               renamingId={renamingId}
               menuOpenId={menuOpenId}
               changeMarkers={changeMarkers}
@@ -899,6 +1089,9 @@ function FolderRow({
               request={request}
               depth={depth + 1}
               isOpen={openRequestId === request.id}
+              isExpanded={expandedIds.has(request.id)}
+              exampleActions={exampleActions}
+              onToggleExpanded={onToggleExpanded}
               isDragging={draggedId === request.id || (groupDragging && selectedIds.has(request.id))}
               isSelected={selectedIds.has(request.id)}
               selectionJoin={selectionJoins.get(request.id)}
@@ -958,6 +1151,11 @@ export function CollectionsPanel({
   onRemoveMany,
   onMoveMany,
   onDuplicateRequest,
+  openExampleId,
+  onAddExample,
+  onOpenExample,
+  onPinExample,
+  onDuplicateExample,
   onMoveRequest,
   onReorderRequest,
   onMoveFolder,
@@ -1223,6 +1421,14 @@ export function CollectionsPanel({
     onOpenRequest(newId, content, name)
   }
 
+  const exampleActions: ExampleActions = {
+    openExampleId,
+    onAdd: onAddExample,
+    onOpen: onOpenExample,
+    onPin: onPinExample,
+    onDuplicate: onDuplicateExample,
+  }
+
   const toggleMenu = (id: string) => {
     setMenuOpenId((current) => (current === id ? null : id))
   }
@@ -1274,7 +1480,7 @@ export function CollectionsPanel({
   /** Search expands matching ancestors independently of saved expansion. Users can collapse results until the search text changes. */
   const searchCollapsedIds = searchCollapsed.query === trimmedQuery ? searchCollapsed.ids : new Set<string>()
   const renderExpandedIds = isSearching
-    ? new Set([...allFolderIds(displayedCollections)].filter((id) => !searchCollapsedIds.has(id)))
+    ? new Set([...allFolderIds(displayedCollections), ...requestIdsWithExamples(displayedCollections)].filter((id) => !searchCollapsedIds.has(id)))
     : expandedIds
   const toggleExpanded = (id: string) => {
     if (!isSearching) {
@@ -1646,6 +1852,7 @@ export function CollectionsPanel({
                 depth={0}
                 expandedIds={renderExpandedIds}
                 openRequestId={openRequestId}
+                exampleActions={exampleActions}
                 renamingId={renamingId}
                 menuOpenId={menuOpenId}
                 changeMarkers={changeMarkers}

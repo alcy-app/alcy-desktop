@@ -1,0 +1,25 @@
+.rw-example-response-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rw-example-response-status-input {
+  width: 64px;
+}
+
+.rw-example-response-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  padding: var(--space-2);
+}
+
+.rw-example-response-language {
+  align-self: flex-start;
+}

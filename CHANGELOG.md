@@ -22,6 +22,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Posição do chat**: arraste o painel do agente pelo cabeçalho para a direita ou a parte de baixo da tela, ou para a esquerda, onde ele vira um módulo da barra lateral. A posição também pode ser escolhida em Configurações › Agente e fica salva.
 - **Aparência "Padrão do sistema"**: em Configurações › Aparência, o Alcy pode seguir o tema claro ou escuro do sistema operacional.
 - **Comentários no body JSON**: comente trechos do body com Ctrl+/ ou Ctrl+; (uma linha vira `//`, várias viram um bloco `/* */`).
+- **Exemplos de requisição**: salve várias chamadas de uma mesma requisição, cada uma com seus parâmetros e a resposta esperada. Crie um exemplo do zero ou a partir de uma resposta recebida e teste-o quando quiser.
 - Exporte e importe flows em arquivos Alcy, mantendo as referências ou incorporando requisições e variáveis no próprio flow.
 - Localizar e substituir nos editores de requisição: troque uma ocorrência ou todas de uma vez, inclusive só dentro do texto selecionado.
 

@@ -33,7 +33,7 @@ import { ComponentKindSelect } from './ComponentKindSelect'
 import type { ComponentKind } from './ComponentKindSelect'
 import { HistoryPanel } from './HistoryPanel'
 import type { EnvironmentState, VariableRow } from '../../environments/environments.types'
-import type { AlphabeticalSortDirection, RequestContent, RequestProtocol, TreeNode } from '../collection-tree'
+import type { AlphabeticalSortDirection, RequestContent, RequestExample, RequestProtocol, TreeNode } from '../collection-tree'
 import { VersionControlPanel, type VersionReviewTarget } from '../../version-control/VersionControlPanel'
 import { logger } from '../../../shared/logging/logger'
 import type { VersionControl } from '../../version-control/use-version-control'
@@ -85,6 +85,11 @@ interface CollectionsPanelSlice {
   onCreateStandaloneRequest: (anchor: DOMRect) => void
   onOpenRequest: (id: string, content: RequestContent, name: string) => void
   onPinRequest: (id: string) => void
+  openExampleId: string | null
+  onAddExample: (requestId: string) => void
+  onOpenExample: (requestId: string, example: RequestExample) => void
+  onPinExample: (exampleId: string) => void
+  onDuplicateExample: (exampleId: string) => void
   onRename: (id: string, name: string) => void
   onUpdateAuthentication: (id: string, authentication: AuthenticationInput) => void
   onUpdateVariables: (id: string, variables: ScopedVariableDto[]) => void

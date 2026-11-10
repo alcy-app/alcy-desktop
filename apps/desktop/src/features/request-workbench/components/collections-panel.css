@@ -202,6 +202,11 @@
   padding: 0;
 }
 
+/* Sits in the row's indentation so requests with and without examples stay aligned. */
+.collections-request-toggle {
+  margin-left: -14px;
+}
+
 .collections-toggle-spacer {
   width: 14px;
   flex-shrink: 0;

@@ -20,6 +20,15 @@ interface RequestMethodBadgeProps {
   'aria-hidden'?: boolean
 }
 
+/** Marks a request example in the collection tree and in open tabs. */
+export function ExampleBadge({ className, 'aria-hidden': ariaHidden }: Pick<RequestMethodBadgeProps, 'className' | 'aria-hidden'>) {
+  return (
+    <Badge tone="neutral" className={className} aria-hidden={ariaHidden}>
+      e.g.
+    </Badge>
+  )
+}
+
 /** Badge do método HTTP (REST) ou "GQL" (GraphQL) — usado na árvore de collections e nas abas abertas. */
 export function RequestMethodBadge({ protocol, method, className, 'aria-hidden': ariaHidden }: RequestMethodBadgeProps) {
   if (protocol === 'rest') {

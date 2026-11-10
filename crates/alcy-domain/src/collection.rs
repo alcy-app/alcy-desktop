@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::api_docs::DocsRef;
 use crate::authentication::Authentication;
+use crate::body_payload::RawBodyLanguage;
 use crate::environment::EnvironmentVariable;
 use crate::request::Request;
 
@@ -18,6 +19,34 @@ pub struct SavedRequest {
     pub request: Request,
     /// Documentação importada desta chamada (ADR 0035), quando houver.
     pub docs_ref: Option<DocsRef>,
+    /// Named calls saved under this request (spec 0156).
+    examples: Vec<RequestExample>,
+}
+
+/// A response header stored in an example. Examples only document a call, so
+/// unlike `HeaderEntry` it accepts any text, including a row still being typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExampleResponseHeader {
+    pub name: String,
+    pub value: String,
+    pub enabled: bool,
+}
+
+/// The response an example documents, written by hand or saved from a send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExampleResponse {
+    pub status_code: u16,
+    pub headers: Vec<ExampleResponseHeader>,
+    pub body: String,
+    pub language: RawBodyLanguage,
+}
+
+/// A named call of a saved request: its own copy of the request (with the
+/// example's id and name) and the response it documents (spec 0156).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestExample {
+    pub request: SavedRequest,
+    pub response: ExampleResponse,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -42,12 +71,22 @@ impl SavedRequest {
             name,
             request,
             docs_ref: None,
+            examples: Vec::new(),
         })
     }
 
     pub fn with_docs_ref(mut self, docs_ref: DocsRef) -> Self {
         self.docs_ref = Some(docs_ref);
         self
+    }
+
+    pub fn with_examples(mut self, examples: Vec<RequestExample>) -> Self {
+        self.examples = examples;
+        self
+    }
+
+    pub fn examples(&self) -> &[RequestExample] {
+        &self.examples
     }
 
     pub fn name(&self) -> &str {

@@ -19,7 +19,7 @@ export interface OpenTabDescriptor {
   /** False for tabs that cannot be fixed, such as review or conflict tabs. */
   fixable?: boolean
   /** Protocol or method badge shown before request tab names. */
-  request?: Pick<WorkbenchTab, 'protocol' | 'method'>
+  request?: Pick<WorkbenchTab, 'protocol' | 'method'> & { example?: boolean }
 }
 
 export type ActiveOpenTab =
@@ -132,7 +132,7 @@ export function useOpenTabs(workbench: WorkbenchTabsSlice, flows: FlowsSlice) {
       dirty: isTabDirty(tab),
       preview: !tab.pinned,
       fixed: tab.fixed === true,
-      request: { protocol: tab.protocol, method: tab.method },
+      request: { protocol: tab.protocol, method: tab.method, ...(tab.example ? { example: true } : {}) },
     })),
     ...openFlowIds.map((id) => ({
       id,

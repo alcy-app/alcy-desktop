@@ -146,9 +146,12 @@ import { useOpenTabs } from './use-open-tabs'
 import type { OpenTabDescriptor } from './use-open-tabs'
 import { contentOf, isTabDirty, useWorkbenchState } from './use-workbench-state'
 import { useTabSession } from './use-tab-session'
-import { findInheritedAuthentication, findNode, findRequest, findRequestPath } from './collection-tree'
+import { findExample, findInheritedAuthentication, findNode, findRequest, findRequestPath } from './collection-tree'
+import type { RequestExample } from './collection-tree'
+import { exampleResponseFromExecution } from './example-response'
+import { ExampleResponsePanel } from './components/ExampleResponsePanel'
 import type { RequestContent, RequestSummary } from './collection-tree'
-import { graphqlErrorsOf } from './request-workbench.types'
+import { graphqlErrorsOf, scopeRequestIdOf } from './request-workbench.types'
 import { formatSize } from './response-summary'
 import { responseFileName } from './response-file-name'
 import type { RequestTabId, WorkbenchProtocol } from './request-workbench.types'
@@ -201,6 +204,9 @@ const WEBSOCKET_TABS: { id: RequestTabId; label: string }[] = [
   { id: 'scripts', label: 'Scripts' },
   { id: 'settings', label: 'Settings' },
 ]
+
+/** Authentication, scripts and documentation stay on the request, not on its examples. */
+const EXAMPLE_SECTIONS: ReadonlySet<RequestTabId> = new Set<RequestTabId>(['params', 'body', 'headers', 'query', 'variables'])
 
 function requestTabsFor(protocol: WorkbenchProtocol): { id: RequestTabId; label: string }[] {
   switch (protocol) {
@@ -391,7 +397,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const effectiveVariables = workbench.effectiveVariables
   const scriptCount = [workbench.preRequestScript, workbench.postResponseScript].filter((script) => script.trim() !== '').length
   const history = useHistoryState(workspace.rootPath)
-  const activeRequestId = workbench.activeTab.requestId
+  const activeRequestId = scopeRequestIdOf(workbench.activeTab)
   const activeTabId = workbench.activeTab.id
   const sendsSource = useMemo(
     () => ({ rootPath: workspace.rootPath, requestId: activeRequestId, tabId: activeTabId }),
@@ -731,6 +737,17 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   useEffect(() => {
     for (const tab of workbench.tabs) {
+      if (tab.example) {
+        const owner = findExample(collections.collections, tab.example.exampleId)
+        // Unsaved edits of a removed example survive as a draft; a clean tab has nothing left to show.
+        if (!owner) {
+          if (tab.dirty) workbench.detachRequest(tab.id)
+          else openTabs.closeOpenTab(tab.id)
+        } else if (owner.example.name !== tab.name) {
+          workbench.renameTab(tab.id, owner.example.name)
+        }
+        continue
+      }
       if (!tab.requestId) continue
       const found = findRequest(collections.collections, tab.requestId)
       if (!found) {
@@ -792,6 +809,37 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       openRequest(id, content, name)
     },
     [closeRunLogPreview, openRequest],
+  )
+
+  const openExample = workbench.openExample
+  const handleOpenExample = useCallback(
+    (requestId: string, example: RequestExample) => {
+      closeRunLogPreview()
+      openExample(requestId, example)
+    },
+    [closeRunLogPreview, openExample],
+  )
+
+  const addExample = collections.addExample
+  const handleAddExample = useCallback(
+    (requestId: string) => {
+      const example = addExample(requestId)
+      if (!example) return
+      closeRunLogPreview()
+      openExample(requestId, example, false)
+    },
+    [addExample, closeRunLogPreview, openExample],
+  )
+
+  const duplicateExample = collections.duplicateExample
+  const handleDuplicateExample = useCallback(
+    (exampleId: string) => {
+      const copy = duplicateExample(exampleId)
+      if (!copy) return
+      closeRunLogPreview()
+      openExample(copy.requestId, copy.example, false)
+    },
+    [closeRunLogPreview, duplicateExample, openExample],
   )
 
   // Shared images become unsaved drafts; files and folders become collections.
@@ -935,7 +983,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     const routeParams = workbench.routeParams
     const method = workbench.protocol === 'rest' ? workbench.method : 'post'
     const requestBody = workbench.protocol === 'rest' ? bodyPreviewText(workbench.body) : workbench.query
-    const { requestId } = workbench.activeTab
+    const requestId = scopeRequestIdOf(workbench.activeTab)
     const authentication =
       workbench.authorization.type !== 'inherit'
         ? toAuthenticationInput(workbench.authorization)
@@ -1018,6 +1066,48 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const handleResendWithoutLimit = useCallback(() => {
     void handleSendRef.current({ ignoreResponseSizeLimit: true })
   }, [])
+
+  // Trying an example sends from a new tab, which must be active before handleSend can read it.
+  const pendingTryTabIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (pendingTryTabIdRef.current !== workbench.activeTab.id) return
+    pendingTryTabIdRef.current = null
+    void handleSendRef.current()
+  }, [workbench.activeTab])
+
+  /** Send the example's call with the authentication and scripts of its request. */
+  const handleTryExample = () => {
+    const tab = workbench.activeTab
+    const owner = tab.example ? findExample(collections.collections, tab.example.exampleId) : null
+    if (!owner) return
+    const { authentication, preRequestScript, postResponseScript } = owner.request.content
+    const content = { ...workbench.contentOfTab(tab.id), authentication, preRequestScript, postResponseScript }
+    pendingTryTabIdRef.current = workbench.openTriedExample(owner.example.id, owner.request.id, tab.name, content)
+  }
+
+  /** The main action of the active tab: examples are tried, everything else is sent. */
+  const handleSendOrTry = () => {
+    if (workbench.activeTab.example) handleTryExample()
+    else void handleSend()
+  }
+
+  const saveResponseAsExample = () => {
+    const tab = workbench.activeTab
+    if (!tab.requestId) return
+    const response = exampleResponseFromExecution(tab.execution)
+    if (!response) {
+      showToast(t('toasts.exampleResponseNotSavable'), 'error')
+      return
+    }
+    const example = collections.addExample(tab.requestId, workbench.contentOfTab(tab.id), response)
+    if (example) workbench.openExample(tab.requestId, example, false)
+  }
+  // Stable for the memoized response panel, calling the latest version.
+  const saveResponseAsExampleRef = useRef(saveResponseAsExample)
+  useEffect(() => {
+    saveResponseAsExampleRef.current = saveResponseAsExample
+  })
+  const handleSaveResponseAsExample = useCallback(() => saveResponseAsExampleRef.current(), [])
 
   const agentHost = useAgentHost({
     workspaceRootPath: workspace.rootPath,
@@ -1285,7 +1375,13 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const handleSaveTab = (tabId: string) => {
     const tab = workbench.tabs.find((candidate) => candidate.id === tabId)
     if (!tab || !isTabDirty(tab)) return
-    if (tab.flowNodeRef) {
+    if (tab.example) {
+      const owner = findExample(collections.collections, tab.example.exampleId)
+      if (!owner) return
+      collections.updateExample({ ...owner.example, content: workbench.contentOfTab(tabId), response: tab.example.response })
+      workbench.markExampleSaved(tabId)
+      showToast(t('toasts.exampleSaved'))
+    } else if (tab.flowNodeRef) {
       saveFlowNodeTab(tabId, tab.flowNodeRef.flowId, tab.flowNodeRef.nodeId)
     } else if (tab.requestId) {
       collections.updateRequestContent(tab.requestId, workbench.contentOfTab(tabId))
@@ -1443,10 +1539,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const inheritedAuthentication = useMemo(
     () =>
-      workbench.activeTab.requestId === null
+      activeRequestId === null
         ? undefined
-        : findInheritedAuthentication(collections.collections, workbench.activeTab.requestId),
-    [collections.collections, workbench.activeTab.requestId],
+        : findInheritedAuthentication(collections.collections, activeRequestId),
+    [collections.collections, activeRequestId],
   )
 
   const effectiveAuthentication = useMemo(
@@ -1511,6 +1607,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       collections: collections.collections,
       expandedIds: collections.expandedIds,
       openRequestId: workbench.activeTab.requestId,
+      openExampleId: workbench.activeTab.example?.exampleId ?? null,
+      onAddExample: handleAddExample,
+      onOpenExample: handleOpenExample,
+      onPinExample: workbench.pinExample,
+      onDuplicateExample: handleDuplicateExample,
       onToggleExpanded: collections.toggleExpanded,
       onCollapseAll: collections.collapseAll,
       onExpandAll: collections.expandAll,
@@ -1570,6 +1671,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       openSidebarNewPopover,
       handleOpenRequest,
       workbench.pinRequest,
+      workbench.activeTab.example?.exampleId,
+      handleAddExample,
+      handleOpenExample,
+      workbench.pinExample,
+      handleDuplicateExample,
       collections.rename,
       collections.updateAuthentication,
       collections.updateVariables,
@@ -1739,12 +1845,17 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
 
   const activeRequestCollection = useMemo(
     () =>
-      workbench.activeTab.requestId ? rootCollectionOf(collections.collections, workbench.activeTab.requestId) : null,
-    [collections.collections, workbench.activeTab.requestId],
+      activeRequestId ? rootCollectionOf(collections.collections, activeRequestId) : null,
+    [collections.collections, activeRequestId],
   )
 
   const requestBreadcrumbSegments = useMemo(() => {
-    const { requestId, flowNodeRef } = workbench.activeTab
+    const { requestId, flowNodeRef, example } = workbench.activeTab
+    if (example) {
+      const owner = findExample(collections.collections, example.exampleId)
+      const path = owner && findRequestPath(collections.collections, owner.request.id)
+      if (path) return [...path, workbench.activeTab.name]
+    }
     if (flowNodeRef) {
       const flow = flows.flows.find((candidate) => candidate.id === flowNodeRef.flowId)
       return [flow?.name || t('common.unnamed'), workbench.activeTab.name || t('workbench.openTabs.untitled')]
@@ -1761,10 +1872,11 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const renameCollectionNode = collections.rename
   const renameTab = workbench.renameTab
   const renameActiveRequest = useMemo(() => {
-    const { id, requestId, flowNodeRef } = workbench.activeTab
+    const { id, requestId, flowNodeRef, example } = workbench.activeTab
     if (flowNodeRef) return undefined
     return (name: string) => {
-      if (requestId) renameCollectionNode(requestId, name)
+      if (example) renameCollectionNode(example.exampleId, name)
+      else if (requestId) renameCollectionNode(requestId, name)
       else renameTab(id, name)
     }
   }, [renameCollectionNode, renameTab, workbench.activeTab])
@@ -1899,7 +2011,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const runShortcut = (action: ShortcutAction) => {
     switch (action) {
       case 'sendRequest':
-        void handleSend()
+        handleSendOrTry()
         return
       case 'saveRequest':
         handleSave()
@@ -2209,7 +2321,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                     onMethodChange={workbench.setMethod}
                     endpointUrl={workbench.endpointUrl}
                     onEndpointUrlChange={workbench.setEndpointUrl}
-                    onSend={() => void handleSend()}
+                    onSend={handleSendOrTry}
+                    actionLabel={workbench.activeTab.example ? t('endpointBar.tryExample') : undefined}
                     onSendAndDownload={() => void handleSend({ download: true })}
                     onCancel={workbench.cancel}
                     isSending={workbench.execution.status === 'loading'}
@@ -2252,9 +2365,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                     style={effectiveResponseLayout === 'right' ? { minWidth: REQUEST_PANE_MIN_WIDTH } : undefined}
                   >
                     <Tabs
-                      tabs={requestTabsFor(workbench.protocol).map((tab) =>
-                        tab.id === 'scripts' ? { ...tab, badge: scriptCount } : tab,
-                      )}
+                      tabs={requestTabsFor(workbench.protocol)
+                        .filter((tab) => !workbench.activeTab.example || EXAMPLE_SECTIONS.has(tab.id))
+                        .map((tab) => (tab.id === 'scripts' ? { ...tab, badge: scriptCount } : tab))}
                       activeTab={workbench.activeSection}
                       onChange={workbench.setActiveSection}
                       ariaLabel={t('workbench.tabs.requestSections')}
@@ -2454,6 +2567,14 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       effectiveResponseLayout === 'right' ? { width: responsePanelRight.size } : { height: responsePanel.size }
                     }
                   >
+                    {workbench.activeTab.example ? (
+                      <ExampleResponsePanel
+                        tabId={workbench.activeTab.id}
+                        response={workbench.activeTab.example.response}
+                        onChange={workbench.updateExampleResponse}
+                        environmentVariables={effectiveVariables}
+                      />
+                    ) : (
                     <ResponsePanel
                       execution={workbench.execution}
                       grpcStream={workbench.grpcStream}
@@ -2469,7 +2590,13 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                       monitor={FEATURE_FLAGS.valueMonitors ? responseMonitor : undefined}
                       onOpenHistorySettings={openGeneralSettings}
                       onShareSelection={handleShareSelection}
+                      onSaveAsExample={
+                        workbench.activeTab.requestId && (workbench.protocol === 'rest' || workbench.protocol === 'graphql')
+                          ? handleSaveResponseAsExample
+                          : undefined
+                      }
                     />
+                    )}
                   </div>
                 </div>
               </>
