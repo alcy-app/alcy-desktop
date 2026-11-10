@@ -22,6 +22,12 @@ use crate::{GitError, open_workspace, ref_target, rejected};
 /// The one remote Alcy manages.
 pub const REMOTE: &str = "origin";
 
+/// Makes git write working files byte for byte as committed. Alcy compares
+/// the files with the commit byte for byte, so a conversion such as
+/// `core.autocrlf=true` (Git for Windows' default) would make every file of a
+/// fresh clone look changed on both sides.
+const LINE_ENDINGS: [(&str, &str); 2] = [("core.autocrlf", "false"), ("core.eol", "lf")];
+
 fn args<const N: usize>(values: [&str; N]) -> Vec<OsString> {
     values.into_iter().map(OsString::from).collect()
 }
@@ -279,22 +285,28 @@ pub async fn clone_folder(source: &Path, destination: &Path) -> Result<(), GitEr
 
 /// Lets a folder with working files take pushes to its current branch: git
 /// updates the files, and refuses while they have uncommitted changes. An
-/// existing setting is someone's decision and stays.
+/// existing `receive.denyCurrentBranch` is someone's decision and stays; the
+/// line endings are always set, since git writes those files with the
+/// pusher's configuration.
 async fn accept_pushes(source: &Path) -> Result<(), GitError> {
     const KEY: &str = "receive.denyCurrentBranch";
     let configured = open_workspace(source)?
         .config_snapshot()
         .string(KEY)
         .is_some();
-    if configured {
-        return Ok(());
+    let mut settings = LINE_ENDINGS.to_vec();
+    if !configured {
+        settings.push((KEY, "updateInstead"));
     }
-    // `--file` edits the configuration without entering the repository, so
-    // git's ownership check for the working tree does not apply.
-    let mut command = args(["config", "--file"]);
-    command.push(source.join(".git").join("config").into_os_string());
-    command.extend(args([KEY, "updateInstead"]));
-    git(None, &command).await?;
+    let config = source.join(".git").join("config");
+    for (key, value) in settings {
+        // `--file` edits the configuration without entering the repository,
+        // so git's ownership check for the working tree does not apply.
+        let mut command = args(["config", "--file"]);
+        command.push(config.clone().into_os_string());
+        command.extend(args([key, value]));
+        git(None, &command).await?;
+    }
     Ok(())
 }
 
@@ -317,6 +329,11 @@ async fn clone_with(url: &str, destination: &Path, options: &[&str]) -> Result<(
     }
     let marker = format!("{CLONED_COPY_KEY}=true");
     let mut command = args(["clone", "--config", &marker]);
+    // Applies to the checkout too, and stays in the copy's configuration.
+    for (key, value) in LINE_ENDINGS {
+        command.push(OsString::from("--config"));
+        command.push(OsString::from(format!("{key}={value}")));
+    }
     command.extend(options.iter().map(OsString::from));
     command.push(OsString::from("--"));
     command.push(OsString::from(&url));

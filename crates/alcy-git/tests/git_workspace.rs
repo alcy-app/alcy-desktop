@@ -768,6 +768,39 @@ async fn a_shared_folder_works_as_the_remote_of_its_copies() {
 }
 
 #[tokio::test]
+async fn copies_and_pushed_folders_keep_the_committed_line_endings() {
+    let mut folder = seeded("Ana");
+    folder.commit("Initial").await;
+    // Git for Windows' default, here in the folder's own configuration.
+    let config = folder.root.join(".git").join("config");
+    let mut content = std::fs::read_to_string(&config).unwrap();
+    content.push_str("[core]\n\tautocrlf = true\n");
+    std::fs::write(&config, content).unwrap();
+
+    let mut bia = Workspace::cloned_from_folder("Bia", &folder.root).await;
+    assert_eq!(state(&bia.status().await, COLLECTIONS), FileState::Clean);
+    for root in [&folder.root, &bia.root] {
+        assert_eq!(
+            folder_config(root, "core.autocrlf").as_deref(),
+            Some("false")
+        );
+        assert_eq!(folder_config(root, "core.eol").as_deref(), Some("lf"));
+    }
+
+    bia.write(
+        COLLECTIONS,
+        &collections(json!([{ "id": "r9", "name": "Bia", "url": "/b" }])),
+    );
+    bia.commit("From Bia").await;
+    push(&bia.root).await.unwrap();
+    assert_eq!(
+        folder.files.read(COLLECTIONS).unwrap(),
+        bia.files.read(COLLECTIONS).unwrap()
+    );
+    assert_eq!(state(&folder.status().await, COLLECTIONS), FileState::Clean);
+}
+
+#[tokio::test]
 async fn a_folder_with_uncommitted_changes_refuses_the_push_and_keeps_them() {
     let mut folder = seeded("Ana");
     folder.commit("Initial").await;
