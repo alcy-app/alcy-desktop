@@ -38,3 +38,4 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - No console, os detalhes de uma requisição mostram também o body enviado, junto dos headers.
 - Ctrl+Z nos editores (body, scripts, query e variables) volta a desfazer colagens e linhas novas no Linux, e o histórico continua disponível depois de trocar de seção ou de aba.
 - No Windows, Ctrl+F fora dos editores não abre mais a busca do navegador.
+- A mensagem de commit e os demais campos de texto não mostram mais sugestões do navegador com o que já foi digitado.
