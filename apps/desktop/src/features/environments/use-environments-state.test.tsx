@@ -36,7 +36,6 @@ describe('useEnvironmentsState', () => {
       value: {
         environments: [{ id: 'dev', name: 'Dev', variables: [{ name: 'baseUrl', value: 'https://api.test', sensitive: false }] }],
         activeEnvironmentId: 'dev',
-        unreadableSecrets: [],
       },
     })
     saveEnvironments.mockReset().mockResolvedValue({ ok: true })
@@ -72,7 +71,6 @@ describe('useEnvironmentsState', () => {
           { id: 'prod', name: 'Prod', variables: [] },
         ],
         activeEnvironmentId: 'prod',
-        unreadableSecrets: [],
       },
     })
     const { result } = renderHook(() => useEnvironmentsState('/workspace'), { wrapper })

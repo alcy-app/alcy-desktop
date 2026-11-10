@@ -15,8 +15,6 @@ export interface EnvironmentDto {
 export interface EnvironmentsSnapshotDto {
   environments: EnvironmentDto[]
   activeEnvironmentId: string | null
-  /** Variáveis sensíveis cujo valor cifrado não pôde ser lido nesta máquina (vêm vazias), como "Ambiente › variável". */
-  unreadableSecrets: string[]
 }
 
 export type EnvironmentsError = { kind: 'invalid'; message: string } | { kind: 'storage'; message: string }

@@ -29,6 +29,10 @@ vi.mock('../../bindings/list-recent-workspaces', () => ({
   listRecentWorkspaces: (...args: unknown[]) => listRecentWorkspaces(...args),
 }))
 
+vi.mock('../../bindings/local-git', () => ({
+  inspectWorkspaceFolder: async () => ({ ok: true, value: { canCloneAsRemote: false } }),
+}))
+
 vi.mock('../../bindings/pick-workspace-folder', () => ({
   pickWorkspaceFolder: (...args: unknown[]) => pickWorkspaceFolder(...args),
 }))

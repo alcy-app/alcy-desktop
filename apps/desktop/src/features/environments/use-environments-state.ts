@@ -45,7 +45,6 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
   const [loaded, setLoaded] = useState(false)
   // An unreadable or newer file must never be overwritten with the empty state shown in the UI.
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [unreadableSecrets, setUnreadableSecrets] = useState<string[]>([])
   const saveTimeoutRef = useRef<number | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   // Loading changes environments and loaded together; skip persistence until an actual edit occurs.
@@ -77,7 +76,6 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
           variables: environment.variables.map((variable) => ({ id: nextVariableId(), ...variable })),
         }))
         setEnvironments(loadedEnvironments)
-        setUnreadableSecrets(result.value.unreadableSecrets)
 
         const requestedActiveId = result.value.activeEnvironmentId
         const activeId = loadedEnvironments.some((environment) => environment.id === requestedActiveId)
@@ -334,7 +332,6 @@ export function useEnvironmentsState(workspaceRootPath: string, onSaved?: () => 
     environments,
     loaded,
     loadError,
-    unreadableSecrets,
     reload,
     hasPendingSave,
     activeEnvironmentId,

@@ -582,6 +582,47 @@ pub async fn push_git_remote(
 pub struct CloneGitWorkspaceInput {
     pub operation_id: String,
     pub url: String,
+    /// `url` is a workspace folder on this computer or on a share, to be set
+    /// up as the remote of the new copy.
+    #[serde(default)]
+    pub from_folder: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFolderInspectionDto {
+    pub can_clone_as_remote: bool,
+}
+
+/// How a folder chosen for import can be brought in.
+#[tauri::command]
+pub async fn inspect_workspace_folder(
+    input: GitRootInput,
+) -> Result<WorkspaceFolderInspectionDto, RemoteCommandError> {
+    let root = PathBuf::from(input.root_path);
+    let result = blocking(move || {
+        Ok(WorkspaceFolderInspectionDto {
+            can_clone_as_remote: alcy_git::can_clone_as_remote(&root),
+        })
+    })
+    .await;
+    crate::logging::logged("alcy::vc", "inspecionar pasta do workspace", result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustGitFolderInput {
+    pub path: String,
+}
+
+/// Trusts a folder git refused over its ownership. Only after the person
+/// confirmed it: a repository of someone else's can run code during a clone.
+#[tauri::command]
+pub async fn trust_git_folder(input: TrustGitFolderInput) -> Result<(), RemoteCommandError> {
+    let result = alcy_git::trust_folder(&input.path)
+        .await
+        .map_err(RemoteCommandError::from);
+    crate::logging::logged("alcy::vc", "confiar em pasta git", result)
 }
 
 /// Local folder name used when the repository's has nothing usable.
@@ -642,7 +683,11 @@ pub async fn clone_git_workspace(
         })?;
         let root = next_available_path(&workspaces, &repository_name(&url))?.0;
         let created = cancellable(&registry, &input.operation_id, async {
-            alcy_git::clone(&url, &root).await?;
+            if input.from_folder {
+                alcy_git::clone_folder(Path::new(&url), &root).await?;
+            } else {
+                alcy_git::clone(&url, &root).await?;
+            }
             let link_root = root.clone();
             let link = blocking(move || {
                 let link = WorkspaceLink::new(alcy_git::versions_environments(&link_root)?);

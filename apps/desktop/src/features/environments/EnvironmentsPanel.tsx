@@ -13,7 +13,6 @@ import { InlineEditInput } from '../../shared/ui/InlineEditInput'
 import { Input } from '../../shared/ui/Input'
 import { Button } from '../../shared/ui/Button'
 import {
-  AlertIcon,
   CloseIcon,
   EyeIcon,
   EyeOffIcon,
@@ -42,7 +41,6 @@ const MAX_VISIBLE_ENVIRONMENTS = 10
 interface EnvironmentsPanelProps {
   environments: EnvironmentState[]
   /** Variáveis sensíveis cujo valor cifrado não pôde ser lido nesta máquina. */
-  unreadableSecrets?: string[]
   activeEnvironmentId: string | null
   onSelectEnvironment: (id: string) => void
   onAddEnvironment: () => void
@@ -101,7 +99,6 @@ function ReorderHandle({ kind, id, label, hint, disabled, describedBy, onPointer
 
 export function EnvironmentsPanel({
   environments,
-  unreadableSecrets = [],
   activeEnvironmentId,
   onSelectEnvironment,
   onAddEnvironment,
@@ -263,12 +260,6 @@ export function EnvironmentsPanel({
 
   return (
     <>
-      {unreadableSecrets.length > 0 && (
-        <p className="env-unreadable" role="status">
-          <AlertIcon size={13} />
-          <span>{t('environments.unreadableSecrets', { names: unreadableSecrets.join(', ') })}</span>
-        </p>
-      )}
       <div className="rw-visually-hidden" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>

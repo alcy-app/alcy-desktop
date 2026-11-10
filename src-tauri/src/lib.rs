@@ -79,8 +79,8 @@ use commands::load_test_import::{analyze_load_test_import, commit_load_test_impo
 use commands::local_git::{
     LocalGitProvider, abort_git_merge, clone_git_workspace, create_git_branch, delete_git_branch,
     fetch_git_remote, finish_git_merge, get_git_commit_changes, get_git_history, get_git_identity,
-    get_git_state, merge_git_branch, pull_git_remote, push_git_remote, restore_git_file,
-    save_git_identity, set_git_remote, switch_git_branch,
+    get_git_state, inspect_workspace_folder, merge_git_branch, pull_git_remote, push_git_remote,
+    restore_git_file, save_git_identity, set_git_remote, switch_git_branch, trust_git_folder,
 };
 use commands::mock_servers::{
     MockServerRuntime, clear_mock_calls, delete_mock_server, get_mock_server, list_mock_calls,
@@ -545,6 +545,8 @@ pub fn run_with(extensions: Vec<Extension>) {
                 pull_git_remote,
                 push_git_remote,
                 clone_git_workspace,
+                inspect_workspace_folder,
+                trust_git_folder,
                 get_git_identity,
                 save_git_identity,
                 list_collections,

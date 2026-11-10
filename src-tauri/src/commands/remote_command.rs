@@ -81,6 +81,12 @@ pub enum RemoteCommandError {
     GitDestinationExists,
     /// The cloned repository holds no Alcy workspace.
     GitNotAWorkspace,
+    /// Git refuses a folder owned by someone else; `path` is what to trust.
+    GitUntrustedFolder {
+        path: String,
+    },
+    /// The folder `origin` points to refused the push.
+    GitRemoteFolderBusy,
 }
 
 impl From<StorageError> for RemoteCommandError {
@@ -135,6 +141,8 @@ impl From<alcy_git::GitError> for RemoteCommandError {
             GitError::Command(message) => Self::GitCommandFailed { message },
             GitError::DestinationExists => Self::GitDestinationExists,
             GitError::NotAWorkspace => Self::GitNotAWorkspace,
+            GitError::UntrustedFolder(path) => Self::GitUntrustedFolder { path },
+            GitError::RemoteFolderBusy => Self::GitRemoteFolderBusy,
         }
     }
 }

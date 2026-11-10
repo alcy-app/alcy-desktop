@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use alcy_domain::{ENVIRONMENTS_FILE, VERSIONED_FILES};
 use serde::Serialize;
 
+use crate::environment_store::SECRETS_FILE_NAME;
 use crate::mock_server_store::MOCK_SERVERS_FILE;
 use crate::recent_workspaces_store::RecentWorkspaceEntry;
 use crate::storage_error::StorageError;
@@ -30,8 +31,9 @@ const MAX_FOLDER_NAME: usize = 60;
 /// Além dos versionados: ambientes, mock servers, vínculo com o repositório
 /// e a sessão de abas (que guarda abas ainda não salvas). Histórico e caches
 /// ficam de fora: são grandes e não são o trabalho do usuário.
-const EXTRA_FILES: [&str; 4] = [
+const EXTRA_FILES: [&str; 5] = [
     ENVIRONMENTS_FILE,
+    SECRETS_FILE_NAME,
     MOCK_SERVERS_FILE,
     LINK_FILE_NAME,
     TAB_SESSION_FILE,

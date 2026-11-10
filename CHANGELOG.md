@@ -6,7 +6,16 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## Unreleased
 
+### Added
+
+- Ao importar uma pasta com repositório Git, escolha entre clonar a pasta e usá-la como repositório remoto ou abrir o próprio diretório. Times sem servidor Git podem trabalhar em cópias separadas e trocar alterações por pull e push.
+
+### Changed
+
+- Em uma pasta compartilhada, cada pessoa tem o próprio valor das variáveis sensíveis. Quem ainda não preencheu vê o campo vazio, sem aviso, e alterar o valor não afeta os colegas.
+
 ## [0.10.0] - 2026-11-08
+- Localizar e substituir nos editores de requisição: troque uma ocorrência ou todas de uma vez, inclusive só dentro do texto selecionado.
 
 ### Added
 

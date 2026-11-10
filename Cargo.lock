@@ -130,6 +130,7 @@ version = "0.1.0"
 dependencies = [
  "alcy-app",
  "alcy-domain",
+ "alcy-storage",
  "gix",
  "serde",
  "serde_json",

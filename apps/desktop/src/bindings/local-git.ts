@@ -119,11 +119,28 @@ export function pushGitRemote(rootPath: string, operationId: string): GitResult<
 export interface CloneGitWorkspaceInput {
   operationId: string
   url: string
+  /** `url` is a workspace folder, to be set up as the remote of the new copy. */
+  fromFolder?: boolean
 }
 
 /** Clones a repository holding an Alcy workspace into the workspaces folder and opens it. */
 export function cloneGitWorkspace(input: CloneGitWorkspaceInput): GitResult<WorkspaceDto> {
   return invokeResult('clone_git_workspace', { input })
+}
+
+export interface WorkspaceFolderInspectionDto {
+  /** The folder holds a committed workspace and has no remote of its own. */
+  canCloneAsRemote: boolean
+}
+
+/** How a folder chosen for import can be brought in. */
+export function inspectWorkspaceFolder(rootPath: string): GitResult<WorkspaceFolderInspectionDto> {
+  return invokeResult('inspect_workspace_folder', { input: { rootPath } })
+}
+
+/** Trusts a folder git refused over its ownership. Only after the person confirms it. */
+export function trustGitFolder(path: string): GitResult<null> {
+  return invokeResult('trust_git_folder', { input: { path } })
 }
 
 export interface GitIdentityFieldsDto {

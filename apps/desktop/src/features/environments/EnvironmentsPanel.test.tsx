@@ -37,29 +37,6 @@ describe('EnvironmentsPanel', () => {
     expect(onSelectEnvironment).not.toHaveBeenCalled()
   })
 
-  it('avisa quando valores sensíveis não puderam ser lidos nesta máquina', () => {
-    render(
-      <EnvironmentsPanel
-        environments={[{ id: 'env-1', name: 'Local', variables: [] }]}
-        unreadableSecrets={['Local › token']}
-        activeEnvironmentId="env-1"
-        onSelectEnvironment={noop}
-        onAddEnvironment={noop}
-        onRemoveEnvironment={noop}
-        onDuplicateEnvironment={noop}
-        onRenameEnvironment={noop}
-        onMoveEnvironment={noop}
-        onAddVariable={noop}
-        onUpdateVariable={noop}
-        onRemoveVariable={noop}
-        onMoveVariable={noop}
-        onReplaceVariables={noop}
-      />,
-    )
-
-    expect(screen.getByRole('status')).toHaveTextContent('Não foi possível ler nesta máquina o valor de: Local › token.')
-  })
-
   describe('reordenação', () => {
     const environments = [
       { id: 'env-1', name: 'Local', variables: [] },

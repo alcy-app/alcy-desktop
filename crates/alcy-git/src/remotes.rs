@@ -13,7 +13,7 @@ use gix::ObjectId;
 use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
 use gix::refs::{FullName, Target};
 
-use crate::cli::{git, validate_remote_url};
+use crate::cli::{git, validate_remote_url, validate_trusted_folder};
 use crate::ownership::CLONED_COPY_KEY;
 use crate::repo::{blob_at, commit_tree, head, short_name};
 use crate::workspace::{Applied, Incoming, Integration, ensure_no_merge, integrate, is_fresh};
@@ -245,12 +245,80 @@ fn follow_branch(repo: &gix::Repository, branch: &str) -> Result<(), GitError> {
 /// Clones `url` into `destination`, a folder that must not exist yet. The
 /// repository must hold an Alcy workspace; otherwise the clone is removed.
 pub async fn clone(url: &str, destination: &Path) -> Result<(), GitError> {
+    clone_with(url, destination, &[]).await
+}
+
+/// Whether a folder's repository can serve as the `origin` of a new copy: its
+/// current commit holds the workspace, and it has no `origin` of its own
+/// (a repository that has one should be cloned from there).
+pub fn can_clone_as_remote(root: &Path) -> bool {
+    clonable_folder(root).unwrap_or(false)
+}
+
+fn clonable_folder(root: &Path) -> Result<bool, GitError> {
+    let repo = open_workspace(root)?;
+    if repo.is_bare() || remote_url_of(&repo).is_some() {
+        return Ok(false);
+    }
+    let Some(commit) = head(&repo)?.1 else {
+        return Ok(false);
+    };
+    let tree = commit_tree(&repo, commit)?;
+    Ok(blob_at(&repo, Some(tree), MANIFEST_FILE)?.is_some())
+}
+
+/// Clones the workspace repository in the folder `source`, which becomes
+/// `origin`: how a team without a git server shares a workspace. Objects are
+/// copied, not hard-linked, so the copy shares nothing with the team's folder.
+pub async fn clone_folder(source: &Path, destination: &Path) -> Result<(), GitError> {
+    clone_with(&source.to_string_lossy(), destination, &["--no-hardlinks"]).await?;
+    // A read-only share still serves pulls; a push will explain the refusal.
+    let _ = accept_pushes(source).await;
+    Ok(())
+}
+
+/// Lets a folder with working files take pushes to its current branch: git
+/// updates the files, and refuses while they have uncommitted changes. An
+/// existing setting is someone's decision and stays.
+async fn accept_pushes(source: &Path) -> Result<(), GitError> {
+    const KEY: &str = "receive.denyCurrentBranch";
+    let configured = open_workspace(source)?
+        .config_snapshot()
+        .string(KEY)
+        .is_some();
+    if configured {
+        return Ok(());
+    }
+    // `--file` edits the configuration without entering the repository, so
+    // git's ownership check for the working tree does not apply.
+    let mut command = args(["config", "--file"]);
+    command.push(source.join(".git").join("config").into_os_string());
+    command.extend(args([KEY, "updateInstead"]));
+    git(None, &command).await?;
+    Ok(())
+}
+
+/// Adds one folder to the `safe.directory` list of the person's own git
+/// configuration, after they agreed to trust it.
+pub async fn trust_folder(path: &str) -> Result<(), GitError> {
+    let path = validate_trusted_folder(path)?;
+    git(
+        None,
+        &args(["config", "--global", "--add", "safe.directory", path]),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn clone_with(url: &str, destination: &Path, options: &[&str]) -> Result<(), GitError> {
     let url = validate_remote_url(url)?;
     if destination.exists() {
         return Err(GitError::DestinationExists);
     }
     let marker = format!("{CLONED_COPY_KEY}=true");
-    let mut command = args(["clone", "--config", &marker, "--"]);
+    let mut command = args(["clone", "--config", &marker]);
+    command.extend(options.iter().map(OsString::from));
+    command.push(OsString::from("--"));
     command.push(OsString::from(&url));
     command.push(destination.as_os_str().to_owned());
     git(None, &command).await?;

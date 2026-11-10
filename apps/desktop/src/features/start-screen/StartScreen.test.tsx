@@ -7,9 +7,15 @@ const openWorkspace = vi.fn()
 const listRecentWorkspaces = vi.fn()
 const pickWorkspaceFolder = vi.fn()
 const cloneGitWorkspace = vi.fn()
+const inspectWorkspaceFolder = vi.fn()
+const trustGitFolder = vi.fn()
 
 vi.mock('../../shared/feature-flags', () => ({ FEATURE_FLAGS: { localGit: true } }))
-vi.mock('../../bindings/local-git', () => ({ cloneGitWorkspace: (...a: unknown[]) => cloneGitWorkspace(...a) }))
+vi.mock('../../bindings/local-git', () => ({
+  cloneGitWorkspace: (...a: unknown[]) => cloneGitWorkspace(...a),
+  inspectWorkspaceFolder: (...a: unknown[]) => inspectWorkspaceFolder(...a),
+  trustGitFolder: (...a: unknown[]) => trustGitFolder(...a),
+}))
 
 vi.mock('../../bindings/create-workspace', () => ({
   createWorkspace: (...args: unknown[]) => createWorkspace(...args),
@@ -33,7 +39,10 @@ beforeEach(() => {
   listRecentWorkspaces.mockReset()
   pickWorkspaceFolder.mockReset()
   cloneGitWorkspace.mockReset()
+  inspectWorkspaceFolder.mockReset()
+  trustGitFolder.mockReset()
   listRecentWorkspaces.mockResolvedValue({ ok: true, value: [] })
+  inspectWorkspaceFolder.mockResolvedValue({ ok: true, value: { canCloneAsRemote: false } })
 })
 
 describe('StartScreen', () => {
@@ -158,5 +167,109 @@ describe('StartScreen — importar', () => {
     fireEvent.click(clone)
     await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
     expect(cloneGitWorkspace).toHaveBeenLastCalledWith({ operationId: expect.any(String), url: 'git@example.com:team/api.git' })
+  })
+})
+
+describe('StartScreen — importar uma pasta com repositório', () => {
+  const workspace = { id: 'w', name: 'API', rootPath: '/docs/api' }
+  const folder = '//server/time/api'
+
+  const chooseFolder = async (onWorkspaceReady = vi.fn()) => {
+    pickWorkspaceFolder.mockResolvedValue(folder)
+    render(<StartScreen onWorkspaceReady={onWorkspaceReady} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Abrir workspace existente' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Escolher pasta…' }))
+    return onWorkspaceReady
+  }
+
+  const offerChoice = () => inspectWorkspaceFolder.mockResolvedValue({ ok: true, value: { canCloneAsRemote: true } })
+
+  it('abre direto a pasta que não pode ser clonada', async () => {
+    openWorkspace.mockResolvedValue({ ok: true, value: workspace })
+    const onWorkspaceReady = await chooseFolder()
+
+    await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
+    expect(openWorkspace).toHaveBeenCalledWith({ rootPath: folder })
+    expect(cloneGitWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('abre direto quando não consegue inspecionar a pasta', async () => {
+    inspectWorkspaceFolder.mockResolvedValue({ ok: false, error: { kind: 'files', message: 'x' } })
+    openWorkspace.mockResolvedValue({ ok: true, value: workspace })
+    const onWorkspaceReady = await chooseFolder()
+
+    await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
+    expect(screen.queryByRole('button', { name: 'Usar esta pasta' })).not.toBeInTheDocument()
+  })
+
+  it('usa o diretório base quando a pessoa escolhe', async () => {
+    offerChoice()
+    openWorkspace.mockResolvedValue({ ok: true, value: workspace })
+    const onWorkspaceReady = await chooseFolder()
+
+    expect(await screen.findByText(folder)).toBeInTheDocument()
+    expect(openWorkspace).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Usar esta pasta' }))
+
+    await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
+    expect(openWorkspace).toHaveBeenCalledWith({ rootPath: folder })
+    expect(cloneGitWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('clona a pasta para usá-la como remoto', async () => {
+    offerChoice()
+    cloneGitWorkspace.mockResolvedValue({ ok: true, value: workspace })
+    const onWorkspaceReady = await chooseFolder()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Clonar e usar como remoto' }))
+
+    await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
+    expect(cloneGitWorkspace).toHaveBeenCalledWith({ operationId: expect.any(String), url: folder, fromFolder: true })
+    expect(openWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('volta para a escolha da pasta', async () => {
+    offerChoice()
+    await chooseFolder()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Voltar' }))
+
+    expect(await screen.findByRole('button', { name: 'Escolher pasta…' })).toBeInTheDocument()
+    expect(openWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('só confia na pasta de outro dono depois da confirmação', async () => {
+    offerChoice()
+    const trusted = '%(prefix)///server/time/api/.git'
+    cloneGitWorkspace.mockResolvedValueOnce({ ok: false, error: { kind: 'gitUntrustedFolder', path: trusted } })
+    cloneGitWorkspace.mockResolvedValueOnce({ ok: true, value: workspace })
+    trustGitFolder.mockResolvedValue({ ok: true, value: null })
+    const onWorkspaceReady = await chooseFolder()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Clonar e usar como remoto' }))
+    const trust = await screen.findByRole('button', { name: 'Confiar nesta pasta e clonar' })
+    expect(trustGitFolder).not.toHaveBeenCalled()
+    expect(onWorkspaceReady).not.toHaveBeenCalled()
+
+    fireEvent.click(trust)
+
+    await waitFor(() => expect(onWorkspaceReady).toHaveBeenCalledWith(workspace))
+    expect(trustGitFolder).toHaveBeenCalledWith(trusted)
+    expect(cloneGitWorkspace).toHaveBeenCalledTimes(2)
+    expect(cloneGitWorkspace).toHaveBeenLastCalledWith({ operationId: expect.any(String), url: folder, fromFolder: true })
+  })
+
+  it('mostra o erro quando não consegue confiar na pasta', async () => {
+    offerChoice()
+    cloneGitWorkspace.mockResolvedValue({ ok: false, error: { kind: 'gitUntrustedFolder', path: '/time/.git' } })
+    trustGitFolder.mockResolvedValue({ ok: false, error: { kind: 'gitNotInstalled' } })
+    await chooseFolder()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Clonar e usar como remoto' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confiar nesta pasta e clonar' }))
+
+    await waitFor(() => expect(trustGitFolder).toHaveBeenCalled())
+    expect(await screen.findByText(/O git não foi encontrado neste computador/)).toBeInTheDocument()
+    expect(cloneGitWorkspace).toHaveBeenCalledTimes(1)
   })
 })

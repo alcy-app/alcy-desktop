@@ -48,14 +48,14 @@ beforeEach(() => {
   listCollections.mockReset()
   onWindowCloseRequested.mockReset()
   listRecentWorkspaces.mockResolvedValue({ ok: true, value: [] })
-  listEnvironments.mockResolvedValue({ ok: true, value: { environments: [], activeEnvironmentId: null, unreadableSecrets: [] } })
+  listEnvironments.mockResolvedValue({ ok: true, value: { environments: [], activeEnvironmentId: null } })
   listCollections.mockResolvedValue({ ok: true, value: [] })
   onWindowCloseRequested.mockResolvedValue(() => {})
 })
 
 describe('App', () => {
   it.each(['collections', 'environments'])('shows loading while %s are pending after switching workspaces', async (pendingArea) => {
-    const environments = { ok: true, value: { environments: [], activeEnvironmentId: null, unreadableSecrets: [] } }
+    const environments = { ok: true, value: { environments: [], activeEnvironmentId: null } }
     const collectionsFor = (name: string) => ({ ok: true, value: [{ id: name, name: `Collection ${name}`, folders: [], requests: [] }] })
     let finishLoading = () => {}
     const pending = new Promise((resolve) => {

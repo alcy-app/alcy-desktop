@@ -4,15 +4,18 @@
 use std::path::{Path, PathBuf};
 
 use alcy_app::{
-    Resolution, VersionControlError, VersionStatus, WorkspaceFiles, push_changes, resolve_conflict,
-    version_status,
+    CredentialError, CredentialStore, Resolution, VersionControlError, VersionStatus,
+    WorkspaceFiles, push_changes, resolve_conflict, version_status,
 };
-use alcy_domain::{FileState, GitIdentity, WorkspaceLink};
+use alcy_domain::{EnvironmentVariable, FileState, GitIdentity, WorkspaceLink};
 use alcy_git::{
     BlobHashCache, FileDeletion, GitError, Integration, RepositoryOwner, Tracking, WorkspaceRemote,
-    abort_merge, checkout, clone, create_branch, delete_branch, fetch, file_deletion,
-    file_versions, finish_merge, git_state, history, init_workspace, merge_branch, merge_upstream,
-    push, restore_file, set_remote, versions_environments,
+    abort_merge, can_clone_as_remote, checkout, clone, clone_folder, create_branch, delete_branch,
+    fetch, file_deletion, file_versions, finish_merge, git_state, history, init_workspace,
+    merge_branch, merge_upstream, push, restore_file, set_remote, versions_environments,
+};
+use alcy_storage::{
+    DiskWorkspaceFiles, EnvironmentStore, EnvironmentsSnapshot, LocalSecrets, SyncedWorkspaceFiles,
 };
 use serde_json::{Value, json};
 
@@ -111,6 +114,18 @@ impl Workspace {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("clone");
         clone(&url.to_string_lossy(), &root).await.unwrap();
+        Self::linked(name, dir, root).await
+    }
+
+    /// A copy of the workspace folder `source`, which becomes its `origin`.
+    async fn cloned_from_folder(name: &str, source: &Path) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("clone");
+        clone_folder(source, &root).await.unwrap();
+        Self::linked(name, dir, root).await
+    }
+
+    async fn linked(name: &str, dir: tempfile::TempDir, root: PathBuf) -> Self {
         let link = WorkspaceLink::new(versions_environments(&root).unwrap());
         init_workspace(&root, "main", &link.tracked_files()).unwrap();
         let mut workspace = Self {
@@ -676,4 +691,211 @@ fn a_folder_without_a_repository_has_no_owner_and_a_broken_one_is_an_error() {
 
     std::fs::create_dir(dir.path().join(".git")).unwrap();
     assert!(file_deletion(dir.path(), None).is_err());
+}
+
+fn folder_config(root: &Path, key: &str) -> Option<String> {
+    gix::open_opts(root, gix::open::Options::isolated())
+        .unwrap()
+        .config_snapshot()
+        .string(key)
+        .map(|value| value.to_string())
+}
+
+#[tokio::test]
+async fn only_a_folder_holding_a_committed_workspace_without_a_remote_can_be_cloned() {
+    let plain = tempfile::tempdir().unwrap();
+    assert!(!can_clone_as_remote(plain.path()));
+
+    let mut folder = seeded("Ana");
+    assert!(!can_clone_as_remote(&folder.root), "no commits yet");
+    folder.commit("Initial").await;
+    assert!(can_clone_as_remote(&folder.root));
+
+    set_remote(&folder.root, Some("https://example.com/team/api.git"))
+        .await
+        .unwrap();
+    assert!(!can_clone_as_remote(&folder.root), "it has its own origin");
+
+    let mut no_manifest = Workspace::new("Ana");
+    no_manifest.write(COLLECTIONS, &collections(json!([])));
+    no_manifest.commit("No manifest").await;
+    assert!(!can_clone_as_remote(&no_manifest.root));
+}
+
+#[tokio::test]
+async fn a_shared_folder_works_as_the_remote_of_its_copies() {
+    let mut folder = seeded("Ana");
+    folder.commit("Initial").await;
+    let url = folder.root.to_string_lossy().to_string();
+
+    let mut bia = Workspace::cloned_from_folder("Bia", &folder.root).await;
+    assert_eq!(
+        git_state(&bia.root).unwrap().remote.as_deref(),
+        Some(url.as_str())
+    );
+    assert_eq!(
+        file_deletion(&bia.root, Some(&bia.identity)).unwrap(),
+        FileDeletion::Allowed,
+        "a copy is the business of whoever made it"
+    );
+    assert_eq!(
+        folder_config(&folder.root, "receive.denyCurrentBranch").as_deref(),
+        Some("updateInstead")
+    );
+    assert!(
+        !can_clone_as_remote(&bia.root),
+        "a copy already has its origin"
+    );
+
+    // A push reaches the folder's own files.
+    bia.write(
+        COLLECTIONS,
+        &collections(json!([{ "id": "r9", "name": "Bia", "url": "/b" }])),
+    );
+    bia.commit("From Bia").await;
+    push(&bia.root).await.unwrap();
+    assert_eq!(folder.json(COLLECTIONS), bia.json(COLLECTIONS));
+    assert_eq!(state(&folder.status().await, COLLECTIONS), FileState::Clean);
+
+    // A commit made in the folder comes back with a pull.
+    folder.write(
+        COLLECTIONS,
+        &collections(json!([{ "id": "r10", "name": "Ana", "url": "/a" }])),
+    );
+    folder.commit("From Ana").await;
+    assert_eq!(bia.pull().await.unwrap().0, Integration::FastForward);
+    assert_eq!(bia.json(COLLECTIONS), folder.json(COLLECTIONS));
+}
+
+#[tokio::test]
+async fn a_folder_with_uncommitted_changes_refuses_the_push_and_keeps_them() {
+    let mut folder = seeded("Ana");
+    folder.commit("Initial").await;
+    let mut bia = Workspace::cloned_from_folder("Bia", &folder.root).await;
+
+    let unsaved = collections(json!([{ "id": "r3", "name": "Unsaved", "url": "/u" }]));
+    folder.write(COLLECTIONS, &unsaved);
+    bia.write(
+        COLLECTIONS,
+        &collections(json!([{ "id": "r9", "name": "Bia", "url": "/b" }])),
+    );
+    bia.commit("From Bia").await;
+
+    assert_eq!(push(&bia.root).await, Err(GitError::RemoteFolderBusy));
+    assert_eq!(folder.json(COLLECTIONS), unsaved);
+}
+
+#[tokio::test]
+async fn a_folder_that_keeps_refusing_pushes_is_reported_as_such() {
+    let mut folder = seeded("Ana");
+    folder.commit("Initial").await;
+    let config = folder.root.join(".git").join("config");
+    let mut content = std::fs::read_to_string(&config).unwrap();
+    content.push_str("[receive]\n\tdenyCurrentBranch = refuse\n");
+    std::fs::write(&config, content).unwrap();
+
+    let mut bia = Workspace::cloned_from_folder("Bia", &folder.root).await;
+    assert_eq!(
+        folder_config(&folder.root, "receive.denyCurrentBranch").as_deref(),
+        Some("refuse"),
+        "an existing setting stays"
+    );
+
+    bia.write(
+        COLLECTIONS,
+        &collections(json!([{ "id": "r9", "name": "Bia", "url": "/b" }])),
+    );
+    bia.commit("From Bia").await;
+    assert_eq!(push(&bia.root).await, Err(GitError::RemoteFolderBusy));
+}
+
+/// Sealing keys of one person: no keyring, a key file of their own.
+fn personal_secrets(dir: &Path) -> LocalSecrets {
+    struct NoKeyring;
+
+    impl CredentialStore for NoKeyring {
+        fn load(&self, _key: &str) -> Result<Option<String>, CredentialError> {
+            Err(CredentialError::Unavailable("no keyring".into()))
+        }
+        fn save(&self, _key: &str, _secret: &str) -> Result<(), CredentialError> {
+            Err(CredentialError::Unavailable("no keyring".into()))
+        }
+        fn delete(&self, _key: &str) -> Result<(), CredentialError> {
+            Ok(())
+        }
+    }
+
+    LocalSecrets::new(Box::new(NoKeyring), dir.join("test-key"))
+}
+
+fn environments(base_url: &str, token: &str) -> EnvironmentsSnapshot {
+    let variables = vec![
+        EnvironmentVariable::new("baseUrl", base_url, false).unwrap(),
+        EnvironmentVariable::new("token", token, true).unwrap(),
+    ];
+    EnvironmentsSnapshot {
+        environments: vec![alcy_domain::Environment::new("env-1", "Dev", variables).unwrap()],
+        active_environment_id: Some("env-1".to_string()),
+    }
+}
+
+fn variable_value(root: &Path, secrets: &LocalSecrets, name: &str) -> String {
+    let loaded = EnvironmentStore::new(root.to_path_buf(), secrets.clone())
+        .load()
+        .unwrap();
+    loaded.snapshot.environments[0]
+        .variables()
+        .iter()
+        .find(|variable| variable.name() == name)
+        .map(|variable| variable.value().to_string())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_folder_with_versioned_environments_takes_pushes_and_keeps_its_secrets() {
+    let keys = tempfile::tempdir().unwrap();
+    let ana_secrets = personal_secrets(&keys.path().join("ana"));
+    let bia_secrets = personal_secrets(&keys.path().join("bia"));
+    std::fs::create_dir_all(keys.path().join("ana")).unwrap();
+    std::fs::create_dir_all(keys.path().join("bia")).unwrap();
+
+    let mut folder = seeded("Ana");
+    folder.link = WorkspaceLink::new(true);
+    init_workspace(&folder.root, "main", &folder.link.tracked_files()).unwrap();
+    EnvironmentStore::new(folder.root.clone(), ana_secrets.clone())
+        .save(&environments("https://a", "ana-secret"))
+        .unwrap();
+    let synced = SyncedWorkspaceFiles::new(
+        DiskWorkspaceFiles::new(folder.root.clone()),
+        ana_secrets.clone(),
+        false,
+    );
+    let status = version_status(&synced, &folder.remote(), &folder.link)
+        .await
+        .unwrap();
+    let outcome = push_changes(&synced, &folder.remote(), &status.link, "Initial")
+        .await
+        .unwrap();
+    folder.link = outcome.link;
+
+    let mut bia = Workspace::cloned_from_folder("Bia", &folder.root).await;
+    assert!(bia.link.tracked_files().contains(&"alcy-environments.json"));
+    EnvironmentStore::new(bia.root.clone(), bia_secrets.clone())
+        .save(&environments("https://b", "bia-secret"))
+        .unwrap();
+    bia.commit("From Bia").await;
+    push(&bia.root).await.unwrap();
+
+    assert_eq!(
+        variable_value(&folder.root, &ana_secrets, "baseUrl"),
+        "https://b"
+    );
+    assert_eq!(
+        variable_value(&folder.root, &ana_secrets, "token"),
+        "ana-secret"
+    );
+    assert_eq!(
+        variable_value(&bia.root, &bia_secrets, "token"),
+        "bia-secret"
+    );
 }

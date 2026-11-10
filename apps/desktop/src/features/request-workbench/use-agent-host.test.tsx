@@ -55,7 +55,7 @@ beforeEach(() => {
   invoke.mockReset().mockImplementation(async (command: string) => {
     switch (command) {
       case 'list_collections': return []
-      case 'list_environments': return { environments: [], activeEnvironmentId: null, unreadableSecrets: [] }
+      case 'list_environments': return { environments: [], activeEnvironmentId: null }
       case 'import_collections_from_text': return imported()
       case 'save_collections':
       case 'save_environments': return undefined

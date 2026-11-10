@@ -368,7 +368,6 @@ const defaultSnapshot = {
     { id: 'env-prod', name: 'Production', variables: [] },
   ],
   activeEnvironmentId: 'env-dev',
-  unreadableSecrets: [],
 }
 
 beforeEach(() => {
@@ -1504,7 +1503,6 @@ describe('RequestWorkbench', () => {
         value: {
           environments: [{ id: 'env-dev', name: 'Development', variables: [{ name: 'apiKey', value: 's3cr3t', sensitive: true }] }],
           activeEnvironmentId: 'env-dev',
-          unreadableSecrets: [],
         },
       })
       executeGraphqlRequest.mockResolvedValue({
@@ -1561,7 +1559,6 @@ describe('RequestWorkbench', () => {
             },
           ],
           activeEnvironmentId: 'env-dev',
-          unreadableSecrets: [],
         },
       })
       executeRestRequest.mockResolvedValue({

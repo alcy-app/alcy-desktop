@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use alcy_domain::{Environment, EnvironmentVariable};
@@ -9,38 +10,31 @@ use serde::{Deserialize, Serialize};
 use crate::local_secrets::{LocalSecrets, SecretKeys};
 use crate::storage_error::StorageError;
 
-/// Versão 2: valores sensíveis cifrados em `encrypted` (valor em `value`
-/// fica vazio).
-const CURRENT_VERSION: u32 = 2;
-/// Versão 1: tudo em texto claro. Ainda é lida (migrada no primeiro
-/// `load`) e é o formato da visão portátil enviada ao controle de versão —
-/// assim versões anteriores do Alcy continuam lendo o arquivo remoto.
-const PORTABLE_VERSION: u32 = 1;
+/// Plain JSON with sensitive values left empty: the file on disk is exactly
+/// what version control commits, so git sees it as clean.
+const CURRENT_VERSION: u32 = 1;
+/// Earlier format, with sensitive values sealed in each variable's
+/// `encrypted`. Still read, and moved to the secrets file on the next save.
+const SEALED_INLINE_VERSION: u32 = 2;
 const MANIFEST_FILE_NAME: &str = "alcy-environments.json";
+const SECRETS_VERSION: u32 = 1;
+/// Sealed values, beside the environments file. Never versioned: a pull or a
+/// push rewrites the environments file and leaves this one alone.
+pub const SECRETS_FILE_NAME: &str = "alcy-environments-secrets.json";
 
-/// Estado completo de ambientes lido ou gravado de uma vez.
+/// Whole environments state, read or written at once.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EnvironmentsSnapshot {
     pub environments: Vec<Environment>,
     pub active_environment_id: Option<String>,
 }
 
-/// Variável sensível cujo valor cifrado não pôde ser lido nesta máquina
-/// (ex.: workspace copiado de outro computador ou chave local perdida). Ela
-/// é carregada com valor vazio.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnreadableSecret {
-    pub environment_name: String,
-    pub variable_name: String,
-}
-
-/// Resultado de `EnvironmentStore::load`.
+/// Result of `EnvironmentStore::load`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LoadedEnvironments {
     pub snapshot: EnvironmentsSnapshot,
-    pub unreadable_secrets: Vec<UnreadableSecret>,
-    /// O arquivo ainda guarda valores sensíveis em texto claro (versão 1) e
-    /// deve ser regravado para cifrá-los.
+    /// The file is in the earlier format or holds sensitive values in plain
+    /// text, and must be rewritten.
     pub needs_migration: bool,
 }
 
@@ -63,13 +57,35 @@ struct PersistedVariable {
     name: String,
     value: String,
     sensitive: bool,
-    /// Só na versão 2, para variáveis sensíveis com valor não vazio.
+    /// Only in files of the earlier format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     encrypted: Option<String>,
 }
 
-/// Obtém as chaves locais só na primeira vez que forem necessárias — um
-/// arquivo sem nada sensível nunca toca o chaveiro.
+#[derive(Serialize, Deserialize)]
+struct SecretsFile {
+    version: u32,
+    secrets: Vec<PersistedSecret>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistedSecret {
+    environment_id: String,
+    variable: String,
+    /// One value per person who filled the variable in, each opened only by
+    /// that person's key.
+    sealed: Vec<String>,
+}
+
+/// Sealed values by environment id and variable name.
+type SealedValues = BTreeMap<(String, String), Vec<String>>;
+
+fn secret_key(environment_id: &str, variable: &str) -> (String, String) {
+    (environment_id.to_string(), variable.to_string())
+}
+
+/// Gets the local keys only the first time they are needed: a file with
+/// nothing sensitive never touches the keyring.
 struct LazyKeys<'a> {
     secrets: &'a LocalSecrets,
     keys: Option<Arc<SecretKeys>>,
@@ -99,24 +115,57 @@ impl<'a> LazyKeys<'a> {
             .map_err(|error| StorageError::Secrets(error.to_string()))
     }
 
-    /// Valor em claro da variável; `None` se o cifrado não pôde ser lido.
-    fn reveal(&mut self, variable: &PersistedVariable) -> Result<Option<String>, StorageError> {
-        match &variable.encrypted {
-            Some(sealed) => Ok(self.get()?.decrypt(sealed).ok()),
-            None => Ok(Some(variable.value.clone())),
+    /// This person's value among `sealed`; `None` while none of them is theirs.
+    fn open(&mut self, sealed: &[String]) -> Result<Option<String>, StorageError> {
+        if sealed.is_empty() {
+            return Ok(None);
         }
+        let keys = self.get()?;
+        Ok(sealed.iter().find_map(|value| keys.decrypt(value).ok()))
+    }
+
+    /// `stored` with this person's value set to `value` (empty removes it).
+    /// Values their key cannot open belong to someone else and stay, and an
+    /// unchanged value is not sealed again, so the file only changes when
+    /// something did.
+    fn updated_sealed(
+        &mut self,
+        value: &str,
+        stored: &[String],
+    ) -> Result<Vec<String>, StorageError> {
+        let mut kept = Vec::with_capacity(stored.len() + 1);
+        let mut has_own = false;
+        if !stored.is_empty() {
+            let keys = self.get()?;
+            for sealed in stored {
+                match keys.decrypt(sealed) {
+                    Err(_) => kept.push(sealed.clone()),
+                    Ok(plain) if plain == value && !has_own => {
+                        has_own = true;
+                        kept.push(sealed.clone());
+                    }
+                    Ok(_) => {}
+                }
+            }
+        }
+        if !has_own && !value.is_empty() {
+            kept.push(self.seal(value)?);
+        }
+        Ok(kept)
     }
 }
 
-/// Lê e grava os ambientes de um workspace (`alcy-environments.json`) na
-/// raiz da pasta do workspace, com escrita atômica (arquivo temporário +
-/// rename) e formato versionado. Ambientes não são compartilhados entre
-/// workspaces — cada um tem seu próprio arquivo, como coleções e histórico.
+/// Reads and writes a workspace's environments (`alcy-environments.json`) at
+/// the root of the workspace folder, with atomic writes (temporary file and
+/// rename) and a versioned format. Environments are not shared between
+/// workspaces: each has its own file, like collections and history.
 ///
-/// Valores de variáveis sensíveis são cifrados com a chave local
-/// (`LocalSecrets`) ao gravar e decifrados ao ler.
+/// Sensitive values are sealed with the local key (`LocalSecrets`) and kept in
+/// a separate file. A value sealed by someone else's key stays there and loads
+/// empty here, so people using the same folder each keep their own.
 pub struct EnvironmentStore {
     path: PathBuf,
+    secrets_path: PathBuf,
     secrets: LocalSecrets,
 }
 
@@ -124,36 +173,33 @@ impl EnvironmentStore {
     pub fn new(root: PathBuf, secrets: LocalSecrets) -> Self {
         Self {
             path: root.join(MANIFEST_FILE_NAME),
+            secrets_path: root.join(SECRETS_FILE_NAME),
             secrets,
         }
     }
 
     pub fn load(&self) -> Result<LoadedEnvironments, StorageError> {
-        if !self.path.exists() {
+        let Some(raw) = read_optional(&self.path)? else {
             return Ok(LoadedEnvironments::default());
-        }
-
-        let raw = fs::read(&self.path).map_err(|error| StorageError::Read(error.to_string()))?;
+        };
         let persisted = parse_file(&raw)?;
-        let needs_migration = persisted.version == PORTABLE_VERSION
-            && variables(&persisted)
+        let needs_migration = persisted.version != CURRENT_VERSION
+            || variables(&persisted)
                 .any(|variable| variable.sensitive && !variable.value.is_empty());
+        let mut sealed = parse_secrets(read_optional(&self.secrets_path)?.as_deref())?;
+        absorb_inline(&mut sealed, &persisted);
 
         let mut keys = LazyKeys::new(&self.secrets);
-        let mut unreadable_secrets = Vec::new();
         let mut environments = Vec::with_capacity(persisted.environments.len());
         for environment in persisted.environments {
             let mut variables = Vec::with_capacity(environment.variables.len());
             for variable in &environment.variables {
-                let value = match keys.reveal(variable)? {
-                    Some(value) => value,
-                    None => {
-                        unreadable_secrets.push(UnreadableSecret {
-                            environment_name: environment.name.clone(),
-                            variable_name: variable.name.clone(),
-                        });
-                        String::new()
-                    }
+                let value = if variable.sensitive && variable.value.is_empty() {
+                    let stored = sealed.get(&secret_key(&environment.id, &variable.name));
+                    keys.open(stored.map_or(&[], Vec::as_slice))?
+                        .unwrap_or_default()
+                } else {
+                    variable.value.clone()
                 };
                 variables.push(
                     EnvironmentVariable::new(variable.name.clone(), value, variable.sensitive)
@@ -171,27 +217,43 @@ impl EnvironmentStore {
                 environments,
                 active_environment_id: persisted.active_environment_id,
             },
-            unreadable_secrets,
             needs_migration,
         })
     }
 
+    /// Writes only the files whose content changed. An unreadable file is an
+    /// error rather than nothing: writing over it would lose the values other
+    /// people keep there.
     pub fn save(&self, snapshot: &EnvironmentsSnapshot) -> Result<(), StorageError> {
+        let current = read_optional(&self.path)?;
+        let current_secrets = read_optional(&self.secrets_path)?;
+        let mut stored = parse_secrets(current_secrets.as_deref())?;
+        if let Some(raw) = &current {
+            absorb_inline(&mut stored, &parse_file(raw)?);
+        }
+
         let mut keys = LazyKeys::new(&self.secrets);
+        let mut sealed = SealedValues::new();
         let mut environments = Vec::with_capacity(snapshot.environments.len());
         for environment in &snapshot.environments {
             let mut variables = Vec::with_capacity(environment.variables().len());
             for variable in environment.variables() {
-                let (value, encrypted) = if variable.sensitive && !variable.value().is_empty() {
-                    (String::new(), Some(keys.seal(variable.value())?))
+                let value = if variable.sensitive {
+                    let key = secret_key(&environment.id, variable.name());
+                    let previous = stored.get(&key).map_or(&[][..], Vec::as_slice);
+                    let updated = keys.updated_sealed(variable.value(), previous)?;
+                    if !updated.is_empty() {
+                        sealed.insert(key, updated);
+                    }
+                    String::new()
                 } else {
-                    (variable.value().to_string(), None)
+                    variable.value().to_string()
                 };
                 variables.push(PersistedVariable {
                     name: variable.name().to_string(),
                     value,
                     sensitive: variable.sensitive,
-                    encrypted,
+                    encrypted: None,
                 });
             }
             environments.push(PersistedEnvironment {
@@ -206,103 +268,220 @@ impl EnvironmentStore {
             active_environment_id: snapshot.active_environment_id.clone(),
             environments,
         };
-        let json = serde_json::to_string_pretty(&persisted)
-            .map_err(|error| StorageError::Write(error.to_string()))?;
 
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| StorageError::Write(error.to_string()))?;
+        // Secrets first: an interruption leaves them in both places, not lost.
+        write_secrets(&self.secrets_path, current_secrets.as_deref(), &sealed)?;
+        let json = to_json(&persisted)?;
+        if current.as_deref() != Some(json.as_slice()) {
+            write_atomic(&self.path, &json)?;
         }
-
-        let tmp_path = self.path.with_extension("tmp");
-        fs::write(&tmp_path, json).map_err(|error| StorageError::Write(error.to_string()))?;
-        fs::rename(&tmp_path, &self.path)
-            .map_err(|error| StorageError::Write(error.to_string()))?;
-
         Ok(())
     }
 }
 
-/// Visão portátil do arquivo de ambientes — o que o controle de versão lê,
-/// compara e envia. Sai no formato da versão 1, sem valores cifrados (a
-/// chave local não existe em outras máquinas): variáveis sensíveis vão
-/// vazias, ou com o valor em claro quando `include_sensitive` (o usuário
-/// desligou a proteção nas configurações).
+fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, StorageError> {
+    match fs::read(path) {
+        Ok(raw) => Ok(Some(raw)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(StorageError::Read(error.to_string())),
+    }
+}
+
+fn write_atomic(path: &Path, content: &[u8]) -> Result<(), StorageError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| StorageError::Write(error.to_string()))?;
+    }
+    let tmp_path = path.with_extension("tmp");
+    fs::write(&tmp_path, content).map_err(|error| StorageError::Write(error.to_string()))?;
+    fs::rename(&tmp_path, path).map_err(|error| StorageError::Write(error.to_string()))
+}
+
+fn write_secrets(
+    path: &Path,
+    current: Option<&[u8]>,
+    sealed: &SealedValues,
+) -> Result<(), StorageError> {
+    match secrets_to_json(sealed)? {
+        Some(json) if current != Some(json.as_slice()) => write_atomic(path, &json),
+        None if current.is_some() => {
+            fs::remove_file(path).map_err(|error| StorageError::Write(error.to_string()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Portable view of the environments file: what version control reads,
+/// compares and sends, without sealed values (the local key does not exist on
+/// other machines). Sensitive variables go empty, or with this person's value
+/// in plain text when `include_sensitive` (they turned the protection off in
+/// the settings). `current_secrets` is only needed in that case.
 pub fn environments_to_portable(
     local: &[u8],
+    current_secrets: Option<&[u8]>,
     secrets: &LocalSecrets,
     include_sensitive: bool,
 ) -> Result<Vec<u8>, StorageError> {
     let mut file = parse_file(local)?;
-    let mut keys = LazyKeys::new(secrets);
-    for variable in variables_mut(&mut file) {
-        if variable.sensitive {
-            variable.value = if include_sensitive {
-                keys.reveal(variable)?.unwrap_or_default()
-            } else {
-                String::new()
-            };
-        }
-        variable.encrypted = None;
+    let mut sealed = SealedValues::new();
+    if include_sensitive {
+        sealed = parse_secrets(current_secrets)?;
+        absorb_inline(&mut sealed, &file);
     }
-    file.version = PORTABLE_VERSION;
-    to_json(&file)
-}
-
-/// Converte a visão portátil (vinda do remoto) no arquivo local. Uma
-/// variável sensível que chega vazia mantém o valor que já existia nesta
-/// máquina (mesmo ambiente e nome) — receber do remoto nunca apaga um
-/// segredo local; uma que chega com valor é cifrada.
-pub fn environments_from_portable(
-    portable: &[u8],
-    current_local: Option<&[u8]>,
-    secrets: &LocalSecrets,
-) -> Result<Vec<u8>, StorageError> {
-    let mut file = parse_file(portable)?;
-    let local = current_local.and_then(|bytes| parse_file(bytes).ok());
-    let local_secrets: HashMap<(&str, &str), &PersistedVariable> = local
-        .iter()
-        .flat_map(|local| &local.environments)
-        .flat_map(|environment| {
-            environment
-                .variables
-                .iter()
-                .filter(|variable| variable.sensitive)
-                .map(|variable| ((environment.id.as_str(), variable.name.as_str()), variable))
-        })
-        .collect();
-
     let mut keys = LazyKeys::new(secrets);
     for environment in &mut file.environments {
         for variable in &mut environment.variables {
-            if !variable.sensitive {
-                variable.encrypted = None;
-                continue;
+            if variable.sensitive {
+                if !include_sensitive {
+                    variable.value.clear();
+                } else if variable.value.is_empty() {
+                    let stored = sealed.get(&secret_key(&environment.id, &variable.name));
+                    variable.value = keys
+                        .open(stored.map_or(&[], Vec::as_slice))?
+                        .unwrap_or_default();
+                }
             }
-            if !variable.value.is_empty() {
-                variable.encrypted = Some(keys.seal(&variable.value)?);
-                variable.value.clear();
-            } else if let Some(existing) =
-                local_secrets.get(&(environment.id.as_str(), variable.name.as_str()))
-            {
-                variable.encrypted = match &existing.encrypted {
-                    Some(sealed) => Some(sealed.clone()),
-                    None if existing.value.is_empty() => None,
-                    None => Some(keys.seal(&existing.value)?),
-                };
-            }
+            variable.encrypted = None;
         }
     }
     file.version = CURRENT_VERSION;
     to_json(&file)
 }
 
+/// What receiving the portable view writes to the workspace folder.
+#[derive(Debug)]
+pub struct ReceivedEnvironments {
+    pub environments: Vec<u8>,
+    /// `None` when no sealed value is left.
+    pub secrets: Option<Vec<u8>>,
+}
+
+/// Turns the portable view (from the remote) into the local files. A sensitive
+/// variable that arrives empty keeps the values already sealed for the same
+/// environment and name, so receiving from the remote never erases a local
+/// secret; one that arrives with a value becomes this person's.
+pub fn environments_from_portable(
+    portable: &[u8],
+    current_local: Option<&[u8]>,
+    current_secrets: Option<&[u8]>,
+    secrets: &LocalSecrets,
+) -> Result<ReceivedEnvironments, StorageError> {
+    let mut file = parse_file(portable)?;
+    let local = current_local.and_then(|bytes| parse_file(bytes).ok());
+    let mut stored = parse_secrets(current_secrets)?;
+    if let Some(local) = &local {
+        absorb_inline(&mut stored, local);
+    }
+    let local_plain: BTreeMap<(String, String), &str> = local
+        .iter()
+        .flat_map(|local| &local.environments)
+        .flat_map(|environment| {
+            environment
+                .variables
+                .iter()
+                .filter(|variable| variable.sensitive && !variable.value.is_empty())
+                .map(|variable| {
+                    (
+                        secret_key(&environment.id, &variable.name),
+                        variable.value.as_str(),
+                    )
+                })
+        })
+        .collect();
+
+    let mut keys = LazyKeys::new(secrets);
+    let mut sealed = SealedValues::new();
+    for environment in &mut file.environments {
+        for variable in &mut environment.variables {
+            variable.encrypted = None;
+            if !variable.sensitive {
+                continue;
+            }
+            let key = secret_key(&environment.id, &variable.name);
+            let previous = stored.get(&key).map_or(&[][..], Vec::as_slice);
+            let incoming = if variable.value.is_empty() {
+                local_plain.get(&key).copied()
+            } else {
+                Some(variable.value.as_str())
+            };
+            let updated = match incoming {
+                Some(value) => keys.updated_sealed(value, previous)?,
+                None => previous.to_vec(),
+            };
+            variable.value.clear();
+            if !updated.is_empty() {
+                sealed.insert(key, updated);
+            }
+        }
+    }
+    file.version = CURRENT_VERSION;
+    Ok(ReceivedEnvironments {
+        environments: to_json(&file)?,
+        secrets: secrets_to_json(&sealed)?,
+    })
+}
+
 fn parse_file(raw: &[u8]) -> Result<PersistedFile, StorageError> {
     let persisted: PersistedFile =
         serde_json::from_slice(raw).map_err(|error| StorageError::Corrupted(error.to_string()))?;
-    if persisted.version != CURRENT_VERSION && persisted.version != PORTABLE_VERSION {
+    if persisted.version != CURRENT_VERSION && persisted.version != SEALED_INLINE_VERSION {
         return Err(StorageError::UnsupportedVersion(persisted.version));
     }
     Ok(persisted)
+}
+
+fn parse_secrets(raw: Option<&[u8]>) -> Result<SealedValues, StorageError> {
+    let Some(raw) = raw else {
+        return Ok(SealedValues::new());
+    };
+    let file: SecretsFile =
+        serde_json::from_slice(raw).map_err(|error| StorageError::Corrupted(error.to_string()))?;
+    if file.version != SECRETS_VERSION {
+        return Err(StorageError::UnsupportedVersion(file.version));
+    }
+    Ok(file
+        .secrets
+        .into_iter()
+        .map(|secret| ((secret.environment_id, secret.variable), secret.sealed))
+        .collect())
+}
+
+/// `None` when there is nothing to keep: the file then does not exist.
+fn secrets_to_json(sealed: &SealedValues) -> Result<Option<Vec<u8>>, StorageError> {
+    if sealed.is_empty() {
+        return Ok(None);
+    }
+    let file = SecretsFile {
+        version: SECRETS_VERSION,
+        secrets: sealed
+            .iter()
+            .map(|((environment_id, variable), sealed)| PersistedSecret {
+                environment_id: environment_id.clone(),
+                variable: variable.clone(),
+                sealed: sealed.clone(),
+            })
+            .collect(),
+    };
+    serde_json::to_vec_pretty(&file)
+        .map(Some)
+        .map_err(|error| StorageError::Write(error.to_string()))
+}
+
+/// Adds the values a file of the earlier format still holds inline, ahead of
+/// the rest: such a value was written after the secrets file existed only if
+/// someone went back to an earlier Alcy, and then it is the newest one.
+fn absorb_inline(sealed: &mut SealedValues, file: &PersistedFile) {
+    for environment in &file.environments {
+        for variable in environment.variables.iter().filter(|v| v.sensitive) {
+            if let Some(value) = &variable.encrypted {
+                let entry = sealed
+                    .entry(secret_key(&environment.id, &variable.name))
+                    .or_default();
+                if !entry.contains(value) {
+                    entry.insert(0, value.clone());
+                }
+            }
+        }
+    }
 }
 
 fn to_json(file: &PersistedFile) -> Result<Vec<u8>, StorageError> {
@@ -313,12 +492,6 @@ fn variables(file: &PersistedFile) -> impl Iterator<Item = &PersistedVariable> {
     file.environments
         .iter()
         .flat_map(|environment| &environment.variables)
-}
-
-fn variables_mut(file: &mut PersistedFile) -> impl Iterator<Item = &mut PersistedVariable> {
-    file.environments
-        .iter_mut()
-        .flat_map(|environment| &mut environment.variables)
 }
 
 #[cfg(test)]
@@ -339,8 +512,8 @@ mod tests {
         std::env::temp_dir().join(format!("alcy-environment-store-test-{nanos}-{count}"))
     }
 
-    /// Segredos cujo chaveiro falha: qualquer tentativa de obter a chave
-    /// vira erro — serve para provar que ela não foi pedida.
+    /// Secrets whose keyring fails: any attempt to get the key is an error,
+    /// which proves it was not requested.
     fn secrets_that_must_not_be_used() -> LocalSecrets {
         LocalSecrets::new(
             Box::new(FakeKeyring {
@@ -398,25 +571,117 @@ mod tests {
         let loaded = store.load().unwrap();
 
         assert_eq!(loaded.snapshot, snapshot);
-        assert!(loaded.unreadable_secrets.is_empty());
         assert!(!loaded.needs_migration);
 
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn save_encrypts_sensitive_values_only() {
+    fn sensitive_values_are_sealed_apart_from_the_shared_file() {
         let root = temp_root();
         let store = EnvironmentStore::new(root.clone(), test_secrets());
 
         store.save(&sample_snapshot()).unwrap();
         let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        let secrets = fs::read_to_string(root.join(SECRETS_FILE_NAME)).unwrap();
 
         assert!(!raw.contains("\"secret\""));
-        assert!(raw.contains("\"encrypted\": \"v1:"));
+        assert!(!raw.contains("v1:"));
         assert!(raw.contains("https://api.example.com"));
-        assert!(raw.contains("\"version\": 2"));
+        assert!(!secrets.contains("\"secret\""));
+        assert!(secrets.contains("\"v1:"));
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_saved_file_is_exactly_what_version_control_commits() {
+        let secrets = test_secrets();
+        let (root, local, sealed) = saved_local_file(&secrets);
+
+        assert_eq!(
+            environments_to_portable(&local, sealed.as_deref(), &secrets, false).unwrap(),
+            local
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_workspace_without_secrets_has_no_secrets_file() {
+        let root = temp_root();
+        EnvironmentStore::new(root.clone(), test_secrets())
+            .save(&snapshot_with("https://a", "", true))
+            .unwrap();
+
+        assert!(!root.join(SECRETS_FILE_NAME).exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn saving_again_does_not_touch_an_unchanged_secret() {
+        let root = temp_root();
+        let store = EnvironmentStore::new(root.clone(), test_secrets());
+        store.save(&sample_snapshot()).unwrap();
+        let before = fs::read(root.join(SECRETS_FILE_NAME)).unwrap();
+
+        store.save(&sample_snapshot()).unwrap();
+
+        assert_eq!(fs::read(root.join(SECRETS_FILE_NAME)).unwrap(), before);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// A file of the earlier format, with one value sealed inline.
+    fn inline_file(sealed: &str) -> String {
+        format!(
+            r#"{{"version": 2, "active_environment_id": "env-1", "environments": [{{"id": "env-1", "name": "Development", "variables": [{{"name": "baseUrl", "value": "https://api.example.com", "sensitive": false}}, {{"name": "token", "value": "", "sensitive": true, "encrypted": "{sealed}"}}]}}]}}"#
+        )
+    }
+
+    #[test]
+    fn a_value_changed_in_an_earlier_version_replaces_the_older_one() {
+        let root = temp_root();
+        let ana = test_secrets();
+        let store = EnvironmentStore::new(root.clone(), ana.clone());
+        store
+            .save(&snapshot_with("https://api.example.com", "older", true))
+            .unwrap();
+        let newer = ana.keys().unwrap().encrypt("newer").unwrap();
+        fs::write(root.join(MANIFEST_FILE_NAME), inline_file(&newer)).unwrap();
+
+        let loaded = store.load().unwrap();
+        assert_eq!(value_of(&loaded.snapshot, "token"), "newer");
+        store.save(&loaded.snapshot).unwrap();
+
+        assert_eq!(token_seen_by(&root, &ana), "newer");
+        let sealed = fs::read_to_string(root.join(SECRETS_FILE_NAME)).unwrap();
+        assert_eq!(sealed.matches("v1:").count(), 1, "the older value is gone");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn values_sealed_inline_move_to_the_secrets_file() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let (ana, bia) = (test_secrets(), test_secrets());
+        let sealed = ana.keys().unwrap().encrypt("ana").unwrap();
+        fs::write(root.join(MANIFEST_FILE_NAME), inline_file(&sealed)).unwrap();
+
+        let loaded = EnvironmentStore::new(root.clone(), ana.clone())
+            .load()
+            .unwrap();
+        assert!(loaded.needs_migration);
+        assert_eq!(value_of(&loaded.snapshot, "token"), "ana");
+
+        // Whoever opens it first moves it, even if the value is not theirs.
+        let bia_store = EnvironmentStore::new(root.clone(), bia.clone());
+        let loaded = bia_store.load().unwrap();
+        bia_store.save(&loaded.snapshot).unwrap();
+
+        let raw = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert!(!raw.contains("encrypted"));
+        assert!(raw.contains("\"version\": 1"));
+        assert_eq!(token_seen_by(&root, &ana), "ana");
+        assert_eq!(token_seen_by(&root, &bia), "");
         fs::remove_dir_all(&root).ok();
     }
 
@@ -464,8 +729,26 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    fn snapshot_with(base_url: &str, token: &str, sensitive: bool) -> EnvironmentsSnapshot {
+        let variables = vec![
+            EnvironmentVariable::new("baseUrl", base_url, false).unwrap(),
+            EnvironmentVariable::new("token", token, sensitive).unwrap(),
+        ];
+        EnvironmentsSnapshot {
+            environments: vec![Environment::new("env-1", "Development", variables).unwrap()],
+            active_environment_id: Some("env-1".to_string()),
+        }
+    }
+
+    fn token_seen_by(root: &std::path::Path, secrets: &LocalSecrets) -> String {
+        let loaded = EnvironmentStore::new(root.to_path_buf(), secrets.clone())
+            .load()
+            .unwrap();
+        value_of(&loaded.snapshot, "token")
+    }
+
     #[test]
-    fn values_sealed_with_another_key_load_empty_and_are_reported() {
+    fn a_value_sealed_by_someone_else_loads_empty() {
         let root = temp_root();
         EnvironmentStore::new(root.clone(), test_secrets())
             .save(&sample_snapshot())
@@ -480,13 +763,115 @@ mod tests {
             value_of(&loaded.snapshot, "baseUrl"),
             "https://api.example.com"
         );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn each_person_sharing_a_folder_keeps_their_own_sensitive_value() {
+        let root = temp_root();
+        let (ana, bia) = (test_secrets(), test_secrets());
+        let ana_store = EnvironmentStore::new(root.clone(), ana.clone());
+        let bia_store = EnvironmentStore::new(root.clone(), bia.clone());
+        let url = "https://api.example.com";
+
+        ana_store.save(&snapshot_with(url, "ana", true)).unwrap();
+        bia_store.save(&snapshot_with(url, "bia", true)).unwrap();
+        assert_eq!(token_seen_by(&root, &ana), "ana");
+        assert_eq!(token_seen_by(&root, &bia), "bia");
+
+        ana_store.save(&snapshot_with(url, "ana-2", true)).unwrap();
+        assert_eq!(token_seen_by(&root, &ana), "ana-2");
+        assert_eq!(token_seen_by(&root, &bia), "bia");
+
+        let raw = fs::read_to_string(root.join(SECRETS_FILE_NAME)).unwrap();
+        assert_eq!(raw.matches("v1:").count(), 2, "one value per person");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn saving_without_a_value_keeps_what_others_have() {
+        let root = temp_root();
+        let (ana, bia) = (test_secrets(), test_secrets());
+        EnvironmentStore::new(root.clone(), ana.clone())
+            .save(&snapshot_with("https://a", "ana", true))
+            .unwrap();
+
+        // Bia never filled the token and changes a shared variable.
+        EnvironmentStore::new(root.clone(), bia.clone())
+            .save(&snapshot_with("https://b", "", true))
+            .unwrap();
+
+        assert_eq!(token_seen_by(&root, &ana), "ana");
+        assert_eq!(token_seen_by(&root, &bia), "");
+        let loaded = EnvironmentStore::new(root.clone(), ana).load().unwrap();
+        assert_eq!(value_of(&loaded.snapshot, "baseUrl"), "https://b");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn clearing_a_value_removes_only_your_own() {
+        let root = temp_root();
+        let (ana, bia) = (test_secrets(), test_secrets());
+        let ana_store = EnvironmentStore::new(root.clone(), ana.clone());
+        let url = "https://api.example.com";
+        ana_store.save(&snapshot_with(url, "ana", true)).unwrap();
+        EnvironmentStore::new(root.clone(), bia.clone())
+            .save(&snapshot_with(url, "bia", true))
+            .unwrap();
+
+        ana_store.save(&snapshot_with(url, "", true)).unwrap();
+
+        assert_eq!(token_seen_by(&root, &ana), "");
+        assert_eq!(token_seen_by(&root, &bia), "bia");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_variable_no_longer_sensitive_is_shared_by_everyone() {
+        let root = temp_root();
+        let (ana, bia) = (test_secrets(), test_secrets());
+        EnvironmentStore::new(root.clone(), ana.clone())
+            .save(&snapshot_with("https://a", "ana", true))
+            .unwrap();
+
+        EnvironmentStore::new(root.clone(), bia.clone())
+            .save(&snapshot_with("https://a", "public", false))
+            .unwrap();
+
+        assert_eq!(token_seen_by(&root, &ana), "public");
+        assert!(!root.join(SECRETS_FILE_NAME).exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn saving_over_an_unreadable_file_is_refused() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(MANIFEST_FILE_NAME), "not json").unwrap();
+
+        let error = EnvironmentStore::new(root.clone(), test_secrets())
+            .save(&sample_snapshot())
+            .unwrap_err();
+
+        assert!(matches!(error, StorageError::Corrupted(_)));
         assert_eq!(
-            loaded.unreadable_secrets,
-            vec![UnreadableSecret {
-                environment_name: "Development".to_string(),
-                variable_name: "token".to_string(),
-            }]
+            fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap(),
+            "not json"
         );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn saving_over_an_unreadable_secrets_file_is_refused() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(SECRETS_FILE_NAME), "not json").unwrap();
+
+        let error = EnvironmentStore::new(root.clone(), test_secrets())
+            .save(&sample_snapshot())
+            .unwrap_err();
+
+        assert!(matches!(error, StorageError::Corrupted(_)));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -498,6 +883,7 @@ mod tests {
         store.save(&sample_snapshot()).unwrap();
 
         assert!(!root.join(MANIFEST_FILE_NAME).with_extension("tmp").exists());
+        assert!(!root.join(SECRETS_FILE_NAME).with_extension("tmp").exists());
 
         fs::remove_dir_all(&root).ok();
     }
@@ -555,13 +941,30 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
-    fn saved_local_file(secrets: &LocalSecrets) -> (PathBuf, Vec<u8>) {
+    fn files_in(root: &std::path::Path) -> (Vec<u8>, Option<Vec<u8>>) {
+        (
+            fs::read(root.join(MANIFEST_FILE_NAME)).unwrap(),
+            fs::read(root.join(SECRETS_FILE_NAME)).ok(),
+        )
+    }
+
+    fn saved_local_file(secrets: &LocalSecrets) -> (PathBuf, Vec<u8>, Option<Vec<u8>>) {
         let root = temp_root();
         EnvironmentStore::new(root.clone(), secrets.clone())
             .save(&sample_snapshot())
             .unwrap();
-        let bytes = fs::read(root.join(MANIFEST_FILE_NAME)).unwrap();
-        (root, bytes)
+        let (local, sealed) = files_in(&root);
+        (root, local, sealed)
+    }
+
+    fn write_received(root: &std::path::Path, received: &ReceivedEnvironments) {
+        fs::write(root.join(MANIFEST_FILE_NAME), &received.environments).unwrap();
+        match &received.secrets {
+            Some(secrets) => fs::write(root.join(SECRETS_FILE_NAME), secrets).unwrap(),
+            None => {
+                fs::remove_file(root.join(SECRETS_FILE_NAME)).ok();
+            }
+        }
     }
 
     fn canonical(json: &str) -> Vec<u8> {
@@ -573,9 +976,10 @@ mod tests {
     #[test]
     fn portable_view_strips_sensitive_values_by_default() {
         let secrets = test_secrets();
-        let (root, local) = saved_local_file(&secrets);
+        let (root, local, sealed) = saved_local_file(&secrets);
 
-        let portable = environments_to_portable(&local, &secrets, false).unwrap();
+        let portable =
+            environments_to_portable(&local, sealed.as_deref(), &secrets, false).unwrap();
 
         assert_eq!(portable, canonical(&portable_file("")));
         fs::remove_dir_all(&root).ok();
@@ -584,9 +988,9 @@ mod tests {
     #[test]
     fn portable_view_carries_plain_values_when_allowed() {
         let secrets = test_secrets();
-        let (root, local) = saved_local_file(&secrets);
+        let (root, local, sealed) = saved_local_file(&secrets);
 
-        let portable = environments_to_portable(&local, &secrets, true).unwrap();
+        let portable = environments_to_portable(&local, sealed.as_deref(), &secrets, true).unwrap();
 
         assert_eq!(portable, canonical(&portable_file("secret")));
         fs::remove_dir_all(&root).ok();
@@ -595,10 +999,15 @@ mod tests {
     #[test]
     fn stripping_does_not_need_the_key() {
         let secrets = test_secrets();
-        let (root, local) = saved_local_file(&secrets);
+        let (root, local, sealed) = saved_local_file(&secrets);
 
-        let portable =
-            environments_to_portable(&local, &secrets_that_must_not_be_used(), false).unwrap();
+        let portable = environments_to_portable(
+            &local,
+            sealed.as_deref(),
+            &secrets_that_must_not_be_used(),
+            false,
+        )
+        .unwrap();
 
         assert_eq!(portable, canonical(&portable_file("")));
         fs::remove_dir_all(&root).ok();
@@ -607,20 +1016,18 @@ mod tests {
     #[test]
     fn receiving_an_empty_secret_keeps_the_local_one() {
         let secrets = test_secrets();
-        let (root, local) = saved_local_file(&secrets);
+        let (root, local, sealed) = saved_local_file(&secrets);
         let remote = canonical(&portable_file(""));
 
-        let merged = environments_from_portable(&remote, Some(&local), &secrets).unwrap();
-        fs::write(root.join(MANIFEST_FILE_NAME), &merged).unwrap();
+        let received =
+            environments_from_portable(&remote, Some(&local), sealed.as_deref(), &secrets).unwrap();
+        write_received(&root, &received);
 
         let loaded = EnvironmentStore::new(root.clone(), secrets.clone())
             .load()
             .unwrap();
         assert_eq!(loaded.snapshot, sample_snapshot());
-        assert_eq!(
-            environments_to_portable(&merged, &secrets, false).unwrap(),
-            remote
-        );
+        assert_eq!(received.environments, remote);
         fs::remove_dir_all(&root).ok();
     }
 
@@ -629,12 +1036,15 @@ mod tests {
         let secrets = test_secrets();
         let remote = canonical(&portable_file("secret"));
 
-        let merged = environments_from_portable(&remote, None, &secrets).unwrap();
+        let received = environments_from_portable(&remote, None, None, &secrets).unwrap();
 
-        let text = String::from_utf8(merged.clone()).unwrap();
-        assert!(!text.contains("\"secret\""));
+        let environments = String::from_utf8(received.environments.clone()).unwrap();
+        let sealed = received.secrets.unwrap();
+        assert!(!environments.contains("\"secret\""));
+        assert!(!String::from_utf8_lossy(&sealed).contains("\"secret\""));
         assert_eq!(
-            environments_to_portable(&merged, &secrets, true).unwrap(),
+            environments_to_portable(&received.environments, Some(&sealed), &secrets, true)
+                .unwrap(),
             remote
         );
     }
@@ -645,14 +1055,82 @@ mod tests {
         let local = portable_file("secret").into_bytes();
         let remote = canonical(&portable_file(""));
 
-        let merged = environments_from_portable(&remote, Some(&local), &secrets).unwrap();
+        let received = environments_from_portable(&remote, Some(&local), None, &secrets).unwrap();
 
-        let text = String::from_utf8(merged.clone()).unwrap();
-        assert!(!text.contains("\"secret\""));
+        let environments = String::from_utf8(received.environments.clone()).unwrap();
+        assert!(!environments.contains("\"secret\""));
         assert_eq!(
-            environments_to_portable(&merged, &secrets, true).unwrap(),
+            environments_to_portable(
+                &received.environments,
+                received.secrets.as_deref(),
+                &secrets,
+                true
+            )
+            .unwrap(),
             canonical(&portable_file("secret"))
         );
+    }
+
+    /// Local files where `ana` and `bia` each keep their own token.
+    fn files_shared_by(
+        ana: &LocalSecrets,
+        bia: &LocalSecrets,
+    ) -> (PathBuf, Vec<u8>, Option<Vec<u8>>) {
+        let root = temp_root();
+        let url = "https://api.example.com";
+        EnvironmentStore::new(root.clone(), ana.clone())
+            .save(&snapshot_with(url, "ana", true))
+            .unwrap();
+        EnvironmentStore::new(root.clone(), bia.clone())
+            .save(&snapshot_with(url, "bia", true))
+            .unwrap();
+        let (local, sealed) = files_in(&root);
+        (root, local, sealed)
+    }
+
+    #[test]
+    fn the_portable_view_never_carries_anyone_elses_value() {
+        let (ana, bia) = (test_secrets(), test_secrets());
+        let (root, local, sealed) = files_shared_by(&ana, &bia);
+
+        assert_eq!(
+            environments_to_portable(&local, sealed.as_deref(), &ana, false).unwrap(),
+            canonical(&portable_file(""))
+        );
+        assert_eq!(
+            environments_to_portable(&local, sealed.as_deref(), &ana, true).unwrap(),
+            canonical(&portable_file("ana"))
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn receiving_keeps_the_values_of_everyone_sharing_the_folder() {
+        let (ana, bia) = (test_secrets(), test_secrets());
+        let (root, local, sealed) = files_shared_by(&ana, &bia);
+
+        let empty = environments_from_portable(
+            &canonical(&portable_file("")),
+            Some(&local),
+            sealed.as_deref(),
+            &ana,
+        )
+        .unwrap();
+        write_received(&root, &empty);
+        assert_eq!(token_seen_by(&root, &ana), "ana");
+        assert_eq!(token_seen_by(&root, &bia), "bia");
+
+        let filled = environments_from_portable(
+            &canonical(&portable_file("new")),
+            Some(&empty.environments),
+            empty.secrets.as_deref(),
+            &ana,
+        )
+        .unwrap();
+        write_received(&root, &filled);
+        assert_eq!(token_seen_by(&root, &ana), "new");
+        assert_eq!(token_seen_by(&root, &bia), "bia");
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -660,12 +1138,13 @@ mod tests {
         let secrets = test_secrets();
 
         assert!(matches!(
-            environments_to_portable(b"not json", &secrets, false),
+            environments_to_portable(b"not json", None, &secrets, false),
             Err(StorageError::Corrupted(_))
         ));
         assert!(matches!(
             environments_from_portable(
                 br#"{"version": 99, "active_environment_id": null, "environments": []}"#,
+                None,
                 None,
                 &secrets
             ),

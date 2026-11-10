@@ -24,8 +24,8 @@ pub use identity::{SystemIdentity, system_identity};
 pub use ownership::{FileDeletion, RepositoryOwner, file_deletion};
 pub use remote::{BlobHashCache, WorkspaceRemote};
 pub use remotes::{
-    REMOTE, Tracking, clone, discard_clone, fetch, merge_upstream, push, remote_url, set_remote,
-    versions_environments,
+    REMOTE, Tracking, can_clone_as_remote, clone, clone_folder, discard_clone, fetch,
+    merge_upstream, push, remote_url, set_remote, trust_folder, versions_environments,
 };
 pub use repo::{GitState, MergeInfo, git_state, init_workspace, write_gitignore};
 pub use workspace::{
@@ -80,6 +80,14 @@ pub enum GitError {
     /// The cloned repository holds no Alcy workspace.
     #[error("the repository has no Alcy workspace")]
     NotAWorkspace,
+    /// Git refuses a folder owned by someone else until it is trusted; holds
+    /// the value `safe.directory` needs.
+    #[error("git does not trust the folder {0}")]
+    UntrustedFolder(String),
+    /// The folder `origin` points to would have its working files overwritten
+    /// by the push, or does not accept pushes to its current branch.
+    #[error("the remote folder refused the push")]
+    RemoteFolderBusy,
 }
 
 fn rejected(error: impl std::fmt::Display) -> RemoteError {

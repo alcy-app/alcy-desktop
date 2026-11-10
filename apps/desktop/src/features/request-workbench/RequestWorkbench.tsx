@@ -1358,7 +1358,6 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const environmentsSlice = useMemo(
     () => ({
       environments: environments.environments,
-      unreadableSecrets: environments.unreadableSecrets,
       activeEnvironmentId: environments.activeEnvironmentId,
       onSelectEnvironment: environments.setActiveEnvironmentId,
       onAddEnvironment: environments.addEnvironment,
@@ -1374,7 +1373,6 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     }),
     [
       environments.environments,
-      environments.unreadableSecrets,
       environments.activeEnvironmentId,
       environments.setActiveEnvironmentId,
       environments.addEnvironment,

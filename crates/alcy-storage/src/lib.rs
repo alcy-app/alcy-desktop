@@ -57,9 +57,7 @@ pub use collections_store::{
 };
 pub use custom_ca_certificate_store::{CustomCaCertificate, CustomCaCertificateStore};
 pub use disk_workspace_files::DiskWorkspaceFiles;
-pub use environment_store::{
-    EnvironmentStore, EnvironmentsSnapshot, LoadedEnvironments, UnreadableSecret,
-};
+pub use environment_store::{EnvironmentStore, EnvironmentsSnapshot, LoadedEnvironments};
 pub use flow_body_archive::{
     ArchivedFlowBody, FlowBodyCapture, MAX_FLOW_BODY_BYTES, archived_flow_body_path,
     flow_body_directory, read_archived_flow_body,

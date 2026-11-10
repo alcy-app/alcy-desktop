@@ -36,9 +36,6 @@ pub struct EnvironmentInput {
 pub struct EnvironmentsSnapshotDto {
     pub environments: Vec<EnvironmentDto>,
     pub active_environment_id: Option<String>,
-    /// Variáveis sensíveis cujo valor cifrado não pôde ser lido nesta
-    /// máquina (carregadas vazias), como "Ambiente › variável".
-    pub unreadable_secrets: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,7 +75,6 @@ fn default_snapshot() -> EnvironmentsSnapshotDto {
             variables: vec![],
         }],
         active_environment_id: Some(DEFAULT_ENVIRONMENT_ID.to_string()),
-        unreadable_secrets: Vec::new(),
     }
 }
 
@@ -98,10 +94,7 @@ pub(crate) fn environment_to_dto(environment: &Environment) -> EnvironmentDto {
     }
 }
 
-fn snapshot_to_dto(
-    snapshot: EnvironmentsSnapshot,
-    unreadable_secrets: Vec<String>,
-) -> EnvironmentsSnapshotDto {
+fn snapshot_to_dto(snapshot: EnvironmentsSnapshot) -> EnvironmentsSnapshotDto {
     EnvironmentsSnapshotDto {
         environments: snapshot
             .environments
@@ -109,15 +102,14 @@ fn snapshot_to_dto(
             .map(environment_to_dto)
             .collect(),
         active_environment_id: snapshot.active_environment_id,
-        unreadable_secrets,
     }
 }
 
-/// Variáveis para montar a versão de uma requisição que vai para o
-/// histórico: cada variável sensível vira o próprio placeholder `{{nome}}`
-/// (a interpolação não é recursiva, então ele sai literal), e o segredo
-/// nunca chega ao disco. `None` quando não há variável sensível — o
-/// histórico pode usar a requisição executada, sem custo extra.
+/// Variables for building the version of a request that goes to the history:
+/// each sensitive variable becomes its own `{{name}}` placeholder
+/// (interpolation is not recursive, so it comes out literally), and the
+/// secret never reaches the disk. `None` when there is no sensitive variable:
+/// the history can use the executed request at no extra cost.
 pub(crate) fn redact_sensitive_variables(
     variables: &[EnvironmentVariableDto],
 ) -> Option<Vec<EnvironmentVariableDto>> {
@@ -168,16 +160,15 @@ fn build_snapshot(input: SaveEnvironmentsInput) -> Result<EnvironmentsSnapshot, 
     })
 }
 
-/// Lista os ambientes persistidos no workspace em `input.root_path`. Se
-/// nada existir ainda, sintetiza um ambiente "Development" padrão em
-/// memória — só é gravado de verdade quando o usuário salvar alguma
-/// mudança. A única escrita possível aqui é a migração de um arquivo antigo
-/// com valores sensíveis em texto claro, regravado já cifrado. Ambientes
-/// não são compartilhados entre workspaces — cada um tem seu próprio
-/// arquivo, como coleções e histórico.
+/// Lists the environments persisted in the workspace at `input.root_path`.
+/// If nothing exists yet, synthesizes a default "Development" environment in
+/// memory, written only when the person saves a change. The only possible
+/// write here is migrating an old file with sensitive values in plain text,
+/// rewritten sealed. Environments are not shared between workspaces: each has
+/// its own file, like collections and history.
 ///
-/// Roda fora da thread principal: o primeiro acesso à chave local passa
-/// pelo chaveiro do sistema, que pode bloquear.
+/// Runs off the main thread: the first access to the local key goes through
+/// the system keyring, which can block.
 #[tauri::command]
 pub async fn list_environments(
     input: ListEnvironmentsInput,
@@ -203,12 +194,7 @@ fn list_environments_inner(
     if loaded.snapshot.environments.is_empty() {
         return Ok(default_snapshot());
     }
-    let unreadable = loaded
-        .unreadable_secrets
-        .into_iter()
-        .map(|secret| format!("{} › {}", secret.environment_name, secret.variable_name))
-        .collect();
-    Ok(snapshot_to_dto(loaded.snapshot, unreadable))
+    Ok(snapshot_to_dto(loaded.snapshot))
 }
 
 #[tauri::command]
@@ -267,7 +253,7 @@ mod tests {
         std::env::temp_dir().join(format!("alcy-env-cmd-test-{nanos}-{count}"))
     }
 
-    /// Sem chaveiro: a chave local vai para um arquivo reserva temporário.
+    /// No keyring: the local key goes to a temporary fallback file.
     struct NoKeyring;
 
     impl CredentialStore for NoKeyring {
@@ -402,7 +388,6 @@ mod tests {
         let raw = std::fs::read_to_string(root.join("alcy-environments.json")).unwrap();
         assert!(!raw.contains("s3cr3t"));
         assert_eq!(snapshot.environments[0].variables[0].value, "s3cr3t");
-        assert!(snapshot.unreadable_secrets.is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -425,14 +410,13 @@ mod tests {
     }
 
     #[test]
-    fn secrets_sealed_by_another_machine_are_reported() {
+    fn secrets_sealed_by_someone_else_are_listed_empty() {
         let root = temp_root();
         save_environments_inner(root.clone(), sensitive_input(&root), secrets()).unwrap();
 
         let snapshot = list_environments_inner(root.clone(), secrets()).unwrap();
 
         assert_eq!(snapshot.environments[0].variables[0].value, "");
-        assert_eq!(snapshot.unreadable_secrets, vec!["Staging › token"]);
         std::fs::remove_dir_all(&root).ok();
     }
 

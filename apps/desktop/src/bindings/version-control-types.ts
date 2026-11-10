@@ -29,6 +29,8 @@ export type VersionControlCommandError =
   | { kind: 'gitCommandFailed'; message: string }
   | { kind: 'gitDestinationExists' }
   | { kind: 'gitNotAWorkspace' }
+  | { kind: 'gitUntrustedFolder'; path: string }
+  | { kind: 'gitRemoteFolderBusy' }
 
 /** The workspace's link to its git repository. */
 export interface WorkspaceLinkDto {

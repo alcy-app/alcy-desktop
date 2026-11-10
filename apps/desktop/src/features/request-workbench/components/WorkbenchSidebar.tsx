@@ -57,7 +57,6 @@ const PINNED_TOOLBAR_MODULES: ReadonlySet<SidebarTab> = new Set<SidebarTab>(['co
 
 interface EnvironmentsPanelSlice {
   environments: EnvironmentState[]
-  unreadableSecrets: string[]
   activeEnvironmentId: string | null
   onSelectEnvironment: (id: string) => void
   onAddEnvironment: () => void

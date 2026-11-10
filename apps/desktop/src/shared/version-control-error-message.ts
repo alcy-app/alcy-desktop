@@ -21,7 +21,10 @@ export function versionControlErrorMessage(error: VersionControlCommandError, t:
     case 'gitPushRejected':
     case 'gitDestinationExists':
     case 'gitNotAWorkspace':
+    case 'gitRemoteFolderBusy':
       return t(`vc.error.${error.kind}`)
+    case 'gitUntrustedFolder':
+      return t('vc.error.gitUntrustedFolder', { path: error.path })
     case 'gitUncommittedChanges':
       return t('vc.error.gitUncommittedChanges', { files: error.files.join(', ') })
     case 'gitInvalidBranch':

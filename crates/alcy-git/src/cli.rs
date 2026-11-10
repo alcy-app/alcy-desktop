@@ -62,10 +62,45 @@ pub(crate) async fn git(dir: Option<&Path>, args: &[OsString]) -> Result<String,
         }
         Err(error) => return Err(GitError::Command(error.to_string())),
     };
+    let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+        return Ok(stdout.into_owned());
+    }
+    // `push --porcelain` reports why each ref was refused on standard output.
+    if refused_by_remote_folder(&stdout.to_lowercase()) {
+        return Err(GitError::RemoteFolderBusy);
     }
     Err(classify(&String::from_utf8_lossy(&output.stderr)))
+}
+
+/// Refusals from a folder whose checked-out branch would change under its
+/// working files. `text` is lowercase.
+fn refused_by_remote_folder(text: &str) -> bool {
+    [
+        "branch is currently checked out",
+        "refusing to update checked out branch",
+        "working directory has",
+        "could not refresh index",
+        "could not update working tree",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+/// What `safe.directory` needs for a folder git refused over its ownership:
+/// the value git itself suggests, which accounts for how it spells the path
+/// on each platform (`%(prefix)///server/share` on a Windows share).
+fn untrusted_folder(stderr: &str) -> Option<String> {
+    let suggested = stderr
+        .lines()
+        .find_map(|line| line.split_once("--add safe.directory "))?
+        .1
+        .trim();
+    let path = suggested
+        .strip_prefix('\'')
+        .and_then(|path| path.strip_suffix('\''))
+        .map_or_else(|| suggested.to_string(), |path| path.replace("'\\''", "'"));
+    (!path.is_empty()).then_some(path)
 }
 
 /// Turns git's error output into a structured failure.
@@ -73,7 +108,14 @@ pub(crate) fn classify(stderr: &str) -> GitError {
     let lower = stderr.to_lowercase();
     let message = excerpt(stderr);
     let any = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
-    if any(&[
+    if lower.contains("dubious ownership")
+        && let Some(path) = untrusted_folder(stderr)
+    {
+        GitError::UntrustedFolder(path)
+    } else if refused_by_remote_folder(&lower) {
+        // Before `PushRejected`: pulling would not help here.
+        GitError::RemoteFolderBusy
+    } else if any(&[
         "authentication failed",
         "could not read username",
         "could not read password",
@@ -145,6 +187,18 @@ pub fn validate_remote_url(url: &str) -> Result<String, GitError> {
     Ok(url.to_string())
 }
 
+/// A `safe.directory` value that names one folder: never the `*` that trusts
+/// every repository on the computer, nor something git would read as an
+/// option.
+pub(crate) fn validate_trusted_folder(path: &str) -> Result<&str, GitError> {
+    let path = path.trim();
+    if path.is_empty() || path == "*" || path.starts_with('-') || path.chars().any(char::is_control)
+    {
+        return Err(GitError::InvalidRemote(path.to_string()));
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +242,64 @@ mod tests {
             panic!("expected a command failure");
         };
         assert_eq!(message.chars().count(), MAX_MESSAGE + 1);
+    }
+
+    #[test]
+    fn a_folder_owned_by_someone_else_reports_what_to_trust() {
+        let report = |path: &str, suggested: &str| {
+            format!(
+                "fatal: detected dubious ownership in repository at '{path}'\nTo add an exception for this directory, call:\n\n\tgit config --global --add safe.directory {suggested}\nfatal: Could not read from remote repository.\n"
+            )
+        };
+        assert_eq!(
+            classify(&report("/srv/team/.git", "/srv/team/.git")),
+            GitError::UntrustedFolder("/srv/team/.git".to_string())
+        );
+        assert_eq!(
+            classify(&report(
+                "//server/share/api/.git",
+                "%(prefix)///server/share/api/.git"
+            )),
+            GitError::UntrustedFolder("%(prefix)///server/share/api/.git".to_string())
+        );
+        assert_eq!(
+            classify(&report("/srv/o time/.git", "'/srv/o time/.git'")),
+            GitError::UntrustedFolder("/srv/o time/.git".to_string())
+        );
+        assert_eq!(
+            classify(&report("/srv/d'agua/.git", r"'/srv/d'\''agua/.git'")),
+            GitError::UntrustedFolder("/srv/d'agua/.git".to_string())
+        );
+        // Without the suggestion there is nothing precise to trust.
+        assert!(matches!(
+            classify("fatal: detected dubious ownership in repository at '/srv/team'"),
+            GitError::Command(_)
+        ));
+    }
+
+    #[test]
+    fn a_refusing_remote_folder_is_not_a_request_to_pull() {
+        for stderr in [
+            "remote: error: refusing to update checked out branch: refs/heads/main\nerror: failed to push some refs to '/srv/team'",
+            " ! [remote rejected] main -> main (branch is currently checked out)\nerror: failed to push some refs to '/srv/team'",
+            " ! [remote rejected] main -> main (Working directory has unstaged changes)\nerror: failed to push some refs to '/srv/team'",
+        ] {
+            assert_eq!(classify(stderr), GitError::RemoteFolderBusy, "{stderr}");
+        }
+    }
+
+    #[test]
+    fn only_a_specific_folder_can_be_trusted() {
+        for path in [
+            "/srv/team/.git",
+            "%(prefix)///server/share/api/.git",
+            "C:/repos/api",
+        ] {
+            assert_eq!(validate_trusted_folder(&format!(" {path} ")).unwrap(), path);
+        }
+        for path in ["", "  ", "*", " * ", "--global", "/srv/\nteam"] {
+            assert!(validate_trusted_folder(path).is_err(), "{path:?}");
+        }
     }
 
     #[test]
