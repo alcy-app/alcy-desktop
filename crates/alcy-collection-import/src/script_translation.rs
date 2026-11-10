@@ -15,8 +15,8 @@ pub struct Translation {
     pub warnings: Vec<TranslationWarning>,
 }
 
-/// Reescreve apenas referências no código. Strings, comentários e template
-/// literals são preservados byte a byte.
+/// Rewrites references in code only. Strings, comments, template literals and
+/// regular expressions are kept byte for byte.
 pub fn translate(source: &str, dialect: ScriptDialect) -> Translation {
     let mut out = String::with_capacity(source.len());
     let mut warnings = Vec::new();
@@ -29,27 +29,16 @@ pub fn translate(source: &str, dialect: ScriptDialect) -> Translation {
         .copied()
         .filter(|root| declares(source, root))
         .collect();
-    let bytes = source.as_bytes();
     let mut i = 0;
     let mut line = 1;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if matches!(b, b'\'' | b'"' | b'`') {
-            let end = quoted_end(bytes, i, b, &mut line);
+    let mut code_end = 0;
+    while i < source.len() {
+        if let Some((end, is_code)) = literal_end(source, i, code_end, &mut line) {
             out.push_str(&source[i..end]);
             i = end;
-            continue;
-        }
-        if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
-            let end = line_comment_end(bytes, i, &mut line);
-            out.push_str(&source[i..end]);
-            i = end;
-            continue;
-        }
-        if b == b'/' && bytes.get(i + 1) == Some(&b'*') {
-            let end = block_comment_end(bytes, i, &mut line);
-            out.push_str(&source[i..end]);
-            i = end;
+            if is_code {
+                code_end = end;
+            }
             continue;
         }
         let mut replaced = false;
@@ -57,9 +46,10 @@ pub fn translate(source: &str, dialect: ScriptDialect) -> Translation {
             if shadowed.contains(&from.split('.').next().unwrap_or(from)) {
                 continue;
             }
-            if source[i..].starts_with(from) && boundary(source, i, from.len()) {
+            if source[i..].starts_with(from) && is_reference(source, i, from.len()) {
                 out.push_str(to);
                 i += from.len();
+                code_end = i;
                 replaced = true;
                 break;
             }
@@ -71,7 +61,7 @@ pub fn translate(source: &str, dialect: ScriptDialect) -> Translation {
             if shadowed.contains(&api.split('.').next().unwrap_or(api)) {
                 continue;
             }
-            if source[i..].starts_with(api) && boundary(source, i, api.len()) {
+            if source[i..].starts_with(api) && is_reference(source, i, api.len()) {
                 out.push_str("al.unsupportedCommand(");
                 out.push_str(&serde_json::Value::String(api.into()).to_string());
                 out.push(')');
@@ -81,16 +71,23 @@ pub fn translate(source: &str, dialect: ScriptDialect) -> Translation {
                     reason: "unsupported",
                 });
                 i += api.len();
+                code_end = i;
                 replaced = true;
                 break;
             }
         }
         if !replaced {
-            out.push(b as char);
-            if b == b'\n' {
+            let Some(ch) = source[i..].chars().next() else {
+                break;
+            };
+            out.push(ch);
+            i += ch.len_utf8();
+            if ch == '\n' {
                 line += 1;
             }
-            i += 1;
+            if !ch.is_whitespace() {
+                code_end = i;
+            }
         }
     }
     Translation {
@@ -99,8 +96,63 @@ pub fn translate(source: &str, dialect: ScriptDialect) -> Translation {
     }
 }
 
-pub fn isolate(source: &str) -> String {
-    format!("(function () {{\n{source}\n}})();")
+/// Keeps the declarations of each inherited script to itself, adding no more
+/// than it needs: nothing for a script running alone and a block when several
+/// share a request. Only a top-level `return` needs a function around it.
+pub fn scope_segment(source: &str, alone: bool) -> String {
+    if has_top_level_return(source) {
+        format!("(function () {{\n{source}\n}})();")
+    } else if alone {
+        source.to_string()
+    } else {
+        format!("{{\n{source}\n}}")
+    }
+}
+
+/// Scans tokens rather than parsing: scripts come from imported files, and a
+/// recursive parser overflows the stack on deeply nested input.
+fn has_top_level_return(source: &str) -> bool {
+    const CONTROL: [&str; 6] = ["if", "for", "while", "switch", "catch", "with"];
+    let (mut i, mut code_end, mut line) = (0, 0, 1);
+    let mut parens = Vec::new();
+    let mut braces = Vec::new();
+    let mut closed_paren = None;
+    while i < source.len() {
+        if let Some((end, is_code)) = literal_end(source, i, code_end, &mut line) {
+            i = end;
+            if is_code {
+                code_end = end;
+            }
+            continue;
+        }
+        let Some(ch) = source[i..].chars().next() else {
+            break;
+        };
+        match ch {
+            '(' => parens.push(CONTROL.contains(&last_word(&source[..code_end]))),
+            ')' => closed_paren = Some((i + 1, parens.pop().unwrap_or(false))),
+            '{' => {
+                let after_parameters =
+                    closed_paren.is_some_and(|(end, control)| end == code_end && !control);
+                braces.push(after_parameters || source[..code_end].ends_with("=>"));
+            }
+            '}' => {
+                braces.pop();
+            }
+            'r' if source[i..].starts_with("return")
+                && is_reference(source, i, "return".len())
+                && !braces.contains(&true) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        i += ch.len_utf8();
+        if !ch.is_whitespace() {
+            code_end = i;
+        }
+    }
+    false
 }
 
 fn mappings(d: ScriptDialect) -> &'static [(&'static str, &'static str)] {
@@ -118,6 +170,19 @@ fn mappings(d: ScriptDialect) -> &'static [(&'static str, &'static str)] {
             ("pm.response.responseSize", "al.response.size"),
             ("pm.response.code", "al.response.status"),
             ("pm.response.status", "al.response.statusText"),
+            ("pm.request.url.query.upsert", "al.request.query.set"),
+            ("pm.request.url.query.add", "al.request.query.set"),
+            ("pm.request.url.query.remove", "al.request.query.remove"),
+            ("pm.request.url.query.get", "al.request.query.get"),
+            ("pm.request.url.query.has", "al.request.query.has"),
+            ("pm.request.url.query.toObject", "al.request.query.toObject"),
+            ("pm.request.headers.upsert", "al.request.headers.set"),
+            ("pm.request.headers.add", "al.request.headers.set"),
+            ("pm.request.headers.clear", "al.request.headers.removeAll"),
+            ("pm.request.upsertHeader", "al.request.headers.set"),
+            ("pm.request.addHeader", "al.request.headers.set"),
+            ("pm.request.removeHeader", "al.request.headers.remove"),
+            ("pm.response.reason", "al.response.getStatusText"),
             ("pm.request.url.addQueryParams", "al.request.query.add"),
             (
                 "pm.request.url.removeQueryParams",
@@ -127,6 +192,7 @@ fn mappings(d: ScriptDialect) -> &'static [(&'static str, &'static str)] {
             ("pm.info.iterationCount", "al.info.iterationCount"),
             ("pm.info.iteration", "al.info.iteration"),
             ("pm.info.eventName", "al.info.phase"),
+            ("pm.info", "al.info"),
             ("pm.environment", "al.environment"),
             ("pm.variables", "al.variables"),
             ("pm.request", "al.request"),
@@ -182,6 +248,8 @@ fn unsupported(d: ScriptDialect) -> &'static [&'static str] {
         ScriptDialect::Postman => &[
             "pm.sendRequest",
             "pm.execution.runRequest",
+            "pm.execution.setNextRequest",
+            "pm.execution.skipRequest",
             "pm.cookies",
             "pm.vault",
             "pm.globals",
@@ -222,6 +290,76 @@ fn boundary(s: &str, start: usize, len: usize) -> bool {
     !s[..start].chars().next_back().is_some_and(id)
         && !s[start + len..].chars().next().is_some_and(id)
 }
+/// A reference to the API, not a property or object key of the same name.
+fn is_reference(s: &str, start: usize, len: usize) -> bool {
+    let bare = !s[start..start + len].contains('.');
+    boundary(s, start, len)
+        && !s[..start].trim_end().ends_with('.')
+        && !(bare && s[start + len..].trim_start().starts_with(':'))
+}
+
+/// The end of the string, comment or regular expression starting at `i`, and
+/// whether it counts as code for what comes after it.
+fn literal_end(source: &str, i: usize, code_end: usize, line: &mut u32) -> Option<(usize, bool)> {
+    let bytes = source.as_bytes();
+    match bytes[i] {
+        quote @ (b'\'' | b'"' | b'`') => Some((quoted_end(bytes, i, quote, line), true)),
+        b'/' if bytes.get(i + 1) == Some(&b'/') => Some((line_comment_end(bytes, i, line), false)),
+        b'/' if bytes.get(i + 1) == Some(&b'*') => Some((block_comment_end(bytes, i, line), false)),
+        b'/' if regex_allowed(&source[..code_end]) => regex_end(bytes, i).map(|end| (end, true)),
+        _ => None,
+    }
+}
+
+/// Whether a `/` after this code starts a regular expression, not a division.
+fn regex_allowed(code: &str) -> bool {
+    let Some(last) = code.chars().next_back() else {
+        return true;
+    };
+    if last.is_alphanumeric() || matches!(last, '_' | '$') {
+        return matches!(
+            last_word(code),
+            "return"
+                | "typeof"
+                | "case"
+                | "in"
+                | "of"
+                | "void"
+                | "delete"
+                | "throw"
+                | "new"
+                | "else"
+                | "do"
+        );
+    }
+    !matches!(last, ')' | ']' | '\'' | '"' | '`' | '/')
+        && !code.ends_with("++")
+        && !code.ends_with("--")
+}
+
+fn last_word(code: &str) -> &str {
+    code.rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+        .next()
+        .unwrap_or("")
+}
+
+fn regex_end(b: &[u8], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    let mut in_class = false;
+    while i < b.len() {
+        match b[i] {
+            b'\n' => return None,
+            b'\\' => i += 1,
+            b'[' => in_class = true,
+            b']' => in_class = false,
+            b'/' if !in_class => return Some(i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 fn quoted_end(b: &[u8], start: usize, quote: u8, line: &mut u32) -> usize {
     let mut i = start + 1;
     while i < b.len() {
@@ -303,6 +441,82 @@ mod tests {
     fn respects_shadowed_globals() {
         let source = "const pm = local; pm.test('x', fn)";
         assert_eq!(translate(source, ScriptDialect::Postman).source, source);
+    }
+
+    #[test]
+    fn translates_request_mutations_to_the_sandbox_api() {
+        let source = "pm.request.headers.upsert({key:'A',value:'1'});\npm.request.addHeader({key:'B',value:'2'});\npm.request.removeHeader('C');\npm.request.url.query.upsert({key:'q',value:'1'});";
+        assert_eq!(
+            translate(source, ScriptDialect::Postman).source,
+            "al.request.headers.set({key:'A',value:'1'});\nal.request.headers.set({key:'B',value:'2'});\nal.request.headers.remove('C');\nal.request.query.set({key:'q',value:'1'});"
+        );
+    }
+
+    #[test]
+    fn keeps_translating_after_a_regex_containing_a_quote() {
+        let r = translate(
+            "var s = v.replace(/'/g, ''); pm.environment.set('s', s);",
+            ScriptDialect::Postman,
+        );
+        assert_eq!(
+            r.source,
+            "var s = v.replace(/'/g, ''); al.environment.set('s', s);"
+        );
+    }
+
+    #[test]
+    fn division_is_not_read_as_a_regex() {
+        let r = translate(
+            "var a = (b) / 2; pm.environment.set('a', a / 2);",
+            ScriptDialect::Postman,
+        );
+        assert_eq!(r.source, "var a = (b) / 2; al.environment.set('a', a / 2);");
+    }
+
+    #[test]
+    fn keeps_non_ascii_code_intact() {
+        let r = translate(
+            "const preço = '1'; pm.environment.set('p', preço);",
+            ScriptDialect::Postman,
+        );
+        assert_eq!(
+            r.source,
+            "const preço = '1'; al.environment.set('p', preço);"
+        );
+    }
+
+    #[test]
+    fn leaves_properties_and_keys_named_like_the_api() {
+        let source = "var o = { fetch: f }; o.fetch(); /x/.test(s);";
+        let postman = translate(source, ScriptDialect::Postman);
+        assert_eq!(postman.source, source);
+        assert!(postman.warnings.is_empty());
+        assert_eq!(translate(source, ScriptDialect::Bruno).source, source);
+    }
+
+    #[test]
+    fn scopes_scripts_only_as_much_as_they_need() {
+        assert_eq!(scope_segment("a();", true), "a();");
+        assert_eq!(scope_segment("a();", false), "{\na();\n}");
+        for source in [
+            "if (x) { return; }\na();",
+            "for (;;) { return; }",
+            "return;",
+        ] {
+            assert!(
+                scope_segment(source, true).starts_with("(function"),
+                "{source}"
+            );
+        }
+        for source in [
+            "function f() { return 1; }",
+            "const f = () => { return 1; };",
+            "const o = { m() { return 1; } };",
+            "// return\nconst s = 'return';",
+            "x.return; y = { return: 1 };",
+        ] {
+            assert_eq!(scope_segment(source, true), source);
+        }
     }
 
     #[test]

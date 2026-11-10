@@ -26,7 +26,7 @@ pub use load_test::{
     LoadTestImportError, analyze_load_test,
 };
 pub use png_text::{IMPORT_PNG_KEYWORD, is_png, png_text};
-use script_translation::{ScriptDialect, isolate, translate};
+use script_translation::{ScriptDialect, scope_segment, translate};
 pub use shell_command::parse_shell_commands;
 pub use variable_review::{
     EnvironmentMerge, ImportVariableCandidate, MAX_REVIEW_VALUE_BYTES, VariableOrigin,
@@ -984,7 +984,7 @@ fn translate_segments(
                 reason: warning.reason.to_string(),
             });
         }
-        translated.push(isolate(&result.source));
+        translated.push(scope_segment(&result.source, segments.len() == 1));
     }
     state.script_count += translated.len();
     translated.join(
@@ -3479,6 +3479,48 @@ mod imported_script_tests {
         assert!(request.post_response_script.contains("al.test"));
         assert_eq!(imported.script_count, 3);
         assert_eq!(imported.warnings[0].api, "pm.sendRequest");
+    }
+
+    #[test]
+    fn wraps_imported_scripts_only_when_they_need_it() {
+        let raw = r#"{
+          "info":{"name":"Scripts","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+          "item":[
+            {"name":"Alone","event":[{"listen":"prerequest","script":{"exec":"pm.request.headers.upsert({key:'A',value:'1'});"}}],
+             "request":{"method":"GET","url":"https://example.test"}},
+            {"name":"Returns","event":[{"listen":"prerequest","script":{"exec":"if (skip) { return; }"}}],
+             "request":{"method":"GET","url":"https://example.test"}}
+          ]
+        }"#;
+        let imported = parse_collection(raw).unwrap();
+        let requests = imported.collections[0].requests();
+        assert_eq!(
+            requests[0].request.pre_request_script,
+            "al.request.headers.set({key:'A',value:'1'});"
+        );
+        assert!(
+            requests[1]
+                .request
+                .pre_request_script
+                .starts_with("(function () {")
+        );
+    }
+
+    #[test]
+    fn inherited_scripts_share_helpers_but_not_block_scoped_names() {
+        let raw = r#"{
+          "info":{"name":"Scripts","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+          "event":[{"listen":"prerequest","script":{"exec":"const a = 1;"}}],
+          "item":[{"name":"Request","event":[{"listen":"prerequest","script":{"exec":"const a = 2;"}}],
+            "request":{"method":"GET","url":"https://example.test"}}]
+        }"#;
+        let imported = parse_collection(raw).unwrap();
+        assert_eq!(
+            imported.collections[0].requests()[0]
+                .request
+                .pre_request_script,
+            "{\nconst a = 1;\n}\n{\nconst a = 2;\n}"
+        );
     }
 
     #[test]

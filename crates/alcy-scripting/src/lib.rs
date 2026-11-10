@@ -244,6 +244,10 @@ var al = (function (host) {
     }
     return -1;
   };
+  // Postman passes headers and query params as one { key, value } object.
+  var keyed = function (name, value) {
+    return name !== null && typeof name === 'object' ? [name.key, name.value] : [name, value];
+  };
   var readOnly = host.phase === 'postResponse';
   var guard = function () {
     if (readOnly) throw new Error('al.request é somente leitura no script de pós-resposta');
@@ -258,7 +262,7 @@ var al = (function (host) {
     query: {
       get: function (name) { var query=request.url.split('?')[1]||''; query=query.split('#')[0]; var parts=query.split('&'); for(var i=0;i<parts.length;i++){var pair=parts[i].split('=');if(decodeURIComponent(pair[0])===String(name))return decodeURIComponent(pair.slice(1).join('='));} return undefined; },
       has: function (name) { return this.get(name) !== undefined; },
-      set: function (name, value) { guard(); this.remove(name); var hash=''; var hashAt=request.url.indexOf('#'); if(hashAt>=0){hash=request.url.slice(hashAt);request.url=request.url.slice(0,hashAt);} request.url += (request.url.indexOf('?')>=0?'&':'?')+encodeURIComponent(String(name))+'='+encodeURIComponent(String(value)); request.url+=hash; },
+      set: function (name, value) { guard(); var pair=keyed(name, value); name=pair[0]; value=pair[1]; this.remove(name); var hash=''; var hashAt=request.url.indexOf('#'); if(hashAt>=0){hash=request.url.slice(hashAt);request.url=request.url.slice(0,hashAt);} request.url += (request.url.indexOf('?')>=0?'&':'?')+encodeURIComponent(String(name))+'='+encodeURIComponent(String(value)); request.url+=hash; },
       add: function (name, value) { guard(); var o=name; if(typeof o==='object'){for(var k in o)this.set(k,o[k]);}else this.set(name,value); },
       remove: function (name) { guard(); var hash=''; var hashAt=request.url.indexOf('#'); if(hashAt>=0){hash=request.url.slice(hashAt);request.url=request.url.slice(0,hashAt);} var pieces=request.url.split('?'); if(pieces.length<2)return; var kept=pieces[1].split('&').filter(function(p){return decodeURIComponent(p.split('=')[0])!==String(name);}); request.url=pieces[0]+(kept.length?'?'+kept.join('&'):'')+hash; },
       toObject: function () { var o={}; var query=request.url.split('?')[1]||''; query.split('#')[0].split('&').forEach(function(p){if(!p)return;var pair=p.split('=');o[decodeURIComponent(pair[0])]=decodeURIComponent(pair.slice(1).join('='));}); return o; }
@@ -270,9 +274,10 @@ var al = (function (host) {
       },
       set: function (name, value) {
         guard();
-        var i = headerIndex(name);
-        if (i < 0) request.headers.push({ name: String(name), value: String(value) });
-        else request.headers[i].value = String(value);
+        var pair = keyed(name, value);
+        var i = headerIndex(pair[0]);
+        if (i < 0) request.headers.push({ name: String(pair[0]), value: String(pair[1]) });
+        else request.headers[i].value = String(pair[1]);
       },
       remove: function (name) {
         guard(); var i = headerIndex(name); if (i >= 0) request.headers.splice(i, 1);
@@ -504,10 +509,82 @@ var al = (function (host) {
     matchers.lengthOf = matchers.toHaveLength; matchers.property = matchers.toHaveProperty;
     matchers.oneOf = function (values) { var pass=false; for(var i=0;i<values.length;i++){if(deepEqual(actual,values[i])){pass=true;break;}} check(pass, 'esperado pertencer à lista' + got(), 'esperado não pertencer à lista' + got()); };
     matchers.a = matchers.an = function (kind) { var type = Array.isArray(actual) ? 'array' : typeof actual; check(type === String(kind).toLowerCase(), 'esperado tipo ' + kind + got(), 'esperado tipo diferente de ' + kind); };
-    matchers.to = matchers; matchers.be = matchers; matchers.have = matchers;
+    matchers.equals = matchers.toBe; matchers.eqls = matchers.toEqual;
+    matchers.contain = matchers.contains = matchers.includes = matchers.toContain;
+    matchers.greaterThan = matchers.gt = matchers.toBeGreaterThan;
+    matchers.lessThan = matchers.lt = matchers.toBeLessThan;
+    matchers.least = matchers.gte = function (n) { check(actual >= n, 'esperado no mínimo ' + show(n) + got(), 'esperado menor que ' + show(n) + got()); };
+    matchers.most = matchers.lte = function (n) { check(actual <= n, 'esperado no máximo ' + show(n) + got(), 'esperado maior que ' + show(n) + got()); };
+    // Every matcher returns the chain, as in `.to.be.an('array').that.is.not.empty`.
+    Object.keys(matchers).forEach(function (key) {
+      var matcher = matchers[key];
+      matchers[key] = function () { matcher.apply(matchers, arguments); return matchers; };
+    });
+    matchers.deep = { equal: matchers.toEqual, equals: matchers.toEqual, eql: matchers.toEqual, include: matchers.toContain, contain: matchers.toContain };
+    ['to', 'be', 'been', 'is', 'that', 'which', 'and', 'has', 'have', 'with', 'at', 'of', 'same', 'does', 'still', 'also'].forEach(function (word) { matchers[word] = matchers; });
+    // Reading these properties is the assertion, so they must not resolve to undefined and pass.
+    var state = function (name, pass, expected) {
+      Object.defineProperty(matchers, name, { get: function () {
+        check(pass(), 'esperado ' + expected + got(), 'esperado diferente de ' + expected);
+        return matchers;
+      } });
+    };
+    state('true', function () { return actual === true; }, 'true');
+    state('false', function () { return actual === false; }, 'false');
+    state('null', function () { return actual === null; }, 'null');
+    state('undefined', function () { return actual === undefined; }, 'undefined');
+    state('NaN', function () { return actual !== actual; }, 'NaN');
+    state('ok', function () { return !!actual; }, 'valor verdadeiro');
+    state('exist', function () { return actual !== null && actual !== undefined; }, 'valor existente');
+    state('empty', function () {
+      if (actual === null || actual === undefined) return false;
+      return (typeof actual === 'string' || Array.isArray(actual) ? actual.length : Object.keys(actual).length) === 0;
+    }, 'valor vazio');
     if (!negated) matchers.not = makeExpect(actual, true);
     return matchers;
   };
+  var makeResponseAssertions = function (negated) {
+    var check = function (pass, message) {
+      if (pass === negated) throw assertionError((negated ? 'não esperado ' : 'esperado ') + message);
+    };
+    var assertions = {
+      status: function (expected) {
+        var actual = typeof expected === 'number' ? responseApi.status : responseApi.statusText;
+        check(actual === expected, 'status ' + show(expected) + ', recebido ' + show(actual));
+      },
+      header: function (name, value) {
+        var actual = responseApi.headers.get(name);
+        var pass = actual !== undefined && (arguments.length < 2 || actual === String(value));
+        check(pass, 'cabeçalho ' + show(name) + (arguments.length < 2 ? '' : ' igual a ' + show(value)) + ', recebido ' + show(actual));
+      },
+      body: function (expected) {
+        var actual = responseApi.body;
+        var pass = arguments.length === 0 ? !!actual : expected instanceof RegExp ? expected.test(String(actual)) : actual === expected;
+        check(pass, 'corpo ' + (arguments.length === 0 ? 'preenchido' : show(expected)) + ', recebido ' + show(actual));
+      },
+      jsonBody: function (path, value) {
+        var parsed = responseApi.json();
+        if (arguments.length === 0) return;
+        var result = readPath(parsed, path);
+        var pass = result.found && (arguments.length < 2 || deepEqual(result.value, value));
+        check(pass, 'JSON com ' + show(path) + (arguments.length < 2 ? '' : ' igual a ' + show(value)));
+      }
+    };
+    var statusRanges = { info: [100, 199], success: [200, 299], redirection: [300, 399], clientError: [400, 499], serverError: [500, 599], error: [400, 599], ok: [200, 200], accepted: [202, 202], badRequest: [400, 400], unauthorized: [401, 401], forbidden: [403, 403], notFound: [404, 404], rateLimited: [429, 429] };
+    Object.keys(statusRanges).forEach(function (name) {
+      Object.defineProperty(assertions, name, { get: function () {
+        var range = statusRanges[name];
+        check(responseApi.status >= range[0] && responseApi.status <= range[1], 'resposta ' + name + ', recebido status ' + responseApi.status);
+        return assertions;
+      } });
+    });
+    Object.defineProperty(assertions, 'withBody', { get: function () { check(!!responseApi.body, 'resposta com corpo'); return assertions; } });
+    Object.defineProperty(assertions, 'json', { get: function () { responseApi.json(); return assertions; } });
+    assertions.to = assertions.be = assertions.have = assertions;
+    if (!negated) assertions.not = makeResponseAssertions(true);
+    return assertions;
+  };
+  if (responseApi) responseApi.to = makeResponseAssertions(false);
   var iteration = host.iteration;
   var localVariables = host.local;
   var runtimeVariables = host.runtime;
@@ -1549,6 +1626,108 @@ mod tests {
             &context,
         ).unwrap();
         assert!(output.tests[0].passed, "{:?}", output.tests[0].message);
+    }
+
+    fn assertion_outcomes(assertions: &[&str]) -> Vec<bool> {
+        let script = assertions
+            .iter()
+            .map(|body| format!("al.test('t', function () {{ {body}; }});"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let context = with_response(Some("{\"ok\":true,\"items\":[]}"));
+        outcomes(
+            &run_script(ScriptPhase::PostResponse, &script, &context)
+                .unwrap()
+                .tests,
+        )
+    }
+
+    #[test]
+    fn property_assertions_fail_instead_of_passing_silently() {
+        assert_eq!(
+            assertion_outcomes(&[
+                "al.expect(false).to.be.true",
+                "al.expect(true).to.be.false",
+                "al.expect(1).to.be.null",
+                "al.expect(1).to.be.undefined",
+                "al.expect(0).to.be.ok",
+                "al.expect(null).to.exist",
+                "al.expect('a').to.be.empty",
+            ]),
+            vec![false; 7]
+        );
+        assert_eq!(
+            assertion_outcomes(&[
+                "al.expect(true).to.be.true",
+                "al.expect(false).to.not.be.true",
+                "al.expect(null).to.be.null",
+                "al.expect(1).to.exist",
+                "al.expect([]).to.be.empty",
+                "al.expect({a:1}).to.not.be.empty",
+            ]),
+            vec![true; 6]
+        );
+    }
+
+    #[test]
+    fn chained_and_comparison_assertions_follow_the_postman_forms() {
+        assert_eq!(
+            assertion_outcomes(&[
+                "al.expect(5).to.be.at.least(5)",
+                "al.expect(5).to.be.at.most(5)",
+                "al.expect(5).to.be.greaterThan(1).and.lessThan(9)",
+                "al.expect({a:[1]}).to.deep.equal({a:[1]})",
+                "al.expect([1]).to.be.an('array').that.is.not.empty",
+            ]),
+            vec![true; 5]
+        );
+        assert_eq!(
+            assertion_outcomes(&["al.expect(1).to.be.at.least(2)"]),
+            vec![false]
+        );
+    }
+
+    #[test]
+    fn response_assertions_check_status_headers_and_body() {
+        assert_eq!(
+            assertion_outcomes(&[
+                "al.response.to.have.status(201)",
+                "al.response.to.have.status('Created')",
+                "al.response.to.be.success",
+                "al.response.to.not.be.error",
+                "al.response.to.not.have.header('X-Missing')",
+                "al.response.to.have.jsonBody('ok', true)",
+                "al.response.to.be.json",
+                "al.response.to.be.withBody",
+            ]),
+            vec![true; 8]
+        );
+        assert_eq!(
+            assertion_outcomes(&[
+                "al.response.to.have.status(200)",
+                "al.response.to.be.ok",
+                "al.response.to.be.notFound",
+                "al.response.to.have.header('X-Missing')",
+                "al.response.to.have.jsonBody('missing')",
+            ]),
+            vec![false; 5]
+        );
+    }
+
+    #[test]
+    fn headers_and_query_accept_postman_key_value_objects() {
+        let out = run_script(
+            ScriptPhase::PreRequest,
+            "al.request.headers.set({key:'accept',value:'text/plain'});
+             al.request.headers.set({key:'X-New',value:1});
+             al.request.query.set({key:'page',value:'2'});",
+            &input(),
+        )
+        .unwrap();
+        assert_eq!(out.request.headers[0].value, "text/plain");
+        assert_eq!(out.request.headers[1].name, "X-New");
+        assert_eq!(out.request.headers[1].value, "1");
+        assert!(out.request.url.ends_with("?page=2"));
     }
 
     /// Runs `source` and returns what it logged.
