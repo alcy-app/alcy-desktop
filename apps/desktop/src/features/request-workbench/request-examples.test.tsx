@@ -21,7 +21,7 @@ import { ExampleResponsePanel } from './components/ExampleResponsePanel'
 import { exampleResponseFromExecution } from './example-response'
 import type { ExecutionState, WorkbenchTab } from './request-workbench.types'
 import { parseTabSession, resolveTabSession, snapshotTabSession } from './tab-session'
-import { contentOf, useWorkbenchState } from './use-workbench-state'
+import { contentOf, isTriedExampleTab, useWorkbenchState } from './use-workbench-state'
 import { requestFromDto, requestToDto } from './use-collections-state'
 
 const example = (id: string, name: string): RequestExample =>
@@ -176,6 +176,17 @@ describe('example tabs', () => {
     expect(result.current.activeTab.endpointUrl).toBe('https://api.test/second')
     expect(result.current.activeTab.scopeRequestId).toBe('r1')
     expect(result.current.activeTab.dirty).toBe(false)
+  })
+
+  it('marks only the tab of a try as one that cannot be renamed', () => {
+    const { result } = setup()
+    act(() => result.current.openExample('r1', example('e1', 'A')))
+    expect(isTriedExampleTab(result.current.activeTab)).toBe(false)
+
+    act(() => {
+      result.current.openTriedExample('e1', 'r1', 'A', { ...emptyRequestContent('rest'), endpointUrl: 'https://api.test/a' })
+    })
+    expect(isTriedExampleTab(result.current.activeTab)).toBe(true)
   })
 })
 

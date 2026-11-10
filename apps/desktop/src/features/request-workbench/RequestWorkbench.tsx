@@ -144,7 +144,7 @@ import type { ActiveComponentKind } from './history'
 import { useHistoryState } from './use-history-state'
 import { useOpenTabs } from './use-open-tabs'
 import type { OpenTabDescriptor } from './use-open-tabs'
-import { contentOf, isTabDirty, useWorkbenchState } from './use-workbench-state'
+import { contentOf, isTabDirty, isTriedExampleTab, useWorkbenchState } from './use-workbench-state'
 import { useTabSession } from './use-tab-session'
 import { findExample, findInheritedAuthentication, findNode, findRequest, findRequestPath } from './collection-tree'
 import type { RequestExample } from './collection-tree'
@@ -1869,12 +1869,13 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   }, [collections.collections, flows.flows, workbench.activeTab, t])
 
   // Saved requests are renamed in their collection (the tab follows); drafts only rename their tab.
-  // Flow node tabs keep their name, which flows use to reference the node.
+  // Flow node tabs keep their name, which flows use to reference the node, and an example's try
+  // is never saved, so renaming it would change nothing.
   const renameCollectionNode = collections.rename
   const renameTab = workbench.renameTab
   const renameActiveRequest = useMemo(() => {
     const { id, requestId, flowNodeRef, example } = workbench.activeTab
-    if (flowNodeRef) return undefined
+    if (flowNodeRef || isTriedExampleTab(workbench.activeTab)) return undefined
     return (name: string) => {
       if (example) renameCollectionNode(example.exampleId, name)
       else if (requestId) renameCollectionNode(requestId, name)

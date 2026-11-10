@@ -243,6 +243,13 @@ function computeDirty(tab: WorkbenchTab): boolean {
 }
 
 /** Whether the tab changed since loading or saving, for the OpenTabsBar indicator. */
+const TRIED_EXAMPLE_TAB_PREFIX = 'example-try:'
+
+/** Whether a tab is the throwaway draft opened by trying an example: it is never saved, so it has no name to change. */
+export function isTriedExampleTab(tab: Pick<WorkbenchTab, 'id'>): boolean {
+  return tab.id.startsWith(TRIED_EXAMPLE_TAB_PREFIX)
+}
+
 export function isTabDirty(tab: WorkbenchTab): boolean {
   return tab.dirty
 }
@@ -778,7 +785,7 @@ export function useWorkbenchState(environmentVariables: EnvironmentVariableDto[]
 
   /** Open the draft that tries an example, reusing the previous try's tab. Returns its ID, or null while that tab is still sending. */
   const openTriedExample = useCallback((exampleId: string, requestId: string, name: string, content: RequestContent): string | null => {
-    const tabId = `example-try:${exampleId}`
+    const tabId = `${TRIED_EXAMPLE_TAB_PREFIX}${exampleId}`
     const previous = stateRef.current.tabs.find((tab) => tab.id === tabId)
     if (previous?.execution.status === 'loading') {
       setState((current) => ({ ...current, activeTabId: tabId }))
