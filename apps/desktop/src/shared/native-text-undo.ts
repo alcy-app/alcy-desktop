@@ -2,19 +2,20 @@
  * WebKitGTK (the Tauri webview on Linux) binds no keys to undo/redo in text
  * fields, unlike WebView2, which handles Ctrl+Z/Ctrl+Y in focused inputs.
  * This listener runs the editing command for native `<input>`/`<textarea>`
- * fields. It listens in the bubble phase and skips handled events, so code
- * editors (CodeMirror), which undo through their own history and call
- * `preventDefault`, keep it: WebKit's own undo stack does not know their
- * pastes, line breaks or completions.
+ * fields. It sits on `window` in the bubble phase, after every listener on
+ * `document` (configurable app shortcuts skip cancelled events), and skips
+ * handled events, so code editors (CodeMirror), which undo through their own
+ * history and call `preventDefault`, keep it: WebKit's own undo stack does not
+ * know their pastes, line breaks or completions.
  *
  * Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo. Returns the function that
  * removes the listener (used in tests).
  */
 export function installNativeTextUndo(
-  target: Document = document,
+  target: Window = window,
   runCommand: (command: 'undo' | 'redo') => void = (command) => {
     // Deprecated, but the only way to reach the field's native undo stack from the page.
-    target.execCommand(command)
+    target.document.execCommand(command)
   },
 ): () => void {
   const onKeyDown = (event: KeyboardEvent) => {

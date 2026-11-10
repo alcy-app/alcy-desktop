@@ -6,10 +6,12 @@ import App from './App.tsx'
 import { installButtonMousedownWorkaround } from './shared/button-mousedown-workaround'
 import { installGlobalLogHandlers } from './shared/logging/logger'
 import { installNativeTextUndo, isLinuxWebView } from './shared/native-text-undo'
+import { installBrowserFindSuppression } from './shared/suppress-browser-find'
 import { startUsageEvents } from './shared/usage-events/track-usage'
 
 installButtonMousedownWorkaround()
 installGlobalLogHandlers()
+installBrowserFindSuppression()
 if (isLinuxWebView()) installNativeTextUndo()
 
 /**

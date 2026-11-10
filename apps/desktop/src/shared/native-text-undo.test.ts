@@ -10,7 +10,7 @@ describe('installNativeTextUndo', () => {
 
   function setup(element: HTMLElement) {
     const runCommand = vi.fn()
-    uninstall = installNativeTextUndo(document, runCommand)
+    uninstall = installNativeTextUndo(window, runCommand)
     document.body.append(element)
     return runCommand
   }

@@ -30,7 +30,7 @@ afterEach(() => clearSavedEditorStates())
 describe('RequestBodyPanel undo history', () => {
   it('undoes a paste with Ctrl+Z through the editor history, not the native field command', () => {
     const runCommand = vi.fn()
-    const uninstall = installNativeTextUndo(document, runCommand)
+    const uninstall = installNativeTextUndo(window, runCommand)
     try {
       const { container } = render(<EditableBody initial="" />)
       const editor = screen.getByRole('textbox', { name: 'Corpo da requisição' })
