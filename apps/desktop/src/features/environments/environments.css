@@ -28,7 +28,7 @@
   flex-direction: column;
   align-items: center;
   width: var(--workbench-rail-width);
-  padding: 8px 0;
+  padding: 0 0 8px;
   border-right: 1px solid var(--border);
   background: var(--bg);
 }
@@ -41,7 +41,28 @@
   gap: 4px;
 }
 
+/* In short windows only the module list shrinks and scrolls, so the rail never
+   paints over the status bar. It spans the rail's full width and carries the
+   top padding so the scroll clip spares the selection indicator and the hover
+   lift. No visible scrollbar: the rail has no width to spare for one. */
+.workbench-rail-items {
+  flex: 0 1 auto;
+  align-self: stretch;
+  min-height: 0;
+  padding: 8px 0 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.workbench-rail-items::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .workbench-rail-footer {
+  flex-shrink: 0;
   margin-top: auto;
 }
 
