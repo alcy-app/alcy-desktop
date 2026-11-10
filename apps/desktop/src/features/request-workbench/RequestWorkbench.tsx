@@ -2450,6 +2450,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           <QueryPanel
                             // One editor per tab keeps undo history from carrying content across tabs.
                             key={workbench.activeTabId ?? ''}
+                            historyKey={workbench.activeTabId ? `${workbench.activeTabId}\nquery` : undefined}
                             value={workbench.query}
                             onChange={workbench.setQuery}
                             environmentVariables={effectiveVariables}
@@ -2465,6 +2466,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                         <VariablesPanel
                           agentSlot="variables"
                           key={workbench.activeTabId ?? ''}
+                          historyKey={workbench.activeTabId ? `${workbench.activeTabId}\nvariables` : undefined}
                           value={workbench.variables}
                           onChange={workbench.setVariables}
                           environmentVariables={effectiveVariables}
@@ -2490,6 +2492,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                         <RestBodyPanel
                           agentEditors
                           key={workbench.activeTabId ?? ''}
+                          historyKey={workbench.activeTabId ? `${workbench.activeTabId}\nbody` : undefined}
                           body={workbench.body}
                           rootPath={workspace.rootPath}
                           onTypeChange={workbench.setBodyType}

@@ -68,6 +68,7 @@ export function ScriptsPanel({
         {active === 'pre' ? (
           <RequestBodyPanel
             key={`${editorKey}\npre`}
+            historyKey={editorKey ? `${editorKey}\npre` : undefined}
             extraExtensions={[scriptCompletionExtension('pre'), scriptReservedHighlight()]}
             language="javascript"
             label={t('scripts.preRequestEditorLabel')}
@@ -78,6 +79,7 @@ export function ScriptsPanel({
         ) : (
           <RequestBodyPanel
             key={`${editorKey}\npost`}
+            historyKey={editorKey ? `${editorKey}\npost` : undefined}
             extraExtensions={[scriptCompletionExtension('post'), scriptReservedHighlight()]}
             language="javascript"
             label={t('scripts.postResponseEditorLabel')}

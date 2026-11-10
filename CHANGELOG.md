@@ -36,3 +36,4 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Nos flows, o campo de URL das requisições avulsas volta a ocupar a largura da linha, em vez de ficar espremido ao lado do método.
 - Ao voltar para uma aba, a resposta continua onde você parou.
 - No console, os detalhes de uma requisição mostram também o body enviado, junto dos headers.
+- Ctrl+Z nos editores (body, scripts, query e variables) volta a desfazer colagens e linhas novas no Linux, e o histórico continua disponível depois de trocar de seção ou de aba.

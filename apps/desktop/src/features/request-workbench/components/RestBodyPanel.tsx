@@ -80,6 +80,8 @@ interface RestBodyPanelProps {
   checkFiles?: (rootPath: string, paths: string[]) => Promise<boolean[]>
   /** Exposes the raw body editor to the agent (ADR 0064); only the workbench sets it. */
   agentEditors?: boolean
+  /** Keeps the raw editor's undo history across remounts (see `RequestBodyPanel`). */
+  historyKey?: string
 }
 
 /** Aba "Body" de uma requisição REST: seletor do tipo de corpo e o editor
@@ -101,6 +103,7 @@ export function RestBodyPanel({
   environmentVariables,
   bodySchema = null,
   agentEditors = false,
+  historyKey,
   pickFile = pickBodyFile,
   checkFiles = checkBodyFiles,
 }: RestBodyPanelProps) {
@@ -180,6 +183,7 @@ export function RestBodyPanel({
             bodySchema={body.rawLanguage === 'json' ? bodySchema : null}
             agentSlot={agentEditors ? 'body' : undefined}
             jsonComments
+            historyKey={historyKey}
           />
         )}
         {body.type === 'urlencoded' && (

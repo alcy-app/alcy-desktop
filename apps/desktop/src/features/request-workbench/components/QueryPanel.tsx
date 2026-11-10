@@ -11,6 +11,7 @@ import { Tooltip } from '../../../shared/ui/Tooltip'
 import { FormatIcon } from '../../../shared/ui/icons'
 import { completionShortcutsExtension } from '../completion-shortcuts'
 import { editorSearchHighlightExtension } from '../editor-search'
+import { restoreEditorState, saveEditorState } from '../editor-state-cache'
 import { graphqlCompletionExtension, setQuerySchema } from '../graphql-completions'
 import { templateVariableCompletionSource } from '../template-variables-codemirror'
 import {
@@ -39,6 +40,9 @@ interface QueryPanelProps {
   schema: LoadSchemaOutput | null
   /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
   agentSlot?: EditorSlot
+  /** Keeps the undo history across remounts (switching sections or tabs)
+   * under this key, while the text is unchanged. Read only at mount. */
+  historyKey?: string
 }
 
 /**
@@ -49,7 +53,7 @@ interface QueryPanelProps {
  * `TemplateHighlightedField` (que segue existindo só para o campo de URL,
  * de linha única — ver `EndpointBar`).
  */
-export function QueryPanel({ value, onChange, environmentVariables, schema, agentSlot }: QueryPanelProps) {
+export function QueryPanel({ value, onChange, environmentVariables, schema, agentSlot, historyKey }: QueryPanelProps) {
   const { t } = useLanguage()
   const formatted = useMemo(() => formatGraphqlQuery(value), [value])
 
@@ -92,8 +96,7 @@ export function QueryPanel({ value, onChange, environmentVariables, schema, agen
     const variableCompletionData = [{ autocomplete: templateVariableCompletionSource(() => translateRef.current) }]
 
     const view = new EditorView({
-      doc: value,
-      extensions: [
+      state: restoreEditorState(historyKey, value, [
         history(),
         completionShortcutsExtension(() => shortcutBindingsRef.current),
         tabIndentKeymap,
@@ -116,13 +119,14 @@ export function QueryPanel({ value, onChange, environmentVariables, schema, agen
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
         }),
-      ],
+      ]),
       parent: container,
     })
     viewRef.current = view
     view.dispatch({ effects: [setQueryVariables.of(environmentVariables), setQuerySchema.of(schema)] })
 
     return () => {
+      saveEditorState(historyKey, view.state)
       view.destroy()
       viewRef.current = null
       ariaLabelCompartmentRef.current = null

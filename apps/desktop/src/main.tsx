@@ -5,10 +5,12 @@ import './shared/ui/buttons.css'
 import App from './App.tsx'
 import { installButtonMousedownWorkaround } from './shared/button-mousedown-workaround'
 import { installGlobalLogHandlers } from './shared/logging/logger'
+import { installNativeTextUndo, isLinuxWebView } from './shared/native-text-undo'
 import { startUsageEvents } from './shared/usage-events/track-usage'
 
 installButtonMousedownWorkaround()
 installGlobalLogHandlers()
+if (isLinuxWebView()) installNativeTextUndo()
 
 /**
  * Suprime o menu de contexto nativo da WebView (com itens como "Recarregar"

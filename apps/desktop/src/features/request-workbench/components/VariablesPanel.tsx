@@ -8,6 +8,7 @@ import { useLanguage } from '../../../shared/i18n/use-language'
 import { useShortcuts } from '../../../shared/shortcuts/use-shortcuts'
 import { completionShortcutsExtension } from '../completion-shortcuts'
 import { editorSearchHighlightExtension } from '../editor-search'
+import { restoreEditorState, saveEditorState } from '../editor-state-cache'
 import {
   autoCloseBracketsExtension,
   codeEditorTheme,
@@ -35,9 +36,12 @@ interface VariablesPanelProps {
   environmentVariables: EnvironmentVariableDto[]
   /** Editor the agent can point at and read the selection from (ADR 0064); read only at mount. */
   agentSlot?: EditorSlot
+  /** Keeps the undo history across remounts (switching sections or tabs)
+   * under this key, while the text is unchanged. Read only at mount. */
+  historyKey?: string
 }
 
-export function VariablesPanel({ value, onChange, environmentVariables, agentSlot }: VariablesPanelProps) {
+export function VariablesPanel({ value, onChange, environmentVariables, agentSlot, historyKey }: VariablesPanelProps) {
   const { t } = useLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -75,8 +79,7 @@ export function VariablesPanel({ value, onChange, environmentVariables, agentSlo
     ariaLabelCompartmentRef.current = ariaLabelCompartment
 
     const view = new EditorView({
-      doc: value,
-      extensions: [
+      state: restoreEditorState(historyKey, value, [
         history(),
         completionShortcutsExtension(() => shortcutBindingsRef.current),
         tabIndentKeymap,
@@ -100,13 +103,14 @@ export function VariablesPanel({ value, onChange, environmentVariables, agentSlo
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
         }),
-      ],
+      ]),
       parent: container,
     })
     viewRef.current = view
     view.dispatch({ effects: setEnvironmentVariables.of(environmentVariables) })
 
     return () => {
+      saveEditorState(historyKey, view.state)
       view.destroy()
       viewRef.current = null
       ariaLabelCompartmentRef.current = null

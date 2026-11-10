@@ -94,7 +94,6 @@ dependencies = [
  "alcy-webclient",
  "alcy-websocket",
  "base64 0.22.1",
- "gtk",
  "log",
  "percent-encoding",
  "reqwest 0.12.28",
@@ -112,7 +111,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "url",
- "webkit2gtk",
  "wiremock",
 ]
 

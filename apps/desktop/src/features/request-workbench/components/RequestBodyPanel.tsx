@@ -12,6 +12,7 @@ import { completionShortcutsExtension } from '../completion-shortcuts'
 import { jsoncLanguageSupport } from '../jsonc-language'
 import type { CodeLanguage } from '../codemirror-shared'
 import { editorSearchHighlightExtension } from '../editor-search'
+import { restoreEditorState, saveEditorState } from '../editor-state-cache'
 import { bodySchemaExtension, setBodySchema } from '../schema-completions'
 import type { BodySchema } from '../schema-completions'
 import { environmentVariablesExtension, setEnvironmentVariables } from '../template-variables-codemirror'
@@ -72,6 +73,9 @@ interface RequestBodyPanelProps {
    * before sending, and the configurable comment shortcut picks a line or a
    * block comment by the selection (spec 0146). Read only at mount. */
   jsonComments?: boolean
+  /** Keeps the undo history across remounts (switching sections or tabs)
+   * under this key, while the text is unchanged. Read only at mount. */
+  historyKey?: string
 }
 
 /**
@@ -91,6 +95,7 @@ export function RequestBodyPanel({
   bodySchema,
   agentSlot,
   jsonComments = false,
+  historyKey,
 }: RequestBodyPanelProps) {
   const { t } = useLanguage()
   const editorLabel = label ?? t('requestBody.editorLabel')
@@ -133,8 +138,7 @@ export function RequestBodyPanel({
     languageCompartmentRef.current = languageCompartment
 
     const view = new EditorView({
-      doc: value,
-      extensions: [
+      state: restoreEditorState(historyKey, value, [
         history(),
         completionShortcutsExtension(() => shortcutBindingsRef.current),
         tabIndentKeymap,
@@ -166,7 +170,7 @@ export function RequestBodyPanel({
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
         }),
-      ],
+      ]),
       parent: container,
     })
     viewRef.current = view
@@ -174,6 +178,7 @@ export function RequestBodyPanel({
     if (bodySchema) view.dispatch({ effects: setBodySchema.of(bodySchema) })
 
     return () => {
+      saveEditorState(historyKey, view.state)
       view.destroy()
       viewRef.current = null
       ariaLabelCompartmentRef.current = null

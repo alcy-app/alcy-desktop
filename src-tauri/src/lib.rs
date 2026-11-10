@@ -132,47 +132,6 @@ use commands::workspaces::{
 };
 use tauri::Manager;
 
-/// WebKitGTK has no native undo/redo key bindings in text fields, unlike
-/// WebView2, which handles Ctrl+Z/Ctrl+Y in focused inputs and textareas.
-/// Tauri Undo/Redo menu items do not help: the GTK backend of muda only
-/// implements Copy/Cut/Paste/Select All. Intercept the keys on the webview
-/// widget and forward them to the WebKit editing command, which targets
-/// the focused text field on the page.
-#[cfg(target_os = "linux")]
-fn enable_linux_text_undo_redo(app: &tauri::App) -> tauri::Result<()> {
-    use gtk::gdk::ModifierType;
-    use gtk::glib::Propagation;
-    use gtk::prelude::WidgetExt;
-    use webkit2gtk::WebViewExt;
-
-    let Some(main_webview) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-
-    main_webview.with_webview(|webview| {
-        let webview = webview.inner();
-        webview.connect_key_press_event(|webview, event| {
-            let modifiers = event.state();
-            let ctrl_only = modifiers.contains(ModifierType::CONTROL_MASK)
-                && !modifiers.contains(ModifierType::SHIFT_MASK);
-            if ctrl_only {
-                match event.keyval().to_unicode().map(|c| c.to_ascii_lowercase()) {
-                    Some('z') => {
-                        webview.execute_editing_command("Undo");
-                        return Propagation::Stop;
-                    }
-                    Some('y') => {
-                        webview.execute_editing_command("Redo");
-                        return Propagation::Stop;
-                    }
-                    _ => {}
-                }
-            }
-            Propagation::Proceed
-        });
-    })
-}
-
 /// Wrap the generated handler to log each invoked command name
 /// through logging::log_invoke.
 fn log_invocations<R: tauri::Runtime>(
@@ -406,9 +365,6 @@ pub fn run_with(extensions: Vec<Extension>) {
                 )
                 .await;
             });
-
-            #[cfg(target_os = "linux")]
-            enable_linux_text_undo_redo(app)?;
 
             for setup in extension_setups {
                 setup(app)?;
