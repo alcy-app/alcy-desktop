@@ -6,23 +6,15 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## Unreleased
 
-### Added
-
-- Ao importar uma pasta com repositório Git, escolha entre clonar a pasta e usá-la como repositório remoto ou abrir o próprio diretório. Times sem servidor Git podem trabalhar em cópias separadas e trocar alterações por pull e push.
-
-### Changed
-
-- Em uma pasta compartilhada, cada pessoa tem o próprio valor das variáveis sensíveis. Quem ainda não preencheu vê o campo vazio, sem aviso, e alterar o valor não afeta os colegas.
-
 ## [0.10.0] - 2026-11-08
 
 ### Added
 
-- **Git no workspace**: inicie um histórico git no próprio workspace, sem conta nem git instalado, com commits, branches, mesclagem item a item e um histórico de onde dá para restaurar versões anteriores. Trabalhe em equipe por uma pasta de rede ou sincronizada.
+- **Git**: inicie um histórico git no próprio workspace, com commits, branches, mesclagem item a item e histórico.
 - **Posição do chat**: arraste o painel do agente pelo cabeçalho para a direita ou a parte de baixo da tela, ou para a esquerda, onde ele vira um módulo da barra lateral. A posição também pode ser escolhida em Configurações › Agente e fica salva.
 - **Aparência "Padrão do sistema"**: em Configurações › Aparência, o Alcy pode seguir o tema claro ou escuro do sistema operacional.
 - **Comentários no body JSON**: comente trechos do body com Ctrl+/ ou Ctrl+; (uma linha vira `//`, várias viram um bloco `/* */`).
-- **Exemplos de requisição**: salve várias chamadas de uma mesma requisição, cada uma com seus parâmetros e a resposta esperada. Crie um exemplo do zero ou a partir de uma resposta recebida e teste-o quando quiser.
+- **Exemplos de requisição**: salve várias chamadas de uma mesma requisição, cada uma com seus parâmetros e a resposta esperada. 
 - Exporte e importe flows em arquivos Alcy, mantendo as referências ou incorporando requisições e variáveis no próprio flow.
 - Localizar e substituir nos editores de requisição: troque uma ocorrência ou todas de uma vez, inclusive só dentro do texto selecionado.
 
