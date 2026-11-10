@@ -31,6 +31,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Fixed
 
+- Copiar a resposta preserva a formatação exibida no Alcy.
 - Nomes longos de variável não ultrapassam mais a caixa de descrição das sugestões no body.
 - Nos flows, o campo de URL das requisições avulsas volta a ocupar a largura da linha, em vez de ficar espremido ao lado do método.
 - Ao voltar para uma aba, a resposta continua onde você parou.

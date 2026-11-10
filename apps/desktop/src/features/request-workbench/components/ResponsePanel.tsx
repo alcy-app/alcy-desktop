@@ -32,16 +32,18 @@ import { ResponseComparisonView } from './ResponseComparisonView'
 import { ResponseHistoryMenu, type ResponseView } from './ResponseHistoryMenu'
 import { ResponseNetworkBadge } from './ResponseNetworkBadge'
 import { registerEditorRevealer } from '../editor-bridge'
+import { detectBodyMode, type ResponseBodyMode } from '../response-body-mode'
+import { formatOffMainThread } from '../format-off-main-thread'
 
 /** Collect the body, fetching windowed chunks on demand, for copying as one string. */
-async function collectBodyText(body: ResponseBodyOutput): Promise<string> {
+async function collectBodyText(body: ResponseBodyOutput): Promise<string | null> {
   if (body.kind === 'inline') return body.body
 
   let text = body.preview
   let offset = body.previewNextOffset
   while (offset !== null) {
     const result = await readResponseBodyChunk({ handle: body.handle, offset })
-    if (!result.ok) break
+    if (!result.ok) return null
     text += result.value.chunk
     offset = result.value.nextOffset
   }
@@ -174,6 +176,13 @@ export const ResponsePanel = memo(function ResponsePanel({
   const http = success ? httpResultOf(success.result) : null
   const grpc = grpcResultOf(success?.result)
   const websocket = websocketResultOf(success?.result)
+  const detectedFormat = useMemo(() => {
+    if (!success || http?.bodyEncoding === 'base64') return 'text'
+    const body = success.result.body
+    return detectBodyMode(http?.headers ?? GRPC_BODY_HEADERS, body.kind === 'inline' ? body.body : body.preview)
+  }, [success, http])
+  const [bodyFormatState, setBodyFormatState] = useState<{ key: string; format: ResponseBodyMode } | null>(null)
+  const bodyFormat = bodyFormatState?.key === bodyKey ? bodyFormatState.format : detectedFormat
   // Older restored executions may omit testResults.
   const testResults = success ? (success.result.testResults ?? []) : []
   const hasTests = testResults.length > 0
@@ -196,14 +205,17 @@ export const ResponsePanel = memo(function ResponsePanel({
 
   const handleCopy = useCallback(async () => {
     if (!success || notStored) return
-    const text = await collectBodyText(success.result.body)
     try {
-      await navigator.clipboard.writeText(text)
+      const text = await collectBodyText(success.result.body)
+      if (text === null) return
+      const formatted = bodyFormat === 'json' || bodyFormat === 'xml' ? await formatOffMainThread(text, bodyFormat) : text
+      if (formatted === null) return
+      await navigator.clipboard.writeText(formatted)
       showToast(t('toasts.responseCopied'))
     } catch {
-      // Clipboard unavailable: do not show a success toast.
+      // Loading, formatting or clipboard failure: do not show a success toast.
     }
-  }, [success, notStored, showToast, t])
+  }, [success, notStored, bodyFormat, showToast, t])
 
   const handleClear = useCallback(() => {
     setView(CURRENT_VIEW)
@@ -425,6 +437,7 @@ export const ResponsePanel = memo(function ResponsePanel({
                 body={success.result.body}
                 bodyEncoding={http ? http.bodyEncoding : 'text'}
                 headers={http ? http.headers : GRPC_BODY_HEADERS}
+                formatControl={{ value: bodyFormat, onChange: (format) => setBodyFormatState({ key: bodyKey, format }) }}
                 onCaptureValue={view.kind === 'current' ? onCaptureValue : undefined}
                 monitor={bodyMonitor}
                 agentSlot={view.kind === 'current' ? 'response' : undefined}

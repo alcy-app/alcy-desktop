@@ -14,7 +14,7 @@ import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
 import type { EditorSlot } from '../editor-bridge'
 import type { ResponseExcerpt } from '../screenshot/response-excerpt'
 
-/** Monitor de valores ligado: monitores a aplicar e onde reportar quantos valores reprovaram. */
+/** Active value monitors and a callback reporting how many values failed. */
 export interface ResponseBodyMonitor {
   monitors: ValueMonitorDto[]
   onFailedCount: (count: number | null) => void
@@ -24,7 +24,9 @@ interface ResponseBodyProps {
   body: ResponseBodyOutput
   bodyEncoding: ResponseBodyEncoding
   headers: ResponseHeader[]
-  /** Quando presente, valores JSON do corpo podem ser capturados para o script de pós-resposta. */
+  /** Shares the selected format with actions outside the body view. */
+  formatControl?: { value: ResponseBodyMode; onChange: (format: ResponseBodyMode) => void }
+  /** Allows capturing JSON body values for the post-response script. */
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
   /** Editor slot for the agent (ADR 0064); only the workbench response sets it. */
@@ -44,26 +46,25 @@ function codeLanguageFor(format: ResponseBodyMode): ResponseCodeLanguage {
 }
 
 /**
- * `sandbox=""` (sem nenhum token `allow-*`) trata o conteúdo como uma
- * origem opaca sem script, formulário, navegação de topo ou popup — HTML
- * de terceiros nunca ganha acesso a IPC/`window` do app. Ver ADR 0008.
+ * `sandbox=""` (without any `allow-*` tokens) treats content as an opaque
+ * origin without scripts, forms, top navigation or popups. Third-party HTML
+ * never gets access to the app's IPC or `window`. See ADR 0008.
  */
 function HtmlPreview({ body }: { body: string }) {
   const { t } = useLanguage()
   return <iframe className="rw-html-preview" srcDoc={body} sandbox="" referrerPolicy="no-referrer" title={t('response.bodyPreviewTitle')} />
 }
 
-/** Imagem a partir de bytes já em base64 (backend, ver ADR 0009) — monta uma data URI, sem passar pelo IPC de novo. */
+/** Builds a data URI from bytes already encoded as base64 by the backend (ADR 0009), without another IPC call. */
 function ImagePreview({ base64, contentType }: { base64: string; contentType: string }) {
   const { t } = useLanguage()
   return <img className="rw-image-preview" src={`data:${contentType};base64,${base64}`} alt={t('response.bodyImageAlt')} />
 }
 
 /**
- * Roteia o texto já disponível (corpo `inline` inteiro, ou o acumulado até
- * agora de um corpo `windowed`) para a exibição correta conforme o formato
- * selecionado. Formatação/destaque de JSON e XML, e virtualização por
- * tamanho, ficam a cargo de `ResponseCodeView` (CodeMirror 6).
+ * Routes available text (the entire inline body or accumulated windowed
+ * chunks) to the selected display format. `ResponseCodeView` (CodeMirror 6)
+ * handles JSON/XML formatting, highlighting and virtualization.
  */
 function TextBodyView({
   text,
@@ -79,7 +80,7 @@ function TextBodyView({
   text: string
   selectedFormat: ResponseBodyMode
   htmlPreview: boolean
-  /** `text` ainda não é o corpo inteiro (corpo `windowed` com chunks pendentes). */
+  /** `text` is incomplete: a windowed body still has pending chunks. */
   partial?: boolean
   onCaptureValue?: (path: JsonPathSegment[]) => void
   monitor?: ResponseBodyMonitor | null
@@ -183,7 +184,7 @@ function FormatSelector({ value, onChange }: { value: ResponseBodyMode; onChange
   )
 }
 
-/** Só relevante para `selectedFormat === 'html'` — alterna entre preview renderizado (ADR 0008) e código-fonte. */
+/** Only used for HTML: toggles between the rendered preview (ADR 0008) and source. */
 function PreviewToggle({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
   const { t } = useLanguage()
   return (
@@ -207,25 +208,20 @@ interface DrainSetters {
   setLoadError: Dispatch<SetStateAction<boolean>>
 }
 
-/** Intervalo mínimo entre duas atualizações do texto exibido durante uma busca em sequência. */
+/** Minimum interval between displayed text updates while fetching chunks sequentially. */
 const DRAIN_PUBLISH_INTERVAL_MS = 300
 
 /**
- * Busca em sequência a partir de `startOffset`. O texto exibido é
- * atualizado no primeiro chunk e depois no máximo a cada
- * `DRAIN_PUBLISH_INTERVAL_MS` (e no fim): atualizar a cada chunk fazia cada
- * versão intermediária, cada vez maior, ser copiada, comparada e formatada
- * inteira. `text` e `nextOffset` são sempre publicados juntos — se uma busca
- * falhar no meio do caminho, o que já chegou é publicado e `nextOffset` fica
- * exatamente onde parou, e um retry (manual ou automático) não refaz nem
- * perde chunks.
+ * Fetches sequentially from `startOffset`. Updates displayed text after the
+ * first chunk, at most every `DRAIN_PUBLISH_INTERVAL_MS`, and at completion.
+ * Updating after every chunk used to copy, compare and format every growing
+ * intermediate version in full. Publishes `text` and `nextOffset` together:
+ * if a fetch fails, available text is published and the offset stays where
+ * it stopped, so manual or automatic retries neither repeat nor lose chunks.
  *
- * Definida no módulo (não como closure dentro do hook) e recebendo os
- * setters explicitamente: chamar uma função local recriada a cada render
- * de dentro de um `useEffect` é exatamente o padrão que
- * `react-hooks/set-state-in-effect` sinaliza — no escopo do módulo, a
- * identidade da função é estável e as dependências ficam explícitas nos
- * parâmetros, não numa closure.
+ * Defined at module scope with explicit setters to keep its identity stable
+ * and dependencies explicit, avoiding the local closure pattern flagged by
+ * `react-hooks/set-state-in-effect` when called from `useEffect`.
  */
 async function drainFrom(handle: string, startOffset: number, isCancelled: () => boolean, setters: DrainSetters): Promise<void> {
   let offset = startOffset
@@ -259,13 +255,11 @@ async function drainFrom(handle: string, startOffset: number, isCancelled: () =>
 }
 
 /**
- * Corpos `windowed` até este tamanho total buscam todos os chunks sozinhos,
- * em segundo plano, assim que chegam — sem exigir clique em "mostrar
- * tudo" (spec 0040). Acima do teto, mantém o comportamento manual de
- * sempre (spec 0020/0039): buscar tudo automaticamente não tem limite
- * superior de memória além da capacidade do cache do backend (ADR 0005),
- * então uma resposta verdadeiramente enorme continua exigindo ação
- * explícita do usuário.
+ * Windowed bodies up to this total size fetch all chunks in the background
+ * immediately, without requiring "show all" (spec 0040). Larger bodies keep
+ * manual loading (spec 0020/0039): automatic fetching has no memory bound
+ * beyond the backend cache capacity (ADR 0005), so huge responses still
+ * require explicit user action.
  */
 export const WINDOWED_AUTO_LOAD_MAX_BYTES = 20 * 1024 * 1024
 
@@ -313,7 +307,7 @@ function useWindowedBodyText(handle: string, preview: string, previewNextOffset:
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- roda uma vez para o preview inicial desta resposta; handleLoadMore/handleLoadAll tratam buscas subsequentes fora deste efeito.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once for this response's initial preview; handleLoadMore/handleLoadAll handle subsequent fetches outside this effect.
   }, [handle])
 
   return { text, nextOffset, isLoading, loadError, isAutoLoading, handleLoadMore, handleLoadAll }
@@ -392,10 +386,9 @@ interface WindowedImageProps {
 }
 
 /**
- * Base64 incompleto não decodifica — diferente de texto, não dá pra mostrar
- * o preview parcial como imagem. Acumula todos os chunks (mesmo laço de
- * "Mostrar tudo" de `useWindowedBodyText`) atrás de um clique explícito, e só
- * então monta a `<img>`.
+ * Incomplete base64 cannot be decoded or previewed as an image. Collects all
+ * chunks after an explicit click (like "show all" in `useWindowedBodyText`)
+ * before mounting the image.
  */
 function WindowedImage({ handle, contentType, preview, previewNextOffset }: WindowedImageProps) {
   const { t } = useLanguage()
@@ -438,15 +431,15 @@ function WindowedImage({ handle, contentType, preview, previewNextOffset }: Wind
   )
 }
 
-export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, monitor, agentSlot, viewMemoryKey, onShareSelection }: ResponseBodyProps) {
-  const [selectedFormat, setSelectedFormat] = useState<ResponseBodyMode>(() =>
-    bodyEncoding === 'text' ? detectBodyMode(headers, body.kind === 'inline' ? body.body : body.preview) : 'text',
+export function ResponseBody({ body, bodyEncoding, headers, formatControl, onCaptureValue, monitor, agentSlot, viewMemoryKey, onShareSelection }: ResponseBodyProps) {
+  const [localFormat, setLocalFormat] = useState<ResponseBodyMode>(() =>
+    formatControl?.value ?? (bodyEncoding === 'text' ? detectBodyMode(headers, body.kind === 'inline' ? body.body : body.preview) : 'text'),
   )
+  const selectedFormat = formatControl?.value ?? localFormat
   const [htmlPreview, setHtmlPreview] = useState(true)
 
-  // `bodyEncoding` já veio decidido do backend (Content-Type real da
-  // resposta, ver ADR 0009) — mais confiável que o frontend re-adivinhar
-  // pelo corpo, então isto vem antes de qualquer seleção de formato.
+  // The backend determines `bodyEncoding` using the actual response Content-Type
+  // (ADR 0009), which takes precedence over frontend format selection.
   if (bodyEncoding === 'base64') {
     const contentType = contentTypeOf(headers) ?? 'image/*'
     if (body.kind === 'windowed') {
@@ -467,7 +460,7 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
 
   const toolbar = (
     <div className="rw-response-format-toolbar">
-      <FormatSelector value={selectedFormat} onChange={setSelectedFormat} />
+      <FormatSelector value={selectedFormat} onChange={formatControl?.onChange ?? setLocalFormat} />
       {selectedFormat === 'html' && <PreviewToggle isOn={htmlPreview} onToggle={() => setHtmlPreview((current) => !current)} />}
     </div>
   )
@@ -476,8 +469,8 @@ export function ResponseBody({ body, bodyEncoding, headers, onCaptureValue, moni
     return (
       <div className="rw-code-block-wrapper">
         {toolbar}
-        {/* `key`: o texto acumulado pertence a este corpo; outro handle (outra
-            aba, outro envio) começa do seu próprio preview, nunca do anterior. */}
+        {/* Accumulated text belongs to this body; another handle (tab or send)
+            starts from its own preview. */}
         <WindowedTextBody
           key={body.handle}
           handle={body.handle}

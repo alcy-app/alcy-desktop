@@ -1690,7 +1690,7 @@ describe('RequestWorkbench', () => {
     expect(screen.getAllByRole('button', { name: 'Ver detalhes da requisição' })).toHaveLength(1)
   })
 
-  it('copia o corpo da resposta ao clicar no botão de copiar', async () => {
+  it('copies the displayed response formatting when the copy button is clicked', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
 
@@ -1726,7 +1726,7 @@ describe('RequestWorkbench', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Copiar resposta' }))
 
-    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('{"data":{}}'))
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('{\n  "data": {}\n}'))
     expect(await screen.findByText('Resposta copiada.')).toBeInTheDocument()
 
     vi.unstubAllGlobals()
@@ -2713,7 +2713,7 @@ describe('RequestWorkbench', () => {
 
         fireEvent.click(addRequestButton())
         const types = screen.getByRole('listbox', { name: 'Tipos de requisição' })
-        // HTTP → GraphQL → gRPC → WebSocket → Criar Collection.
+        // HTTP → GraphQL → gRPC → WebSocket → Create Collection.
         fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
         fireEvent.keyDown(types, { key: 'ArrowDown' })
