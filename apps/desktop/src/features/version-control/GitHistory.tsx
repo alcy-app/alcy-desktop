@@ -116,7 +116,7 @@ export function GitHistory({ rootPath, vc, reloadKey, state, onReview }: GitHist
       </button>
       <GitRemoteActions rootPath={rootPath} vc={vc} state={state} />
     </header>
-    {open && <>
+    {open && <div className="vc-history-body">
       {error && <InlineAlert>{error}</InlineAlert>}
       {loading && <p className="vc-section-empty" role="status">{t('vc.history.loading')}</p>}
       {current && current.commits.length === 0 && <p className="vc-section-empty">{t('vc.history.empty')}</p>}
@@ -142,7 +142,7 @@ export function GitHistory({ rootPath, vc, reloadKey, state, onReview }: GitHist
         })}
       </ol>}
       {current && current.nextOffset !== null && <Button variant="ghost" isLoading={loadingMore} onClick={() => void loadMore(current)}>{t('vc.history.loadMore')}</Button>}
-    </>}
+    </div>}
   </section>
 }
 

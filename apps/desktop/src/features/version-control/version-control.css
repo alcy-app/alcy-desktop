@@ -497,9 +497,11 @@
 /* In the sidebar, changes and graph are two panes that scroll on their own. */
 .vc-sidebar-panel .vc-linked-body--git { padding: 0; overflow: hidden; }
 .vc-sidebar-panel .vc-linked-body--git .vc-linked-changes { flex: 1 1 45%; min-height: 0; padding: 10px 12px 12px; overflow-y: auto; }
-.vc-sidebar-panel .vc-linked-body--git .vc-history { display: flex; flex: 1 1 55%; min-height: 0; flex-direction: column; padding: 0 12px var(--space-2); overflow-y: auto; }
-.vc-sidebar-panel .vc-linked-body--git .vc-history:has(> .vc-section-header [aria-expanded="false"]) { flex: none; padding-bottom: 0; }
-.vc-sidebar-panel .vc-linked-body--git .vc-history > .vc-section-header { position: sticky; z-index: var(--z-raised); top: 0; flex: none; background: var(--surface); }
+/* The header stays out of the scroller: inside it, a commit scrolled past the top showed above the header. */
+.vc-sidebar-panel .vc-linked-body--git .vc-history { display: flex; flex: 1 1 55%; min-height: 0; flex-direction: column; overflow: hidden; }
+.vc-sidebar-panel .vc-linked-body--git .vc-history:has(> .vc-section-header [aria-expanded="false"]) { flex: none; }
+.vc-sidebar-panel .vc-linked-body--git .vc-history > .vc-section-header { position: relative; z-index: var(--z-raised); flex: none; padding: 0 12px; background: var(--surface); }
+.vc-sidebar-panel .vc-linked-body--git .vc-history-body { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 0 12px var(--space-2); overflow-y: auto; }
 .vc-history-files { margin: 0 0 var(--space-2); padding: 0 0 0 var(--space-3); list-style: none; }
 .vc-history-file-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .vc-history-file-toggle { display: flex; min-width: 0; align-items: center; gap: var(--space-1); padding: 2px 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--font-size-sm); }
