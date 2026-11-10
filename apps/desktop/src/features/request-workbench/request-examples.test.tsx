@@ -101,14 +101,14 @@ describe('examples in the collection tree', () => {
 })
 
 describe('saving a response as an example', () => {
-  const success = (body: Record<string, unknown>, bodyEncoding: string): ExecutionState =>
+  const success = (body: Record<string, unknown>, bodyEncoding: string, contentType = 'application/json'): ExecutionState =>
     ({
       status: 'success',
-      result: { statusCode: 201, body, bodyEncoding, headers: [{ name: 'Content-Type', value: 'application/json' }] },
+      result: { statusCode: 201, body, bodyEncoding, headers: [{ name: 'Content-Type', value: contentType }] },
     }) as unknown as ExecutionState
 
-  it('copies status, headers and body and detects the language', () => {
-    expect(exampleResponseFromExecution(success({ kind: 'inline', body: '{}' }, 'text'))).toEqual({
+  it('copies status, headers and body and detects the language', async () => {
+    expect(await exampleResponseFromExecution(success({ kind: 'inline', body: '{}' }, 'text'))).toEqual({
       statusCode: 201,
       headers: [{ name: 'Content-Type', value: 'application/json', enabled: true }],
       body: '{}',
@@ -116,10 +116,25 @@ describe('saving a response as an example', () => {
     })
   })
 
-  it('refuses bodies that are binary or not fully in memory', () => {
-    expect(exampleResponseFromExecution(success({ kind: 'inline', body: 'AAAA' }, 'base64'))).toBeNull()
-    expect(exampleResponseFromExecution(success({ kind: 'windowed', handle: 'h' }, 'text'))).toBeNull()
-    expect(exampleResponseFromExecution({ status: 'idle' })).toBeNull()
+  it.each([
+    ['application/json', '{"user":{"name":"Ana"},"items":[1,2]}', '{\n  "user": {\n    "name": "Ana"\n  },\n  "items": [\n    1,\n    2\n  ]\n}', 'json'],
+    ['application/xml', '<root><name>Ana</name></root>', '<root>\n  <name>Ana</name>\n</root>', 'xml'],
+    ['text/plain', 'first line\n  second line', 'first line\n  second line', 'text'],
+    ['text/html', '<html><body>Hello</body></html>', '<html><body>Hello</body></html>', 'html'],
+    ['application/json', '{invalid json', '{invalid json', 'json'],
+  ])('saves the displayed formatting for %s bodies', async (contentType, body, formatted, language) => {
+    const response = await exampleResponseFromExecution(success({ kind: 'inline', body }, 'text', contentType))
+
+    expect(response?.body).toBe(formatted)
+    expect(response?.language).toBe(language)
+    const saved = createExample('e1', 'Formatted', emptyRequestContent('rest'), response!)
+    expect(requestFromDto(requestToDto(request([saved]))).examples?.[0].response.body).toBe(formatted)
+  })
+
+  it('refuses bodies that are binary or not fully in memory', async () => {
+    expect(await exampleResponseFromExecution(success({ kind: 'inline', body: 'AAAA' }, 'base64'))).toBeNull()
+    expect(await exampleResponseFromExecution(success({ kind: 'windowed', handle: 'h' }, 'text'))).toBeNull()
+    expect(await exampleResponseFromExecution({ status: 'idle' })).toBeNull()
   })
 })
 

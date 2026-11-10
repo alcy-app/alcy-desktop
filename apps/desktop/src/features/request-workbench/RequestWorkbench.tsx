@@ -1091,15 +1091,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     else void handleSend()
   }
 
-  const saveResponseAsExample = () => {
+  const saveResponseAsExample = async () => {
     const tab = workbench.activeTab
     if (!tab.requestId) return
-    const response = exampleResponseFromExecution(tab.execution)
+    const content = workbench.contentOfTab(tab.id)
+    const response = await exampleResponseFromExecution(tab.execution)
     if (!response) {
       showToast(t('toasts.exampleResponseNotSavable'), 'error')
       return
     }
-    const example = collections.addExample(tab.requestId, workbench.contentOfTab(tab.id), response)
+    const example = collections.addExample(tab.requestId, content, response)
     if (example) workbench.openExample(tab.requestId, example, false)
   }
   // Stable for the memoized response panel, calling the latest version.
@@ -1107,7 +1108,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   useEffect(() => {
     saveResponseAsExampleRef.current = saveResponseAsExample
   })
-  const handleSaveResponseAsExample = useCallback(() => saveResponseAsExampleRef.current(), [])
+  const handleSaveResponseAsExample = useCallback(() => { void saveResponseAsExampleRef.current() }, [])
 
   const agentHost = useAgentHost({
     workspaceRootPath: workspace.rootPath,
