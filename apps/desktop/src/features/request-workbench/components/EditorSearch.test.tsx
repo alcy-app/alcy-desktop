@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import { undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { fireEvent, render, screen } from '../../../test-utils'
 import { RequestBodyPanel } from './RequestBodyPanel'
@@ -130,6 +131,130 @@ describe('EditorSearch', () => {
     expect(input).toHaveValue('alphabet')
     expect(input).toHaveFocus()
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'alphabet'.length])
+  })
+
+  describe('replace', () => {
+    function openReplace(query: string) {
+      const editor = screen.getByRole('textbox', { name: 'Corpo da requisição' })
+      fireEvent.keyDown(editor, { key: 'h', ctrlKey: true })
+      fireEvent.change(screen.getByRole('textbox', { name: 'Texto para localizar' }), { target: { value: query } })
+      return { editor, replaceInput: screen.getByRole('textbox', { name: 'Texto de substituição' }) }
+    }
+
+    it('replaces the active match and moves on to the next one', () => {
+      render(<EditableRequestBody />)
+      const { editor, replaceInput } = openReplace('alpha')
+      fireEvent.change(replaceInput, { target: { value: 'beta' } })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Substituir' }))
+      expect(editor.textContent).toBe('beta alpha alphabet')
+      expect(screen.getByText('1 de 2')).toBeInTheDocument()
+
+      fireEvent.keyDown(replaceInput, { key: 'Enter' })
+      expect(editor.textContent).toBe('beta beta alphabet')
+    })
+
+    it('does not replace its own replacement when it contains the query', () => {
+      render(<EditableRequestBody />)
+      const { editor, replaceInput } = openReplace('alpha')
+      fireEvent.change(replaceInput, { target: { value: 'alpha!' } })
+
+      fireEvent.keyDown(replaceInput, { key: 'Enter' })
+      fireEvent.keyDown(replaceInput, { key: 'Enter' })
+
+      expect(editor.textContent).toBe('alpha! alpha! alphabet')
+    })
+
+    it('replaces everything in one step that a single undo brings back', () => {
+      const { container } = render(<EditableRequestBody />)
+      const { editor, replaceInput } = openReplace('alpha')
+      fireEvent.change(replaceInput, { target: { value: 'beta' } })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Substituir tudo' }))
+      expect(editor.textContent).toBe('beta beta betabet')
+      expect(screen.getByText('Nenhum resultado')).toBeInTheDocument()
+
+      const view = EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)!
+      undo(view)
+      expect(editor.textContent).toBe('Alpha alpha alphabet')
+    })
+
+    it('expands capture groups only with the regular expression option', () => {
+      render(<EditableRequestBody />)
+      const { editor, replaceInput } = openReplace('(al)pha')
+      fireEvent.click(screen.getByRole('button', { name: 'Usar expressão regular' }))
+      fireEvent.change(replaceInput, { target: { value: '$1' } })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Substituir tudo' }))
+
+      expect(editor.textContent).toBe('Al al albet')
+    })
+
+    it('keeps the case of what it replaces with preserve case on', () => {
+      render(<EditableRequestBody />)
+      const { editor, replaceInput } = openReplace('alpha')
+      fireEvent.click(screen.getByRole('button', { name: 'Preservar maiúsculas e minúsculas' }))
+      fireEvent.change(replaceInput, { target: { value: 'beta' } })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Substituir tudo' }))
+
+      expect(editor.textContent).toBe('Beta beta betabet')
+    })
+
+    it('limits the search and the replacement to the selection', () => {
+      const { container } = render(<EditableRequestBody />)
+      const { editor, replaceInput } = openReplace('alpha')
+      const view = EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)!
+      view.dispatch({ selection: { anchor: 6, head: 20 } })
+      fireEvent.change(replaceInput, { target: { value: 'b' } })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Localizar na seleção' }))
+      expect(screen.getByText('1 de 2')).toBeInTheDocument()
+      expect(container.querySelectorAll('.cm-editor-search-scope').length).toBeGreaterThan(0)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Substituir tudo' }))
+      expect(editor.textContent).toBe('Alpha b bbet')
+    })
+
+    it('opens the replace row from the toggle and disables its actions without results', () => {
+      render(<EditableRequestBody />)
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Corpo da requisição' }), { key: 'f', ctrlKey: true })
+      expect(screen.queryByRole('textbox', { name: 'Texto de substituição' })).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Mostrar substituição' }))
+
+      expect(screen.getByRole('textbox', { name: 'Texto de substituição' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Substituir' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Substituir tudo' })).toBeDisabled()
+    })
+
+    it('focuses the replacement with Ctrl+H over a selection and the query without one', () => {
+      const { container } = render(<EditableRequestBody />)
+      const editor = screen.getByRole('textbox', { name: 'Corpo da requisição' })
+
+      fireEvent.keyDown(editor, { key: 'h', ctrlKey: true })
+      expect(screen.getByRole('textbox', { name: 'Texto para localizar' })).toHaveFocus()
+
+      const view = EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)!
+      view.dispatch({ selection: { anchor: 6, head: 11 } })
+      editor.focus()
+      fireEvent.keyDown(editor, { key: 'h', ctrlKey: true })
+
+      expect(screen.getByRole('textbox', { name: 'Texto para localizar' })).toHaveValue('alpha')
+      expect(screen.getByRole('textbox', { name: 'Texto de substituição' })).toHaveFocus()
+    })
+
+    it('is not offered in the read-only response', () => {
+      render(<ResponseCodeView text="Alpha alpha alphabet" language="none" />)
+      const editor = screen.getByRole('textbox', { name: 'Corpo da resposta' })
+
+      fireEvent.keyDown(editor, { key: 'h', ctrlKey: true })
+      expect(screen.queryByRole('textbox', { name: 'Texto para localizar' })).not.toBeInTheDocument()
+
+      fireEvent.keyDown(editor, { key: 'f', ctrlKey: true })
+      expect(screen.getByRole('textbox', { name: 'Texto para localizar' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Mostrar substituição' })).not.toBeInTheDocument()
+    })
   })
 
   it('keeps the previous query when the selection spans lines', () => {

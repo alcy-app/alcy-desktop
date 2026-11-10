@@ -522,6 +522,31 @@ export function SelectionIcon(props: IconProps) {
   )
 }
 
+/** One block of text turned into another, for replacing a search result. */
+export function ReplaceIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="2" y="2.5" width="6" height="4" rx="1" />
+      <rect x="8" y="9.5" width="6" height="4" rx="1" />
+      <path d="M10.5 4.5h1a1.5 1.5 0 0 1 1.5 1.5v1.5" />
+      <path d="M11.5 6.25 13 7.75l1.5-1.5" />
+    </svg>
+  )
+}
+
+/** Several blocks of text turned into another, for replacing every search result. */
+export function ReplaceAllIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <rect x="2" y="2" width="6" height="3" rx="1" />
+      <rect x="2" y="7" width="6" height="3" rx="1" />
+      <rect x="8" y="10.5" width="6" height="3.5" rx="1" />
+      <path d="M10.5 3.5h1a1.5 1.5 0 0 1 1.5 1.5v3" />
+      <path d="M11.5 6.75 13 8.25l1.5-1.5" />
+    </svg>
+  )
+}
+
 export function SparkleIcon(props: IconProps) {
   return (
     <svg {...svgProps(props)}>

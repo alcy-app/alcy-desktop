@@ -15,7 +15,6 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Em uma pasta compartilhada, cada pessoa tem o próprio valor das variáveis sensíveis. Quem ainda não preencheu vê o campo vazio, sem aviso, e alterar o valor não afeta os colegas.
 
 ## [0.10.0] - 2026-11-08
-- Localizar e substituir nos editores de requisição: troque uma ocorrência ou todas de uma vez, inclusive só dentro do texto selecionado.
 
 ### Added
 
@@ -24,6 +23,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Aparência "Padrão do sistema"**: em Configurações › Aparência, o Alcy pode seguir o tema claro ou escuro do sistema operacional.
 - **Comentários no body JSON**: comente trechos do body com Ctrl+/ ou Ctrl+; (uma linha vira `//`, várias viram um bloco `/* */`).
 - Exporte e importe flows em arquivos Alcy, mantendo as referências ou incorporando requisições e variáveis no próprio flow.
+- Localizar e substituir nos editores de requisição: troque uma ocorrência ou todas de uma vez, inclusive só dentro do texto selecionado.
 
 ### Changed
 
