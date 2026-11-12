@@ -34,10 +34,13 @@ impl WorkspaceFiles for DiskFiles {
         }
     }
     fn write(&self, name: &str, content: &[u8]) -> Result<(), String> {
-        std::fs::write(self.0.join(name), content).map_err(|error| error.to_string())
+        DiskWorkspaceFiles::new(self.0.clone()).write(name, content)
     }
     fn delete(&self, name: &str) -> Result<(), String> {
-        std::fs::remove_file(self.0.join(name)).map_err(|error| error.to_string())
+        DiskWorkspaceFiles::new(self.0.clone()).delete(name)
+    }
+    fn list(&self, folder: &str) -> Result<Vec<String>, String> {
+        DiskWorkspaceFiles::new(self.0.clone()).list(folder)
     }
 }
 
@@ -931,4 +934,206 @@ async fn a_folder_with_versioned_environments_takes_pushes_and_keeps_its_secrets
         variable_value(&bia.root, &bia_secrets, "token"),
         "bia-secret"
     );
+}
+
+const ENVIRONMENTS: &str = "alcy-environments.json";
+
+/// Three environments sharing a name, as "New environment" leaves them.
+fn three_environments() -> EnvironmentsSnapshot {
+    let environments = (1..=3)
+        .map(|index| {
+            let variables = vec![
+                EnvironmentVariable::new("baseUrl", format!("https://{index}"), false).unwrap(),
+            ];
+            alcy_domain::Environment::new(format!("env-{index}"), "New environment", variables)
+                .unwrap()
+        })
+        .collect();
+    EnvironmentsSnapshot {
+        environments,
+        active_environment_id: Some("env-1".to_string()),
+    }
+}
+
+fn environment_ids(root: &Path, secrets: &LocalSecrets) -> Vec<String> {
+    EnvironmentStore::new(root.to_path_buf(), secrets.clone())
+        .load()
+        .unwrap()
+        .snapshot
+        .environments
+        .into_iter()
+        .map(|environment| environment.id)
+        .collect()
+}
+
+/// What turning environment versioning on does to a linked workspace.
+async fn version_environments_of(workspace: &mut Workspace) {
+    workspace.link.include_environments = true;
+    init_workspace(&workspace.root, "main", &workspace.link.tracked_files()).unwrap();
+    workspace.status().await;
+}
+
+#[tokio::test]
+async fn every_environment_reaches_a_clone_once_they_are_versioned() {
+    let keys = tempfile::tempdir().unwrap();
+    let secrets = personal_secrets(keys.path());
+    let origin = origin("main");
+    let mut ana = seeded("Ana");
+    set_remote(&ana.root, Some(&origin.path().to_string_lossy()))
+        .await
+        .unwrap();
+    EnvironmentStore::new(ana.root.clone(), secrets.clone())
+        .save(&three_environments())
+        .unwrap();
+    ana.commit("Initial").await;
+    push(&ana.root).await.unwrap();
+    // Unversioned, a clone only gets the default environment.
+    let before = Workspace::cloned("Bia", origin.path()).await;
+    assert!(!before.root.join(ENVIRONMENTS).exists());
+
+    version_environments_of(&mut ana).await;
+    let gitignore = std::fs::read_to_string(ana.root.join(".gitignore")).unwrap();
+    assert!(gitignore.contains("!/alcy-environments.json"));
+    assert_eq!(
+        state(&ana.status().await, ENVIRONMENTS),
+        FileState::LocalAdded
+    );
+    assert_eq!(state(&ana.status().await, COLLECTIONS), FileState::Clean);
+    ana.commit("Environments").await;
+    push(&ana.root).await.unwrap();
+
+    let bia = Workspace::cloned("Bia", origin.path()).await;
+    assert!(bia.link.tracked_files().contains(&ENVIRONMENTS));
+    assert_eq!(
+        environment_ids(&bia.root, &secrets),
+        ["env-1", "env-2", "env-3"]
+    );
+}
+
+#[tokio::test]
+async fn a_merge_by_someone_who_does_not_version_environments_keeps_them() {
+    let keys = tempfile::tempdir().unwrap();
+    let secrets = personal_secrets(keys.path());
+    let origin = origin("main");
+    let mut ana = seeded("Ana");
+    set_remote(&ana.root, Some(&origin.path().to_string_lossy()))
+        .await
+        .unwrap();
+    ana.commit("Initial").await;
+    push(&ana.root).await.unwrap();
+    // Bia joined before Ana started versioning the environments.
+    let mut bia = Workspace::cloned("Bia", origin.path()).await;
+    assert!(!bia.link.include_environments);
+
+    EnvironmentStore::new(ana.root.clone(), secrets.clone())
+        .save(&three_environments())
+        .unwrap();
+    version_environments_of(&mut ana).await;
+    ana.commit("Environments").await;
+    push(&ana.root).await.unwrap();
+
+    bia.write(
+        COLLECTIONS,
+        &collections(json!([
+            { "id": "r1", "name": "Login", "url": "/bia" },
+            { "id": "r2", "name": "Users", "url": "/users" }
+        ])),
+    );
+    bia.commit("Bia's change").await;
+    assert_eq!(bia.pull().await.unwrap().0, Integration::Merged);
+    assert!(versions_environments(&bia.root).unwrap());
+    assert!(!bia.root.join(ENVIRONMENTS).exists());
+    push(&bia.root).await.unwrap();
+
+    assert_eq!(ana.pull().await.unwrap().0, Integration::FastForward);
+    assert_eq!(request_url(&ana, "r1").as_deref(), Some("/bia"));
+    assert_eq!(
+        environment_ids(&ana.root, &secrets),
+        ["env-1", "env-2", "env-3"]
+    );
+}
+
+const DOCUMENT: &str = "alcy-documents/doc-1/document.json";
+const DATASET: &str = "alcy-flow-assets/flow-1/users.csv";
+const MOCKS: &str = "alcy-mock-servers.json";
+
+fn text(workspace: &Workspace, name: &str) -> Option<String> {
+    workspace
+        .files
+        .read(name)
+        .unwrap()
+        .map(|bytes| String::from_utf8(bytes).unwrap())
+}
+
+#[tokio::test]
+async fn documents_datasets_and_mock_servers_travel_with_the_workspace() {
+    let origin = origin("main");
+    let mut ana = seeded("Ana");
+    set_remote(&ana.root, Some(&origin.path().to_string_lossy()))
+        .await
+        .unwrap();
+    ana.files.write(DOCUMENT, br#"{"title":"Guide"}"#).unwrap();
+    ana.files.write(DATASET, b"id\n1\n").unwrap();
+    ana.write(MOCKS, &json!({ "version": 1, "servers": [] }));
+    std::fs::write(ana.root.join("alcy-documents/doc-1/.draft"), "local").unwrap();
+    let gitignore = std::fs::read_to_string(ana.root.join(".gitignore")).unwrap();
+    assert!(gitignore.contains("!/alcy-documents/"));
+    assert!(gitignore.contains("!/alcy-flow-assets/"));
+    assert!(gitignore.contains("!/alcy-mock-servers.json"));
+
+    let status = ana.status().await;
+    for name in [DOCUMENT, DATASET, MOCKS] {
+        assert_eq!(state(&status, name), FileState::LocalAdded, "{name}");
+    }
+    assert!(!status.files.iter().any(|file| file.name.contains(".draft")));
+    ana.commit("Initial").await;
+    push(&ana.root).await.unwrap();
+    assert!(index_paths(&ana.root).contains(&DATASET.to_string()));
+    assert!(
+        history(&ana.root, 0, 1).unwrap().commits[0]
+            .files
+            .contains(&DOCUMENT.to_string())
+    );
+
+    let mut bia = Workspace::cloned("Bia", origin.path()).await;
+    assert_eq!(
+        text(&bia, DOCUMENT).as_deref(),
+        Some(r#"{"title":"Guide"}"#)
+    );
+    assert_eq!(text(&bia, DATASET).as_deref(), Some("id\n1\n"));
+    assert!(bia.root.join(MOCKS).is_file());
+    assert!(!bia.root.join("alcy-documents/doc-1/.draft").exists());
+    assert_eq!(state(&bia.status().await, DATASET), FileState::Clean);
+
+    // Each side changes a different folder file; the pull merges both, and a
+    // file deleted on one side goes away on the other.
+    let second = "alcy-documents/doc-2/document.json";
+    ana.files.write(second, b"{}").unwrap();
+    ana.files.delete(DATASET).unwrap();
+    ana.commit("Ana's document").await;
+    push(&ana.root).await.unwrap();
+    bia.files.write(DOCUMENT, br#"{"title":"Bia"}"#).unwrap();
+    bia.commit("Bia's edit").await;
+    let (integration, files) = bia.pull().await.unwrap();
+    assert_eq!(integration, Integration::Merged);
+    assert!(files.contains(&second.to_string()) && files.contains(&DATASET.to_string()));
+    assert_eq!(text(&bia, second).as_deref(), Some("{}"));
+    assert_eq!(text(&bia, DOCUMENT).as_deref(), Some(r#"{"title":"Bia"}"#));
+    assert!(!bia.root.join("alcy-flow-assets/flow-1").exists());
+    push(&bia.root).await.unwrap();
+    assert_eq!(ana.pull().await.unwrap().0, Integration::FastForward);
+    assert_eq!(text(&ana, DOCUMENT).as_deref(), Some(r#"{"title":"Bia"}"#));
+
+    // Switching branches swaps the folder files too.
+    create_branch(&bia.root, "draft").unwrap();
+    let applied = checkout(&bia.root, &bia.files, &bia.link, "draft").unwrap();
+    bia.link = applied.link;
+    bia.files.write(DATASET, b"id\n2\n").unwrap();
+    bia.commit("Dataset on draft").await;
+    let applied = checkout(&bia.root, &bia.files, &bia.link, "main").unwrap();
+    bia.link = applied.link;
+    assert!(text(&bia, DATASET).is_none());
+    let applied = checkout(&bia.root, &bia.files, &bia.link, "draft").unwrap();
+    bia.link = applied.link;
+    assert_eq!(text(&bia, DATASET).as_deref(), Some("id\n2\n"));
 }

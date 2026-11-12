@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::StorageError;
 
-pub const MOCK_SERVERS_FILE: &str = "alcy-mock-servers.json";
+pub use alcy_domain::MOCK_SERVERS_FILE;
 const VERSION: u32 = 1;
 
 pub struct MockServerStore {

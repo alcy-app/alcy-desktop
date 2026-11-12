@@ -8,7 +8,8 @@ use std::path::Path;
 
 use alcy_app::{CommitAction, FileMerge, WorkspaceFiles, content_hash, merge_file};
 use alcy_domain::{
-    FileState, GitIdentity, MANIFEST_FILE, WorkspaceLink, classify, is_valid_branch_name,
+    ENVIRONMENTS_FILE, FileState, GitIdentity, MANIFEST_FILE, WorkspaceLink, classify,
+    is_valid_branch_name,
 };
 use gix::ObjectId;
 use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog};
@@ -17,8 +18,8 @@ use gix::refs::{FullName, Target};
 use crate::merge_state::MergeState;
 use crate::remote::apply_actions;
 use crate::repo::{
-    blob_at, branch_exists, commit_tree, file_at, head, is_ancestor, move_branch, write_commit,
-    write_index,
+    blob_at, branch_exists, commit_tree, file_at, head, is_ancestor, move_branch, tracked_in,
+    write_commit, write_index,
 };
 use crate::{GitError, branch_ref, open_workspace, ref_target, rejected};
 
@@ -68,12 +69,12 @@ fn dirty<F: WorkspaceFiles>(
     repo: &gix::Repository,
     files: &F,
     tree: Option<ObjectId>,
-    names: &[&str],
+    names: &[String],
 ) -> Result<Vec<String>, GitError> {
     let mut changed = Vec::new();
     for name in names {
         if read_local(files, name)? != file_at(repo, tree, name)? {
-            changed.push((*name).to_string());
+            changed.push(name.clone());
         }
     }
     Ok(changed)
@@ -83,7 +84,7 @@ fn require_clean<F: WorkspaceFiles>(
     repo: &gix::Repository,
     files: &F,
     tree: Option<ObjectId>,
-    names: &[&str],
+    names: &[String],
 ) -> Result<(), GitError> {
     let changed = dirty(repo, files, tree, names)?;
     if changed.is_empty() {
@@ -98,12 +99,12 @@ fn changed_between(
     repo: &gix::Repository,
     a: Option<ObjectId>,
     b: Option<ObjectId>,
-    tracked: &[&'static str],
-) -> Result<Vec<&'static str>, GitError> {
+    tracked: &[String],
+) -> Result<Vec<String>, GitError> {
     let mut changed = Vec::new();
-    for &name in tracked {
+    for name in tracked {
         if blob_at(repo, a, name)? != blob_at(repo, b, name)? {
-            changed.push(name);
+            changed.push(name.clone());
         }
     }
     Ok(changed)
@@ -176,7 +177,7 @@ pub fn checkout<F: WorkspaceFiles>(
     }
     let current_tree = head.map(|head| commit_tree(&repo, head)).transpose()?;
     let target_tree = Some(commit_tree(&repo, target)?);
-    let tracked = link.tracked_files();
+    let tracked = tracked_in(&repo, &link, &[current_tree, target_tree])?;
     let changed = changed_between(&repo, current_tree, target_tree, &tracked)?;
     require_clean(&repo, files, current_tree, &changed)?;
 
@@ -200,7 +201,7 @@ pub fn checkout<F: WorkspaceFiles>(
         write_index(&repo, tree)?;
     }
     Ok(Applied {
-        files: changed.iter().map(|name| (*name).to_string()).collect(),
+        files: changed,
         link,
     })
 }
@@ -257,6 +258,34 @@ fn action_for(path: &str, exists: bool, content: Option<&[u8]>) -> Option<Commit
     }
 }
 
+/// The environments in the merge commit when this link leaves them out:
+/// someone else versions them, so the commit takes their side whenever ours
+/// did not change them. The file on disk is not touched. Without this the
+/// merge tree, built from ours, would drop the file, and the next pull would
+/// delete the environments of whoever versions them.
+fn untracked_environments(
+    repo: &gix::Repository,
+    link: &WorkspaceLink,
+    base_tree: Option<ObjectId>,
+    ours_tree: Option<ObjectId>,
+    theirs_tree: Option<ObjectId>,
+) -> Result<Option<CommitAction>, GitError> {
+    if link.include_environments {
+        return Ok(None);
+    }
+    let ours = blob_at(repo, ours_tree, ENVIRONMENTS_FILE)?;
+    let theirs = blob_at(repo, theirs_tree, ENVIRONMENTS_FILE)?;
+    if ours == theirs || blob_at(repo, base_tree, ENVIRONMENTS_FILE)? != ours {
+        return Ok(None);
+    }
+    let content = file_at(repo, theirs_tree, ENVIRONMENTS_FILE)?;
+    Ok(action_for(
+        ENVIRONMENTS_FILE,
+        ours.is_some(),
+        content.as_deref(),
+    ))
+}
+
 /// Work to bring into the current branch.
 pub(crate) struct Incoming<'a> {
     pub commit: ObjectId,
@@ -284,7 +313,6 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
         adopt_fresh,
     } = incoming;
     let mut link = link.clone();
-    let tracked = link.tracked_files();
     let (name, ours) = head(repo)?;
     let unchanged = |link| {
         Ok((
@@ -308,6 +336,7 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
         Some(ours) => is_ancestor(repo, ours, theirs)?,
     };
     if fast_forward {
+        let tracked = tracked_in(repo, &link, &[ours_tree, theirs_tree])?;
         let changed = changed_between(repo, ours_tree, theirs_tree, &tracked)?;
         // A fresh workspace with no commits takes the incoming work as is.
         if !(adopt_fresh && ours.is_none()) {
@@ -324,7 +353,7 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
         return Ok((
             Integration::FastForward,
             Applied {
-                files: changed.iter().map(|name| (*name).to_string()).collect(),
+                files: changed,
                 link,
             },
         ));
@@ -335,19 +364,20 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
     let base_tree = base
         .map(|base| commit_tree(repo, base.detach()))
         .transpose()?;
-    let mut merged: BTreeMap<&'static str, Option<Vec<u8>>> = BTreeMap::new();
-    let mut conflicts: Vec<&'static str> = Vec::new();
-    let mut base_versions: BTreeMap<&'static str, Option<Vec<u8>>> = BTreeMap::new();
-    let mut theirs_versions: BTreeMap<&'static str, Option<Vec<u8>>> = BTreeMap::new();
-    for &name in &tracked {
-        let ours_content = file_at(repo, ours_tree, name)?;
-        let theirs_content = file_at(repo, theirs_tree, name)?;
+    let tracked = tracked_in(repo, &link, &[base_tree, ours_tree, theirs_tree])?;
+    let mut merged: BTreeMap<String, Option<Vec<u8>>> = BTreeMap::new();
+    let mut conflicts: Vec<String> = Vec::new();
+    let mut base_versions: BTreeMap<String, Option<Vec<u8>>> = BTreeMap::new();
+    let mut theirs_versions: BTreeMap<String, Option<Vec<u8>>> = BTreeMap::new();
+    for name in tracked {
+        let ours_content = file_at(repo, ours_tree, &name)?;
+        let theirs_content = file_at(repo, theirs_tree, &name)?;
         if ours_content == theirs_content {
             continue;
         }
-        let base_content = file_at(repo, base_tree, name)?;
+        let base_content = file_at(repo, base_tree, &name)?;
         match merge_file(
-            name,
+            &name,
             base_content.as_deref(),
             ours_content.as_deref(),
             theirs_content.as_deref(),
@@ -358,17 +388,13 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
                 }
             }
             FileMerge::Conflict => {
+                base_versions.insert(name.clone(), base_content);
+                theirs_versions.insert(name.clone(), theirs_content);
                 conflicts.push(name);
-                base_versions.insert(name, base_content);
-                theirs_versions.insert(name, theirs_content);
             }
         }
     }
-    let touched: Vec<&'static str> = merged
-        .keys()
-        .copied()
-        .chain(conflicts.iter().copied())
-        .collect();
+    let touched: Vec<String> = merged.keys().chain(conflicts.iter()).cloned().collect();
     require_clean(repo, files, ours_tree, &touched)?;
 
     let mut actions = Vec::new();
@@ -381,6 +407,13 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
         let theirs_content = theirs_versions.get(name).cloned().flatten();
         actions.extend(action_for(name, exists, theirs_content.as_deref()));
     }
+    actions.extend(untracked_environments(
+        repo,
+        &link,
+        base_tree,
+        ours_tree,
+        theirs_tree,
+    )?);
     let merge_tree = apply_actions(repo, ours_tree, &actions)?;
 
     if conflicts.is_empty() {
@@ -394,7 +427,7 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
         return Ok((
             Integration::Merged,
             Applied {
-                files: merged.keys().map(|name| (*name).to_string()).collect(),
+                files: merged.keys().cloned().collect(),
                 link,
             },
         ));
@@ -404,8 +437,8 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
         theirs,
         label: label.to_string(),
         merge_tree,
-        files: touched.iter().map(|name| (*name).to_string()).collect(),
-        conflicts: conflicts.iter().map(|name| (*name).to_string()).collect(),
+        files: touched,
+        conflicts: conflicts.clone(),
     }
     .save(repo.git_dir())?;
     for (name, content) in &merged {
@@ -417,17 +450,17 @@ pub(crate) fn integrate<F: WorkspaceFiles>(
     for name in &conflicts {
         match base_versions.get(name).cloned().flatten() {
             Some(bytes) => {
-                link.base.insert((*name).to_string(), content_hash(&bytes));
+                link.base.insert(name.clone(), content_hash(&bytes));
             }
             None => {
-                link.base.remove(*name);
+                link.base.remove(name);
             }
         }
     }
     Ok((
-        Integration::Conflicts(conflicts.iter().map(|name| (*name).to_string()).collect()),
+        Integration::Conflicts(conflicts),
         Applied {
-            files: merged.keys().map(|name| (*name).to_string()).collect(),
+            files: merged.keys().cloned().collect(),
             link,
         },
     ))

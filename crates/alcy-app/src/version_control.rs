@@ -8,7 +8,9 @@
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 
-use alcy_domain::{FileState, MANIFEST_FILE, WorkspaceLink, classify};
+use alcy_domain::{
+    FileState, MANIFEST_FILE, VERSIONED_FOLDERS, WorkspaceLink, classify, is_versioned_folder_file,
+};
 use futures_util::future::try_join_all;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -81,6 +83,12 @@ pub trait RemoteRepository {
         path: &str,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, RemoteError>> + Send;
 
+    /// Files under `folder` (a root folder name), as `folder/…/file` paths.
+    fn list_files(
+        &self,
+        folder: &str,
+    ) -> impl Future<Output = Result<Vec<String>, RemoteError>> + Send;
+
     /// Grava todas as ações num único commit e devolve o id dele.
     fn commit(
         &self,
@@ -94,6 +102,9 @@ pub trait WorkspaceFiles {
     fn read(&self, name: &str) -> Result<Option<Vec<u8>>, String>;
     fn write(&self, name: &str, content: &[u8]) -> Result<(), String>;
     fn delete(&self, name: &str) -> Result<(), String>;
+    /// Files under `folder` (a root folder name), as `folder/…/file` paths;
+    /// empty when the folder does not exist.
+    fn list(&self, folder: &str) -> Result<Vec<String>, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -269,7 +280,7 @@ pub fn content_hash(bytes: &[u8]) -> String {
 }
 
 struct Entry {
-    name: &'static str,
+    name: String,
     local: Option<Vec<u8>>,
     local_hash: Option<String>,
     remote: RemoteFileMeta,
@@ -278,7 +289,7 @@ struct Entry {
 impl Entry {
     fn state(&self, link: &WorkspaceLink) -> FileState {
         classify(
-            link.base.get(self.name).map(String::as_str),
+            link.base.get(&self.name).map(String::as_str),
             self.local_hash.as_deref(),
             self.remote.sha256.as_deref(),
         )
@@ -294,18 +305,26 @@ where
     F: WorkspaceFiles + Sync,
     R: RemoteRepository + Sync,
 {
-    let names = link.tracked_files();
-    let metas = try_join_all(names.iter().map(|name| {
-        let path = name.to_string();
-        async move { remote.file_meta(&path).await }
-    }))
+    let mut names = local_names(files, link)?;
+    for folder in VERSIONED_FOLDERS {
+        for name in remote.list_files(folder).await? {
+            if is_versioned_folder_file(&name) && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    let metas = try_join_all(
+        names
+            .iter()
+            .map(|name| async move { remote.file_meta(name).await }),
+    )
     .await?;
 
     names
         .into_iter()
         .zip(metas)
         .map(|(name, remote)| {
-            let local = files.read(name).map_err(VersionControlError::Files)?;
+            let local = files.read(&name).map_err(VersionControlError::Files)?;
             let local_hash = local.as_deref().map(content_hash);
             Ok(Entry {
                 name,
@@ -315,6 +334,30 @@ where
             })
         })
         .collect()
+}
+
+/// The files version control looks at without asking the remote: the
+/// tracked root files, then the files of the versioned folders on disk and
+/// in the base (one deleted here still has a base to compare with).
+fn local_names<F: WorkspaceFiles>(
+    files: &F,
+    link: &WorkspaceLink,
+) -> Result<Vec<String>, VersionControlError> {
+    let mut folder_files = std::collections::BTreeSet::new();
+    for folder in VERSIONED_FOLDERS {
+        folder_files.extend(files.list(folder).map_err(VersionControlError::Files)?);
+    }
+    folder_files.extend(link.base.keys().cloned());
+    Ok(link
+        .tracked_files()
+        .into_iter()
+        .map(str::to_string)
+        .chain(
+            folder_files
+                .into_iter()
+                .filter(|name| is_versioned_folder_file(name)),
+        )
+        .collect())
 }
 
 /// Atualiza a base dos arquivos que já convergem (mesmo conteúdo dos dois
@@ -330,7 +373,7 @@ fn heal(link: &WorkspaceLink, entries: &[Entry]) -> (WorkspaceLink, bool) {
                 healed.base.insert(entry.name.to_string(), hash.clone());
             }
             None => {
-                healed.base.remove(entry.name);
+                healed.base.remove(&entry.name);
             }
         }
     }
@@ -380,14 +423,14 @@ pub fn local_file_status<F>(
 where
     F: WorkspaceFiles,
 {
-    link.tracked_files()
+    local_names(files, link)?
         .into_iter()
         .map(|name| {
-            let local = files.read(name).map_err(VersionControlError::Files)?;
+            let local = files.read(&name).map_err(VersionControlError::Files)?;
             let local_hash = local.as_deref().map(content_hash);
-            let base = link.base.get(name).map(String::as_str);
+            let base = link.base.get(&name).map(String::as_str);
             Ok(FileStatus {
-                name: name.to_string(),
+                name,
                 state: classify(base, local_hash.as_deref(), base),
                 local_revision: local_hash,
                 remote_revision: base.map(str::to_string),
@@ -404,6 +447,8 @@ fn entity_kind(array_name: &str) -> Option<&'static str> {
         "flows" => Some("flow"),
         "environments" => Some("environment"),
         "monitors" => Some("monitor"),
+        // Mock servers change as a whole: their routes stay inside the item.
+        "servers" => Some("mockServer"),
         _ => None,
     }
 }
@@ -536,6 +581,7 @@ fn supports_partial_format(name: &str) -> bool {
             | "alcy-flows.json"
             | "alcy-environments.json"
             | "alcy-value-monitors.json"
+            | "alcy-mock-servers.json"
     )
 }
 
@@ -579,7 +625,7 @@ where
     F: WorkspaceFiles + Sync,
     R: RemoteRepository + Sync,
 {
-    if !link.tracked_files().contains(&name) {
+    if !link.tracks(name) {
         return Err(VersionControlError::NotTracked(name.to_string()));
     }
     let local = files.read(name).map_err(VersionControlError::Files)?;
@@ -947,7 +993,8 @@ where
     let conflicts: Vec<String> = entries
         .iter()
         .filter(|entry| {
-            selected_names.contains(entry.name) && entry.state(&link) == FileState::Conflict
+            selected_names.contains(entry.name.as_str())
+                && entry.state(&link) == FileState::Conflict
         })
         .map(|entry| entry.name.to_string())
         .collect();
@@ -968,12 +1015,12 @@ where
         {
             return Err(VersionControlError::StaleSelection);
         }
-        let remote_content = remote.read_file(entry.name).await?;
+        let remote_content = remote.read_file(&entry.name).await?;
         if remote_content.as_deref().map(content_hash) != entry.remote.sha256 {
             return Err(VersionControlError::StaleSelection);
         }
         let content = compose_selection(
-            entry.name,
+            &entry.name,
             remote_content.as_deref(),
             entry.local.as_deref(),
             selection,
@@ -1125,16 +1172,18 @@ where
                 match &entry.remote.sha256 {
                     None if entry.name == MANIFEST_FILE => skipped.push(entry.name.to_string()),
                     None => {
-                        let current = files.read(entry.name).map_err(VersionControlError::Files)?;
+                        let current = files
+                            .read(&entry.name)
+                            .map_err(VersionControlError::Files)?;
                         let current_hash = current.as_deref().map(content_hash);
                         if current_hash != entry.local_hash {
                             conflicts.push(entry.name.to_string());
                             continue;
                         }
                         files
-                            .delete(entry.name)
+                            .delete(&entry.name)
                             .map_err(VersionControlError::Files)?;
-                        link.base.remove(entry.name);
+                        link.base.remove(&entry.name);
                         updated.push(entry.name.to_string());
                     }
                     Some(expected) => {
@@ -1143,15 +1192,16 @@ where
                         // nesse caso fica para a próxima atualização.
                         match content {
                             Some(bytes) if &content_hash(&bytes) == expected => {
-                                let current =
-                                    files.read(entry.name).map_err(VersionControlError::Files)?;
+                                let current = files
+                                    .read(&entry.name)
+                                    .map_err(VersionControlError::Files)?;
                                 let current_hash = current.as_deref().map(content_hash);
                                 if current_hash != entry.local_hash {
                                     conflicts.push(entry.name.to_string());
                                     continue;
                                 }
                                 files
-                                    .write(entry.name, &bytes)
+                                    .write(&entry.name, &bytes)
                                     .map_err(VersionControlError::Files)?;
                                 link.base.insert(entry.name.to_string(), expected.clone());
                                 updated.push(entry.name.to_string());
@@ -1188,7 +1238,7 @@ where
     let name = input.name.as_str();
     let item_id = input.item_id.as_str();
     let items = input.items.as_slice();
-    if !link.tracked_files().contains(&name) {
+    if !link.tracks(name) {
         return Err(VersionControlError::NotTracked(name.to_string()));
     }
     let entries = snapshot(files, remote, link).await?;
@@ -1274,7 +1324,7 @@ where
     F: WorkspaceFiles + Sync,
     R: RemoteRepository + Sync,
 {
-    if !link.tracked_files().contains(&name) {
+    if !link.tracks(name) {
         return Err(VersionControlError::NotTracked(name.to_string()));
     }
 
@@ -1400,7 +1450,7 @@ where
     F: WorkspaceFiles + Sync,
     R: RemoteRepository + Sync,
 {
-    if !link.tracked_files().contains(&name) {
+    if !link.tracks(name) {
         return Err(VersionControlError::NotTracked(name.to_string()));
     }
 
@@ -1529,6 +1579,17 @@ mod tests {
             self.0.lock().unwrap().remove(name);
             Ok(())
         }
+        fn list(&self, folder: &str) -> Result<Vec<String>, String> {
+            Ok(in_folder(self.0.lock().unwrap().keys(), folder))
+        }
+    }
+
+    fn in_folder<'a>(names: impl Iterator<Item = &'a String>, folder: &str) -> Vec<String> {
+        let prefix = format!("{folder}/");
+        names
+            .filter(|name| name.starts_with(&prefix))
+            .cloned()
+            .collect()
     }
 
     #[derive(Default)]
@@ -1588,6 +1649,10 @@ mod tests {
                 .unwrap()
                 .get(path)
                 .map(|(bytes, _)| bytes.clone()))
+        }
+
+        async fn list_files(&self, folder: &str) -> Result<Vec<String>, RemoteError> {
+            Ok(in_folder(self.files.lock().unwrap().keys(), folder))
         }
 
         async fn commit(
@@ -1661,6 +1726,10 @@ mod tests {
             self.inner.read_file(path).await
         }
 
+        async fn list_files(&self, folder: &str) -> Result<Vec<String>, RemoteError> {
+            self.inner.list_files(folder).await
+        }
+
         async fn commit(
             &self,
             _message: &str,
@@ -1681,6 +1750,10 @@ mod tests {
 
         async fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>, RemoteError> {
             self.0.read_file(path).await
+        }
+
+        async fn list_files(&self, folder: &str) -> Result<Vec<String>, RemoteError> {
+            self.0.list_files(folder).await
         }
 
         async fn commit(
@@ -2007,6 +2080,9 @@ mod tests {
             }
             async fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>, RemoteError> {
                 self.0.read_file(path).await
+            }
+            async fn list_files(&self, folder: &str) -> Result<Vec<String>, RemoteError> {
+                self.0.list_files(folder).await
             }
             async fn commit(
                 &self,
@@ -2469,13 +2545,75 @@ mod tests {
         let remote = FakeRemote::default();
 
         let without = version_status(&files, &remote, &link()).await.unwrap();
-        // Workspace, coleções, flows, documentação importada e monitores de valores.
-        assert_eq!(states(&without).len(), 5);
+        // Workspace, collections, flows, imported docs, value monitors and mock servers.
+        assert_eq!(states(&without).len(), 6);
 
         let mut with_env = link();
         with_env.include_environments = true;
         let with = version_status(&files, &remote, &with_env).await.unwrap();
-        assert_eq!(states(&with).len(), 6);
+        assert_eq!(states(&with).len(), 7);
+    }
+
+    const DOCUMENT: &str = "alcy-documents/doc-1/document.json";
+    const DATASET: &str = "alcy-flow-assets/flow-1/users.csv";
+
+    #[tokio::test]
+    async fn files_of_versioned_folders_are_pushed_and_pulled() {
+        let files = FakeFiles::with(&[
+            (DOCUMENT, "{}"),
+            ("alcy-documents/doc-1/.draft", "hidden"),
+            ("alcy-history/entry.json", "{}"),
+        ]);
+        let remote = FakeRemote::with(&[(DATASET, "id\n1")]);
+
+        let status = version_status(&files, &remote, &link()).await.unwrap();
+        assert_eq!(state_of(&status, DOCUMENT), FileState::LocalAdded);
+        assert_eq!(state_of(&status, DATASET), FileState::RemoteChanged);
+        assert!(
+            !states(&status)
+                .iter()
+                .any(|(name, _)| name.contains(".draft"))
+        );
+        assert!(
+            !states(&status)
+                .iter()
+                .any(|(name, _)| name.starts_with("alcy-history"))
+        );
+
+        let pushed = push_changes(&files, &remote, &status.link, "docs")
+            .await
+            .unwrap();
+        assert_eq!(pushed.pushed, [DOCUMENT]);
+        assert_eq!(remote.text(DOCUMENT).as_deref(), Some("{}"));
+
+        let pulled = pull_changes(&files, &remote, &pushed.link).await.unwrap();
+        assert_eq!(pulled.updated, [DATASET]);
+        assert_eq!(files.text(DATASET).as_deref(), Some("id\n1"));
+
+        // A file removed on both sides leaves the status and the base.
+        files.delete(DATASET).unwrap();
+        remote.files.lock().unwrap().remove(DATASET);
+        let status = version_status(&files, &remote, &pulled.link).await.unwrap();
+        assert!(!status.link.base.contains_key(DATASET));
+        assert_eq!(state_of(&status, DOCUMENT), FileState::Clean);
+    }
+
+    #[test]
+    fn mock_servers_merge_per_server() {
+        let base = br#"{"version":1,"servers":[{"id":"a","name":"A","port":3001,"routes":[]},{"id":"b","name":"B","port":3002,"routes":[]}]}"#;
+        let ours = br#"{"version":1,"servers":[{"id":"a","name":"A2","port":3001,"routes":[]},{"id":"b","name":"B","port":3002,"routes":[]}]}"#;
+        let theirs = br#"{"version":1,"servers":[{"id":"a","name":"A","port":3001,"routes":[]},{"id":"b","name":"B","port":4002,"routes":[]}]}"#;
+        let FileMerge::Merged(Some(merged)) = merge_file(
+            "alcy-mock-servers.json",
+            Some(base),
+            Some(ours),
+            Some(theirs),
+        ) else {
+            panic!("expected a merge");
+        };
+        let merged: Value = serde_json::from_slice(&merged).unwrap();
+        assert_eq!(merged["servers"][0]["name"], "A2");
+        assert_eq!(merged["servers"][1]["port"], 4002);
     }
 
     #[tokio::test]

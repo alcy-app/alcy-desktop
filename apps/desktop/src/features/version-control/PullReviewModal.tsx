@@ -11,7 +11,7 @@ import { GitPullIcon, Spinner } from '../../shared/ui/icons'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Modal } from '../../shared/ui/Modal'
 import { FileChangeViewer } from './FileChangeViewer'
-import { FILE_LABELS } from './file-labels'
+import { fileLabel } from './file-labels'
 import type { VersionControl } from './use-version-control'
 
 interface PullReviewModalProps {
@@ -98,7 +98,7 @@ export function PullReviewModal({ rootPath, vc, onClose }: PullReviewModalProps)
                   className="vc-file-button"
                   onClick={() => setSelected(fileName)}
                 >
-                  {FILE_LABELS[fileName] ?? fileName}
+                  {fileLabel(fileName)}
                 </button>
               ))}
             </div>

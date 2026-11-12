@@ -43,7 +43,11 @@ export function summarize({ linked, loaded, statusKnown, remoteStatusKnown, busy
 }
 
 /** Arquivos versionados por padrão (a lista autoritativa vive em `alcy-domain`). */
-export const TRACKED_FILES = ['alcy-workspace.json', 'alcy-collections.json', 'alcy-flows.json', 'alcy-api-docs.json', 'alcy-value-monitors.json'] as const
+export const TRACKED_FILES = ['alcy-workspace.json', 'alcy-collections.json', 'alcy-flows.json', 'alcy-api-docs.json', 'alcy-value-monitors.json', 'alcy-mock-servers.json'] as const
+/** Mock servers of the workspace. */
+export const MOCK_SERVERS_FILE = 'alcy-mock-servers.json'
+/** Written documents: every file under it is versioned. */
+export const DOCUMENTS_FOLDER = 'alcy-documents/'
 /** Monitores de valores do workspace. */
 export const VALUE_MONITORS_FILE = 'alcy-value-monitors.json'
 export const ENVIRONMENTS_FILE = 'alcy-environments.json'

@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use alcy_app::RemoteError;
+use alcy_domain::VERSIONED_FOLDERS;
 use gix::ObjectId;
 
 use crate::remotes::remote_branch_ref;
-use crate::repo::{commit_tree, file_at, head, short_name};
+use crate::repo::{blob_at, commit_tree, file_at, files_under, head, short_name};
 use crate::{GitError, open_workspace, ref_target, rejected};
 
 /// Largest page served at once (invariant 8: never the whole log).
@@ -142,20 +143,35 @@ fn root_entries(
 }
 
 /// Workspace files live at the repository root, so comparing root entries is
-/// enough (a changed folder shows as its name).
+/// enough, except for a versioned folder, which lists its changed files.
 fn changed_root_entries(
     repo: &gix::Repository,
-    before: Option<ObjectId>,
-    after: ObjectId,
+    before_tree: Option<ObjectId>,
+    after_tree: ObjectId,
 ) -> Result<Vec<String>, RemoteError> {
-    let before = root_entries(repo, before)?;
-    let after = root_entries(repo, Some(after))?;
+    let before = root_entries(repo, before_tree)?;
+    let after = root_entries(repo, Some(after_tree))?;
     let names: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
-    Ok(names
-        .into_iter()
-        .filter(|name| before.get(*name) != after.get(*name))
-        .cloned()
-        .collect())
+    let mut changed = Vec::new();
+    for name in names {
+        if before.get(name) == after.get(name) {
+            continue;
+        }
+        if VERSIONED_FOLDERS.contains(&name.as_str()) {
+            let files: BTreeSet<String> = files_under(repo, before_tree, name)?
+                .into_iter()
+                .chain(files_under(repo, Some(after_tree), name)?)
+                .collect();
+            for file in files {
+                if blob_at(repo, before_tree, &file)? != blob_at(repo, Some(after_tree), &file)? {
+                    changed.push(file);
+                }
+            }
+        } else {
+            changed.push(name.clone());
+        }
+    }
+    Ok(changed)
 }
 
 /// A file's content at a commit and at its first parent (`None` = absent).

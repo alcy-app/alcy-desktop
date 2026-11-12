@@ -1,13 +1,50 @@
 use std::collections::BTreeMap;
 
 /// Workspace files under version control by default.
-pub const VERSIONED_FILES: [&str; 5] = [
+pub const VERSIONED_FILES: [&str; 6] = [
     "alcy-workspace.json",
     "alcy-collections.json",
     "alcy-flows.json",
     API_DOCS_FILE,
     VALUE_MONITORS_FILE,
+    MOCK_SERVERS_FILE,
 ];
+
+/// Mock servers of the workspace.
+pub const MOCK_SERVERS_FILE: &str = "alcy-mock-servers.json";
+
+/// Folders whose files are all versioned: written documentation, and the
+/// files flows read (datasets), which the versioned flows reference by id.
+pub const VERSIONED_FOLDERS: [&str; 2] = ["alcy-documents", "alcy-flow-assets"];
+
+/// Whether `name` is a file inside a versioned folder (`folder/…/file`, with
+/// `/` as separator). Hidden entries and the temporary files of an atomic
+/// write never are, and no component may leave the folder or carry a
+/// character some file system refuses.
+pub fn is_versioned_folder_file(name: &str) -> bool {
+    let mut components = name.split('/');
+    let Some(folder) = components.next() else {
+        return false;
+    };
+    if !VERSIONED_FOLDERS.contains(&folder) {
+        return false;
+    }
+    let rest: Vec<&str> = components.collect();
+    let Some(file) = rest.last() else {
+        return false;
+    };
+    name.len() <= 1024
+        && rest.iter().all(|component| {
+            !component.is_empty()
+                && !component.starts_with('.')
+                && component.len() <= 255
+                && !component
+                    .chars()
+                    .any(|c| c.is_control() || "\\:*?\"<>|".contains(c))
+        })
+        && !file.ends_with(".tmp")
+        && !file.contains(".writing-")
+}
 
 /// Imported API documentation (ADR 0035), versioned with the collections
 /// that reference it.
@@ -43,13 +80,20 @@ impl WorkspaceLink {
         }
     }
 
-    /// Names (relative to the workspace root) of the versioned files.
+    /// Names of the versioned files at the workspace root. The files inside
+    /// `VERSIONED_FOLDERS` come on top, listed from the folder and the trees.
     pub fn tracked_files(&self) -> Vec<&'static str> {
         let mut files = VERSIONED_FILES.to_vec();
         if self.include_environments {
             files.push(ENVIRONMENTS_FILE);
         }
         files
+    }
+
+    /// Whether version control handles `name`: a root file it tracks or a
+    /// file inside a versioned folder.
+    pub fn tracks(&self, name: &str) -> bool {
+        self.tracked_files().contains(&name) || is_versioned_folder_file(name)
     }
 }
 
@@ -128,6 +172,36 @@ mod tests {
                 .tracked_files()
                 .contains(&ENVIRONMENTS_FILE)
         );
+    }
+
+    #[test]
+    fn files_inside_versioned_folders_are_tracked() {
+        let link = WorkspaceLink::new(false);
+        for name in [
+            "alcy-documents/doc-1/document.json",
+            "alcy-documents/doc-1/assets/image.png",
+            "alcy-flow-assets/flow-1/users.csv",
+            "alcy-mock-servers.json",
+        ] {
+            assert!(link.tracks(name), "{name}");
+        }
+        for name in [
+            "alcy-documents",
+            "alcy-documents/",
+            "alcy-documents//a",
+            "alcy-documents/../alcy-history.json",
+            "alcy-documents/./a",
+            "alcy-documents/doc-1/.hidden",
+            "alcy-flow-assets/.flow.importing/a.csv",
+            "alcy-documents/doc-1/document.tmp",
+            "alcy-documents/doc-1/document.writing-1-2",
+            "alcy-documents/a\\b",
+            "alcy-documents/c:d",
+            "alcy-history/entry.json",
+            "alcy-environments.json",
+        ] {
+            assert!(!link.tracks(name), "{name}");
+        }
     }
 
     #[test]

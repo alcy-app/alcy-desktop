@@ -88,7 +88,7 @@ export interface ChangedItemDto {
   id: string
   parentId: string | null
   label: string
-  itemKind: 'collection' | 'folder' | 'request' | 'flow' | 'environment' | 'monitor'
+  itemKind: 'collection' | 'folder' | 'request' | 'flow' | 'environment' | 'monitor' | 'mockServer'
   changeKind: ItemChangeKind
   fields: FieldChangeDto[]
   dependencies: string[]

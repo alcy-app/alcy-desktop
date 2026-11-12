@@ -119,7 +119,7 @@ use commands::version_control::{
     VersionControlFiles, cancel_version_control_operation, commit_and_push, get_file_diff,
     get_local_version_status, get_structured_file_changes, get_version_status, get_workspace_link,
     link_workspace, preview_conflict_resolution, preview_pull_changes, pull_changes,
-    resolve_conflict, unlink_workspace,
+    resolve_conflict, unlink_workspace, version_environments,
 };
 use commands::websocket::{
     WebSocketSessions, close_websocket, execute_websocket_request, send_websocket_message,
@@ -477,6 +477,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 get_workspace_link,
                 link_workspace,
                 unlink_workspace,
+                version_environments,
                 get_version_status,
                 get_local_version_status,
                 get_file_diff,

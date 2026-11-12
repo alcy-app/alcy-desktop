@@ -11,7 +11,9 @@ use gix::ObjectId;
 use gix::objs::tree::EntryKind;
 
 use crate::merge_state::MergeState;
-use crate::repo::{blob_at, commit_tree, head, move_branch, read_blob, write_commit, write_index};
+use crate::repo::{
+    blob_at, commit_tree, files_under, head, move_branch, read_blob, write_commit, write_index,
+};
 use crate::{blocking, open_workspace, rejected};
 
 /// Entries kept before the cache starts over.
@@ -101,6 +103,11 @@ fn read_file_blocking(root: &Path, file: &str) -> Result<Option<Vec<u8>>, Remote
     blob_at(&repo, committed_tree(&repo)?, file)?
         .map(|id| read_blob(&repo, id))
         .transpose()
+}
+
+fn list_files_blocking(root: &Path, folder: &str) -> Result<Vec<String>, RemoteError> {
+    let repo = open_workspace(root)?;
+    files_under(&repo, committed_tree(&repo)?, folder)
 }
 
 fn action_path(action: &CommitAction) -> &str {
@@ -196,6 +203,11 @@ impl RemoteRepository for WorkspaceRemote {
     async fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>, RemoteError> {
         let (root, file) = (self.root.clone(), path.to_string());
         blocking(move || read_file_blocking(&root, &file)).await
+    }
+
+    async fn list_files(&self, folder: &str) -> Result<Vec<String>, RemoteError> {
+        let (root, folder) = (self.root.clone(), folder.to_string());
+        blocking(move || list_files_blocking(&root, &folder)).await
     }
 
     async fn commit(&self, message: &str, actions: &[CommitAction]) -> Result<String, RemoteError> {

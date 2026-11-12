@@ -367,6 +367,10 @@ where
         Ok(content)
     }
 
+    async fn list_files(&self, folder: &str) -> Result<Vec<String>, RemoteError> {
+        self.inner.list_files(folder).await
+    }
+
     async fn commit(&self, message: &str, actions: &[CommitAction]) -> Result<String, RemoteError> {
         self.inner.commit(message, actions).await
     }
@@ -446,6 +450,10 @@ mod tests {
                 .clone()
                 .map(Some)
                 .ok_or_else(|| RemoteError::Network("offline".into()))
+        }
+
+        async fn list_files(&self, _folder: &str) -> Result<Vec<String>, RemoteError> {
+            Ok(Vec::new())
         }
 
         async fn commit(

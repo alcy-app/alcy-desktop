@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use alcy_app::RemoteError;
-use alcy_domain::{GitIdentity, is_valid_branch_name};
+use alcy_domain::{
+    GitIdentity, VERSIONED_FOLDERS, WorkspaceLink, is_valid_branch_name, is_versioned_folder_file,
+};
 use gix::ObjectId;
 use gix::refs::transaction::{PreviousValue, RefEdit};
 use gix::refs::{FullName, Target};
@@ -24,18 +26,27 @@ pub fn gitignore_content(tracked: &[&str]) -> String {
     for name in tracked {
         content.push_str(&format!("!/{name}\n"));
     }
+    for folder in VERSIONED_FOLDERS {
+        content.push_str(&format!("!/{folder}/\n"));
+    }
+    // Hidden entries and interrupted writes inside them stay out.
+    for folder in VERSIONED_FOLDERS {
+        content.push_str(&format!("/{folder}/**/.*\n/{folder}/**/*.tmp\n"));
+    }
+    content.push_str("/alcy-documents/**/*.writing-*\n");
     content
 }
 
 /// Writes the managed `.gitignore` unless the user has one of their own.
 pub fn write_gitignore(root: &Path, tracked: &[&str]) -> Result<(), RemoteError> {
     let path = root.join(".gitignore");
+    let content = gitignore_content(tracked);
     if let Ok(existing) = std::fs::read_to_string(&path)
-        && !existing.starts_with(GITIGNORE_MARKER)
+        && (!existing.starts_with(GITIGNORE_MARKER) || existing == content)
     {
         return Ok(());
     }
-    std::fs::write(path, gitignore_content(tracked)).map_err(rejected)
+    std::fs::write(path, content).map_err(rejected)
 }
 
 /// Creates the repository in the workspace folder with `HEAD` on `branch`,
@@ -115,6 +126,68 @@ pub(crate) fn blob_at(
     Ok(entry
         .filter(|entry| entry.mode().is_blob())
         .map(|entry| entry.object_id()))
+}
+
+/// Blob paths under `folder` (a root folder) in `tree`, as `folder/…/file`.
+pub(crate) fn files_under(
+    repo: &gix::Repository,
+    tree: Option<ObjectId>,
+    folder: &str,
+) -> Result<Vec<String>, RemoteError> {
+    let mut names = Vec::new();
+    let Some(tree) = tree else { return Ok(names) };
+    let tree = repo.find_tree(tree).map_err(rejected)?;
+    let Some(entry) = tree.lookup_entry_by_path(folder).map_err(rejected)? else {
+        return Ok(names);
+    };
+    if entry.mode().is_tree() {
+        collect_blobs(repo, entry.object_id(), folder, &mut names)?;
+    }
+    Ok(names)
+}
+
+fn collect_blobs(
+    repo: &gix::Repository,
+    tree: ObjectId,
+    prefix: &str,
+    names: &mut Vec<String>,
+) -> Result<(), RemoteError> {
+    let tree = repo.find_tree(tree).map_err(rejected)?;
+    for entry in tree.iter() {
+        let entry = entry.map_err(rejected)?;
+        let name = format!("{prefix}/{}", entry.filename());
+        if entry.mode().is_tree() {
+            collect_blobs(repo, entry.object_id(), &name, names)?;
+        } else if entry.mode().is_blob() {
+            names.push(name);
+        }
+    }
+    Ok(())
+}
+
+/// What version control handles in the given trees: the tracked root files,
+/// then every valid file of the versioned folders found in any of them.
+pub(crate) fn tracked_in(
+    repo: &gix::Repository,
+    link: &WorkspaceLink,
+    trees: &[Option<ObjectId>],
+) -> Result<Vec<String>, RemoteError> {
+    let mut folder_files = std::collections::BTreeSet::new();
+    for folder in VERSIONED_FOLDERS {
+        for tree in trees {
+            folder_files.extend(files_under(repo, *tree, folder)?);
+        }
+    }
+    Ok(link
+        .tracked_files()
+        .into_iter()
+        .map(str::to_string)
+        .chain(
+            folder_files
+                .into_iter()
+                .filter(|name| is_versioned_folder_file(name)),
+        )
+        .collect())
 }
 
 pub(crate) fn read_blob(repo: &gix::Repository, id: ObjectId) -> Result<Vec<u8>, RemoteError> {

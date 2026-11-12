@@ -440,7 +440,7 @@ pub async fn get_git_commit_changes(
     let _guard = coordinator.read(&root).await;
     let result = blocking(move || {
         let link = git_link(&root)?;
-        if !link.tracked_files().contains(&input.file_name.as_str()) {
+        if !link.tracks(&input.file_name) {
             return Err(RemoteCommandError::Invalid {
                 message: format!("{} is not versioned", input.file_name),
             });
@@ -468,7 +468,7 @@ pub async fn restore_git_file(
     let files = files_view.open(root.clone())?;
     let result = blocking(move || {
         let link = git_link(&root)?;
-        if !link.tracked_files().contains(&input.file_name.as_str()) {
+        if !link.tracks(&input.file_name) {
             return Err(RemoteCommandError::Invalid {
                 message: format!("{} is not versioned", input.file_name),
             });

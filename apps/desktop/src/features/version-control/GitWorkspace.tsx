@@ -68,7 +68,7 @@ function useRemoteActions(rootPath: string, vc: VersionControl) {
   }
 }
 
-type GitDialog = 'create' | 'merge' | 'delete' | 'remote' | 'removeRemote'
+type GitDialog = 'create' | 'merge' | 'delete' | 'remote' | 'removeRemote' | 'versionEnvironments'
 
 /** The panel's "…" menu for git: remote operations, branches and the remote's URL. */
 export function GitActionsMenu({ rootPath, vc, state, label, onUnlink }: GitProps & { label: string; onUnlink: () => void }) {
@@ -98,6 +98,7 @@ export function GitActionsMenu({ rootPath, vc, state, label, onUnlink }: GitProp
       <MenuItem label={t(noRemote ? 'vc.git.addRemote' : 'vc.git.editRemote')} disabled={vc.busy !== null} onSelect={choose(() => setDialog('remote'))} />
       {!noRemote && <MenuItem label={t('vc.git.removeRemote')} disabled={vc.busy !== null} onSelect={choose(() => setDialog('removeRemote'))} />}
       <MenuSeparator />
+      {vc.link?.includeEnvironments === false && <MenuItem label={t('vc.git.versionEnvironments')} disabled={locked} onSelect={choose(() => setDialog('versionEnvironments'))} />}
       <MenuItem label={t('vc.action.unlink')} onSelect={choose(onUnlink)} />
     </OptionsMenu>
     {dialog === 'create' && <CreateBranchDialog rootPath={rootPath} vc={vc} state={state} onClose={closeDialog} />}
@@ -114,6 +115,19 @@ export function GitActionsMenu({ rootPath, vc, state, label, onUnlink }: GitProp
       onConfirm={() => {
         closeDialog()
         void vc.runGit(() => setGitRemote(rootPath, null))
+      }}
+      tone="primary"
+    />}
+    {dialog === 'versionEnvironments' && <ConfirmDialog
+      title={t('vc.git.versionEnvironments')}
+      description={t('vc.git.versionEnvironmentsConfirm')}
+      confirmLabel={t('vc.git.versionEnvironmentsAction')}
+      cancelLabel={t('vc.cancel')}
+      closeAriaLabel={t('vc.cancel')}
+      onCancel={closeDialog}
+      onConfirm={() => {
+        closeDialog()
+        void vc.versionEnvironments()
       }}
       tone="primary"
     />}

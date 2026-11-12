@@ -345,7 +345,9 @@ counts as not linked.
 Git in the workspace (ADR 0074, behind the `localGit` feature flag) needs no
 account. "Start git in the workspace" creates or adopts
 `<workspace>/.git` on `main`, with a managed `.gitignore` that allow-lists only
-the versioned files. `alcy-git` serves the committed
+the versioned files: the root files of `VERSIONED_FILES` (environments by
+opt-in) and every file inside `VERSIONED_FOLDERS` (written documents and flow
+assets), each handled as a file of its own. `alcy-git` serves the committed
 state as the `RemoteRepository` of the same use cases: "remote" is `HEAD`'s
 tree, or the merge tree while a merge waits for decisions, so status, partial
 commits and per-item conflict resolution are shared with the other providers.

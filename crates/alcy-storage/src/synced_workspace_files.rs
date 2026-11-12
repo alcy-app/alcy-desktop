@@ -77,6 +77,10 @@ impl<F: WorkspaceFiles> WorkspaceFiles for SyncedWorkspaceFiles<F> {
     fn delete(&self, name: &str) -> Result<(), String> {
         self.inner.delete(name)
     }
+
+    fn list(&self, folder: &str) -> Result<Vec<String>, String> {
+        self.inner.list(folder)
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +110,10 @@ mod tests {
         fn delete(&self, name: &str) -> Result<(), String> {
             self.files.borrow_mut().remove(name);
             Ok(())
+        }
+
+        fn list(&self, _folder: &str) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
         }
     }
 

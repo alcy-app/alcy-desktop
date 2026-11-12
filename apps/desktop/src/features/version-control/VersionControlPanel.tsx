@@ -5,7 +5,7 @@ import type { ChangedItemDto, FileState, FileStatusDto, StructuredFileChangesDto
 import { versionControlErrorMessage } from '../../shared/version-control-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FlowIcon, FolderIcon, GitIcon, MonitorIcon, RefreshIcon, SendIcon, Spinner, VariablesIcon } from '../../shared/ui/icons'
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FlowIcon, FolderIcon, GitIcon, MockServerIcon, MonitorIcon, RefreshIcon, SendIcon, Spinner, VariablesIcon } from '../../shared/ui/icons'
 import { IconButton } from '../../shared/ui/IconButton'
 import { Input } from '../../shared/ui/Input'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
@@ -16,7 +16,7 @@ import { GitActionsMenu, GitAddRemoteButton, GitBranchSelect, GitMergeBanner } f
 import { useGitState } from './use-git-state'
 import { GitLinkForm } from './GitLinkForm'
 import { DiffView } from './DiffView'
-import { FILE_LABELS, itemKindLabelKey } from './file-labels'
+import { fileLabel, itemKindLabelKey } from './file-labels'
 import { FEATURE_FLAGS } from '../../shared/feature-flags'
 import type { LinkParams, VersionControl } from './use-version-control'
 import './version-control.css'
@@ -183,7 +183,7 @@ function LinkedView({ rootPath, vc, onOpenSettings, onReview, onPull, onResolveC
   const openReview = async (file: FileStatusDto, item: ChangedItemDto | null, direction: 'outgoing' | 'incoming') => {
     const detail = details[file.name] ?? await loadDetail(file.name)
     if (!detail) return
-    if (onReview) onReview({ fileName: file.name, fileLabel: FILE_LABELS[file.name] ?? file.name, changes: detail, item, direction })
+    if (onReview) onReview({ fileName: file.name, fileLabel: fileLabel(file.name), changes: detail, item, direction })
     else setInlineReview({ name: file.name, direction })
   }
   const toggleFile = (name: string) => {
@@ -234,7 +234,7 @@ function LinkedView({ rootPath, vc, onOpenSettings, onReview, onPull, onResolveC
       {conflicts.length > 0 && <section className="vc-change-section vc-change-section--conflicts">
         <header className="vc-section-header"><button type="button" onClick={() => toggleSection('conflicts')} aria-expanded={!collapsed.has('conflicts')}>{collapsed.has('conflicts') ? <ChevronRightIcon /> : <ChevronDownIcon />}<h3>{t('vc.sections.conflicts')} <span>{conflicts.length}</span></h3></button></header>
         {!collapsed.has('conflicts') && conflicts.map((file) => <div className="vc-conflict-row" key={file.name}>
-          <button type="button" className="vc-tree-label" onClick={() => void openReview(file, null, 'outgoing')}><span>{FILE_LABELS[file.name] ?? file.name}</span><small>{file.name}</small></button>
+          <button type="button" className="vc-tree-label" onClick={() => void openReview(file, null, 'outgoing')}><span>{fileLabel(file.name)}</span><small>{file.name}</small></button>
           <Button variant="ghost" disabled={working || loadingDetailNames.has(file.name)} onClick={() => void openConflict(file)}>{t('vc.resolve.open')}</Button>
         </div>)}
       </section>}
@@ -314,7 +314,7 @@ function ChangeFile({ kind, file, detail, detailLoading, allDetails, selection, 
   return <li className="vc-tree-file">
     <div className="vc-tree-file-row">
       <button type="button" className="vc-disclosure" aria-label={disclosureLabel} {...disclosureTooltip.triggerProps} disabled={!canExpand} onClick={onToggle}>{expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}</button>{disclosureTooltip.tooltip}
-      <button type="button" className="vc-tree-label" onClick={() => onReview(null)}><span>{FILE_LABELS[file.name] ?? file.name}</span><small className="vc-file-name">{file.name}</small></button>
+      <button type="button" className="vc-tree-label" onClick={() => onReview(null)}><span>{fileLabel(file.name)}</span><small className="vc-file-name">{file.name}</small></button>
       <span className="vc-file-badge" data-state={file.state}>{STATE_MARKERS[file.state]}</span>
       {action}
     </div>
@@ -336,6 +336,7 @@ function entityIcon(kind: string) {
   if (kind === 'request') return <SendIcon size={13} />
   if (kind === 'environment') return <VariablesIcon size={13} />
   if (kind === 'monitor' && FEATURE_FLAGS.valueMonitors) return <MonitorIcon size={13} />
+  if (kind === 'mockServer') return <MockServerIcon size={13} />
   return <FolderIcon size={13} />
 }
 

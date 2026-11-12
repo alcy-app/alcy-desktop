@@ -15,7 +15,6 @@ use alcy_domain::{ENVIRONMENTS_FILE, VERSIONED_FILES};
 use serde::Serialize;
 
 use crate::environment_store::SECRETS_FILE_NAME;
-use crate::mock_server_store::MOCK_SERVERS_FILE;
 use crate::recent_workspaces_store::RecentWorkspaceEntry;
 use crate::storage_error::StorageError;
 use crate::tab_session_store::FILE_NAME as TAB_SESSION_FILE;
@@ -28,13 +27,12 @@ const MANIFEST_FILE: &str = "backup.json";
 const PARTIAL_SUFFIX: &str = ".tmp";
 const MAX_FOLDER_NAME: usize = 60;
 
-/// Além dos versionados: ambientes, mock servers, vínculo com o repositório
-/// e a sessão de abas (que guarda abas ainda não salvas). Histórico e caches
-/// ficam de fora: são grandes e não são o trabalho do usuário.
-const EXTRA_FILES: [&str; 5] = [
+/// Besides the versioned files (mock servers among them): environments, the
+/// repository link and the tab session (which keeps unsaved tabs). History
+/// and caches stay out: they are large and not the person's work.
+const EXTRA_FILES: [&str; 4] = [
     ENVIRONMENTS_FILE,
     SECRETS_FILE_NAME,
-    MOCK_SERVERS_FILE,
     LINK_FILE_NAME,
     TAB_SESSION_FILE,
 ];

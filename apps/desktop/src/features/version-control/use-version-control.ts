@@ -9,6 +9,7 @@ import { linkWorkspace } from '../../bindings/link-workspace'
 import { pullChanges } from '../../bindings/pull-changes'
 import { resolveConflict } from '../../bindings/resolve-conflict'
 import { unlinkWorkspace } from '../../bindings/unlink-workspace'
+import { versionEnvironments as versionEnvironmentsCommand } from '../../bindings/version-environments'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { countChanges, mergeLocalStatus, summarize } from './version-summary'
 
@@ -257,6 +258,23 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
     [rootPath, runAction],
   )
 
+  /** Environments enter the commits from now on; the file shows up as a change to commit. */
+  const versionEnvironments = useCallback(
+    () =>
+      runAction(
+        'link',
+        (operationId) => versionEnvironmentsCommand(rootPath, operationId),
+        (status) => {
+          setLink(status.link)
+          setFiles(status.files)
+          setRemoteStatusKnown(true)
+          setStatusVersion((current) => current + 1)
+          return t('vc.git.environmentsVersioned')
+        },
+      ),
+    [rootPath, runAction, t],
+  )
+
   const unlink = useCallback(async (): Promise<ActionResult> => {
     const result = await unlinkWorkspace(rootPath)
     if (!result.ok) {
@@ -482,6 +500,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       notifyLocalChange,
       cancel,
       linkTo,
+      versionEnvironments,
       unlink,
       pull,
       push,
@@ -513,6 +532,7 @@ export function useVersionControl(rootPath: string, onFilesChanged: (names: stri
       notifyLocalChange,
       cancel,
       linkTo,
+      versionEnvironments,
       unlink,
       pull,
       push,

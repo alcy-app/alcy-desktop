@@ -541,6 +541,48 @@ pub async fn link_workspace(
     crate::logging::logged("alcy::vc", "vincular workspace", result)
 }
 
+/// Starts versioning the environments of a linked workspace (the opt-in of
+/// ADR 0074): the managed `.gitignore` lets the file in and it shows up as a
+/// change to commit. The base of the other files is kept.
+#[tauri::command]
+pub async fn version_environments(
+    input: OperationInput,
+    coordinator: State<'_, WorkspaceOperationCoordinator>,
+    files_view: State<'_, VersionControlFiles>,
+    registry: State<'_, ExecutionRegistry>,
+    git: State<'_, LocalGitProvider>,
+) -> Result<VersionStatusDto, RemoteCommandError> {
+    let result: Result<VersionStatusDto, RemoteCommandError> = async {
+        let root = PathBuf::from(&input.root_path);
+        let _workspace_guard = coordinator.write(&root).await;
+        let store = WorkspaceLinkStore::new(root.clone());
+        let mut link = load_link(&store)?;
+        link.include_environments = true;
+        let files = files_view.open(root.clone())?;
+        let tracked = link.tracked_files();
+        let repo_root = root.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            init_workspace(&repo_root, DEFAULT_GIT_BRANCH, &tracked)
+                .map_err(RemoteCommandError::from)
+        })
+        .await
+        .map_err(|error| RemoteCommandError::Files {
+            message: error.to_string(),
+        })??;
+        let remote = WorkspaceRemote::new(root.clone(), None, git.hashes.clone());
+        let status = cancellable(&registry, &input.operation_id, async {
+            version_status(&files, &remote, &link)
+                .await
+                .map_err(RemoteCommandError::from)
+        })
+        .await?;
+        store.save(&status.link)?;
+        Ok(status_dto(&status.link, status.files))
+    }
+    .await;
+    crate::logging::logged("alcy::vc", "versionar ambientes", result)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelVersionControlOperationInput {
@@ -588,6 +630,9 @@ pub async fn get_version_status(
         if load_link(&WorkspaceLinkStore::new(root.clone()))? != link {
             return Err(RemoteCommandError::Cancelled);
         }
+        // Workspaces linked before a file or folder became versioned get the
+        // managed `.gitignore` that lets it in (a no-op once up to date).
+        alcy_git::write_gitignore(&root, &status.link.tracked_files())?;
         if status.healed {
             WorkspaceLinkStore::new(root).save(&status.link)?;
         }

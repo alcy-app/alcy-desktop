@@ -28,6 +28,7 @@ export function fakeVersionControl(overrides: Partial<VersionControl> = {}): Ver
     notifyLocalChange: () => {},
     cancel: () => {},
     linkTo: async () => ({ ok: true }),
+    versionEnvironments: async () => ({ ok: true }),
     unlink: async () => ({ ok: true }),
     pull: async () => ({ ok: true }),
     push: async () => ({ ok: true }),

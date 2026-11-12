@@ -119,6 +119,7 @@ import type { VersionReviewTarget } from '../version-control/VersionControlPanel
 import type { StructuredFileChangesDto } from '../../bindings/version-control-types'
 import { WorkspaceMenu } from '../workspace-menu/WorkspaceMenu'
 import { MockServerEditor } from '../mock-servers/MockServerEditor'
+import { MOCK_SERVERS_CHANGED_EVENT } from '../mock-servers/mock-server-defaults'
 import type { MockServerDto } from '../../bindings/mock-servers'
 import type { FlowState } from '../flows/flows.types'
 import { useCollectionsState, type ImportOutcome } from './use-collections-state'
@@ -128,7 +129,7 @@ import { jsonBodySchema, parametersIn, schemaTypeLabel } from './schema-docs'
 import { parameterNameSuggestions, parameterValueSuggestions } from './schema-completions'
 import type { BodySchema } from './schema-completions'
 import type { VariableDoc } from './components/VariablePreviewCard'
-import { API_DOCS_FILE, VALUE_MONITORS_FILE } from '../version-control/version-summary'
+import { API_DOCS_FILE, DOCUMENTS_FOLDER, MOCK_SERVERS_FILE, VALUE_MONITORS_FILE } from '../version-control/version-summary'
 import { COLLECTIONS_FILE, ENVIRONMENTS_FILE, FLOWS_FILE, useExternalFileChanges } from './use-external-file-changes'
 import { buildHar } from './har'
 import { harRedactionContext, redactRecordedEntry } from './har-redaction'
@@ -532,6 +533,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const { reload: reloadEnvironments } = environments
   const { reload: reloadFlows } = flows
   const { reload: reloadValueMonitors } = valueMonitors
+  const { refresh: refreshDocuments } = documentManager
   // Change after pulls rewrite alcy-api-docs.json to reload documentation.
   const [docsRevision, setDocsRevision] = useState(0)
   // Reload in-memory data after repository updates so autosave does not overwrite updated files.
@@ -542,8 +544,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       if (names.includes(FLOWS_FILE)) reloadFlows()
       if (names.includes(VALUE_MONITORS_FILE)) reloadValueMonitors()
       if (names.includes(API_DOCS_FILE)) setDocsRevision((revision) => revision + 1)
+      if (names.includes(MOCK_SERVERS_FILE)) window.dispatchEvent(new Event(MOCK_SERVERS_CHANGED_EVENT))
+      if (FEATURE_FLAGS.documents && names.some((name) => name.startsWith(DOCUMENTS_FOLDER))) void refreshDocuments().catch(() => {})
     },
-    [reloadCollections, reloadEnvironments, reloadFlows, reloadValueMonitors],
+    [reloadCollections, reloadEnvironments, reloadFlows, reloadValueMonitors, refreshDocuments],
   )
   const versionControl = useVersionControl(workspace.rootPath, handleWorkspaceFilesChanged, isVersionControlEnabled())
   useEffect(() => {

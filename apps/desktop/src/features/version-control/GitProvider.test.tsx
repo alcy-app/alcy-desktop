@@ -14,6 +14,7 @@ const commitAndPush = vi.fn()
 const getStructuredFileChanges = vi.fn()
 const cancelVersionControlOperation = vi.fn()
 const pickWorkspaceFolder = vi.fn()
+const versionEnvironments = vi.fn()
 const git = vi.hoisted(() => ({
   getGitState: vi.fn(),
   createGitBranch: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('../../bindings/link-workspace', () => ({ linkWorkspace: (...a: unknown[
 vi.mock('../../bindings/commit-and-push', () => ({ commitAndPush: (...a: unknown[]) => commitAndPush(...a) }))
 vi.mock('../../bindings/get-structured-file-changes', () => ({ getStructuredFileChanges: (...a: unknown[]) => getStructuredFileChanges(...a) }))
 vi.mock('../../bindings/cancel-version-control-operation', () => ({ cancelVersionControlOperation: (...a: unknown[]) => cancelVersionControlOperation(...a) }))
+vi.mock('../../bindings/version-environments', () => ({ versionEnvironments: (...a: unknown[]) => versionEnvironments(...a) }))
 vi.mock('../../bindings/pick-workspace-folder', () => ({ pickWorkspaceFolder: (...a: unknown[]) => pickWorkspaceFolder(...a) }))
 vi.mock('../../bindings/local-git', () => Object.fromEntries(
   Object.keys(git).map((name) => [name, (...a: unknown[]) => git[name as keyof typeof git](...a)]),
@@ -83,7 +85,7 @@ const panelHeader = async () => within(await waitFor(() => {
 }))
 
 beforeEach(() => {
-  for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelVersionControlOperation, pickWorkspaceFolder, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
+  for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelVersionControlOperation, pickWorkspaceFolder, versionEnvironments, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
     mock.mockReset()
   }
   getWorkspaceLink.mockResolvedValue({ ok: true, value: link })
@@ -305,6 +307,26 @@ describe('git in the workspace — remote', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Remover remoto' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remover remoto' }))
     await waitFor(() => expect(git.setGitRemote).toHaveBeenCalledWith(ROOT, null))
+  })
+})
+
+describe('git in the workspace — environments', () => {
+  it('starts versioning the environments after a confirmation', async () => {
+    const versioned: WorkspaceLinkDto = { includeEnvironments: true }
+    const added: FileStatusDto = { name: 'alcy-environments.json', state: 'localAdded', localRevision: 'l', remoteRevision: null }
+    versionEnvironments.mockResolvedValue(status([added], versioned))
+    render(<Harness />)
+
+    await chooseAction('Versionar ambientes')
+    const dialog = await screen.findByRole('dialog', { name: 'Versionar ambientes' })
+    expect(within(dialog).getByText(/variáveis sensíveis ficam só neste computador/)).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Versionar' }))
+
+    await waitFor(() => expect(versionEnvironments).toHaveBeenCalledWith(ROOT, expect.any(String)))
+    expect(await screen.findByText(/Os ambientes agora entram nos commits/)).toBeInTheDocument()
+    await openMenu()
+    expect(await screen.findByRole('menuitem', { name: 'Desvincular' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Versionar ambientes' })).not.toBeInTheDocument()
   })
 })
 

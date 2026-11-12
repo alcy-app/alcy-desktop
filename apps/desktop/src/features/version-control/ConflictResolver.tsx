@@ -9,7 +9,7 @@ import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { EyeIcon, EyeOffIcon, Spinner } from '../../shared/ui/icons'
 import { useTooltip } from '../../shared/ui/use-tooltip'
 import { DiffView } from './DiffView'
-import { FILE_LABELS } from './file-labels'
+import { fileLabel } from './file-labels'
 import type { VersionControl } from './use-version-control'
 
 export interface ConflictResolutionTarget {
@@ -94,7 +94,7 @@ export function ConflictResolver({ rootPath, vc, target, onResolved }: ConflictR
 
   return <section className="vc-review vc-conflict-resolver" aria-label={t('vc.resolve.title')}>
     <header className="vc-review-header vc-resolver-header">
-      <div><span className="vc-review-eyebrow">{t('vc.resolve.title')}</span><h2>{FILE_LABELS[target.fileName] ?? target.fileName}</h2><p>{target.fileName}</p></div>
+      <div><span className="vc-review-eyebrow">{t('vc.resolve.title')}</span><h2>{fileLabel(target.fileName)}</h2><p>{target.fileName}</p></div>
       <div className="vc-resolve-bulk"><Button variant="ghost" disabled={working} onClick={() => chooseAll('local')}>{t('vc.resolve.keepAllMine')}</Button><Button variant="ghost" disabled={working} onClick={() => chooseAll('remote')}>{t('vc.resolve.keepAllTheirs')}</Button></div>
     </header>
 

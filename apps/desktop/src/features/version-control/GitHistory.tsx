@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../../shared/ui/ConfirmDialog'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { ChevronDownIcon, ChevronRightIcon } from '../../shared/ui/icons'
 import { formatDateTime, formatRelativeTime } from '../documents/document-format'
-import { FILE_LABELS, itemKindLabelKey } from './file-labels'
+import { fileLabel, itemKindLabelKey } from './file-labels'
 import { layoutGraph, type GraphRow } from './git-graph'
 import { GitRemoteActions } from './GitWorkspace'
 import type { VersionControl } from './use-version-control'
@@ -151,7 +151,7 @@ function CommitFile({ rootPath, vc, commit, file, onReview }: { rootPath: string
   const [open, setOpen] = useState(false)
   const [changes, setChanges] = useState<{ value: StructuredFileChangesDto | null; error: string | null } | null>(null)
   const [confirmRestore, setConfirmRestore] = useState(false)
-  const label = FILE_LABELS[file] ?? file
+  const label = fileLabel(file)
 
   useEffect(() => {
     if (!open || changes) return
