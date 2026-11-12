@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Compartment } from '@codemirror/state'
 import type { Extension } from '@codemirror/state'
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap } from '@codemirror/view'
@@ -14,6 +14,8 @@ import { commentShortcutExtension } from '../comment-toggle'
 import { completionShortcutsExtension } from '../completion-shortcuts'
 import { jsoncLanguageSupport } from '../jsonc-language'
 import type { CodeLanguage } from '../codemirror-shared'
+import { editorContextMenuExtension } from '../editor-context-menu'
+import type { EditorMenuState } from '../editor-context-menu'
 import { editorSearchHighlightExtension } from '../editor-search'
 import { restoreEditorState, saveEditorState } from '../editor-state-cache'
 import { bodySchemaExtension, setBodySchema } from '../schema-completions'
@@ -31,6 +33,7 @@ import {
   tabIndentKeymap,
   twoDigitLineNumbersTheme,
 } from '../codemirror-shared'
+import { EditorContextMenu } from './EditorContextMenu'
 import { EditorSearch } from './EditorSearch'
 import { useEditorSearch } from './use-editor-search'
 import { editorSelectionExtension, useEditorAgentBridge } from './use-editor-agent-bridge'
@@ -118,6 +121,8 @@ export function RequestBodyPanel({
   const shortcutBindingsRef = useRef(shortcutBindings)
   const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
   const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
+  const [contextMenu, setContextMenu] = useState<EditorMenuState | null>(null)
+  const closeContextMenu = useCallback(() => setContextMenu(null), [])
   const formatBody = () => {
     const view = viewRef.current
     if (!view || !formatter) return
@@ -182,6 +187,7 @@ export function RequestBodyPanel({
         twoDigitLineNumbersTheme,
         editorSearchHighlightExtension,
         editorSelectionExtension(agentSlot),
+        editorContextMenuExtension(setContextMenu, jsonComments),
         ariaLabelCompartment.of(EditorView.contentAttributes.of({ 'aria-label': editorLabel })),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString())
@@ -264,6 +270,7 @@ export function RequestBodyPanel({
         onOpen={openSearch}
         onClose={closeSearch}
       />
+      {contextMenu && <EditorContextMenu viewRef={viewRef} menu={contextMenu} onClose={closeContextMenu} />}
     </div>
   )
 }

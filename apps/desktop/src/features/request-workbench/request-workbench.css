@@ -1553,6 +1553,11 @@
   box-shadow: var(--shadow-sm);
 }
 
+.ui-menu.rw-editor-context-menu {
+  min-width: 128px;
+  box-shadow: var(--shadow-sm);
+}
+
 /* Inside .rw-response-body, fill remaining height and let only cm-scroller scroll, like .rw-request-body-editor. The generic 60vh limit otherwise produced nested scrollbars. */
 .rw-response-body .rw-code-block-wrapper {
   flex: 1;

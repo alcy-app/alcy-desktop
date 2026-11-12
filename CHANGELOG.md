@@ -11,6 +11,11 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Git**: os ambientes entram nos commits e chegam completos a quem clonar o workspace. A opção vem marcada ao iniciar o Git e, num repositório que ainda não os versiona, fica em "Versionar ambientes", no menu do repositório.
 - **Git**: mock servers, documentos e os arquivos usados pelos flows (como datasets) também entram nos commits e chegam a quem clonar ou fizer pull.
 - Botão para formatar o body raw em JSON ou XML, mantendo comentários e variáveis `{{nome}}` como estão.
+- Menu de botão direito no editor do body, com Copiar, Colar e comentar a linha, o texto selecionado ou tudo.
+
+### Changed
+
+- Com parte do texto selecionada, Ctrl+/ e Ctrl+; comentam só o trecho selecionado (`/* */`), não mais a linha inteira.
 
 ### Fixed
 
