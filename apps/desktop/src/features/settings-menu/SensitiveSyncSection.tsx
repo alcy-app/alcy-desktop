@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getSecuritySettings, type SecuritySettingsDto } from '../../bindings/get-security-settings'
 import { saveSecuritySettings } from '../../bindings/save-security-settings'
 import { useLanguage } from '../../shared/i18n/use-language'
+import { notifySecuritySettingsChanged } from '../../shared/security/sensitive-sync'
 import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon } from '../../shared/ui/icons'
@@ -32,8 +33,12 @@ export function SensitiveSyncSection() {
     setSaveError(null)
     const result = await saveSecuritySettings({ syncSensitiveValues: !protect })
     setBusy(false)
-    if (result.ok) setSettings(result.value)
-    else setSaveError(t('settings.securitySyncSaveError', { message: result.error.message }))
+    if (!result.ok) {
+      setSaveError(t('settings.securitySyncSaveError', { message: result.error.message }))
+      return
+    }
+    setSettings(result.value)
+    notifySecuritySettingsChanged(result.value)
   }
 
   return (

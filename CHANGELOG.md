@@ -8,7 +8,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Added
 
-- **Git**: "Versionar ambientes", no menu do repositório, passa a incluir os ambientes nos commits, para que cheguem completos a quem clonar o workspace.
+- **Git**: os ambientes entram nos commits e chegam completos a quem clonar o workspace. A opção vem marcada ao iniciar o Git e, num repositório que ainda não os versiona, fica em "Versionar ambientes", no menu do repositório.
 - **Git**: mock servers, documentos e os arquivos usados pelos flows (como datasets) também entram nos commits e chegam a quem clonar ou fizer pull.
 
 ### Fixed

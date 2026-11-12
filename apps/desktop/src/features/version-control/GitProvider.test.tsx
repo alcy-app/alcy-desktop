@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '../../test-utils'
+import { act, fireEvent, render, screen, waitFor, within } from '../../test-utils'
+import { notifySecuritySettingsChanged } from '../../shared/security/sensitive-sync'
 import type { ChangedItemDto, FileStatusDto, WorkspaceLinkDto } from '../../bindings/version-control-types'
 import type { GitStateDto } from '../../bindings/local-git'
 import { useVersionControl } from './use-version-control'
@@ -15,6 +16,7 @@ const getStructuredFileChanges = vi.fn()
 const cancelVersionControlOperation = vi.fn()
 const pickWorkspaceFolder = vi.fn()
 const versionEnvironments = vi.fn()
+const getSecuritySettings = vi.fn()
 const git = vi.hoisted(() => ({
   getGitState: vi.fn(),
   createGitBranch: vi.fn(),
@@ -42,6 +44,7 @@ vi.mock('../../bindings/commit-and-push', () => ({ commitAndPush: (...a: unknown
 vi.mock('../../bindings/get-structured-file-changes', () => ({ getStructuredFileChanges: (...a: unknown[]) => getStructuredFileChanges(...a) }))
 vi.mock('../../bindings/cancel-version-control-operation', () => ({ cancelVersionControlOperation: (...a: unknown[]) => cancelVersionControlOperation(...a) }))
 vi.mock('../../bindings/version-environments', () => ({ versionEnvironments: (...a: unknown[]) => versionEnvironments(...a) }))
+vi.mock('../../bindings/get-security-settings', () => ({ getSecuritySettings: (...a: unknown[]) => getSecuritySettings(...a) }))
 vi.mock('../../bindings/pick-workspace-folder', () => ({ pickWorkspaceFolder: (...a: unknown[]) => pickWorkspaceFolder(...a) }))
 vi.mock('../../bindings/local-git', () => Object.fromEntries(
   Object.keys(git).map((name) => [name, (...a: unknown[]) => git[name as keyof typeof git](...a)]),
@@ -85,7 +88,7 @@ const panelHeader = async () => within(await waitFor(() => {
 }))
 
 beforeEach(() => {
-  for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelVersionControlOperation, pickWorkspaceFolder, versionEnvironments, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
+  for (const mock of [getWorkspaceLink, getVersionStatus, getLocalVersionStatus, linkWorkspace, commitAndPush, getStructuredFileChanges, cancelVersionControlOperation, pickWorkspaceFolder, versionEnvironments, getSecuritySettings, onFilesChanged, onOpenSettings, ...Object.values(git)]) {
     mock.mockReset()
   }
   getWorkspaceLink.mockResolvedValue({ ok: true, value: link })
@@ -106,6 +109,7 @@ beforeEach(() => {
 describe('git in the workspace — starting', () => {
   beforeEach(() => {
     getWorkspaceLink.mockResolvedValue({ ok: true, value: null })
+    getSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: false } })
   })
 
   it('offers only starting git, without any account', async () => {
@@ -118,9 +122,35 @@ describe('git in the workspace — starting', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Iniciar Git' }))
 
     await waitFor(() => expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({
-      rootPath: ROOT, includeEnvironments: false,
+      rootPath: ROOT, includeEnvironments: true,
     })))
     expect(git.pullGitRemote).not.toHaveBeenCalled()
+  })
+
+  it('leaves the environments out when the person unchecks them', async () => {
+    linkWorkspace.mockResolvedValue(status([]))
+    render(<Harness />)
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Versionar ambientes/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciar Git' }))
+
+    await waitFor(() => expect(linkWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+      rootPath: ROOT, includeEnvironments: false,
+    })))
+  })
+
+  it('says sensitive values stay local, or that they go in plain text when their protection is off', async () => {
+    const { unmount } = render(<Harness />)
+    expect(await screen.findByText('Valores de variáveis sensíveis ficam fora do repositório.')).toBeInTheDocument()
+    unmount()
+
+    getSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: true } })
+    render(<Harness />)
+    expect(await screen.findByText(/eles também vão para o repositório, em texto claro/)).toBeInTheDocument()
+
+    // Turning the protection back on in the settings updates the open form.
+    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: false }))
+    expect(screen.getByText('Valores de variáveis sensíveis ficam fora do repositório.')).toBeInTheDocument()
   })
 })
 
