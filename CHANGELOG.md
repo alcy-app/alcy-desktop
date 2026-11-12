@@ -15,7 +15,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 - Fazer pull com mesclagem num workspace git que não versiona ambientes não apaga mais os ambientes de quem os versiona.
 
-## [0.10.0] - 2026-11-08
+## [0.10.0] - 2026-11-10
 
 ### Added
 
