@@ -617,8 +617,8 @@ const en: Record<TranslationKey, string> = {
   'settings.telemetryOff': 'Telemetry is off: nothing is being recorded.',
   'settings.telemetryRefresh': 'Refresh',
   'settings.securitySyncLabel': 'Workspace sync',
-  'settings.securitySyncProtect': 'Do not send sensitive variable values',
-  'settings.securitySyncProtectHint': 'Sensitive variables go to the remote without their value. Being encrypted locally.',
+  'settings.securitySyncProtect': 'Do not send sensitive values',
+  'settings.securitySyncProtectHint': 'Sensitive variables and secrets typed in authentication go to the remote without their value and stay encrypted on this machine.',
   'settings.securitySyncRevealWarning': 'Sensitive values will be sent to the remote in plain text.',
   'settings.securitySyncLoadError': 'Could not load the preference: {message}',
   'settings.securitySyncSaveError': 'Could not save the preference: {message}',
@@ -978,6 +978,7 @@ const en: Record<TranslationKey, string> = {
   'authorization.headerNameLabel': 'Header name',
   'authorization.headerValueLabel': 'Header value',
   'authorization.inheritHint': 'Uses the authentication of the parent folder or collection.',
+  'authorization.localSecretHint': 'The secret typed here stays on this computer only. To share it with the team, use a sensitive environment variable.',
   'authorization.inheritedFrom': 'Inherited from "{name}" ({type}).',
   'authorization.inheritedNone': 'No inherited authentication.',
 

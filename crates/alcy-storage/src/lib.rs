@@ -3,6 +3,7 @@
 mod agent_session_store;
 mod agent_settings_store;
 mod api_docs_store;
+mod auth_secrets;
 mod collection_run_history_store;
 mod collection_run_report;
 mod collections_store;

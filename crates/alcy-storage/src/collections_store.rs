@@ -10,13 +10,27 @@ use alcy_domain::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::auth_secrets::{SecretFields, Slot};
+use crate::local_secrets::LocalSecrets;
 use crate::storage_error::StorageError;
 
 const CURRENT_VERSION: u32 = 1;
 const MANIFEST_FILE_NAME: &str = "alcy-collections.json";
+/// Authentication secrets of the collections, sealed per person (ADR 0078).
+/// Never versioned.
+pub(crate) const COLLECTIONS_SECRETS_FILE: &str = "alcy-collections-secrets.json";
+
+/// Secret authentication fields of `alcy-collections.json`.
+pub(crate) const SECRET_FIELDS: SecretFields<PersistedFile> = SecretFields {
+    file_name: MANIFEST_FILE_NAME,
+    secrets_file_name: COLLECTIONS_SECRETS_FILE,
+    parse: parse_file,
+    serialize: to_json,
+    slots: file_slots,
+};
 
 #[derive(Serialize, Deserialize)]
-struct PersistedFile {
+pub(crate) struct PersistedFile {
     version: u32,
     collections: Vec<PersistedCollection>,
 }
@@ -331,30 +345,59 @@ enum PersistedAuthentication {
     },
 }
 
-/// Lê e grava as coleções de um workspace (`alcy-collections.json`) na
-/// raiz da pasta do workspace, com escrita atômica (arquivo temporário +
-/// rename) e formato versionado.
+/// Reads and writes a workspace's collections (`alcy-collections.json`) at
+/// the root of the workspace folder, with atomic writes (temporary file and
+/// rename) and a versioned format. Literal authentication secrets are sealed
+/// in `alcy-collections-secrets.json` instead (ADR 0078).
 pub struct CollectionsStore {
     manifest_path: PathBuf,
+    secrets_path: PathBuf,
+    secrets: LocalSecrets,
 }
 
 impl CollectionsStore {
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(root: PathBuf, secrets: LocalSecrets) -> Self {
         Self {
             manifest_path: root.join(MANIFEST_FILE_NAME),
+            secrets_path: root.join(COLLECTIONS_SECRETS_FILE),
+            secrets,
         }
     }
 
     pub fn load(&self) -> Result<Vec<Collection>, StorageError> {
-        if !self.manifest_path.exists() {
-            return Ok(Vec::new());
-        }
+        Ok(self.load_checked()?.0)
+    }
 
-        import_collections(&self.manifest_path)
+    /// Loads, and rewrites a file that still holds a literal secret (written
+    /// before ADR 0078 or received from an earlier Alcy) so it is sealed.
+    pub fn load_and_seal(&self) -> Result<Vec<Collection>, StorageError> {
+        let (collections, holds_literal) = self.load_checked()?;
+        if holds_literal {
+            self.save(&collections)?;
+        }
+        Ok(collections)
+    }
+
+    fn load_checked(&self) -> Result<(Vec<Collection>, bool), StorageError> {
+        let raw = match fs::read(&self.manifest_path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), false));
+            }
+            Err(error) => return Err(StorageError::Read(error.to_string())),
+        };
+        let mut file = parse_file(&raw)?;
+        let holds_literal = SECRET_FIELDS.open(&mut file, &self.secrets_path, &self.secrets)?;
+        Ok((collections_from_file(file)?, holds_literal))
     }
 
     pub fn save(&self, collections: &[Collection]) -> Result<(), StorageError> {
-        write_collections_file(&self.manifest_path, collections)
+        SECRET_FIELDS.save(
+            persisted_file(collections),
+            &self.manifest_path,
+            &self.secrets_path,
+            &self.secrets,
+        )
     }
 }
 
@@ -379,18 +422,83 @@ pub fn import_collections(path: &Path) -> Result<Vec<Collection>, StorageError> 
 /// Alcy" — mesmas regras de erro de `import_collections`, exceto que não há
 /// caminho de arquivo, então nunca há `StorageError::Read`.
 pub fn import_collections_from_str(raw: &str) -> Result<Vec<Collection>, StorageError> {
-    let persisted: PersistedFile =
-        serde_json::from_str(raw).map_err(|error| StorageError::Corrupted(error.to_string()))?;
+    collections_from_file(parse_file(raw.as_bytes())?)
+}
 
+fn parse_file(raw: &[u8]) -> Result<PersistedFile, StorageError> {
+    let persisted: PersistedFile =
+        serde_json::from_slice(raw).map_err(|error| StorageError::Corrupted(error.to_string()))?;
     if persisted.version != CURRENT_VERSION {
         return Err(StorageError::UnsupportedVersion(persisted.version));
     }
+    Ok(persisted)
+}
 
-    persisted
-        .collections
+fn collections_from_file(file: PersistedFile) -> Result<Vec<Collection>, StorageError> {
+    file.collections
         .into_iter()
         .map(collection_from_persisted)
         .collect()
+}
+
+fn to_json(file: &PersistedFile) -> Result<Vec<u8>, StorageError> {
+    serde_json::to_vec_pretty(file).map_err(|error| StorageError::Write(error.to_string()))
+}
+
+fn file_slots(file: &mut PersistedFile) -> Vec<Slot<'_>> {
+    let mut slots = Vec::new();
+    for collection in &mut file.collections {
+        let owner = format!("collection:{}", collection.id);
+        collection.authentication.slots(owner, &mut slots);
+        folders_slots(&mut collection.folders, &mut slots);
+        for request in &mut collection.requests {
+            let owner = format!("request:{}", request.id);
+            request_slots(request, owner, &mut slots);
+        }
+    }
+    slots
+}
+
+fn folders_slots<'a>(folders: &'a mut [PersistedFolder], slots: &mut Vec<Slot<'a>>) {
+    for folder in folders {
+        let owner = format!("folder:{}", folder.id);
+        folder.authentication.slots(owner, slots);
+        folders_slots(&mut folder.folders, slots);
+        for request in &mut folder.requests {
+            let owner = format!("request:{}", request.id);
+            request_slots(request, owner, slots);
+        }
+    }
+}
+
+/// Secret fields of a request and of its examples, under `owner`.
+pub(crate) fn request_slots<'a>(
+    request: &'a mut PersistedRequest,
+    owner: String,
+    slots: &mut Vec<Slot<'a>>,
+) {
+    for example in &mut request.examples {
+        let owner = format!("{owner}/example:{}", example.request.id);
+        request_slots(&mut example.request, owner, slots);
+    }
+    request.authentication.slots(owner, slots);
+}
+
+impl PersistedAuthentication {
+    fn slots<'a>(&'a mut self, owner: String, slots: &mut Vec<Slot<'a>>) {
+        let (field, value) = match self {
+            Self::CustomHeader { value, .. } => ("value", value),
+            Self::Bearer { token } => ("token", token),
+            Self::Basic { password, .. } | Self::Digest { password, .. } => ("password", password),
+            Self::OAuth2ClientCredentials { client_secret, .. } => ("client_secret", client_secret),
+            Self::None | Self::Inherit => return,
+        };
+        slots.push(Slot {
+            owner,
+            field,
+            value,
+        });
+    }
 }
 
 /// Coleções no "formato Alcy" compacto, sem gravar em disco — usado para
@@ -960,6 +1068,7 @@ fn persisted_from_folder(folder: &Folder) -> PersistedFolder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_secrets::tests::test_secrets;
 
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1021,7 +1130,7 @@ mod tests {
 
     #[test]
     fn load_returns_an_empty_list_when_the_manifest_does_not_exist() {
-        let store = CollectionsStore::new(temp_root());
+        let store = CollectionsStore::new(temp_root(), test_secrets());
 
         let collections = store.load().unwrap();
 
@@ -1031,7 +1140,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_nested_collections_with_full_request_content() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let collections = sample_collections();
 
         store.save(&collections).unwrap();
@@ -1045,7 +1154,7 @@ mod tests {
     #[test]
     fn save_creates_the_root_directory_when_it_does_not_exist() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         assert!(!root.exists());
         store.save(&sample_collections()).unwrap();
@@ -1058,7 +1167,7 @@ mod tests {
     #[test]
     fn save_does_not_leave_a_temporary_file_behind() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         store.save(&sample_collections()).unwrap();
 
@@ -1076,7 +1185,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": []}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let collections = store.load().unwrap();
 
@@ -1090,7 +1199,7 @@ mod tests {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join(MANIFEST_FILE_NAME), "not json").unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1108,7 +1217,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "soap", "endpoint": "https://api.example.com", "body": "", "variables": "{}", "headers": [], "authentication": {"type": "none"}}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1121,7 +1230,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_grpc_requests_and_omits_grpc_for_other_protocols() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let reflected = Request::new(
             Endpoint::new("grpcs://{{host}}:443").unwrap(),
             RequestDocument::new(ProtocolId::Grpc, r#"{"name": "{{user}}"}"#),
@@ -1179,7 +1288,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_websocket_requests_and_omits_websocket_for_other_protocols() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let chat = Request::new(
             Endpoint::saved("wss://{{host}}/chat"),
             RequestDocument::new(ProtocolId::WebSocket, r#"{"join": "{{room}}"}"#),
@@ -1236,7 +1345,7 @@ mod tests {
             r#"{"version": 99, "collections": []}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1257,7 +1366,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "", "folders": []}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1275,7 +1384,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [{"id": "folder-1", "name": "", "folders": []}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1295,7 +1404,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "graphql", "endpoint": "", "body": "", "variables": "{}", "headers": [], "authentication": {"type": "none"}}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let collections = store.load().unwrap();
 
@@ -1309,7 +1418,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_a_rest_request_with_a_non_post_method() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let request = Request::new(
             Endpoint::new("{{baseUrl}}/users").unwrap(),
             RequestDocument::new(ProtocolId::Rest, ""),
@@ -1357,7 +1466,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_the_docs_reference_and_omits_it_when_absent() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let documented = SavedRequest::new("request-1", "List pets", sample_request(""))
             .unwrap()
             .with_docs_ref(DocsRef {
@@ -1379,7 +1488,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_examples_and_omits_them_when_absent() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let example = RequestExample {
             request: SavedRequest::new("example-1", "Not found", sample_request("")).unwrap(),
             response: ExampleResponse {
@@ -1424,7 +1533,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_scripts_and_old_files_load_with_empty_scripts() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let request = Request::new(
             Endpoint::new("{{baseUrl}}/users").unwrap(),
             RequestDocument::new(ProtocolId::Rest, ""),
@@ -1460,7 +1569,9 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "graphql", "endpoint": "https://api.example.com", "body": "", "variables": "{}", "headers": [], "authentication": {"type": "none"}}]}]}"#,
         )
         .unwrap();
-        let loaded = CollectionsStore::new(root.clone()).load().unwrap();
+        let loaded = CollectionsStore::new(root.clone(), test_secrets())
+            .load()
+            .unwrap();
         assert_eq!(loaded[0].requests()[0].request.pre_request_script, "");
         assert_eq!(loaded[0].requests()[0].request.post_response_script, "");
         fs::remove_dir_all(&root).ok();
@@ -1469,7 +1580,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_folder_and_collection_authentication() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let folder = Folder::new("folder-1", "Orders", vec![], vec![])
             .unwrap()
             .with_authentication(Authentication::CustomHeader {
@@ -1500,7 +1611,9 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = CollectionsStore::new(root.clone()).load().unwrap();
+        let loaded = CollectionsStore::new(root.clone(), test_secrets())
+            .load()
+            .unwrap();
 
         assert_eq!(loaded[0].authentication, Authentication::Inherit);
         assert_eq!(
@@ -1513,7 +1626,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_folder_and_collection_variables() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let folder = Folder::new("folder-1", "Orders", vec![], vec![])
             .unwrap()
             .with_variables(vec![EnvironmentVariable::new("id", "42", false).unwrap()])
@@ -1536,7 +1649,7 @@ mod tests {
     #[test]
     fn collections_without_variables_do_not_write_the_field() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         store.save(&sample_collections()).unwrap();
 
@@ -1549,7 +1662,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_collection_labels() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
         let collections = vec![
             Collection::new("collection-1", "Customer API", vec![], vec![])
                 .unwrap()
@@ -1571,7 +1684,7 @@ mod tests {
     #[test]
     fn collections_without_labels_do_not_write_the_field() {
         let root = temp_root();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         store.save(&sample_collections()).unwrap();
 
@@ -1591,7 +1704,9 @@ mod tests {
         )
         .unwrap();
 
-        let collections = CollectionsStore::new(root.clone()).load().unwrap();
+        let collections = CollectionsStore::new(root.clone(), test_secrets())
+            .load()
+            .unwrap();
 
         assert_eq!(collections[0].labels()[0].name(), "Novo");
         assert_eq!(collections[0].labels()[0].color, LabelColor::Gray);
@@ -1607,7 +1722,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "graphql", "endpoint": "https://api.example.com", "body": "", "variables": "{}", "headers": [], "authentication": {"type": "none"}}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let collections = store.load().unwrap();
 
@@ -1628,7 +1743,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "rest", "endpoint": "https://api.example.com", "body": "", "variables": "", "headers": [], "authentication": {"type": "none"}, "method": "trace"}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1763,7 +1878,7 @@ mod tests {
 
         for body in bodies {
             let root = temp_root();
-            let store = CollectionsStore::new(root.clone());
+            let store = CollectionsStore::new(root.clone(), test_secrets());
             let collections = collection_with_request(request_with_body(body.clone()));
 
             store.save(&collections).unwrap();
@@ -1788,7 +1903,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "rest", "endpoint": "https://api.example.com", "body": "{}", "variables": "", "headers": [], "authentication": {"type": "none"}}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let collections = store.load().unwrap();
 
@@ -1811,7 +1926,7 @@ mod tests {
             r#"{"version": 1, "collections": [{"id": "collection-1", "name": "Customer API", "folders": [], "requests": [{"id": "request-1", "name": "Ping", "protocol": "rest", "endpoint": "https://api.example.com", "body": "", "variables": "", "headers": [], "authentication": {"type": "none"}, "body_type": "graphql"}]}]}"#,
         )
         .unwrap();
-        let store = CollectionsStore::new(root.clone());
+        let store = CollectionsStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 

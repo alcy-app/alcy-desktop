@@ -45,14 +45,14 @@ pub enum PreviewLoadFlowError {
 #[tauri::command]
 pub fn preview_load_flow(
     input: PreviewLoadFlowInput,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<LoadFlowPreviewDto, PreviewLoadFlowError> {
     let root = PathBuf::from(input.root_path);
-    let snapshot =
-        FlowStore::new(root.clone())
-            .load()
-            .map_err(|error| PreviewLoadFlowError::Storage {
-                message: error.to_string(),
-            })?;
+    let snapshot = FlowStore::new(root.clone(), alcy_storage::LocalSecrets::clone(&secrets))
+        .load()
+        .map_err(|error| PreviewLoadFlowError::Storage {
+            message: error.to_string(),
+        })?;
     let flow = snapshot
         .flows
         .iter()

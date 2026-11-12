@@ -69,6 +69,7 @@ pub enum LoadDatasetAssetError {
 #[tauri::command]
 pub fn copy_load_dataset_asset(
     input: CopyLoadDatasetAssetInput,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<CopyLoadDatasetAssetOutput, CopyLoadDatasetAssetError> {
     if !is_single_component(&input.flow_id) {
         return Err(CopyLoadDatasetAssetError::Invalid {
@@ -76,11 +77,12 @@ pub fn copy_load_dataset_asset(
         });
     }
     let root = Path::new(&input.root_path);
-    let snapshot = FlowStore::new(root.to_path_buf()).load().map_err(|error| {
-        CopyLoadDatasetAssetError::Storage {
+    let secrets = alcy_storage::LocalSecrets::clone(&secrets);
+    let snapshot = FlowStore::new(root.to_path_buf(), secrets)
+        .load()
+        .map_err(|error| CopyLoadDatasetAssetError::Storage {
             message: error.to_string(),
-        }
-    })?;
+        })?;
     if !snapshot.flows.iter().any(|flow| flow.id == input.flow_id) {
         return Err(CopyLoadDatasetAssetError::NotFound);
     }

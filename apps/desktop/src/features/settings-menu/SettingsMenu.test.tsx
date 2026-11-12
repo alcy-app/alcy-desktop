@@ -361,7 +361,7 @@ describe('SettingsMenu — segurança', () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
 
-    const protect = screen.getByRole('checkbox', { name: 'Não enviar valores de variáveis sensíveis' })
+    const protect = screen.getByRole('checkbox', { name: 'Não enviar valores sensíveis' })
     await waitFor(() => expect(protect).toBeEnabled())
     expect(protect).toBeChecked()
     expect(screen.queryByText(/serão enviados em texto claro/)).not.toBeInTheDocument()
@@ -378,7 +378,7 @@ describe('SettingsMenu — segurança', () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
 
-    const protect = screen.getByRole('checkbox', { name: 'Não enviar valores de variáveis sensíveis' })
+    const protect = screen.getByRole('checkbox', { name: 'Não enviar valores sensíveis' })
     await waitFor(() => expect(protect).toBeEnabled())
     fireEvent.click(protect)
 

@@ -565,6 +565,7 @@ pub async fn execute_collection_run(
     rest_executor: tauri::State<'_, ReqwestRestExecutor>,
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<(), ExecuteCollectionRunError> {
     let run_id = input.run_id.clone();
     let started = std::time::Instant::now();
@@ -583,6 +584,7 @@ pub async fn execute_collection_run(
         &graphql_executor,
         &rest_executor,
         history.get(),
+        alcy_storage::LocalSecrets::clone(&secrets),
     )
     .await;
     match &result {
@@ -634,6 +636,7 @@ async fn execute_collection_run_inner(
     graphql_executor: &ReqwestGraphqlExecutor,
     rest_executor: &ReqwestRestExecutor,
     history: HistoryPreferences,
+    secrets: alcy_storage::LocalSecrets,
 ) -> Result<CollectionRunCounts, ExecuteCollectionRunError> {
     if input.request_ids.is_empty() {
         return Err(ExecuteCollectionRunError::EmptyPlan);
@@ -669,7 +672,7 @@ async fn execute_collection_run_inner(
 
     let root_path = input.root_path.clone();
     let collections = tauri::async_runtime::spawn_blocking(move || {
-        CollectionsStore::new(PathBuf::from(root_path)).load()
+        CollectionsStore::new(PathBuf::from(root_path), secrets).load()
     })
     .await
     .map_err(|error| ExecuteCollectionRunError::Storage {

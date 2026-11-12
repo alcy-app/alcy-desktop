@@ -161,14 +161,14 @@ pub async fn execute_load_flow(
     rest_executor: tauri::State<'_, ReqwestRestExecutor>,
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<(), ExecuteLoadFlowError> {
     let root = PathBuf::from(&input.root_path);
-    let snapshot =
-        FlowStore::new(root.clone())
-            .load()
-            .map_err(|error| ExecuteLoadFlowError::Storage {
-                message: error.to_string(),
-            })?;
+    let snapshot = FlowStore::new(root.clone(), alcy_storage::LocalSecrets::clone(&secrets))
+        .load()
+        .map_err(|error| ExecuteLoadFlowError::Storage {
+            message: error.to_string(),
+        })?;
     let flow = snapshot
         .flows
         .iter()

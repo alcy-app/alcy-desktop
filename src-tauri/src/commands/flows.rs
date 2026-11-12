@@ -6,7 +6,7 @@ use alcy_domain::{
     FlowNodeKind, FlowPosition, LoadNode, LoadNodeKind, MockCallCountOperator, MockServerSource,
     VariableAssignment, VariableOperation, validate_flow_folders,
 };
-use alcy_storage::{FlowStore, FlowsSnapshot, StorageError};
+use alcy_storage::{FlowStore, FlowsSnapshot, LocalSecrets, StorageError};
 
 use crate::commands::collections::{
     CollectionsCommandError, SavedRequestDto, request_from_dto, request_to_dto,
@@ -757,14 +757,19 @@ fn build_snapshot(input: SaveFlowsInput) -> Result<FlowsSnapshot, FlowsError> {
 /// List flows in the workspace at `input.root_path`. An unsaved workspace
 /// starts empty; flows are stored independently for each workspace.
 #[tauri::command]
-pub async fn list_flows(input: ListFlowsInput) -> Result<FlowsSnapshotDto, FlowsError> {
-    let result = run_blocking(move || list_flows_inner(PathBuf::from(input.root_path))).await;
+pub async fn list_flows(
+    input: ListFlowsInput,
+    secrets: tauri::State<'_, LocalSecrets>,
+) -> Result<FlowsSnapshotDto, FlowsError> {
+    let secrets = LocalSecrets::clone(&secrets);
+    let result =
+        run_blocking(move || list_flows_inner(PathBuf::from(input.root_path), secrets)).await;
     crate::logging::logged("alcy::flow", "carregar flows", result)
 }
 
-fn list_flows_inner(root: PathBuf) -> Result<FlowsSnapshotDto, FlowsError> {
-    let store = FlowStore::new(root);
-    let snapshot = store.load()?;
+fn list_flows_inner(root: PathBuf, secrets: LocalSecrets) -> Result<FlowsSnapshotDto, FlowsError> {
+    let store = FlowStore::new(root, secrets);
+    let snapshot = store.load_and_seal()?;
     Ok(snapshot_to_dto(snapshot))
 }
 
@@ -772,11 +777,17 @@ fn list_flows_inner(root: PathBuf) -> Result<FlowsSnapshotDto, FlowsError> {
 static FLOW_SAVES: OrderedSaves = OrderedSaves::new();
 
 #[tauri::command]
-pub async fn save_flows(input: SaveFlowsInput) -> Result<(), FlowsError> {
+pub async fn save_flows(
+    input: SaveFlowsInput,
+    secrets: tauri::State<'_, LocalSecrets>,
+) -> Result<(), FlowsError> {
     let ticket = FLOW_SAVES.ticket();
+    let secrets = LocalSecrets::clone(&secrets);
     let result = run_blocking(move || {
         let root = PathBuf::from(input.root_path.clone());
-        FLOW_SAVES.run(ticket, &root.clone(), || save_flows_inner(root, input))
+        FLOW_SAVES.run(ticket, &root.clone(), || {
+            save_flows_inner(root, input, secrets)
+        })
     })
     .await;
     crate::logging::logged("alcy::flow", "salvar flows", result)
@@ -851,9 +862,13 @@ async fn run_blocking<T: Send + 'static>(
         })
 }
 
-fn save_flows_inner(root: PathBuf, input: SaveFlowsInput) -> Result<(), FlowsError> {
+fn save_flows_inner(
+    root: PathBuf,
+    input: SaveFlowsInput,
+    secrets: LocalSecrets,
+) -> Result<(), FlowsError> {
     let snapshot = build_snapshot(input)?;
-    let store = FlowStore::new(root.clone());
+    let store = FlowStore::new(root.clone(), secrets);
     store.save(&snapshot)?;
     remove_orphaned_flow_assets(&root, &snapshot)?;
     Ok(())
@@ -901,6 +916,7 @@ fn remove_orphaned_flow_assets(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::test_secrets::test_secrets;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::UNIX_EPOCH;
 
@@ -1074,7 +1090,7 @@ mod tests {
     fn lists_no_flows_when_nothing_is_persisted() {
         let root = temp_root();
 
-        let snapshot = list_flows_inner(root).unwrap();
+        let snapshot = list_flows_inner(root, test_secrets()).unwrap();
 
         assert!(snapshot.flows.is_empty());
     }
@@ -1088,8 +1104,8 @@ mod tests {
             folders: vec![],
         };
 
-        save_flows_inner(root.clone(), input).unwrap();
-        let snapshot = list_flows_inner(root.clone()).unwrap();
+        save_flows_inner(root.clone(), input, test_secrets()).unwrap();
+        let snapshot = list_flows_inner(root.clone(), test_secrets()).unwrap();
 
         assert_eq!(snapshot.flows.len(), 1);
         assert_eq!(snapshot.flows[0].name, "My flow");
@@ -1112,9 +1128,11 @@ mod tests {
                 flows: vec![sample_flow_input()],
                 folders: vec![folder],
             },
+            test_secrets(),
         )
         .unwrap();
-        let snapshot = serde_json::to_value(list_flows_inner(root.clone()).unwrap()).unwrap();
+        let snapshot =
+            serde_json::to_value(list_flows_inner(root.clone(), test_secrets()).unwrap()).unwrap();
         assert_eq!(
             snapshot["folders"][0]["flowIds"],
             serde_json::json!(["flow-1"])
@@ -1136,6 +1154,7 @@ mod tests {
                     flow_ids: vec!["missing".into()],
                 }],
             },
+            test_secrets(),
         )
         .unwrap_err();
         assert!(matches!(error, FlowsError::Invalid { .. }));
@@ -1157,6 +1176,7 @@ mod tests {
                 flows: vec![sample_flow_input()],
                 folders: vec![],
             },
+            test_secrets(),
         )
         .unwrap();
 
@@ -1177,7 +1197,7 @@ mod tests {
             folders: vec![],
         };
 
-        let error = save_flows_inner(root, input).unwrap_err();
+        let error = save_flows_inner(root, input, test_secrets()).unwrap_err();
 
         assert!(matches!(error, FlowsError::Invalid { .. }));
     }
@@ -1192,8 +1212,8 @@ mod tests {
             folders: vec![],
         };
 
-        save_flows_inner(root_a.clone(), input).unwrap();
-        let snapshot_b = list_flows_inner(root_b.clone()).unwrap();
+        save_flows_inner(root_a.clone(), input, test_secrets()).unwrap();
+        let snapshot_b = list_flows_inner(root_b.clone(), test_secrets()).unwrap();
 
         assert!(snapshot_b.flows.is_empty());
 

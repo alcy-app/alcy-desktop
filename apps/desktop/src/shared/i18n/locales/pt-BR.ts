@@ -611,8 +611,8 @@ const ptBR = {
   'settings.telemetryOff': 'A telemetria está desligada: nada está sendo registrado.',
   'settings.telemetryRefresh': 'Atualizar',
   'settings.securitySyncLabel': 'Sincronização do workspace',
-  'settings.securitySyncProtect': 'Não enviar valores de variáveis sensíveis',
-  'settings.securitySyncProtectHint': 'Variáveis sensíveis vão ao remoto sem valor. Sendo criptografadas localmente.',
+  'settings.securitySyncProtect': 'Não enviar valores sensíveis',
+  'settings.securitySyncProtectHint': 'Variáveis sensíveis e segredos digitados na autenticação vão ao remoto sem valor e ficam criptografados nesta máquina.',
   'settings.securitySyncRevealWarning': 'Os valores sensíveis serão enviados em texto claro ao remoto.',
   'settings.securitySyncLoadError': 'Não foi possível carregar a preferência: {message}',
   'settings.securitySyncSaveError': 'Não foi possível salvar a preferência: {message}',
@@ -972,6 +972,7 @@ const ptBR = {
   'authorization.headerNameLabel': 'Nome do header',
   'authorization.headerValueLabel': 'Valor do header',
   'authorization.inheritHint': 'Usa a autenticação da pasta ou coleção pai.',
+  'authorization.localSecretHint': 'O segredo digitado aqui fica só neste computador. Para o time recebê-lo, use uma variável de ambiente sensível.',
   'authorization.inheritedFrom': 'Herdada de "{name}" ({type}).',
   'authorization.inheritedNone': 'Não há autenticação herdada.',
 

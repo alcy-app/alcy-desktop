@@ -8,7 +8,7 @@ use alcy_graphql::{
     GraphqlSchema, GraphqlTypeKind, ReqwestGraphqlExecutor, SchemaError, introspection_request,
     parse_schema,
 };
-use alcy_storage::SchemaStore;
+use alcy_storage::{LocalSecrets, SchemaStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -403,7 +403,16 @@ pub async fn load_schema(
     registry: tauri::State<'_, ExecutionRegistry>,
     store: tauri::State<'_, SchemaStore>,
     executor: tauri::State<'_, ReqwestGraphqlExecutor>,
+    secrets: tauri::State<'_, LocalSecrets>,
 ) -> Result<LoadSchemaOutput, LoadSchemaError> {
+    let mut input = input;
+    input.authentication = resolve_inherited_authentication(
+        input.authentication,
+        input.request_id.as_deref(),
+        input.root_path.as_deref(),
+        &secrets,
+    )
+    .await;
     let result: Result<LoadSchemaOutput, LoadSchemaError> =
         async { load_schema_inner(input, &registry, &store, &executor).await }.await;
     crate::logging::logged("alcy::schema", "carregar schema", result)
@@ -418,12 +427,6 @@ async fn load_schema_inner(
     let mut input = input;
     let execution_id = input.execution_id.clone();
     let force_refresh = input.force_refresh;
-    input.authentication = resolve_inherited_authentication(
-        input.authentication,
-        input.request_id.as_deref(),
-        input.root_path.as_deref(),
-    )
-    .await;
 
     let scopes = scopes_from_dto(std::mem::take(&mut input.variable_scopes))?;
     let environment_variables = with_scoped_variables(&input.environment_variables, &scopes)

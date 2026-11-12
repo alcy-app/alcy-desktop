@@ -183,6 +183,10 @@ export const AuthorizationPanel = memo(function AuthorizationPanel({
           </AuthRow>
         </>
       )}
+
+      {authorization.type !== 'inherit' && authorization.type !== 'none' && (
+        <p className="rw-auth-hint">{t('authorization.localSecretHint')}</p>
+      )}
       </div>
     </div>
   )

@@ -127,14 +127,17 @@ pub(crate) fn analyze_load_test_source(
 pub async fn commit_load_test_import(
     input: CommitLoadTestImportInput,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || commit_load_test_import_with_format(input))
-            .await
-            .map_err(|error| LoadTestImportErrorDto::Storage {
-                message: error.to_string(),
-            })
-            .and_then(|result| result);
+    let secrets = alcy_storage::LocalSecrets::clone(&secrets);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        commit_load_test_import_with_format(input, secrets)
+    })
+    .await
+    .map_err(|error| LoadTestImportErrorDto::Storage {
+        message: error.to_string(),
+    })
+    .and_then(|result| result);
     usage.record(alcy_app::UsageEvent::ImportFinished {
         format: result
             .as_ref()
@@ -162,12 +165,14 @@ fn load_format_name(format: LoadImportFormat) -> &'static str {
 fn commit_load_test_import_blocking(
     input: CommitLoadTestImportInput,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
-    commit_load_test_import_with_format(input).map(|(flow, _)| flow)
+    let secrets = crate::commands::test_secrets::test_secrets();
+    commit_load_test_import_with_format(input, secrets).map(|(flow, _)| flow)
 }
 
 /// The saved flow and the source format (`k6`, `jmeter`).
 fn commit_load_test_import_with_format(
     input: CommitLoadTestImportInput,
+    secrets: alcy_storage::LocalSecrets,
 ) -> Result<(FlowDto, &'static str), LoadTestImportErrorDto> {
     crate::logging::logged_with(
         "alcy::load-import",
@@ -188,7 +193,7 @@ fn commit_load_test_import_with_format(
             analysis.flow.id = committed_flow_id();
 
             let root = PathBuf::from(&input.root_path);
-            let store = FlowStore::new(root.clone());
+            let store = FlowStore::new(root.clone(), secrets);
             let mut snapshot = store
                 .load()
                 .map_err(|error| LoadTestImportErrorDto::Storage {
@@ -380,6 +385,7 @@ mod tests {
         analyze_load_test_import_blocking as analyze_load_test_import,
         commit_load_test_import_blocking as commit_load_test_import,
     };
+    use crate::commands::test_secrets::test_secrets;
     use std::future::pending;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -583,7 +589,7 @@ mod tests {
             analysis_hash: preview.analysis_hash,
         })
         .unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let mut snapshot = store.load().unwrap();
         let flow = &snapshot.flows[0];
         assert_eq!(flow.id, committed.id);
@@ -882,7 +888,7 @@ mod tests {
             body_urls(&committed, "Catalog"),
             body_urls(&preview.flow, "Catalog")
         );
-        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let snapshot = FlowStore::new(root.clone(), test_secrets()).load().unwrap();
         let flow = snapshot
             .flows
             .iter()
@@ -1013,7 +1019,7 @@ mod tests {
                 analysis_hash: preview.analysis_hash,
             })
             .unwrap();
-            let snapshot = FlowStore::new(root.clone()).load().unwrap();
+            let snapshot = FlowStore::new(root.clone(), test_secrets()).load().unwrap();
             let flow = snapshot
                 .flows
                 .iter()
@@ -1129,7 +1135,7 @@ mod tests {
             analysis_hash: preview.analysis_hash,
         })
         .unwrap();
-        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let snapshot = FlowStore::new(root.clone(), test_secrets()).load().unwrap();
         let flow = snapshot
             .flows
             .iter()
@@ -1219,7 +1225,7 @@ mod tests {
             analysis_hash: preview.analysis_hash,
         })
         .unwrap();
-        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let snapshot = FlowStore::new(root.clone(), test_secrets()).load().unwrap();
         let flow = snapshot
             .flows
             .iter()

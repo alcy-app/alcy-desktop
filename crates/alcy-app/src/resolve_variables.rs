@@ -75,6 +75,24 @@ pub(crate) fn placeholder_names(template: &str) -> Vec<&str> {
     names
 }
 
+/// Whether `template` holds nothing but `{{name}}` placeholders and
+/// whitespace: a reference to values kept elsewhere, not a value of its own.
+/// Unclosed braces are text, as in [`resolve_placeholders`].
+pub fn is_only_placeholders(template: &str) -> bool {
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        if !rest[..start].trim().is_empty() {
+            return false;
+        }
+        let after_open = &rest[start + 2..];
+        let Some(end) = after_open.find("}}") else {
+            return false;
+        };
+        rest = &after_open[end + 2..];
+    }
+    rest.trim().is_empty()
+}
+
 fn lookup_environment_variable(
     name: &str,
     variables: &[EnvironmentVariable],
@@ -269,6 +287,30 @@ mod tests {
             EnvironmentVariable::new("baseUrl", "https://api.example.com", false).unwrap(),
             EnvironmentVariable::new("token", "secret", true).unwrap(),
         ]
+    }
+
+    #[test]
+    fn only_placeholders_are_references() {
+        for template in [
+            "",
+            "  ",
+            "{{token}}",
+            " {{ token }} ",
+            "{{a}} {{b}}",
+            "{{}}",
+        ] {
+            assert!(is_only_placeholders(template), "{template:?}");
+        }
+        for template in [
+            "secret",
+            "Bearer {{token}}",
+            "{{token}}x",
+            "{{user}}:{{password}}",
+            "{{unclosed",
+            "}}",
+        ] {
+            assert!(!is_only_placeholders(template), "{template:?}");
+        }
     }
 
     #[test]

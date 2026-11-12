@@ -601,6 +601,7 @@ pub(crate) fn body_input_from_domain(text: &str, payload: &BodyPayload) -> BodyI
 
 /// Execute cancellable REST through the same protocol-neutral registry and cancel command as GraphQL.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_rest_request(
     input: ExecuteRestRequestInput,
     registry: tauri::State<'_, ExecutionRegistry>,
@@ -609,7 +610,16 @@ pub async fn execute_rest_request(
     session_cookies: tauri::State<'_, SessionCookies>,
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
+    let mut input = input;
+    input.authentication = resolve_inherited_authentication(
+        input.authentication,
+        input.request_id.as_deref(),
+        Some(&input.root_path),
+        &secrets,
+    )
+    .await;
     let execution_id = input.execution_id.clone();
     let started = std::time::Instant::now();
     let method = input.method.as_str().to_ascii_uppercase();
@@ -704,12 +714,6 @@ async fn execute_rest_request_inner(
     // Scripts receive environment/scopes separately; interpolation overlays them (ADR 0031).
     let environment = input.environment_variables.clone();
     input.environment_variables = with_scoped_variables(&input.environment_variables, &scopes);
-    input.authentication = resolve_inherited_authentication(
-        input.authentication,
-        input.request_id.as_deref(),
-        Some(&root_path),
-    )
-    .await;
     let redacted_input =
         redact_sensitive_variables(&input.environment_variables).map(|environment_variables| {
             ExecuteRestRequestInput {

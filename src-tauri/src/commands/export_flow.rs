@@ -5,7 +5,7 @@ use alcy_domain::{
     EnvironmentVariable, FlowNodeKind, effective_authentication, find_saved_request,
     merge_variables, variable_scopes,
 };
-use alcy_storage::CollectionsStore;
+use alcy_storage::{CollectionsStore, LocalSecrets};
 use serde::{Deserialize, Serialize};
 
 use super::collections::request_to_dto;
@@ -45,7 +45,11 @@ fn invalid(message: impl ToString) -> FlowsError {
     }
 }
 
-fn prepare(input: FlowExportInput, inline: bool) -> Result<PreparedFlowExport, FlowsError> {
+fn prepare(
+    input: FlowExportInput,
+    inline: bool,
+    secrets: LocalSecrets,
+) -> Result<PreparedFlowExport, FlowsError> {
     let flow = flow_from_input(input.flow)?;
     let variables = input
         .environment_variables
@@ -64,7 +68,7 @@ fn prepare(input: FlowExportInput, inline: bool) -> Result<PreparedFlowExport, F
         .iter()
         .any(|node| matches!(node.kind, FlowNodeKind::Request { .. }))
     {
-        CollectionsStore::new(PathBuf::from(input.root_path)).load()?
+        CollectionsStore::new(PathBuf::from(input.root_path), secrets).load()?
     } else {
         Vec::new()
     };
@@ -104,9 +108,13 @@ fn prepare(input: FlowExportInput, inline: bool) -> Result<PreparedFlowExport, F
 }
 
 #[tauri::command]
-pub async fn preview_flow_export(input: FlowExportInput) -> Result<FlowExportPreview, FlowsError> {
+pub async fn preview_flow_export(
+    input: FlowExportInput,
+    secrets: tauri::State<'_, LocalSecrets>,
+) -> Result<FlowExportPreview, FlowsError> {
+    let secrets = LocalSecrets::clone(&secrets);
     tauri::async_runtime::spawn_blocking(move || {
-        let prepared = prepare(input, false)?;
+        let prepared = prepare(input, false, secrets)?;
         Ok(FlowExportPreview {
             request_count: prepared.request_count,
             variable_count: prepared.variable_names.len(),
@@ -127,8 +135,10 @@ pub async fn preview_flow_export(input: FlowExportInput) -> Result<FlowExportPre
 pub async fn export_flow(
     input: WriteFlowExportInput,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    secrets: tauri::State<'_, LocalSecrets>,
 ) -> Result<(), FlowsError> {
-    let result = tauri::async_runtime::spawn_blocking(move || write_export(input))
+    let secrets = LocalSecrets::clone(&secrets);
+    let result = tauri::async_runtime::spawn_blocking(move || write_export(input, secrets))
         .await
         .map_err(|e| FlowsError::Storage {
             message: e.to_string(),
@@ -137,7 +147,7 @@ pub async fn export_flow(
     crate::logging::logged("alcy::export", "export flow", result)
 }
 
-fn write_export(input: WriteFlowExportInput) -> Result<(), FlowsError> {
+fn write_export(input: WriteFlowExportInput, secrets: LocalSecrets) -> Result<(), FlowsError> {
     let path = PathBuf::from(input.path);
     if !path
         .extension()
@@ -145,7 +155,7 @@ fn write_export(input: WriteFlowExportInput) -> Result<(), FlowsError> {
     {
         return Err(invalid("Flow exports must use the .json extension"));
     }
-    let prepared = prepare(input.source, input.inline)?;
+    let prepared = prepare(input.source, input.inline, secrets)?;
     let bytes = serde_json::to_vec_pretty(&prepared.document).map_err(invalid)?;
     std::fs::write(path, bytes).map_err(|e| FlowsError::Storage {
         message: e.to_string(),
@@ -155,6 +165,7 @@ fn write_export(input: WriteFlowExportInput) -> Result<(), FlowsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::test_secrets::test_secrets;
     use alcy_domain::{
         Authentication, Collection, Endpoint, ProtocolId, Request, RequestDocument, SavedRequest,
     };
@@ -200,10 +211,10 @@ mod tests {
                 name: "X-Example".into(),
                 value: "example".into(),
             });
-        CollectionsStore::new(root.clone())
+        CollectionsStore::new(root.clone(), test_secrets())
             .save(&[collection])
             .unwrap();
-        let prepared = prepare(input(&root), true).unwrap();
+        let prepared = prepare(input(&root), true, test_secrets()).unwrap();
         assert_eq!(
             prepared.document["flow"]["nodes"][1]["kind"],
             "inlineRequest"
@@ -213,17 +224,23 @@ mod tests {
             "customHeader"
         );
         let path = root.join("example.flow.alcy.json");
-        write_export(WriteFlowExportInput {
-            source: input(&root),
-            path: path.to_string_lossy().into(),
-            inline: true,
-        })
+        write_export(
+            WriteFlowExportInput {
+                source: input(&root),
+                path: path.to_string_lossy().into(),
+                inline: true,
+            },
+            test_secrets(),
+        )
         .unwrap();
         let actual: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(actual, prepared.document);
         assert_eq!(
-            CollectionsStore::new(root.clone()).load().unwrap()[0].requests()[0]
+            CollectionsStore::new(root.clone(), test_secrets())
+                .load()
+                .unwrap()[0]
+                .requests()[0]
                 .request
                 .endpoint
                 .url(),
@@ -244,27 +261,36 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("example.json");
         assert!(
-            write_export(WriteFlowExportInput {
-                source: input(&root),
-                path: path.to_string_lossy().into(),
-                inline: true
-            })
+            write_export(
+                WriteFlowExportInput {
+                    source: input(&root),
+                    path: path.to_string_lossy().into(),
+                    inline: true
+                },
+                test_secrets()
+            )
             .is_err()
         );
         assert!(!path.exists());
-        write_export(WriteFlowExportInput {
-            source: input(&root),
-            path: path.to_string_lossy().into(),
-            inline: false,
-        })
+        write_export(
+            WriteFlowExportInput {
+                source: input(&root),
+                path: path.to_string_lossy().into(),
+                inline: false,
+            },
+            test_secrets(),
+        )
         .unwrap();
         let invalid_path = root.join("example.txt");
         assert!(
-            write_export(WriteFlowExportInput {
-                source: input(&root),
-                path: invalid_path.to_string_lossy().into(),
-                inline: false
-            })
+            write_export(
+                WriteFlowExportInput {
+                    source: input(&root),
+                    path: invalid_path.to_string_lossy().into(),
+                    inline: false
+                },
+                test_secrets()
+            )
             .is_err()
         );
         assert!(!invalid_path.exists());

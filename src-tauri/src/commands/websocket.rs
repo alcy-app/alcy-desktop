@@ -15,7 +15,7 @@ use alcy_domain::{
 };
 use alcy_rest::ReqwestRestExecutor;
 use alcy_scripting::ScriptWebSocketRequest;
-use alcy_storage::GeneralSettingsStore;
+use alcy_storage::{GeneralSettingsStore, LocalSecrets};
 use alcy_websocket::{
     ConnectError, ConnectInput, Connection, Direction, Handshake, MessageFormat, Outgoing,
     SendError, SessionAction, SessionEvent, SessionMode, Transcript, TranscriptMessage,
@@ -442,7 +442,16 @@ pub async fn execute_websocket_request(
     body_cache: State<'_, ResponseBodyCache>,
     history: State<'_, HistoryPreferencesState>,
     usage: State<'_, UsageHub>,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<ExecuteWebSocketRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
+    let mut input = input;
+    input.authentication = resolve_inherited_authentication(
+        input.authentication,
+        input.request_id.as_deref(),
+        Some(&input.root_path),
+        &secrets,
+    )
+    .await;
     let execution_id = input.execution_id.clone();
     let started = std::time::Instant::now();
     log::info!(
@@ -540,12 +549,6 @@ async fn execute_inner(
     }
     let environment = input.environment_variables.clone();
     let variables = with_scoped_variables(&environment, &scopes);
-    input.authentication = resolve_inherited_authentication(
-        input.authentication,
-        input.request_id.as_deref(),
-        Some(&root_path),
-    )
-    .await;
     let redacted = redact_sensitive_variables(&variables)
         .map(|redacted| build_websocket_request(&input, redacted).ok());
     let request = match build_websocket_request(&input, variables.clone()) {

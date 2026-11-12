@@ -642,6 +642,7 @@ pub async fn execute_flow(
     history: tauri::State<'_, HistoryPreferencesState>,
     mock_runtime: tauri::State<'_, MockServerRuntime>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
 ) -> Result<(), ExecuteFlowError> {
     let flow_execution_id = input.flow_execution_id.clone();
     let node_count = u64::try_from(input.nodes.len()).unwrap_or(u64::MAX);
@@ -681,6 +682,7 @@ pub async fn execute_flow(
         history.get(),
         &mock_runtime,
         &cancellation,
+        alcy_storage::LocalSecrets::clone(&secrets),
     )
     .await;
     flow_registry.remove(&flow_execution_id);
@@ -723,6 +725,7 @@ async fn execute_flow_inner(
     history: HistoryPreferences,
     mock_runtime: &MockServerRuntime,
     cancellation: &WatchCancellation,
+    secrets: alcy_storage::LocalSecrets,
 ) -> Result<(), ExecuteFlowError> {
     let environment_variables = input
         .environment_variables
@@ -762,7 +765,7 @@ async fn execute_flow_inner(
     // Read/parse collections through spawn_blocking outside async workers.
     let collections_root = PathBuf::from(&input.root_path);
     let collections = tauri::async_runtime::spawn_blocking(move || {
-        CollectionsStore::new(collections_root).load()
+        CollectionsStore::new(collections_root, secrets).load()
     })
     .await
     .map_err(|error| ExecuteFlowError::Storage {
@@ -889,6 +892,7 @@ async fn execute_flow_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::test_secrets::test_secrets;
     use alcy_app::execute_flow as run_flow;
     use alcy_domain::{
         Authentication, Collection, Endpoint, ProtocolId, Request, RequestDocument, SavedRequest,
@@ -986,7 +990,7 @@ mod tests {
         let saved = SavedRequest::new(request_id, "Ping", sample_request(endpoint_url)).unwrap();
         let collection =
             Collection::new("collection-1", "Customer API", vec![], vec![saved]).unwrap();
-        CollectionsStore::new(root.to_path_buf())
+        CollectionsStore::new(root.to_path_buf(), test_secrets())
             .save(&[collection])
             .unwrap();
     }
@@ -1052,7 +1056,9 @@ mod tests {
             SystemTime::now(),
         )
         .unwrap();
-        let collections = CollectionsStore::new(root.to_path_buf()).load().unwrap();
+        let collections = CollectionsStore::new(root.to_path_buf(), test_secrets())
+            .load()
+            .unwrap();
 
         let (sender, receiver) = watch::channel(false);
         registry.register(flow_execution_id.to_string(), sender);
@@ -1198,7 +1204,9 @@ mod tests {
             SystemTime::now(),
         )
         .unwrap();
-        let collections = CollectionsStore::new(root.clone()).load().unwrap();
+        let collections = CollectionsStore::new(root.clone(), test_secrets())
+            .load()
+            .unwrap();
 
         let (sender, receiver) = watch::channel(false);
         registry.register("flow-exec-cancel".to_string(), sender);

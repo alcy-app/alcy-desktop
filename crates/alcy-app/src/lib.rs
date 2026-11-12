@@ -99,7 +99,8 @@ pub use resolve_request_variables::{
     ResolveRequestError, apply_route_parameters, resolve_request_variables,
 };
 pub use resolve_variables::{
-    Substitution, TemplateError, resolve_template_for_display, resolve_variables,
+    Substitution, TemplateError, is_only_placeholders, resolve_template_for_display,
+    resolve_variables,
 };
 pub use run_collection::{
     CollectionRunPlan, CollectionRunSink, CollectionRunStep, CollectionRunSummary, RunIteration,

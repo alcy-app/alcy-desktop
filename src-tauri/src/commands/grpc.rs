@@ -19,7 +19,7 @@ use alcy_grpc::{
     GrpcStatus, GrpcTarget, MetadataEntry, MethodKind, SchemaSummary,
     compile_workspace_proto_files, connect, describe, find_method, reflect, start_call,
 };
-use alcy_storage::{CustomCaCertificateStore, GeneralSettingsStore};
+use alcy_storage::{CustomCaCertificateStore, GeneralSettingsStore, LocalSecrets};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel as IpcChannel;
 use tauri::{Manager, State};
@@ -366,12 +366,6 @@ async fn resolve_connection(
     let scopes = scopes_from_dto(std::mem::take(&mut connection.variable_scopes))?;
     connection.environment_variables =
         with_scoped_variables(&connection.environment_variables, &scopes);
-    connection.authentication = resolve_inherited_authentication(
-        connection.authentication,
-        connection.request_id.as_deref(),
-        Some(&connection.root_path),
-    )
-    .await;
     let redacted = redact_sensitive_variables(&connection.environment_variables)
         .map(|variables| build_request(&connection, &variables, &call, message).ok());
     let request = build_request(
@@ -657,13 +651,23 @@ async fn cancellable<T>(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn load_grpc_schema(
     input: LoadGrpcSchemaInput,
     registry: State<'_, ExecutionRegistry>,
     cache: State<'_, GrpcSchemaCache>,
     ca_store: State<'_, CustomCaCertificateStore>,
     proxy: State<'_, ProxyApplyState>,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<SchemaSummary, GrpcCommandError> {
+    let mut input = input;
+    input.connection.authentication = resolve_inherited_authentication(
+        input.connection.authentication,
+        input.connection.request_id.as_deref(),
+        Some(&input.connection.root_path),
+        &secrets,
+    )
+    .await;
     let execution_id = input.execution_id.clone();
     let result = cancellable(&registry, &execution_id, async {
         let source = schema_source(&input.connection.schema_source);
@@ -706,7 +710,16 @@ pub async fn execute_grpc_request(
     body_cache: State<'_, ResponseBodyCache>,
     history: State<'_, HistoryPreferencesState>,
     usage: State<'_, UsageHub>,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<ExecuteGrpcRequestOutput, ExecutionFailure<GrpcCommandError>> {
+    let mut input = input;
+    input.connection.authentication = resolve_inherited_authentication(
+        input.connection.authentication,
+        input.connection.request_id.as_deref(),
+        Some(&input.connection.root_path),
+        &secrets,
+    )
+    .await;
     let started = std::time::Instant::now();
     let mut effects = ScriptEffects::default();
     let result: Result<ExecuteGrpcRequestOutput, GrpcCommandError> = async {

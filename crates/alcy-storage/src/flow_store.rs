@@ -10,7 +10,11 @@ use alcy_domain::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::collections_store::{PersistedRequest, persisted_from_request, request_from_persisted};
+use crate::auth_secrets::{SecretFields, Slot};
+use crate::collections_store::{
+    PersistedRequest, persisted_from_request, request_from_persisted, request_slots,
+};
+use crate::local_secrets::LocalSecrets;
 use crate::mock_server_store::{Server as PersistedMockServer, server_from, server_to};
 use crate::storage_error::StorageError;
 
@@ -21,6 +25,18 @@ const CURRENT_VERSION: u32 = 5;
 const LEGACY_VERSION: u32 = 1;
 const PREVIOUS_VERSION: u32 = 4;
 const MANIFEST_FILE_NAME: &str = "alcy-flows.json";
+/// Authentication secrets of inline flow requests, sealed per person
+/// (ADR 0078). Never versioned.
+pub(crate) const FLOWS_SECRETS_FILE: &str = "alcy-flows-secrets.json";
+
+/// Secret authentication fields of `alcy-flows.json`.
+pub(crate) const SECRET_FIELDS: SecretFields<PersistedFile> = SecretFields {
+    file_name: MANIFEST_FILE_NAME,
+    secrets_file_name: FLOWS_SECRETS_FILE,
+    parse: parse_file,
+    serialize: to_json,
+    slots: file_slots,
+};
 
 /// Complete workspace flow state, loaded and saved atomically.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -30,7 +46,7 @@ pub struct FlowsSnapshot {
 }
 
 #[derive(Serialize, Deserialize)]
-struct PersistedFile {
+pub(crate) struct PersistedFile {
     version: u32,
     flows: Vec<PersistedFlow>,
     #[serde(default)]
@@ -273,36 +289,49 @@ struct PersistedEdge {
 }
 
 /// Versioned workspace flow storage using a temporary file and atomic rename.
-/// Each workspace has its own independent `alcy-flows.json` manifest.
+/// Each workspace has its own independent `alcy-flows.json` manifest. Literal
+/// authentication secrets of inline requests are sealed in
+/// `alcy-flows-secrets.json` instead (ADR 0078).
 pub struct FlowStore {
     path: PathBuf,
+    secrets_path: PathBuf,
+    secrets: LocalSecrets,
 }
 
 impl FlowStore {
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(root: PathBuf, secrets: LocalSecrets) -> Self {
         Self {
             path: root.join(MANIFEST_FILE_NAME),
+            secrets_path: root.join(FLOWS_SECRETS_FILE),
+            secrets,
         }
     }
 
     pub fn load(&self) -> Result<FlowsSnapshot, StorageError> {
-        if !self.path.exists() {
-            return Ok(FlowsSnapshot::default());
-        }
+        Ok(self.load_checked()?.0)
+    }
 
-        let raw = fs::read_to_string(&self.path)
-            .map_err(|error| StorageError::Read(error.to_string()))?;
-        let persisted: PersistedFile = serde_json::from_str(&raw)
-            .map_err(|error| StorageError::Corrupted(error.to_string()))?;
-
-        if persisted.version != CURRENT_VERSION
-            && persisted.version != PREVIOUS_VERSION
-            && persisted.version != 3
-            && persisted.version != 2
-            && persisted.version != LEGACY_VERSION
-        {
-            return Err(StorageError::UnsupportedVersion(persisted.version));
+    /// Loads, and rewrites a file that still holds a literal secret (written
+    /// before ADR 0078 or received from an earlier Alcy) so it is sealed.
+    pub fn load_and_seal(&self) -> Result<FlowsSnapshot, StorageError> {
+        let (snapshot, holds_literal) = self.load_checked()?;
+        if holds_literal {
+            self.save(&snapshot)?;
         }
+        Ok(snapshot)
+    }
+
+    fn load_checked(&self) -> Result<(FlowsSnapshot, bool), StorageError> {
+        let raw = match fs::read(&self.path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((FlowsSnapshot::default(), false));
+            }
+            Err(error) => return Err(StorageError::Read(error.to_string())),
+        };
+        let mut persisted = parse_file(&raw)?;
+        let holds_literal =
+            SECRET_FIELDS.open(&mut persisted, &self.secrets_path, &self.secrets)?;
 
         let flows = persisted
             .flows
@@ -321,7 +350,7 @@ impl FlowStore {
             .collect::<Vec<_>>();
         validate_flow_folders(&flows, &folders)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
-        Ok(FlowsSnapshot { flows, folders })
+        Ok((FlowsSnapshot { flows, folders }, holds_literal))
     }
 
     pub fn save(&self, snapshot: &FlowsSnapshot) -> Result<(), StorageError> {
@@ -340,21 +369,39 @@ impl FlowStore {
                 })
                 .collect(),
         };
-
-        let json = serde_json::to_string_pretty(&persisted)
-            .map_err(|error| StorageError::Write(error.to_string()))?;
-
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| StorageError::Write(error.to_string()))?;
-        }
-
-        let tmp_path = self.path.with_extension("tmp");
-        fs::write(&tmp_path, json).map_err(|error| StorageError::Write(error.to_string()))?;
-        fs::rename(&tmp_path, &self.path)
-            .map_err(|error| StorageError::Write(error.to_string()))?;
-
-        Ok(())
+        SECRET_FIELDS.save(persisted, &self.path, &self.secrets_path, &self.secrets)
     }
+}
+
+fn parse_file(raw: &[u8]) -> Result<PersistedFile, StorageError> {
+    let persisted: PersistedFile =
+        serde_json::from_slice(raw).map_err(|error| StorageError::Corrupted(error.to_string()))?;
+    if persisted.version != CURRENT_VERSION
+        && persisted.version != PREVIOUS_VERSION
+        && persisted.version != 3
+        && persisted.version != 2
+        && persisted.version != LEGACY_VERSION
+    {
+        return Err(StorageError::UnsupportedVersion(persisted.version));
+    }
+    Ok(persisted)
+}
+
+fn to_json(file: &PersistedFile) -> Result<Vec<u8>, StorageError> {
+    serde_json::to_vec_pretty(file).map_err(|error| StorageError::Write(error.to_string()))
+}
+
+fn file_slots(file: &mut PersistedFile) -> Vec<Slot<'_>> {
+    let mut slots = Vec::new();
+    for flow in &mut file.flows {
+        for node in &mut flow.nodes {
+            if let PersistedNodeKind::InlineRequest { request } = &mut node.kind {
+                let owner = format!("flow:{}/node:{}", flow.id, node.id);
+                request_slots(request, owner, &mut slots);
+            }
+        }
+    }
+    slots
 }
 
 fn condition_from_persisted(condition: PersistedCondition) -> Condition {
@@ -763,6 +810,7 @@ fn to_millis(time: SystemTime) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_secrets::tests::test_secrets;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -819,7 +867,7 @@ mod tests {
 
     #[test]
     fn load_returns_an_empty_snapshot_when_the_file_does_not_exist() {
-        let store = FlowStore::new(temp_root());
+        let store = FlowStore::new(temp_root(), test_secrets());
 
         let snapshot = store.load().unwrap();
 
@@ -829,7 +877,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_a_request_node() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let now = millis_now();
         let flow = Flow::new(
             "flow-1",
@@ -891,7 +939,7 @@ mod tests {
         use alcy_domain::{HttpMethod, MockResponse, MockRoute, MockServer};
 
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let now = millis_now();
         let mut inline = MockServer::new("inline-1".to_string(), "Avulso".to_string(), 4010);
         inline.routes.push(MockRoute {
@@ -997,7 +1045,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_a_load_flow_as_current_version() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let now = millis_now();
         let flow = Flow::new_with_execution_kind(
             "load-1",
@@ -1056,7 +1104,7 @@ mod tests {
         )
         .unwrap();
 
-        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let snapshot = FlowStore::new(root.clone(), test_secrets()).load().unwrap();
         assert_eq!(
             snapshot.flows[0].execution_kind(),
             FlowExecutionKind::Standard
@@ -1068,7 +1116,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_note_log_display_sleep_and_set_variables_nodes() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let now = millis_now();
         let node = |id: &str, kind: FlowNodeKind| FlowNode {
             id: id.to_string(),
@@ -1207,7 +1255,7 @@ mod tests {
     #[test]
     fn numeric_settings_keep_numbers_as_numbers_and_templates_as_text() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let now = millis_now();
         let node = |id: &str, kind: FlowNodeKind| FlowNode {
             id: id.to_string(),
@@ -1292,7 +1340,7 @@ mod tests {
         )
         .unwrap();
 
-        let snapshot = FlowStore::new(root.clone()).load().unwrap();
+        let snapshot = FlowStore::new(root.clone(), test_secrets()).load().unwrap();
         let nodes = snapshot.flows[0].nodes();
         assert_eq!(
             nodes[1].kind,
@@ -1322,7 +1370,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_an_if_node_with_handled_edges() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let now = millis_now();
         let flow = Flow::new(
             "flow-1",
@@ -1407,7 +1455,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
 
         let snapshot = store.load().unwrap();
 
@@ -1442,7 +1490,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
 
         let snapshot = store.load().unwrap();
 
@@ -1456,7 +1504,7 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_the_snapshot() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let snapshot = sample_snapshot();
 
         store.save(&snapshot).unwrap();
@@ -1470,7 +1518,7 @@ mod tests {
     #[test]
     fn round_trips_ordered_folders_and_empty_folders_without_changing_graphs() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let mut snapshot = sample_snapshot();
         snapshot.folders = vec![
             FlowFolder {
@@ -1561,7 +1609,7 @@ mod tests {
             flows: vec![flow],
             folders: vec![],
         };
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         store.save(&expected).unwrap();
         assert_eq!(store.load().unwrap(), expected);
         let serialized = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
@@ -1575,7 +1623,7 @@ mod tests {
     fn reads_all_older_versions_without_folders_and_saves_as_v5() {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let snapshot = sample_snapshot();
         for version in 1..=4 {
             let legacy = serde_json::json!({
@@ -1597,7 +1645,7 @@ mod tests {
     #[test]
     fn rejects_invalid_folders_without_overwriting_the_previous_snapshot() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
         let snapshot = sample_snapshot();
         store.save(&snapshot).unwrap();
         let folder = FlowFolder {
@@ -1647,7 +1695,9 @@ mod tests {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join(MANIFEST_FILE_NAME), r#"{"version":4,"flows":[],"folders":[{"id":"folder","name":"Checkout","flow_ids":["missing"]}]}"#).unwrap();
-        let error = FlowStore::new(root.clone()).load().unwrap_err();
+        let error = FlowStore::new(root.clone(), test_secrets())
+            .load()
+            .unwrap_err();
         assert!(matches!(error, StorageError::Corrupted(_)));
         fs::remove_dir_all(root).ok();
     }
@@ -1655,7 +1705,7 @@ mod tests {
     #[test]
     fn save_does_not_leave_a_temporary_file_behind() {
         let root = temp_root();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
 
         store.save(&sample_snapshot()).unwrap();
 
@@ -1669,7 +1719,7 @@ mod tests {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join(MANIFEST_FILE_NAME), "not json").unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1687,7 +1737,7 @@ mod tests {
             r#"{"version": 99, "flows": []}"#,
         )
         .unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 
@@ -1708,7 +1758,7 @@ mod tests {
             r#"{"version": 1, "flows": [{"id": "flow-1", "name": "", "nodes": [], "edges": [], "created_at_ms": 0, "updated_at_ms": 0}]}"#,
         )
         .unwrap();
-        let store = FlowStore::new(root.clone());
+        let store = FlowStore::new(root.clone(), test_secrets());
 
         let error = store.load().unwrap_err();
 

@@ -127,6 +127,77 @@ impl LocalSecrets {
     }
 }
 
+/// Gets the local keys only the first time they are needed: a file with
+/// nothing sensitive never touches the keyring.
+pub(crate) struct LazyKeys<'a> {
+    secrets: &'a LocalSecrets,
+    keys: Option<Arc<SecretKeys>>,
+}
+
+impl<'a> LazyKeys<'a> {
+    pub(crate) fn new(secrets: &'a LocalSecrets) -> Self {
+        Self {
+            secrets,
+            keys: None,
+        }
+    }
+
+    fn get(&mut self) -> Result<&SecretKeys, StorageError> {
+        if self.keys.is_none() {
+            self.keys = Some(self.secrets.keys()?);
+        }
+        match &self.keys {
+            Some(keys) => Ok(keys),
+            None => Err(StorageError::Secrets("chave local indisponível".into())),
+        }
+    }
+
+    pub(crate) fn seal(&mut self, plaintext: &str) -> Result<String, StorageError> {
+        self.get()?
+            .encrypt(plaintext)
+            .map_err(|error| StorageError::Secrets(error.to_string()))
+    }
+
+    /// This person's value among `sealed`; `None` while none of them is theirs.
+    pub(crate) fn open(&mut self, sealed: &[String]) -> Result<Option<String>, StorageError> {
+        if sealed.is_empty() {
+            return Ok(None);
+        }
+        let keys = self.get()?;
+        Ok(sealed.iter().find_map(|value| keys.decrypt(value).ok()))
+    }
+
+    /// `stored` with this person's value set to `value` (empty removes it).
+    /// Values their key cannot open belong to someone else and stay, and an
+    /// unchanged value is not sealed again, so the file only changes when
+    /// something did.
+    pub(crate) fn updated_sealed(
+        &mut self,
+        value: &str,
+        stored: &[String],
+    ) -> Result<Vec<String>, StorageError> {
+        let mut kept = Vec::with_capacity(stored.len() + 1);
+        let mut has_own = false;
+        if !stored.is_empty() {
+            let keys = self.get()?;
+            for sealed in stored {
+                match keys.decrypt(sealed) {
+                    Err(_) => kept.push(sealed.clone()),
+                    Ok(plain) if plain == value && !has_own => {
+                        has_own = true;
+                        kept.push(sealed.clone());
+                    }
+                    Ok(_) => {}
+                }
+            }
+        }
+        if !has_own && !value.is_empty() {
+            kept.push(self.seal(value)?);
+        }
+        Ok(kept)
+    }
+}
+
 fn secret_error(error: SecretError) -> StorageError {
     StorageError::Secrets(error.to_string())
 }

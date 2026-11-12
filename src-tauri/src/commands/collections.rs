@@ -12,7 +12,7 @@ use alcy_domain::{
     HeaderError, LabelColor, ProtocolId, Request, RequestDocument, RequestExample, RouteParameter,
     SavedRequest, SavedRequestError, WebSocketCall, WebSocketCollect, WebSocketMessageFormat,
 };
-use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, StorageError};
+use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, LocalSecrets, StorageError};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::environments::{EnvironmentDto, EnvironmentVariableDto, environment_to_dto};
@@ -703,27 +703,37 @@ pub(crate) fn collection_from_dto(
 pub async fn list_collections(
     input: ListCollectionsInput,
     docs: tauri::State<'_, ApiDocsStore>,
+    secrets: tauri::State<'_, LocalSecrets>,
 ) -> Result<Vec<CollectionDto>, CollectionsCommandError> {
     let docs = ApiDocsStore::clone(&docs);
-    let result =
-        run_blocking(move || list_collections_inner(PathBuf::from(input.root_path), &docs)).await;
+    let secrets = LocalSecrets::clone(&secrets);
+    let result = run_blocking(move || {
+        list_collections_inner(PathBuf::from(input.root_path), &docs, secrets)
+    })
+    .await;
     crate::logging::logged("alcy::collections", "carregar coleções", result)
 }
 
 fn list_collections_inner(
     root: PathBuf,
     docs: &ApiDocsStore,
+    secrets: LocalSecrets,
 ) -> Result<Vec<CollectionDto>, CollectionsCommandError> {
-    let store = CollectionsStore::new(root.clone());
-    let collections = store.load()?;
-    prune_orphan_docs(&root, &collections, docs);
+    let store = CollectionsStore::new(root.clone(), secrets.clone());
+    let collections = store.load_and_seal()?;
+    prune_orphan_docs(&root, &collections, docs, secrets);
     Ok(collections.iter().map(collection_to_dto).collect())
 }
 
 /// Sem conseguir ler os flows não dá para saber o que eles referenciam —
 /// nesse caso nada é removido. Falhas aqui nunca impedem de listar.
-fn prune_orphan_docs(root: &Path, collections: &[Collection], docs: &ApiDocsStore) {
-    let flows = match FlowStore::new(root.to_path_buf()).load() {
+fn prune_orphan_docs(
+    root: &Path,
+    collections: &[Collection],
+    docs: &ApiDocsStore,
+    secrets: LocalSecrets,
+) {
+    let flows = match FlowStore::new(root.to_path_buf(), secrets).load() {
         Ok(snapshot) => snapshot.flows,
         Err(error) => {
             log::warn!("documentação importada não foi limpa (flows ilegíveis): {error}");
@@ -741,12 +751,16 @@ fn prune_orphan_docs(root: &Path, collections: &[Collection], docs: &ApiDocsStor
 static COLLECTION_SAVES: OrderedSaves = OrderedSaves::new();
 
 #[tauri::command]
-pub async fn save_collections(input: SaveCollectionsInput) -> Result<(), CollectionsCommandError> {
+pub async fn save_collections(
+    input: SaveCollectionsInput,
+    secrets: tauri::State<'_, LocalSecrets>,
+) -> Result<(), CollectionsCommandError> {
     let ticket = COLLECTION_SAVES.ticket();
+    let secrets = LocalSecrets::clone(&secrets);
     let result = run_blocking(move || {
         let root = PathBuf::from(input.root_path);
         COLLECTION_SAVES.run(ticket, &root.clone(), || {
-            save_collections_inner(root, input.collections)
+            save_collections_inner(root, input.collections, secrets)
         })
     })
     .await;
@@ -756,13 +770,14 @@ pub async fn save_collections(input: SaveCollectionsInput) -> Result<(), Collect
 fn save_collections_inner(
     root: PathBuf,
     dtos: Vec<CollectionDto>,
+    secrets: LocalSecrets,
 ) -> Result<(), CollectionsCommandError> {
     let collections = dtos
         .into_iter()
         .map(collection_from_dto)
         .collect::<Result<Vec<_>, _>>()?;
 
-    let store = CollectionsStore::new(root);
+    let store = CollectionsStore::new(root, secrets);
     store.save(&collections)?;
     Ok(())
 }
@@ -1796,6 +1811,7 @@ pub(crate) fn import_collections_for_test(
 mod tests {
     use super::*;
     use crate::commands::execute_rest_request::{FormDataFieldInput, RawBodyLanguageInput};
+    use crate::commands::test_secrets::test_secrets;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1880,7 +1896,8 @@ mod tests {
     fn lists_no_collections_when_nothing_is_persisted() {
         let root = temp_root();
 
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert!(collections.is_empty());
 
@@ -1891,8 +1908,9 @@ mod tests {
     fn save_then_list_round_trips_nested_collections_with_full_request_content() {
         let root = temp_root();
 
-        save_collections_inner(root.clone(), sample_collections()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), sample_collections(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections, sample_collections());
 
@@ -1926,8 +1944,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos.clone()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos.clone(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections, dtos);
 
@@ -1955,8 +1974,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos.clone()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos.clone(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections, dtos);
 
@@ -1986,8 +2006,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos.clone()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos.clone(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections, dtos);
         let json = serde_json::to_value(&collections[0].requests[0]).unwrap();
@@ -2023,8 +2044,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos.clone()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos.clone(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections, dtos);
         let json = serde_json::to_value(&collections[0].requests[0]).unwrap();
@@ -2064,8 +2086,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos.clone()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos.clone(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections, dtos);
 
@@ -2088,8 +2111,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos, test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(
             collections[0].requests[0].rest_body,
@@ -2115,7 +2139,7 @@ mod tests {
             requests: vec![],
         }];
 
-        let error = save_collections_inner(root.clone(), dtos).unwrap_err();
+        let error = save_collections_inner(root.clone(), dtos, test_secrets()).unwrap_err();
 
         assert!(matches!(error, CollectionsCommandError::Invalid { .. }));
 
@@ -2137,8 +2161,9 @@ mod tests {
             },
         ];
 
-        save_collections_inner(root.clone(), dtos.clone()).unwrap();
-        let collections = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos.clone(), test_secrets()).unwrap();
+        let collections =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(collections[0].labels, dtos[0].labels);
 
@@ -2166,7 +2191,7 @@ mod tests {
         ];
 
         for dtos in [unknown_color, duplicate] {
-            let error = save_collections_inner(root.clone(), dtos).unwrap_err();
+            let error = save_collections_inner(root.clone(), dtos, test_secrets()).unwrap_err();
             assert!(matches!(error, CollectionsCommandError::Invalid { .. }));
         }
 
@@ -2203,7 +2228,7 @@ mod tests {
             requests: vec![],
         }];
 
-        let error = save_collections_inner(root.clone(), dtos).unwrap_err();
+        let error = save_collections_inner(root.clone(), dtos, test_secrets()).unwrap_err();
 
         assert!(matches!(error, CollectionsCommandError::Invalid { .. }));
 
@@ -2225,7 +2250,7 @@ mod tests {
             requests: vec![request],
         }];
 
-        let error = save_collections_inner(root.clone(), dtos).unwrap_err();
+        let error = save_collections_inner(root.clone(), dtos, test_secrets()).unwrap_err();
 
         assert!(matches!(error, CollectionsCommandError::Invalid { .. }));
 
@@ -2249,8 +2274,9 @@ mod tests {
             requests: vec![request],
         }];
 
-        save_collections_inner(root.clone(), dtos).unwrap();
-        let loaded = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        save_collections_inner(root.clone(), dtos, test_secrets()).unwrap();
+        let loaded =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(loaded[0].requests[0].endpoint, "");
 
@@ -2920,13 +2946,13 @@ collection:
         assert!(docs_file.exists());
 
         // Enquanto a coleção importada existir, a documentação fica.
-        save_collections_inner(root.clone(), imported).unwrap();
-        list_collections_inner(root.clone(), &store).unwrap();
+        save_collections_inner(root.clone(), imported, test_secrets()).unwrap();
+        list_collections_inner(root.clone(), &store, test_secrets()).unwrap();
         assert!(docs_file.exists());
 
         // Removida a coleção, a documentação órfã some na próxima listagem.
-        save_collections_inner(root.clone(), vec![]).unwrap();
-        list_collections_inner(root.clone(), &store).unwrap();
+        save_collections_inner(root.clone(), vec![], test_secrets()).unwrap();
+        list_collections_inner(root.clone(), &store, test_secrets()).unwrap();
         assert!(!docs_file.exists());
 
         fs::remove_dir_all(&root).ok();
@@ -2941,9 +2967,10 @@ collection:
             operation_id: "listPets".to_string(),
         });
 
-        save_collections_inner(root.clone(), collections.clone()).unwrap();
+        save_collections_inner(root.clone(), collections.clone(), test_secrets()).unwrap();
         // Sem arquivo de documentação não há o que limpar.
-        let listed = list_collections_inner(root.clone(), &ApiDocsStore::new()).unwrap();
+        let listed =
+            list_collections_inner(root.clone(), &ApiDocsStore::new(), test_secrets()).unwrap();
 
         assert_eq!(listed, collections);
         fs::remove_dir_all(&root).ok();

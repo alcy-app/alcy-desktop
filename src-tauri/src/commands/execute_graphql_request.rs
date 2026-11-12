@@ -12,7 +12,7 @@ use alcy_domain::{
 use alcy_graphql::{
     GraphqlError, GraphqlErrorLocation, ReqwestGraphqlExecutor, interpret_graphql_errors,
 };
-use alcy_storage::{CollectionsStore, HistoryStore};
+use alcy_storage::{CollectionsStore, HistoryStore, LocalSecrets};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
@@ -134,6 +134,7 @@ pub(crate) async fn resolve_inherited_authentication(
     authentication: AuthenticationInput,
     request_id: Option<&str>,
     root_path: Option<&str>,
+    secrets: &LocalSecrets,
 ) -> AuthenticationInput {
     if !matches!(authentication, AuthenticationInput::Inherit) {
         return authentication;
@@ -143,9 +144,12 @@ pub(crate) async fn resolve_inherited_authentication(
     };
     let request_id = request_id.to_string();
     let root_path = PathBuf::from(root_path);
-    tauri::async_runtime::spawn_blocking(move || match CollectionsStore::new(root_path).load() {
-        Ok(collections) => effective_authentication(&collections, &request_id).into(),
-        Err(_) => AuthenticationInput::None,
+    let secrets = secrets.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        match CollectionsStore::new(root_path, secrets).load() {
+            Ok(collections) => effective_authentication(&collections, &request_id).into(),
+            Err(_) => AuthenticationInput::None,
+        }
     })
     .await
     .unwrap_or(AuthenticationInput::None)
@@ -507,6 +511,7 @@ pub(crate) async fn cancellation_signal(receiver: oneshot::Receiver<()>) {
 
 /// Execute cancellable GraphQL HTTP requests using the managed executor and pooled TCP/TLS connections. Cancel using the same execution ID.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_graphql_request(
     input: ExecuteGraphqlRequestInput,
     registry: tauri::State<'_, ExecutionRegistry>,
@@ -515,7 +520,16 @@ pub async fn execute_graphql_request(
     session_cookies: tauri::State<'_, SessionCookies>,
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, UsageHub>,
+    secrets: tauri::State<'_, LocalSecrets>,
 ) -> Result<ExecuteGraphqlRequestOutput, ExecutionFailure<ExecuteGraphqlRequestError>> {
+    let mut input = input;
+    input.authentication = resolve_inherited_authentication(
+        input.authentication,
+        input.request_id.as_deref(),
+        Some(&input.root_path),
+        &secrets,
+    )
+    .await;
     let execution_id = input.execution_id.clone();
     let started = std::time::Instant::now();
     let operation = graphql_operation_type(&input.query);
@@ -607,12 +621,6 @@ async fn execute_graphql_request_inner(
     // Scripts receive environment/scopes separately; template resolution overlays them (ADR 0031).
     let environment = input.environment_variables.clone();
     input.environment_variables = with_scoped_variables(&input.environment_variables, &scopes);
-    input.authentication = resolve_inherited_authentication(
-        input.authentication,
-        input.request_id.as_deref(),
-        Some(&root_path),
-    )
-    .await;
     let redacted_input =
         redact_sensitive_variables(&input.environment_variables).map(|environment_variables| {
             ExecuteGraphqlRequestInput {

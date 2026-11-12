@@ -14,7 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use alcy_domain::{ENVIRONMENTS_FILE, VERSIONED_FILES};
 use serde::Serialize;
 
+use crate::collections_store::COLLECTIONS_SECRETS_FILE;
 use crate::environment_store::SECRETS_FILE_NAME;
+use crate::flow_store::FLOWS_SECRETS_FILE;
 use crate::recent_workspaces_store::RecentWorkspaceEntry;
 use crate::storage_error::StorageError;
 use crate::tab_session_store::FILE_NAME as TAB_SESSION_FILE;
@@ -28,11 +30,14 @@ const PARTIAL_SUFFIX: &str = ".tmp";
 const MAX_FOLDER_NAME: usize = 60;
 
 /// Besides the versioned files (mock servers among them): environments, the
-/// repository link and the tab session (which keeps unsaved tabs). History
-/// and caches stay out: they are large and not the person's work.
-const EXTRA_FILES: [&str; 4] = [
+/// sealed secrets, the repository link and the tab session (which keeps
+/// unsaved tabs). History and caches stay out: they are large and not the
+/// person's work.
+const EXTRA_FILES: [&str; 6] = [
     ENVIRONMENTS_FILE,
     SECRETS_FILE_NAME,
+    COLLECTIONS_SECRETS_FILE,
+    FLOWS_SECRETS_FILE,
     LINK_FILE_NAME,
     TAB_SESSION_FILE,
 ];

@@ -15,6 +15,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 - Fazer pull com mesclagem num workspace git que não versiona ambientes não apaga mais os ambientes de quem os versiona.
 
+### Security
+
+- Tokens, senhas e outros segredos digitados na autenticação de coleções, requisições e flows não vão mais para o git: ficam criptografados neste computador. Para compartilhar um segredo com o time, use uma variável de ambiente sensível.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added
