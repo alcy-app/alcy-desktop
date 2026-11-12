@@ -877,6 +877,7 @@ const en: Record<TranslationKey, string> = {
   'requestBody.languageJson': 'JSON',
   'requestBody.languageHtml': 'HTML',
   'requestBody.languageXml': 'XML',
+  'requestBody.formatButton': 'Format body',
   'requestBody.noneHint': 'This request does not send a body.',
   'requestBody.formDataCaption': 'Form-data fields',
   'requestBody.urlEncodedCaption': 'x-www-form-urlencoded fields',

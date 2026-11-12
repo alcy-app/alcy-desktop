@@ -7,6 +7,9 @@ import { foldGutter, foldKeymap, syntaxHighlighting } from '@codemirror/language
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { useShortcuts } from '../../../shared/shortcuts/use-shortcuts'
+import { IconButton } from '../../../shared/ui/IconButton'
+import { Tooltip } from '../../../shared/ui/Tooltip'
+import { FormatIcon } from '../../../shared/ui/icons'
 import { commentShortcutExtension } from '../comment-toggle'
 import { completionShortcutsExtension } from '../completion-shortcuts'
 import { jsoncLanguageSupport } from '../jsonc-language'
@@ -76,6 +79,9 @@ interface RequestBodyPanelProps {
   /** Keeps the undo history across remounts (switching sections or tabs)
    * under this key, while the text is unchanged. Read only at mount. */
   historyKey?: string
+  /** Shows a "Format" button that reindents the text with it; when it returns
+   * `null` (invalid syntax) the button does nothing. */
+  formatter?: (text: string) => string | null
 }
 
 /**
@@ -96,6 +102,7 @@ export function RequestBodyPanel({
   agentSlot,
   jsonComments = false,
   historyKey,
+  formatter,
 }: RequestBodyPanelProps) {
   const { t } = useLanguage()
   const editorLabel = label ?? t('requestBody.editorLabel')
@@ -111,6 +118,15 @@ export function RequestBodyPanel({
   const shortcutBindingsRef = useRef(shortcutBindings)
   const { isOpen: isSearchOpen, openSearch, closeSearch } = useEditorSearch()
   const requestedSearch = useEditorAgentBridge(agentSlot, viewRef, openSearch)
+  const formatBody = () => {
+    const view = viewRef.current
+    if (!view || !formatter) return
+    const current = view.state.doc.toString()
+    const formatted = formatter(current)
+    // Text that cannot be formatted stays as it is. Through the editor, so a
+    // single undo brings the previous text back.
+    if (formatted !== null && formatted !== current) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: formatted } })
+  }
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -227,6 +243,17 @@ export function RequestBodyPanel({
     <div className="rw-panel rw-request-body-panel">
       <div className="rw-editor-toolbar">
         <LineCount text={value} />
+        {formatter && (
+          <Tooltip label={t('requestBody.formatButton')} side="bottom">
+            <IconButton
+              className="rw-query-format-button"
+              icon={<FormatIcon size={16} />}
+              label={t('requestBody.formatButton')}
+              tooltip={false}
+              onClick={formatBody}
+            />
+          </Tooltip>
+        )}
       </div>
       <div className="rw-request-body-editor" ref={containerRef} />
       <EditorSearch

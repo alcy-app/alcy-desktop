@@ -871,6 +871,7 @@ const ptBR = {
   'requestBody.languageJson': 'JSON',
   'requestBody.languageHtml': 'HTML',
   'requestBody.languageXml': 'XML',
+  'requestBody.formatButton': 'Formatar corpo',
   'requestBody.noneHint': 'Esta requisição não envia corpo.',
   'requestBody.formDataCaption': 'Campos do form-data',
   'requestBody.urlEncodedCaption': 'Campos do x-www-form-urlencoded',

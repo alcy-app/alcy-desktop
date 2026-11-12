@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { undo } from '@codemirror/commands'
+import { EditorView } from '@codemirror/view'
 import { fireEvent, render, screen, waitFor } from '../../../test-utils'
 import { emptyBodyState, toBodyState } from '../body-state'
 import type { BodyState } from '../request-workbench.types'
@@ -61,6 +63,32 @@ describe('RestBodyPanel', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Formato do corpo raw' }))
     fireEvent.click(screen.getByRole('option', { name: 'XML' }))
     expect(onRawLanguageChange).toHaveBeenCalledWith('xml')
+  })
+
+  it('formats the raw JSON body, keeping comments and templates, and undoes it in one step', () => {
+    const onRawChange = vi.fn()
+    const { container } = renderPanel({ ...emptyBodyState, raw: '{"id":{{id}}, // note\n"ok":true}' }, { onRawChange })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Formatar corpo' }))
+    expect(onRawChange).toHaveBeenLastCalledWith('{\n  "id": {{id}}, // note\n  "ok": true\n}')
+
+    const view = EditorView.findFromDOM(container.querySelector<HTMLElement>('.cm-editor')!)!
+    expect(undo(view)).toBe(true)
+    expect(onRawChange).toHaveBeenLastCalledWith('{"id":{{id}}, // note\n"ok":true}')
+  })
+
+  it('leaves a body that cannot be formatted untouched, silently', () => {
+    const onRawChange = vi.fn()
+    renderPanel({ ...emptyBodyState, raw: '{"a":' }, { onRawChange })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Formatar corpo' }))
+    expect(onRawChange).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('offers formatting only for languages that have a formatter', () => {
+    renderPanel({ ...emptyBodyState, rawLanguage: 'text' })
+    expect(screen.queryByRole('button', { name: 'Formatar corpo' })).not.toBeInTheDocument()
   })
 
   it('explica que "none" não envia corpo', () => {

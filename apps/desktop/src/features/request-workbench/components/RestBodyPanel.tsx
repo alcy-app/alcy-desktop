@@ -6,6 +6,7 @@ import { pickBodyFile } from '../../../bindings/pick-body-file'
 import type { BulkRow } from '../../../shared/bulk-edit'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { bodyFilePaths, codeLanguageForRaw, toWorkspaceRelativePath } from '../body-state'
+import { rawBodyFormatter } from '../request-body-format'
 import type { BodyState, BodyType, FormDataEntry, UrlEncodedEntry } from '../request-workbench.types'
 import type { BodySchema } from '../schema-completions'
 import { BinaryBodyPanel } from './BinaryBodyPanel'
@@ -184,6 +185,7 @@ export function RestBodyPanel({
             agentSlot={agentEditors ? 'body' : undefined}
             jsonComments
             historyKey={historyKey}
+            formatter={rawBodyFormatter(body.rawLanguage)}
           />
         )}
         {body.type === 'urlencoded' && (
