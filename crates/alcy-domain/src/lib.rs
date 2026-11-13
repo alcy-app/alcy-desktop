@@ -8,6 +8,7 @@ mod collection;
 mod collection_run;
 mod document;
 mod documentation;
+mod script_trust;
 pub use documentation::*;
 mod endpoint;
 mod environment;
@@ -91,6 +92,10 @@ pub use request::{RedirectPolicy, Request, RouteParameter};
 pub use response::{
     BodyEncoding, ConnectionInfo, Cookie, GrpcResponseStatus, Response, ResponseHeader,
     ResponseMetadata, WebSocketClosedBy, WebSocketOutcome,
+};
+pub use script_trust::{
+    ScriptsSkipReason, WorkspaceScriptTrust, collection_skip_reason, scripts_skip_reason,
+    withhold_untrusted_scripts,
 };
 pub use security_settings::SecuritySettings;
 pub use update::{UpdateSettings, UpdateSource, UpdateSourceError, is_prerelease_tag};

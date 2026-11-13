@@ -1,4 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
+import type { ScriptsSkipReason } from './script-trust'
 import type { EnvironmentChange, ScopedVariableChange, ScriptTestResult } from './execute-graphql-request'
 import type { EnvironmentVariableDto } from './list-environments'
 
@@ -52,6 +53,8 @@ export interface RunStepDto {
   logs: string[]
   /** A resposta foi guardada e pode ser buscada sob demanda. */
   hasOutput: boolean
+  /** Why the request's scripts did not run (spec 0162); live runs only. */
+  scriptsSkipped?: ScriptsSkipReason
 }
 
 export type CollectionRunEventDto =

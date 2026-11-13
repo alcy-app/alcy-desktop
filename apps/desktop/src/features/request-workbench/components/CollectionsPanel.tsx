@@ -33,6 +33,7 @@ import {
   FolderOpenIcon,
   ImportIcon,
   LocateIcon,
+  LockIcon,
   PlusIcon,
   SearchIcon,
   Spinner,
@@ -63,6 +64,8 @@ import {
 import type { RequestContent, RequestExample, RequestProtocol, RequestSummary, TreeNode } from '../collection-tree'
 import type { AlphabeticalSortDirection } from '../collection-tree'
 import type { ImportOutcome } from '../use-collections-state'
+import type { WorkspaceScriptTrust } from '../../../bindings/script-trust'
+import { nodeHasScripts } from '../script-trust'
 import {
   filterCollections,
   hasCollectionFilters,
@@ -82,6 +85,7 @@ import { NodeSettingsModal } from './NodeSettingsModal'
 import { RemoveNodeModal } from './RemoveNodeModal'
 import { ExampleBadge, RequestMethodBadge } from './RequestMethodBadge'
 import './collections-panel.css'
+import './script-trust.css'
 import './collection-labels.css'
 
 // Load the import UI in its own chunk, outside app startup.
@@ -181,9 +185,17 @@ interface CollectionsPanelProps {
   onPrepareImportFromPath: (path: string) => Promise<PrepareImportResult>
   onPrepareImportFromUrl: (url: string) => Promise<PrepareImportResult>
   onPrepareImportFromText: (content: string) => Promise<PrepareImportResult>
-  onCommitPreparedImport: (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[]) => Promise<ImportOutcome>
+  onCommitPreparedImport: (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[], trustScripts?: boolean) => Promise<ImportOutcome>
   /** Workspace environments the import review can merge variables into (spec 0130). */
   importEnvironmentTargets: ExistingEnvironmentTarget[]
+  /** This person's decision about the workspace scripts; `null` while loading (spec 0162). */
+  workspaceScriptTrust: WorkspaceScriptTrust | null
+  /** Opens the review that trusts the workspace scripts. */
+  onTrustWorkspaceScripts: () => void
+  /** Opens the review that trusts the scripts of an imported collection. */
+  onTrustCollectionScripts: (id: string) => void
+  /** Marks a collection's scripts as not trusted. */
+  onRevokeCollectionScripts: (id: string) => void
   /** Active environment variables used by the folder or collection authentication modal. */
   environmentVariables: EnvironmentVariableDto[]
   /** Execute a pending shortcut command and acknowledge it through onCommandHandled. */
@@ -698,6 +710,19 @@ interface FolderRowProps {
   isFavorite?: boolean
   onToggleFavorite?: (id: string) => void
   onOpenLabels?: (id: string) => void
+  /** Root collections only: trust (`true`, through a review) or revoke their scripts (spec 0162). */
+  onScriptTrust?: (id: string, trust: boolean) => void
+}
+
+/** Lock beside an imported collection whose scripts do not run until someone trusts them (spec 0162). */
+function UntrustedScriptsMark() {
+  const { t } = useLanguage()
+  const label = t('scriptTrust.collectionMark')
+  return (
+    <span className="collections-untrusted-scripts" role="img" aria-label={label} title={label}>
+      <LockIcon size={11} />
+    </span>
+  )
 }
 
 /** Label dots follow the collection name; the tooltip lists their names. */
@@ -766,6 +791,7 @@ function FolderRow({
   isFavorite = false,
   onToggleFavorite,
   onOpenLabels,
+  onScriptTrust,
 }: FolderRowProps) {
   const { t } = useLanguage()
   const [draftName, setDraftName] = useState(node.name)
@@ -877,6 +903,7 @@ function FolderRow({
         )}
 
         {kind === 'collection' && node.labels && node.labels.length > 0 && <CollectionLabelDots labels={node.labels} />}
+        {kind === 'collection' && node.untrustedScripts && <UntrustedScriptsMark />}
 
         {changeKind ? <ChangeMarker kind={changeKind} /> : nestedChangeKind ? <ChangeDot kind={nestedChangeKind} /> : null}
 
@@ -980,6 +1007,15 @@ function FolderRow({
                   />
                 )}
               </>
+            )}
+            {kind === 'collection' && onScriptTrust && (node.untrustedScripts || nodeHasScripts(node)) && (
+              <MenuItem
+                label={t(node.untrustedScripts ? 'scriptTrust.trustCollectionMenuItem' : 'scriptTrust.revokeCollectionMenuItem')}
+                onSelect={() => {
+                  onScriptTrust(node.id, Boolean(node.untrustedScripts))
+                  onCloseMenu()
+                }}
+              />
             )}
             <MenuSeparator />
             <MenuItem
@@ -1174,12 +1210,17 @@ export function CollectionsPanel({
   onPrepareImportFromText,
   onCommitPreparedImport,
   importEnvironmentTargets,
+  workspaceScriptTrust,
+  onTrustWorkspaceScripts,
+  onTrustCollectionScripts,
+  onRevokeCollectionScripts,
   environmentVariables,
   command = null,
   onCommandHandled,
 }: CollectionsPanelProps) {
   const { t } = useLanguage()
   const nestedChangeMarkers = useMemo(() => nestedChangeKinds(collections, changeMarkers), [collections, changeMarkers])
+  const workspaceHasScripts = useMemo(() => collections.some(nodeHasScripts), [collections])
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
@@ -1295,7 +1336,7 @@ export function CollectionsPanel({
         continue
       }
       setImportJobs((current) => current.map((job) => job.summary.id === item.summary.id ? { ...job, status: 'running', message: undefined } : job))
-      const result = await onCommitPreparedImport(item.summary.id, item.includeDocumentation, importVariableSelections(item.variables))
+      const result = await onCommitPreparedImport(item.summary.id, item.includeDocumentation, importVariableSelections(item.variables), item.trustScripts)
       setImportJobs((current) => current.map((job) => job.summary.id === item.summary.id
         ? result.ok
           ? { ...job, status: 'success', message: undefined }
@@ -1826,6 +1867,15 @@ export function CollectionsPanel({
         )}
       </div>
 
+      {workspaceScriptTrust !== null && workspaceScriptTrust !== 'trusted' && workspaceHasScripts && (
+        <div className="rw-scripts-lock collections-scripts-lock" role="status">
+          <LockIcon size={12} />
+          <span className="rw-scripts-lock-text">{t('scriptTrust.workspaceNotice')}</span>
+          <Button size="sm" variant="ghost" onClick={onTrustWorkspaceScripts}>
+            {t('scriptTrust.trustWorkspace')}
+          </Button>
+        </div>
+      )}
       <div className="sidebar-panel-scroll">
         {collections.length === 0 ? (
           <EmptyState icon={<FolderIcon size={22} />} title={t('collections.emptyState')} />
@@ -1891,6 +1941,7 @@ export function CollectionsPanel({
                 isFavorite={favoriteIds.has(collection.id)}
                 onToggleFavorite={toggleFavorite}
                 onOpenLabels={(id) => setLabelsModal({ collectionIds: [id] })}
+                onScriptTrust={(id, trust) => (trust ? onTrustCollectionScripts(id) : onRevokeCollectionScripts(id))}
               />
             ))}
           </ul>
@@ -2026,6 +2077,7 @@ export function CollectionsPanel({
             onPrepareFromText={onPrepareImportFromText}
             onImportPrepared={(items) => { discardFailedImports(); void runPreparedImports(items) }}
             existingEnvironments={importEnvironmentTargets}
+            scriptsCanBeTrusted={workspaceScriptTrust === 'trusted'}
           />
         </Suspense>
       )}

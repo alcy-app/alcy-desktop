@@ -643,8 +643,10 @@ pub async fn execute_flow(
     mock_runtime: tauri::State<'_, MockServerRuntime>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
+    script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
 ) -> Result<(), ExecuteFlowError> {
     let flow_execution_id = input.flow_execution_id.clone();
+    let workspace_trust = script_trust.workspace(Path::new(&input.root_path));
     let node_count = u64::try_from(input.nodes.len()).unwrap_or(u64::MAX);
     usage.record(alcy_app::UsageEvent::FlowRunStarted {
         kind: alcy_domain::FlowExecutionKind::Standard,
@@ -683,6 +685,7 @@ pub async fn execute_flow(
         &mock_runtime,
         &cancellation,
         alcy_storage::LocalSecrets::clone(&secrets),
+        workspace_trust,
     )
     .await;
     flow_registry.remove(&flow_execution_id);
@@ -726,6 +729,7 @@ async fn execute_flow_inner(
     mock_runtime: &MockServerRuntime,
     cancellation: &WatchCancellation,
     secrets: alcy_storage::LocalSecrets,
+    workspace_trust: alcy_domain::WorkspaceScriptTrust,
 ) -> Result<(), ExecuteFlowError> {
     let environment_variables = input
         .environment_variables
@@ -764,7 +768,7 @@ async fn execute_flow_inner(
 
     // Read/parse collections through spawn_blocking outside async workers.
     let collections_root = PathBuf::from(&input.root_path);
-    let collections = tauri::async_runtime::spawn_blocking(move || {
+    let mut collections = tauri::async_runtime::spawn_blocking(move || {
         CollectionsStore::new(collections_root, secrets).load()
     })
     .await
@@ -774,6 +778,17 @@ async fn execute_flow_inner(
     .map_err(|error| ExecuteFlowError::Storage {
         message: error.to_string(),
     })?;
+
+    // Saved requests whose scripts are not trusted run without them (spec 0162).
+    let withheld = alcy_domain::withhold_untrusted_scripts(workspace_trust, &mut collections);
+    if !withheld.is_empty() {
+        log::info!(
+            target: "alcy::flow",
+            "{}: scripts of {} saved request(s) skipped (not trusted)",
+            input.flow_execution_id,
+            withheld.len()
+        );
+    }
 
     let executor = ScriptingExecutor::new(
         ProtocolDispatchingExecutor {

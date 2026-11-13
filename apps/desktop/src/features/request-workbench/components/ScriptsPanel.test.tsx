@@ -88,3 +88,31 @@ describe('ScriptsPanel', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
+
+describe('ScriptsPanel — scripts not trusted (spec 0162)', () => {
+  it('locks the editors, says why and offers to trust', () => {
+    const onTrust = vi.fn()
+    render(
+      <ScriptsPanel
+        preRequestScript="al.request.url = 'x'"
+        postResponseScript=""
+        onPreRequestScriptChange={vi.fn()}
+        onPostResponseScriptChange={vi.fn()}
+        execution={{ status: 'idle' }}
+        lock={{ reason: 'collection', onTrust }}
+      />,
+    )
+
+    expect(screen.getByText('Os scripts desta coleção importada não rodam até você confiar nela.')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Script de pré-requisição' })).toHaveAttribute('contenteditable', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'Confiar nos scripts' }))
+    expect(onTrust).toHaveBeenCalled()
+  })
+
+  it('keeps the editors editable without a lock', () => {
+    renderPanel()
+
+    expect(screen.queryByText(/não rodam até você confiar/)).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Script de pré-requisição' })).toHaveAttribute('contenteditable', 'true')
+  })
+})

@@ -18,6 +18,7 @@ import type { ExecuteRestRequestError, RouteParameterInput } from './execute-res
 import { invokeResult, type CommandResult } from './invoke-result'
 import type { EnvironmentVariableDto } from './list-environments'
 import type { WebSocketCallDto, WebSocketMessageFormat } from './websocket-call'
+import type { ScriptsSkippedDto } from './script-trust'
 
 export interface ExecuteWebSocketRequestInput {
   executionId: string
@@ -69,6 +70,8 @@ export interface ExecuteWebSocketRequestOutput {
   scriptLogs: string[]
   scriptError: ScriptErrorOutput | null
   testResults: ScriptTestResult[]
+  /** Scripts that did not run because they are not trusted (spec 0162). */
+  scriptsSkipped?: ScriptsSkippedDto
 }
 
 /** A connection's progress, as it happens. Data longer than 256 KiB arrives

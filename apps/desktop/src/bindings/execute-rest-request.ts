@@ -18,6 +18,7 @@ import type {
 } from './execute-graphql-request'
 import { splitExecutionFailure } from './execute-graphql-request'
 import type { EnvironmentVariableDto } from './list-environments'
+import type { ScriptsSkippedDto } from './script-trust'
 
 export type HttpMethodInput = 'get' | 'post' | 'put' | 'patch' | 'delete' | 'head' | 'options'
 
@@ -86,6 +87,8 @@ export interface ExecuteRestRequestOutput {
   scriptLogs: string[]
   scriptError: ScriptErrorOutput | null
   testResults: ScriptTestResult[]
+  /** Scripts that did not run because they are not trusted (spec 0162). */
+  scriptsSkipped?: ScriptsSkippedDto
 }
 
 export type ExecuteRestRequestError =

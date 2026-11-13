@@ -11,7 +11,8 @@ use alcy_app::{
 };
 use alcy_domain::{
     Collection, CollectionRunOptions, EnvironmentVariable, HistoryRetention, ProtocolId, Response,
-    RunStepOutcome, find_saved_request,
+    RunStepOutcome, ScriptsSkipReason, WorkspaceScriptTrust, find_saved_request,
+    withhold_untrusted_scripts,
 };
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_rest::ReqwestRestExecutor;
@@ -133,6 +134,10 @@ pub struct RunStepDto {
     pub logs: Vec<String>,
     /// `true` quando a resposta foi guardada e pode ser buscada.
     pub has_output: bool,
+    /// Why the request's scripts did not run (`workspace` or `collection`,
+    /// spec 0162). Live runs only: run history does not keep it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scripts_skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -291,6 +296,8 @@ struct ChannelSink<'a> {
     iterations: Mutex<u32>,
     /// Timestamped completed requests persisted at run end.
     steps: Mutex<Vec<RecordedRunStep>>,
+    /// Requests whose scripts were withheld because they are not trusted.
+    scripts_skipped: &'a HashMap<String, ScriptsSkipReason>,
 }
 
 impl ChannelSink<'_> {
@@ -345,7 +352,11 @@ impl CollectionRunSink for ChannelSink<'_> {
             }
             _ => false,
         };
-        let step = step_dto(report, self.options.disable_logs, has_output);
+        let mut step = step_dto(report, self.options.disable_logs, has_output);
+        step.scripts_skipped = self
+            .scripts_skipped
+            .get(&report.request_id)
+            .map(|reason| reason.as_str().to_string());
         self.steps
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -385,6 +396,7 @@ fn step_dto(report: &RunStepReport, disable_logs: bool, has_output: bool) -> Run
             report.logs.clone()
         },
         has_output,
+        scripts_skipped: None,
     }
 }
 
@@ -442,6 +454,7 @@ pub(crate) fn step_dto_from_recorded(step: RecordedRunStep, has_output: bool) ->
             .collect(),
         logs: step.logs,
         has_output,
+        scripts_skipped: None,
     }
 }
 
@@ -566,8 +579,10 @@ pub async fn execute_collection_run(
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
+    script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
 ) -> Result<(), ExecuteCollectionRunError> {
     let run_id = input.run_id.clone();
+    let workspace_trust = script_trust.workspace(Path::new(&input.root_path));
     let started = std::time::Instant::now();
     log::info!(
         target: "alcy::runner",
@@ -585,6 +600,7 @@ pub async fn execute_collection_run(
         &rest_executor,
         history.get(),
         alcy_storage::LocalSecrets::clone(&secrets),
+        workspace_trust,
     )
     .await;
     match &result {
@@ -637,6 +653,7 @@ async fn execute_collection_run_inner(
     rest_executor: &ReqwestRestExecutor,
     history: HistoryPreferences,
     secrets: alcy_storage::LocalSecrets,
+    workspace_trust: WorkspaceScriptTrust,
 ) -> Result<CollectionRunCounts, ExecuteCollectionRunError> {
     if input.request_ids.is_empty() {
         return Err(ExecuteCollectionRunError::EmptyPlan);
@@ -671,7 +688,7 @@ async fn execute_collection_run_inner(
     };
 
     let root_path = input.root_path.clone();
-    let collections = tauri::async_runtime::spawn_blocking(move || {
+    let mut collections = tauri::async_runtime::spawn_blocking(move || {
         CollectionsStore::new(PathBuf::from(root_path), secrets).load()
     })
     .await
@@ -697,6 +714,8 @@ async fn execute_collection_run_inner(
         runtime_variables: Mutex::new(Vec::new()),
     };
     outputs.begin(&input.run_id);
+    // Untrusted scripts do not run: those requests go out without them.
+    let scripts_skipped = withhold_untrusted_scripts(workspace_trust, &mut collections);
     let sink = ChannelSink {
         channel: on_event,
         outputs,
@@ -704,6 +723,7 @@ async fn execute_collection_run_inner(
         options: raw,
         iterations: Mutex::new(0),
         steps: Mutex::new(Vec::new()),
+        scripts_skipped: &scripts_skipped,
     };
 
     let started_at = SystemTime::now();

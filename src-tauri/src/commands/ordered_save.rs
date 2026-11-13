@@ -62,6 +62,17 @@ impl OrderedSaves {
         }
         Ok(())
     }
+
+    /// Runs `write` under the same lock, without taking part in the
+    /// ordering: for a change to a field the autosave keeps from the disk,
+    /// which therefore never races with it.
+    pub fn run_unordered<T, E>(&self, write: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        let _latest = self
+            .latest
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        write()
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { EnvironmentVariableDto } from './list-environments'
 import type { ScopedVariableDto } from './list-collections'
+import type { ScriptsSkippedDto } from './script-trust'
 
 export type AuthenticationInput =
   | { type: 'none' }
@@ -160,6 +161,8 @@ export interface ExecuteGraphqlRequestOutput {
   scriptLogs: string[]
   scriptError: ScriptErrorOutput | null
   testResults: ScriptTestResult[]
+  /** Scripts that did not run because they are not trusted (spec 0162). */
+  scriptsSkipped?: ScriptsSkippedDto
 }
 
 /** Causa reconhecida de uma requisição inválida; a interface a descreve no

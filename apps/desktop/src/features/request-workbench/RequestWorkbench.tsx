@@ -36,7 +36,7 @@ import { hasOpenModal } from '../../shared/ui/open-modals'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Tooltip } from '../../shared/ui/Tooltip'
 import { useTooltip } from '../../shared/ui/use-tooltip'
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon, ProxyIcon, RobotIcon, RunnerIcon, Spinner } from '../../shared/ui/icons'
+import { ChevronLeftIcon, ChevronRightIcon, LockIcon, PanelLeftIcon, ProxyIcon, RobotIcon, RunnerIcon, Spinner } from '../../shared/ui/icons'
 import { Button } from '../../shared/ui/Button'
 import { ImportLoadTestModal } from './components/ImportLoadTestModal'
 import { IconButton } from '../../shared/ui/IconButton'
@@ -124,6 +124,9 @@ import type { MockServerDto } from '../../bindings/mock-servers'
 import type { FlowState } from '../flows/flows.types'
 import { useCollectionsState, type ImportOutcome } from './use-collections-state'
 import { useCollectionFavorites } from './use-collection-favorites'
+import { useWorkspaceScriptTrust } from './use-workspace-script-trust'
+import { collectionOfRequest, collectionScriptsLock, scriptedRequests } from './script-trust'
+import { ScriptTrustDialog } from './components/ScriptTrustDialog'
 import { useRequestDocs } from './use-request-docs'
 import { jsonBodySchema, parametersIn, schemaTypeLabel } from './schema-docs'
 import { parameterNameSuggestions, parameterValueSuggestions } from './schema-completions'
@@ -400,6 +403,29 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
   const history = useHistoryState(workspace.rootPath)
   const activeRequestId = scopeRequestIdOf(workbench.activeTab)
   const activeTabId = workbench.activeTab.id
+  // Scripts of a workspace or an imported collection the person has not trusted do not run (spec 0162).
+  const scriptTrust = useWorkspaceScriptTrust(workspace.rootPath, collections.collections, collections.loaded)
+  const [scriptTrustReview, setScriptTrustReview] = useState<{ kind: 'workspace' } | { kind: 'collection'; id: string } | null>(null)
+  const activeCollection = useMemo(() => collectionOfRequest(collections.collections, activeRequestId), [collections.collections, activeRequestId])
+  const scriptsLockReason = collectionScriptsLock(scriptTrust.trust, activeCollection)
+  const activeCollectionId = activeCollection?.id ?? null
+  const scriptsLock = useMemo(
+    () =>
+      scriptsLockReason === null
+        ? null
+        : {
+            reason: scriptsLockReason,
+            onTrust: () =>
+              setScriptTrustReview(
+                scriptsLockReason === 'workspace' || activeCollectionId === null ? { kind: 'workspace' } : { kind: 'collection', id: activeCollectionId },
+              ),
+          },
+    [scriptsLockReason, activeCollectionId],
+  )
+  const { setCollectionScriptsTrusted } = collections
+  const reviewWorkspaceScripts = useCallback(() => setScriptTrustReview({ kind: 'workspace' }), [])
+  const reviewCollectionScripts = useCallback((id: string) => setScriptTrustReview({ kind: 'collection', id }), [])
+  const revokeCollectionScripts = useCallback((id: string) => void setCollectionScriptsTrusted(id, false), [setCollectionScriptsTrusted])
   const sendsSource = useMemo(
     () => ({ rootPath: workspace.rootPath, requestId: activeRequestId, tabId: activeTabId }),
     [workspace.rootPath, activeRequestId, activeTabId],
@@ -1658,6 +1684,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       onPrepareImportFromText: collections.prepareCollectionsFromText,
       onCommitPreparedImport: collections.commitPreparedCollection,
       importEnvironmentTargets,
+      workspaceScriptTrust: scriptTrust.trust,
+      onTrustWorkspaceScripts: reviewWorkspaceScripts,
+      onTrustCollectionScripts: reviewCollectionScripts,
+      onRevokeCollectionScripts: revokeCollectionScripts,
       environmentVariables: activeEnvironmentVariables,
       command: collectionsCommand,
       onCommandHandled: clearCollectionsCommand,
@@ -1712,6 +1742,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
       collections.prepareCollectionsFromText,
       collections.commitPreparedCollection,
       importEnvironmentTargets,
+      scriptTrust.trust,
+      reviewWorkspaceScripts,
+      reviewCollectionScripts,
+      revokeCollectionScripts,
       activeEnvironmentVariables,
       collectionsCommand,
       clearCollectionsCommand,
@@ -2373,7 +2407,22 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                     <Tabs
                       tabs={requestTabsFor(workbench.protocol)
                         .filter((tab) => !workbench.activeTab.example || EXAMPLE_SECTIONS.has(tab.id))
-                        .map((tab) => (tab.id === 'scripts' ? { ...tab, badge: scriptCount } : tab))}
+                        .map((tab) =>
+                          tab.id !== 'scripts'
+                            ? tab
+                            : scriptsLock && scriptCount > 0
+                              ? {
+                                  ...tab,
+                                  badge: scriptCount,
+                                  label: (
+                                    <span className="rw-scripts-tab-label" title={t(scriptsLock.reason === 'workspace' ? 'scriptTrust.lockedByWorkspace' : 'scriptTrust.lockedByCollection')}>
+                                      {tab.label}
+                                      <LockIcon size={11} />
+                                    </span>
+                                  ),
+                                }
+                              : { ...tab, badge: scriptCount },
+                        )}
                       activeTab={workbench.activeSection}
                       onChange={workbench.setActiveSection}
                       ariaLabel={t('workbench.tabs.requestSections')}
@@ -2523,6 +2572,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           onPreRequestScriptChange={workbench.setPreRequestScript}
                           onPostResponseScriptChange={workbench.setPostResponseScript}
                           execution={workbench.execution}
+                          lock={scriptsLock}
                         />
                       )}
                       {workbench.activeSection === 'headers' && (
@@ -2604,6 +2654,7 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           ? handleSaveResponseAsExample
                           : undefined
                       }
+                      onShowScripts={() => workbench.setActiveSection('scripts')}
                     />
                     )}
                   </div>
@@ -2880,6 +2931,45 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
         {pullReviewOpen && (
           <PullReviewModal rootPath={workspace.rootPath} vc={versionControl} onClose={() => setPullReviewOpen(false)} />
         )}
+
+        {(scriptTrust.shouldAsk || scriptTrustReview?.kind === 'workspace') && (
+          <ScriptTrustDialog
+            title={t('scriptTrust.workspaceTitle')}
+            description={t('scriptTrust.workspaceDescription')}
+            origin={workspace.rootPath}
+            entries={collections.collections.flatMap((collection) => scriptedRequests(collection, [collection.name]))}
+            confirmLabel={t('scriptTrust.trustWorkspace')}
+            declineLabel={t('scriptTrust.doNotTrust')}
+            onConfirm={() => {
+              setScriptTrustReview(null)
+              void scriptTrust.decide(true)
+            }}
+            onDecline={() => {
+              setScriptTrustReview(null)
+              // Closing the first question records the refusal, so it is not asked again.
+              if (scriptTrust.trust === 'undecided') void scriptTrust.decide(false)
+            }}
+          />
+        )}
+
+        {scriptTrustReview?.kind === 'collection' && (() => {
+          const collection = collections.collections.find((node) => node.id === scriptTrustReview.id)
+          if (!collection) return null
+          return (
+            <ScriptTrustDialog
+              title={t('scriptTrust.collectionTitle', { name: collection.name })}
+              description={t('scriptTrust.collectionDescription')}
+              entries={scriptedRequests(collection, [collection.name])}
+              confirmLabel={t('scriptTrust.trustCollection')}
+              declineLabel={t('common.cancel')}
+              onConfirm={() => {
+                setScriptTrustReview(null)
+                void setCollectionScriptsTrusted(collection.id, true)
+              }}
+              onDecline={() => setScriptTrustReview(null)}
+            />
+          )
+        })()}
 
         {FEATURE_FLAGS.webclientExport && webclientExportSelection && (
           <ExportWebclientModal

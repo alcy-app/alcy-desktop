@@ -90,6 +90,9 @@ export interface CollectionDto {
   variables?: ScopedVariableDto[]
   /** Ausente em DTOs antigos e em collections sem rótulos. */
   labels?: CollectionLabelDto[]
+  /** Imported without trusting its scripts (spec 0162). A save keeps the value on disk; only
+   * `setCollectionScriptTrust` changes it. */
+  untrustedScripts?: boolean
 }
 
 export type CollectionsError = { kind: 'invalid'; message: string } | { kind: 'storage'; message: string }

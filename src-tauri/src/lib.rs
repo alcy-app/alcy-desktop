@@ -10,8 +10,8 @@ use alcy_platform::KeyringCredentialStore;
 use alcy_rest::ReqwestRestExecutor;
 use alcy_storage::{
     ApiDocsStore, CustomCaCertificateStore, GeneralSettingsStore, GitIdentityStore, LocalSecrets,
-    ProxySettingsStore, RecentWorkspacesStore, SchemaStore, SecuritySettingsStore,
-    TlsSettingsStore, UpdateSettingsStore, UsagePreferencesStore,
+    ProxySettingsStore, RecentWorkspacesStore, SchemaStore, ScriptTrustStore,
+    SecuritySettingsStore, TlsSettingsStore, UpdateSettingsStore, UsagePreferencesStore,
 };
 use commands::agent::{
     AgentPaths, AgentRuns, cancel_agent_turn, clear_agent_api_key, compact_agent_session,
@@ -99,6 +99,9 @@ use commands::remote_command::RemoteHttpClients;
 use commands::remote_content_cache::VersionControlCaches;
 use commands::response_body_cache::ResponseBodyCache;
 use commands::save_response_body::save_response_body;
+use commands::script_trust::{
+    get_workspace_script_trust, set_collection_script_trust, set_workspace_script_trust,
+};
 use commands::security_settings::{get_security_settings, save_security_settings};
 use commands::send_history::{compare_request_sends, list_request_sends, set_send_baseline};
 use commands::session_cookies::{
@@ -277,9 +280,22 @@ pub fn run_with(extensions: Vec<Extension>) {
             app.manage(VersionControlCaches::new(
                 app_data_dir.join("version-control-cache"),
             ));
-            app.manage(RecentWorkspacesStore::new(
-                app_data_dir.join("recent-workspaces.json"),
-            ));
+            let recent_workspaces =
+                RecentWorkspacesStore::new(app_data_dir.join("recent-workspaces.json"));
+            // Workspaces already open before spec 0162 keep running their
+            // scripts: trust them once.
+            let script_trust = ScriptTrustStore::new(app_data_dir.join("script-trust.json"));
+            let known_roots: Vec<_> = recent_workspaces
+                .load()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|entry| entry.root_path)
+                .collect();
+            if let Err(error) = script_trust.migrate(&known_roots) {
+                log::warn!(target: "alcy::scripts", "script trust migration failed: {error}");
+            }
+            app.manage(script_trust);
+            app.manage(recent_workspaces);
             app.manage(ProxySettingsStore::new(
                 app_data_dir.join("proxy-settings.json"),
             ));
@@ -520,6 +536,9 @@ pub fn run_with(extensions: Vec<Extension>) {
                 prepare_import_from_text,
                 prepare_import_from_url,
                 commit_prepared_import,
+                get_workspace_script_trust,
+                set_workspace_script_trust,
+                set_collection_script_trust,
                 discard_prepared_import,
                 expand_import_paths,
                 import_collections_from_text,

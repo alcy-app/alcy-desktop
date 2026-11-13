@@ -86,10 +86,11 @@ export async function commitPreparedImport(
   rootPath: string,
   includeDocumentation: boolean,
   variables?: ImportVariableSelectionDto[],
+  trustScripts = false,
 ): Promise<CommitPreparedImportResult> {
   try {
     const value = await invoke<ImportedCollectionDataDto>('commit_prepared_import', {
-      input: { id, rootPath, includeDocumentation, variables: variables ?? null },
+      input: { id, rootPath, includeDocumentation, variables: variables ?? null, trustScripts },
     })
     return { ok: true, value }
   } catch (error) {

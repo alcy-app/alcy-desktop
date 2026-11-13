@@ -267,6 +267,9 @@ pub struct Collection {
     variables: Vec<EnvironmentVariable>,
     /// Rótulos da coleção, sem nomes repetidos (ADR 0060).
     labels: Vec<CollectionLabel>,
+    /// Imported without trusting its scripts (spec 0162): they do not run
+    /// until someone trusts the collection.
+    untrusted_scripts: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -302,7 +305,40 @@ impl Collection {
             authentication: Authentication::Inherit,
             variables: Vec::new(),
             labels: Vec::new(),
+            untrusted_scripts: false,
         })
+    }
+
+    /// Marks (or clears) the collection as imported without trusting its
+    /// scripts (spec 0162).
+    pub fn with_untrusted_scripts(mut self, untrusted: bool) -> Self {
+        self.untrusted_scripts = untrusted;
+        self
+    }
+
+    pub fn untrusted_scripts(&self) -> bool {
+        self.untrusted_scripts
+    }
+
+    /// Whether any request of the collection has a pre-request or
+    /// post-response script.
+    pub fn has_scripts(&self) -> bool {
+        any_request(&self.requests, &self.folders, &|saved| {
+            saved.request.has_scripts()
+        })
+    }
+
+    /// Whether the request with this id lives in this collection, at any depth.
+    pub fn contains_request(&self, id: &str) -> bool {
+        any_request(&self.requests, &self.folders, &|saved| saved.id == id)
+    }
+
+    /// Clears every script of the collection and returns the ids of the
+    /// requests that had one.
+    pub fn withhold_scripts(&mut self) -> Vec<String> {
+        let mut withheld = Vec::new();
+        withhold_in(&mut self.requests, &mut self.folders, &mut withheld);
+        withheld
     }
 
     pub fn with_authentication(mut self, authentication: Authentication) -> Self {
@@ -351,6 +387,30 @@ impl Collection {
 
     pub fn variables(&self) -> &[EnvironmentVariable] {
         &self.variables
+    }
+}
+
+fn any_request(
+    requests: &[SavedRequest],
+    folders: &[Folder],
+    matches: &dyn Fn(&SavedRequest) -> bool,
+) -> bool {
+    requests.iter().any(matches)
+        || folders
+            .iter()
+            .any(|folder| any_request(&folder.requests, &folder.folders, matches))
+}
+
+fn withhold_in(requests: &mut [SavedRequest], folders: &mut [Folder], withheld: &mut Vec<String>) {
+    for saved in requests {
+        if saved.request.has_scripts() {
+            saved.request.pre_request_script.clear();
+            saved.request.post_response_script.clear();
+            withheld.push(saved.id.clone());
+        }
+    }
+    for folder in folders {
+        withhold_in(&mut folder.requests, &mut folder.folders, withheld);
     }
 }
 

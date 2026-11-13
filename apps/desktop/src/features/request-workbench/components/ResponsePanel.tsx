@@ -9,7 +9,8 @@ import type { ValueMonitorDto } from '../../../bindings/list-value-monitors'
 import { readResponseBodyChunk } from '../../../bindings/read-response-body-chunk'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
-import { CopyIcon, MonitorIcon, PanelBottomIcon, PanelRightIcon, SaveIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
+import { CopyIcon, LockIcon, MonitorIcon, PanelBottomIcon, PanelRightIcon, SaveIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
+import './script-trust.css'
 import { IconButton } from '../../../shared/ui/IconButton'
 import { LoadingBar } from '../../../shared/ui/LoadingBar'
 import { Tooltip } from '../../../shared/ui/Tooltip'
@@ -77,6 +78,8 @@ interface ResponsePanelProps {
   onShareSelection?: (excerpt: ResponseExcerpt) => void
   /** Saves the current response as an example of the tab's saved request; absent when the tab has none. */
   onSaveAsExample?: () => void
+  /** Opens the Scripts tab, from the badge of a send whose scripts did not run (spec 0162). */
+  onShowScripts?: () => void
 }
 
 export interface ResponseMonitorControl {
@@ -120,6 +123,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   onOpenHistorySettings,
   onShareSelection,
   onSaveAsExample,
+  onShowScripts,
 }: ResponsePanelProps) {
   const { t, language } = useLanguage()
   const { showToast } = useToast()
@@ -166,6 +170,7 @@ export const ResponsePanel = memo(function ResponsePanel({
   const formatTime = useCallback((send: RequestSendDto) => timeFormatter.format(new Date(send.executedAtMs)), [timeFormatter])
 
   const success = displayed?.status === 'success' ? displayed : null
+  const scriptsSkipped = success && 'scriptsSkipped' in success.result ? success.result.scriptsSkipped : undefined
   // The body view's identity: its formatting, loaded text and (current view) position belong to it.
   const bodyKey = success ? `${viewKey}\n${view.kind}\n${success.result.body.kind === 'windowed' ? success.result.body.handle : ''}` : ''
   // Keep tabs visible for history entries without a stored response body.
@@ -305,6 +310,18 @@ export const ResponsePanel = memo(function ResponsePanel({
               <span className="rw-response-metric">{http.durationMs} ms</span>
               <span className="rw-response-metric">{formatSize(http.sizeBytes)}</span>
             </span>
+          )}
+          {view.kind !== 'compare' && scriptsSkipped && (
+            <button
+              type="button"
+              className="rw-response-scripts-skipped"
+              onClick={onShowScripts}
+              disabled={!onShowScripts}
+              title={t(scriptsSkipped.reason === 'workspace' ? 'scriptTrust.lockedByWorkspace' : 'scriptTrust.lockedByCollection')}
+            >
+              <LockIcon size={12} />
+              {t('scriptTrust.skippedBadge')}
+            </button>
           )}
           {view.kind !== 'compare' && displayed?.status === 'error' && (
             <span className="rw-response-summary rw-response-summary--error">{errorLabel(t, displayed.error)}</span>

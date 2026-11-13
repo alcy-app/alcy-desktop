@@ -1,0 +1,147 @@
+.script-trust-description {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.script-trust-description svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+.script-trust-origin {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.script-trust-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  cursor: pointer;
+}
+
+.script-trust-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.script-trust-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.script-trust-item-name {
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.script-trust-code {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.script-trust-code-label {
+  display: block;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.script-trust-code pre {
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script-trust-more {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* Scripts tab of a request whose scripts do not run. */
+.rw-scripts-lock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  font-size: var(--font-size-sm);
+}
+
+.rw-scripts-lock > svg {
+  flex: none;
+  color: var(--warning);
+}
+
+.rw-scripts-lock-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Response toolbar: the send went out without its scripts. */
+.rw-response-scripts-skipped {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.rw-response-scripts-skipped:disabled {
+  cursor: default;
+}
+
+/* Collections sidebar. */
+.collections-scripts-lock {
+  margin: 0 var(--space-2) var(--space-2);
+  padding: 4px 8px;
+  font-size: var(--font-size-xs);
+}
+
+.collections-untrusted-scripts {
+  display: inline-flex;
+  flex: none;
+  color: var(--warning);
+}
+
+.rw-scripts-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rw-scripts-tab-label svg {
+  color: var(--warning);
+}

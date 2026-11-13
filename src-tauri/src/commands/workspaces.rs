@@ -5,7 +5,7 @@ use alcy_domain::{GitIdentity, Workspace, WorkspaceLink, validate_workspace_fold
 use alcy_git::{FileDeletion, file_deletion};
 use alcy_storage::{
     AgentSessionStore, DiskWorkspaceFiles, RecentWorkspaceEntry, RecentWorkspacesStore,
-    StorageError, WorkspaceLinkStore, WorkspaceStore,
+    ScriptTrustStore, StorageError, WorkspaceLinkStore, WorkspaceStore,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -226,11 +226,16 @@ pub async fn create_workspace(
     app: tauri::AppHandle,
     recent_store: tauri::State<'_, RecentWorkspacesStore>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
+    script_trust: tauri::State<'_, ScriptTrustStore>,
 ) -> Result<WorkspaceDto, WorkspaceCommandError> {
     let recent_store = RecentWorkspacesStore::clone(&recent_store);
+    let script_trust = ScriptTrustStore::clone(&script_trust);
     let result = match app.path().document_dir() {
         Ok(documents_dir) => {
-            run_blocking(move || create_workspace_inner(input, documents_dir, &recent_store)).await
+            run_blocking(move || {
+                create_workspace_inner(input, documents_dir, &recent_store, &script_trust)
+            })
+            .await
         }
         Err(error) => Err(WorkspaceCommandError::Storage {
             message: error.to_string(),
@@ -248,6 +253,7 @@ fn create_workspace_inner(
     input: CreateWorkspaceInput,
     documents_dir: PathBuf,
     recent_store: &RecentWorkspacesStore,
+    script_trust: &ScriptTrustStore,
 ) -> Result<WorkspaceDto, WorkspaceCommandError> {
     let workspaces_root = documents_dir.join(WORKSPACES_FOLDER_NAME);
     let (root_path, name) = next_available_workspace(&workspaces_root)?;
@@ -264,6 +270,10 @@ fn create_workspace_inner(
         root_path.clone(),
         workspace.name().to_string(),
     )?;
+    // A new, empty workspace only holds what this person writes (spec 0162).
+    if let Err(error) = script_trust.trust_if_undecided(&root_path) {
+        log::warn!(target: "alcy::workspace", "new workspace not marked as trusted: {error}");
+    }
 
     Ok(workspace_to_dto(
         &workspace,
@@ -346,6 +356,7 @@ fn rename_workspace_inner(
 /// refused: it would write to the old path when it ends and bring that folder
 /// back.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn rename_workspace_folder(
     input: RenameWorkspaceFolderInput,
     recent_store: tauri::State<'_, RecentWorkspacesStore>,
@@ -354,8 +365,10 @@ pub async fn rename_workspace_folder(
     executions: tauri::State<'_, ExecutionRegistry>,
     flows: tauri::State<'_, FlowExecutionRegistry>,
     agents: tauri::State<'_, AgentRuns>,
+    script_trust: tauri::State<'_, ScriptTrustStore>,
 ) -> Result<WorkspaceDto, WorkspaceCommandError> {
     let recent_store = RecentWorkspacesStore::clone(&recent_store);
+    let script_trust = ScriptTrustStore::clone(&script_trust);
     let sessions = AgentSessionStore::new(agent_paths.sessions.clone());
     let root_path = PathBuf::from(&input.root_path);
     let _workspace_guard = coordinator.write(&root_path).await;
@@ -365,7 +378,10 @@ pub async fn rename_workspace_folder(
             message: input.root_path,
         })
     } else {
-        run_blocking(move || rename_workspace_folder_inner(input, &recent_store, &sessions)).await
+        run_blocking(move || {
+            rename_workspace_folder_inner(input, &recent_store, &sessions, &script_trust)
+        })
+        .await
     };
     crate::logging::logged("alcy::workspace", "renomear pasta do workspace", result)
 }
@@ -374,6 +390,7 @@ fn rename_workspace_folder_inner(
     input: RenameWorkspaceFolderInput,
     recent_store: &RecentWorkspacesStore,
     sessions: &AgentSessionStore,
+    script_trust: &ScriptTrustStore,
 ) -> Result<WorkspaceDto, WorkspaceCommandError> {
     let old_root = PathBuf::from(&input.root_path);
     let workspace = WorkspaceStore::new(old_root.clone())
@@ -402,12 +419,24 @@ fn rename_workspace_folder_inner(
         });
     }
 
+    // The decision is keyed by the folder's canonical path, read while the
+    // folder still exists at the old one.
+    let trust = script_trust.workspace(&old_root);
     std::fs::rename(&old_root, &new_root).map_err(folder_rename_error)?;
 
     // The list is what reopens the workspace, so a failure here undoes the move.
     if let Err(error) = recent_store.relocate(&old_root, &new_root) {
         let _ = std::fs::rename(&new_root, &old_root);
         return Err(storage_error(error));
+    }
+
+    // A rename made in the app keeps this person's decision about its scripts
+    // (spec 0162). The folder has moved by now: a failure does not undo it.
+    let carried = script_trust
+        .set_decision(&old_root, alcy_domain::WorkspaceScriptTrust::Undecided)
+        .and_then(|()| script_trust.set_decision(&new_root, trust));
+    if let Err(error) = carried {
+        log::warn!(target: "alcy::workspace", "script trust did not follow the folder: {error}");
     }
 
     let new_root = new_root.to_string_lossy().to_string();
@@ -673,6 +702,10 @@ mod tests {
         std::env::temp_dir().join(format!("alcy-workspaces-cmd-test-{label}-{nanos}-{count}"))
     }
 
+    fn test_trust() -> ScriptTrustStore {
+        ScriptTrustStore::new(temp_dir("trust").join("script-trust.json"))
+    }
+
     fn temp_recent_store() -> (RecentWorkspacesStore, PathBuf) {
         let path = temp_dir("recent").join("recent-workspaces.json");
         (RecentWorkspacesStore::new(path.clone()), path)
@@ -689,6 +722,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -714,8 +748,11 @@ mod tests {
             id: "workspace".to_string(),
         };
 
-        create_workspace_inner(input(), documents_dir.clone(), &recent_store).unwrap();
-        let second = create_workspace_inner(input(), documents_dir.clone(), &recent_store).unwrap();
+        create_workspace_inner(input(), documents_dir.clone(), &recent_store, &test_trust())
+            .unwrap();
+        let second =
+            create_workspace_inner(input(), documents_dir.clone(), &recent_store, &test_trust())
+                .unwrap();
 
         assert_eq!(second.name, "Workspace 2");
 
@@ -734,6 +771,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -780,6 +818,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
         create_workspace_inner(
@@ -788,6 +827,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
         open_workspace_inner(
@@ -822,6 +862,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
         let unlinked = create_workspace_inner(
@@ -830,6 +871,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -867,6 +909,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -902,6 +945,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -961,13 +1005,17 @@ mod tests {
         let input = || CreateWorkspaceInput {
             id: "workspace-1".to_string(),
         };
-        let first = create_workspace_inner(input(), documents_dir.clone(), &recent_store).unwrap();
-        create_workspace_inner(input(), documents_dir.clone(), &recent_store).unwrap();
+        let first =
+            create_workspace_inner(input(), documents_dir.clone(), &recent_store, &test_trust())
+                .unwrap();
+        create_workspace_inner(input(), documents_dir.clone(), &recent_store, &test_trust())
+            .unwrap();
 
         let renamed = rename_workspace_folder_inner(
             folder_input(&first.root_path, "  payments  "),
             &recent_store,
             &sessions,
+            &test_trust(),
         );
         let recents = list_recent_workspaces_inner(&recent_store);
         let old_exists = PathBuf::from(&first.root_path).exists();
@@ -1000,6 +1048,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
         let taken = PathBuf::from(&created.root_path)
@@ -1012,6 +1061,7 @@ mod tests {
             folder_input(&created.root_path, "taken"),
             &recent_store,
             &sessions,
+            &test_trust(),
         );
         let still_there = PathBuf::from(&created.root_path).exists();
 
@@ -1027,6 +1077,44 @@ mod tests {
     }
 
     #[test]
+    fn a_new_workspace_trusts_its_scripts_and_a_folder_rename_keeps_the_decision() {
+        let documents_dir = temp_dir("folder-trust-documents");
+        let (recent_store, recent_path) = temp_recent_store();
+        let (sessions, sessions_root) = temp_sessions();
+        let trust = test_trust();
+        let created = create_workspace_inner(
+            CreateWorkspaceInput {
+                id: "workspace-1".to_string(),
+            },
+            documents_dir.clone(),
+            &recent_store,
+            &trust,
+        )
+        .unwrap();
+        let created_trust = trust.workspace(std::path::Path::new(&created.root_path));
+
+        let renamed = rename_workspace_folder_inner(
+            folder_input(&created.root_path, "payments"),
+            &recent_store,
+            &sessions,
+            &trust,
+        )
+        .unwrap();
+        let renamed_trust = trust.workspace(std::path::Path::new(&renamed.root_path));
+        // Another folder later created at the old path is not trusted.
+        fs::create_dir_all(&created.root_path).unwrap();
+        let old_path_trust = trust.workspace(std::path::Path::new(&created.root_path));
+
+        fs::remove_dir_all(&documents_dir).ok();
+        fs::remove_dir_all(recent_path.parent().unwrap()).ok();
+        fs::remove_dir_all(&sessions_root).ok();
+
+        assert_eq!(created_trust, alcy_domain::WorkspaceScriptTrust::Trusted);
+        assert_eq!(renamed_trust, alcy_domain::WorkspaceScriptTrust::Trusted);
+        assert_eq!(old_path_trust, alcy_domain::WorkspaceScriptTrust::Undecided);
+    }
+
+    #[test]
     fn renaming_the_folder_to_its_current_name_changes_nothing() {
         let documents_dir = temp_dir("folder-same-documents");
         let (recent_store, recent_path) = temp_recent_store();
@@ -1037,6 +1125,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -1044,6 +1133,7 @@ mod tests {
             folder_input(&created.root_path, "Workspace"),
             &recent_store,
             &sessions,
+            &test_trust(),
         );
         let still_there = PathBuf::from(&created.root_path).exists();
 
@@ -1066,6 +1156,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -1073,6 +1164,7 @@ mod tests {
             folder_input(&created.root_path, "../escaped"),
             &recent_store,
             &sessions,
+            &test_trust(),
         );
         let still_there = PathBuf::from(&created.root_path).exists();
 
@@ -1098,6 +1190,7 @@ mod tests {
             folder_input(&root.to_string_lossy(), "other"),
             &recent_store,
             &sessions,
+            &test_trust(),
         );
 
         assert!(matches!(
@@ -1121,6 +1214,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
         let unknown = documents_dir.to_string_lossy().to_string();
@@ -1153,6 +1247,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -1184,6 +1279,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
 
@@ -1257,6 +1353,7 @@ mod tests {
             },
             documents_dir.clone(),
             &recent_store,
+            &test_trust(),
         )
         .unwrap();
         let root = PathBuf::from(&created.root_path);

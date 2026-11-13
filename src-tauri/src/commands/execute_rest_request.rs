@@ -25,6 +25,7 @@ use crate::commands::execution_registry::ExecutionRegistry;
 use crate::commands::failure_cause::{InvalidRequestCause, NetworkCauseOutput};
 use crate::commands::general_settings::{HistoryPreferences, HistoryPreferencesState};
 use crate::commands::response_body_cache::ResponseBodyCache;
+use crate::commands::script_trust::{ScriptsSkippedOutput, withhold_untrusted_send_scripts};
 use crate::commands::scripting::{
     EnvironmentChangeOutput, ExecutionFailure, ScopedChangeOutput, ScriptEffects,
     ScriptErrorOutput, ScriptTestOutput, ScriptedRequest, run_post_response, run_pre_request,
@@ -250,6 +251,9 @@ pub struct ExecuteRestRequestOutput {
     pub script_error: Option<ScriptErrorOutput>,
     /// Testes registrados com `al.test` pelos scripts (spec 0072).
     pub test_results: Vec<ScriptTestOutput>,
+    /// Scripts that did not run because they are not trusted (spec 0162).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scripts_skipped: Option<ScriptsSkippedOutput>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -611,6 +615,7 @@ pub async fn execute_rest_request(
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
+    script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let mut input = input;
     input.authentication = resolve_inherited_authentication(
@@ -618,6 +623,15 @@ pub async fn execute_rest_request(
         input.request_id.as_deref(),
         Some(&input.root_path),
         &secrets,
+    )
+    .await;
+    let scripts_skipped = withhold_untrusted_send_scripts(
+        &script_trust,
+        &secrets,
+        &input.root_path,
+        input.request_id.as_deref(),
+        &mut input.pre_request_script,
+        &mut input.post_response_script,
     )
     .await;
     let execution_id = input.execution_id.clone();
@@ -638,7 +652,11 @@ pub async fn execute_rest_request(
         history.get(),
         &secrets,
     )
-    .await;
+    .await
+    .map(|output| ExecuteRestRequestOutput {
+        scripts_skipped,
+        ..output
+    });
     match &result {
         Ok(output) => log::info!(
             target: "alcy::request",
@@ -819,6 +837,7 @@ async fn execute_rest_request_inner(
         script_logs: effects.logs,
         script_error,
         test_results: effects.tests,
+        scripts_skipped: None,
     })
 }
 

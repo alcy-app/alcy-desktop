@@ -4,6 +4,7 @@ import { Channel } from '@tauri-apps/api/core'
 import type { ResponseBodyOutput } from './execute-graphql-request'
 import { invokeResult, type CommandResult } from './invoke-result'
 import type { GrpcCommandError, GrpcConnectionInput, GrpcMethodKind } from './load-grpc-schema'
+import type { ScriptsSkippedDto } from './script-trust'
 
 export interface GrpcStatusOutput {
   code: number
@@ -35,6 +36,8 @@ export interface ExecuteGrpcRequestOutput {
   scriptLogs?: string[]
   scriptError?: ScriptErrorOutput | null
   testResults?: ScriptTestResult[]
+  /** Scripts that did not run because they are not trusted (spec 0162). */
+  scriptsSkipped?: ScriptsSkippedDto
   /** Tells a gRPC result apart from the HTTP ones in a union. */
   status: GrpcStatusOutput
   durationMs: number

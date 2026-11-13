@@ -3,7 +3,7 @@ import type { FlowNodeOutputDto } from '../../bindings/get-flow-node-output'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Select } from '../../shared/ui/Select'
-import { AlertIcon, CheckIcon, CloseIcon, Spinner } from '../../shared/ui/icons'
+import { AlertIcon, CheckIcon, CloseIcon, LockIcon, Spinner } from '../../shared/ui/icons'
 import { VirtualizedList } from '../request-workbench/components/VirtualizedList'
 import { ScriptTestList } from '../request-workbench/components/ScriptTestList'
 import { countByFilter, filterOf, filterRows, runRows, stepKey, stepTone, summarizeRun } from './collection-run-state'
@@ -194,6 +194,7 @@ function RunSummaryStrip({
   const running = state.phase === 'running'
   const wallMs =
     state.finishedAtMs !== null && state.startedAtMs !== null ? state.finishedAtMs - state.startedAtMs : null
+  const scriptsSkipped = state.steps.filter((step) => step.scriptsSkipped).length
   const items: { label: string; value: string; tone?: 'success' | 'error' | 'warning' }[] = [
     ...(environmentName !== null ? [{ label: t('runner.summary.environment'), value: environmentName }] : []),
     { label: t('runner.summary.iterations'), value: String(state.iterations || 1) },
@@ -207,6 +208,8 @@ function RunSummaryStrip({
     },
     { label: t('runner.summary.failed'), value: String(summary.failed), tone: summary.failed > 0 ? 'error' : undefined },
     { label: t('runner.summary.errors'), value: String(summary.errors), tone: summary.errors > 0 ? 'warning' : undefined },
+    // Requests sent without their scripts because they are not trusted (spec 0162).
+    ...(scriptsSkipped > 0 ? [{ label: t('scriptTrust.runnerSkipped'), value: String(scriptsSkipped), tone: 'warning' as const }] : []),
     {
       label: t('runner.summary.averageTime'),
       value: summary.averageDurationMs === null ? '—' : formatDuration(summary.averageDurationMs),
@@ -287,6 +290,15 @@ function ResultRow({
       </span>
       <span className="runner-result-meta">
         {showIteration && <span className="runner-chip">{t('runner.results.iterationBadge', { n: String(step.iteration + 1) })}</span>}
+        {step.scriptsSkipped && (
+          <span
+            className="runner-chip runner-chip--warning"
+            title={t(step.scriptsSkipped === 'workspace' ? 'scriptTrust.lockedByWorkspace' : 'scriptTrust.lockedByCollection')}
+          >
+            <LockIcon size={10} />
+            {t('scriptTrust.runnerSkipped')}
+          </span>
+        )}
         {step.tests.length > 0 && (
           <span className={`runner-chip runner-chip--${passedTests === step.tests.length ? 'success' : 'error'}`}>
             {t('runner.results.testsCount', { passed: String(passedTests), total: String(step.tests.length) })}

@@ -284,6 +284,7 @@ mod tests {
             examples: vec![],
         };
         CollectionDto {
+            untrusted_scripts: false,
             id: "c1".into(),
             name: "API".into(),
             folders: vec![FolderDto {

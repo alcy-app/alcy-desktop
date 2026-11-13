@@ -706,6 +706,15 @@
   color: var(--error);
 }
 
+.runner-chip--warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-color: transparent;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .runner-status {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);

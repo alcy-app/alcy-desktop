@@ -287,6 +287,8 @@ export interface TreeNode {
   variables: ScopedVariableDto[]
   /** Rótulos da collection (ADR 0060). Só existe no nível raiz; pastas não têm rótulos. */
   labels?: CollectionLabelDto[]
+  /** Root only: imported without trusting its scripts, which do not run until someone trusts it (spec 0162). */
+  untrustedScripts?: boolean
 }
 
 export type ChildKind = 'folder' | 'request'

@@ -48,6 +48,7 @@ import {
 import { DragPreview } from '../../../shared/DragPreview'
 import { usePointerDrag } from '../../../shared/use-pointer-drag'
 import './workbench-modules.css'
+import type { WorkspaceScriptTrust } from '../../../bindings/script-trust'
 
 export type SidebarTab = SidebarModuleId
 
@@ -119,8 +120,12 @@ interface CollectionsPanelSlice {
   onPrepareImportFromPath: (path: string) => Promise<PrepareImportResult>
   onPrepareImportFromUrl: (url: string) => Promise<PrepareImportResult>
   onPrepareImportFromText: (content: string) => Promise<PrepareImportResult>
-  onCommitPreparedImport: (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[]) => Promise<ImportOutcome>
+  onCommitPreparedImport: (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[], trustScripts?: boolean) => Promise<ImportOutcome>
   importEnvironmentTargets: ExistingEnvironmentTarget[]
+  workspaceScriptTrust: WorkspaceScriptTrust | null
+  onTrustWorkspaceScripts: () => void
+  onTrustCollectionScripts: (id: string) => void
+  onRevokeCollectionScripts: (id: string) => void
   environmentVariables: EnvironmentVariableDto[]
   command: CollectionsCommand | null
   onCommandHandled: () => void

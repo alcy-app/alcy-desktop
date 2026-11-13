@@ -91,6 +91,10 @@ function panelProps(
     onPrepareImportFromText: vi.fn(),
     onCommitPreparedImport: vi.fn(),
     importEnvironmentTargets: [],
+    workspaceScriptTrust: 'trusted',
+    onTrustWorkspaceScripts: noop,
+    onTrustCollectionScripts: noop,
+    onRevokeCollectionScripts: noop,
     environmentVariables: [],
     ...overrides,
   }
@@ -245,6 +249,53 @@ describe('CollectionsPanel — alphabetical sorting', () => {
     fireEvent.click(within(ordersRow).getByRole('button', { name: 'Mais opções de Orders' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Ordenar conteúdo de A a Z' }))
     expect(onSortChildren).toHaveBeenLastCalledWith('f1', 'ascending')
+  })
+})
+
+describe('CollectionsPanel — script trust (spec 0162)', () => {
+  const scripted = (id: string, name: string): RequestSummary => ({ ...request(id, name), content: { ...emptyContent(), preRequestScript: 'al.x = 1' } })
+
+  it('marks an untrusted imported collection and offers to trust it', () => {
+    const onTrustCollectionScripts = vi.fn()
+    const collections = [{ ...node('c1', 'Imported API', [], [scripted('r1', 'Ping')]), untrustedScripts: true }]
+    renderPanel(collections, new Map(), new Set(), noop, noop, { onTrustCollectionScripts })
+    const row = screen.getByText('Imported API').closest('.collections-row') as HTMLElement
+
+    expect(within(row).getByRole('img', { name: 'Scripts importados sem confiança: não rodam' })).toBeInTheDocument()
+    fireEvent.contextMenu(row)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Confiar nos scripts…' }))
+    expect(onTrustCollectionScripts).toHaveBeenCalledWith('c1')
+  })
+
+  it('offers to revoke trust only in collections with scripts', () => {
+    const onRevokeCollectionScripts = vi.fn()
+    const collections = [node('c1', 'Scripted', [], [scripted('r1', 'Ping')]), node('c2', 'Plain', [], [request('r2', 'Get')])]
+    renderPanel(collections, new Map(), new Set(), noop, noop, { onRevokeCollectionScripts })
+
+    fireEvent.contextMenu(screen.getByText('Plain').closest('.collections-row') as HTMLElement)
+    expect(screen.queryByRole('menuitem', { name: 'Revogar confiança nos scripts' })).not.toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+
+    fireEvent.contextMenu(screen.getByText('Scripted').closest('.collections-row') as HTMLElement)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Revogar confiança nos scripts' }))
+    expect(onRevokeCollectionScripts).toHaveBeenCalledWith('c1')
+  })
+
+  it('tells when the workspace scripts do not run', () => {
+    const onTrustWorkspaceScripts = vi.fn()
+    renderPanel([node('c1', 'Scripted', [], [scripted('r1', 'Ping')])], new Map(), new Set(), noop, noop, {
+      workspaceScriptTrust: 'untrusted',
+      onTrustWorkspaceScripts,
+    })
+
+    expect(screen.getByText('Os scripts deste workspace não rodam.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confiar no workspace' }))
+    expect(onTrustWorkspaceScripts).toHaveBeenCalled()
+  })
+
+  it('says nothing about a trusted workspace or one without scripts', () => {
+    renderPanel([node('c1', 'Plain', [], [request('r1', 'Get')])], new Map(), new Set(), noop, noop, { workspaceScriptTrust: 'untrusted' })
+    expect(screen.queryByText('Os scripts deste workspace não rodam.')).not.toBeInTheDocument()
   })
 })
 

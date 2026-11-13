@@ -96,6 +96,12 @@ impl Request {
         self
     }
 
+    /// Whether a pre-request or post-response script would run: a script
+    /// with only whitespace is skipped by the interpreter.
+    pub fn has_scripts(&self) -> bool {
+        !self.pre_request_script.trim().is_empty() || !self.post_response_script.trim().is_empty()
+    }
+
     pub fn with_method(mut self, method: HttpMethod) -> Self {
         self.method = method;
         self

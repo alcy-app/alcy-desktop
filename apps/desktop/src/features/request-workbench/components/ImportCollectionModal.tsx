@@ -6,7 +6,7 @@ import { pickImportFiles, pickImportFolder } from '../../../bindings/pick-import
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
 import { Field } from '../../../shared/ui/Field'
-import { ChevronDownIcon, ChevronRightIcon, ImportIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
+import { ChevronDownIcon, ChevronRightIcon, ImportIcon, LockIcon, Spinner, TrashIcon } from '../../../shared/ui/icons'
 import { IconButton } from '../../../shared/ui/IconButton'
 import { InlineAlert } from '../../../shared/ui/InlineAlert'
 import { Input } from '../../../shared/ui/Input'
@@ -31,6 +31,8 @@ export interface PreparedImportSelection {
   includeDocumentation: boolean
   /** Variable choices of the review (spec 0130). */
   variables: ImportVariablesState
+  /** Run the imported scripts (spec 0162); off by default. */
+  trustScripts: boolean
 }
 
 interface ImportCollectionModalProps {
@@ -41,10 +43,12 @@ interface ImportCollectionModalProps {
   onImportPrepared: (items: PreparedImportSelection[]) => void
   /** Workspace environments a variable can be merged into. */
   existingEnvironments: ExistingEnvironmentTarget[]
+  /** The workspace is trusted, so the review may offer to trust the imported scripts (spec 0162). */
+  scriptsCanBeTrusted: boolean
 }
 
 function selection(source: string, summary: PreparedImportDto): PreparedImportSelection {
-  return { source, summary, includeDocumentation: summary.supportsDocumentation, variables: initialImportVariables(summary) }
+  return { source, summary, includeDocumentation: summary.supportsDocumentation, variables: initialImportVariables(summary), trustScripts: false }
 }
 
 function sourceName(path: string) {
@@ -58,6 +62,7 @@ export function ImportCollectionModal({
   onPrepareFromText,
   onImportPrepared,
   existingEnvironments,
+  scriptsCanBeTrusted,
 }: ImportCollectionModalProps) {
   const { t } = useLanguage()
   const fieldId = useId()
@@ -158,6 +163,10 @@ export function ImportCollectionModal({
 
   const updateDocumentation = (id: string, includeDocumentation: boolean) => {
     setItems((current) => current.map((item) => item.summary.id === id ? { ...item, includeDocumentation } : item))
+  }
+
+  const updateTrustScripts = (id: string, trustScripts: boolean) => {
+    setItems((current) => current.map((item) => item.summary.id === id ? { ...item, trustScripts } : item))
   }
 
   const updateVariables = (id: string, variables: ImportVariablesState) => {
@@ -270,6 +279,28 @@ export function ImportCollectionModal({
                 <div className="import-modal-card-body">
                   <p className="import-modal-card-summary">{t('collections.importReviewCounts', { collections: item.summary.collectionCount, folders: item.summary.folderCount, requests: item.summary.requestCount })}</p>
                   {item.summary.warningCount > 0 && <p className="import-modal-card-summary">{t('collections.importReviewWarnings', { count: item.summary.warningCount })}</p>}
+                  {item.summary.scriptCount > 0 && (
+                    <div className="import-modal-scripts">
+                      <p className="import-modal-scripts-warning">
+                        <LockIcon size={12} />
+                        <span>{t('scriptTrust.importWarning', { count: item.summary.scriptCount })}</span>
+                      </p>
+                      {scriptsCanBeTrusted ? (
+                        <div className="import-modal-options" role="radiogroup" aria-label={t('scriptTrust.importChoiceLabel')}>
+                          <label className={!item.trustScripts ? 'import-modal-option import-modal-option--selected' : 'import-modal-option'}>
+                            <input type="radio" name={`scripts-${item.summary.id}`} checked={!item.trustScripts} onChange={() => updateTrustScripts(item.summary.id, false)} />
+                            <span>{t('scriptTrust.importWithoutTrust')}</span>
+                          </label>
+                          <label className={item.trustScripts ? 'import-modal-option import-modal-option--selected' : 'import-modal-option'}>
+                            <input type="radio" name={`scripts-${item.summary.id}`} checked={item.trustScripts} onChange={() => updateTrustScripts(item.summary.id, true)} />
+                            <span>{t('scriptTrust.importAndTrust')}</span>
+                          </label>
+                        </div>
+                      ) : (
+                        <p className="import-modal-card-summary">{t('scriptTrust.importWorkspaceNotTrusted')}</p>
+                      )}
+                    </div>
+                  )}
                   {item.summary.supportsDocumentation && (
                     <div className="import-modal-options" role="radiogroup" aria-label={t('collections.importContentLabel')}>
                       <label className={item.includeDocumentation ? 'import-modal-option import-modal-option--selected' : 'import-modal-option'}>

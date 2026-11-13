@@ -54,6 +54,7 @@ pub mod remote_command;
 pub mod remote_content_cache;
 pub mod response_body_cache;
 pub mod save_response_body;
+pub mod script_trust;
 pub mod scripting;
 pub mod security_settings;
 pub mod send_history;

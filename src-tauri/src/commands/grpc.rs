@@ -19,7 +19,9 @@ use alcy_grpc::{
     GrpcStatus, GrpcTarget, MetadataEntry, MethodKind, SchemaSummary,
     compile_workspace_proto_files, connect, describe, find_method, reflect, start_call,
 };
-use alcy_storage::{CustomCaCertificateStore, GeneralSettingsStore, LocalSecrets};
+use alcy_storage::{
+    CustomCaCertificateStore, GeneralSettingsStore, LocalSecrets, ScriptTrustStore,
+};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel as IpcChannel;
 use tauri::{Manager, State};
@@ -36,6 +38,7 @@ use crate::commands::failure_cause::InvalidRequestCause;
 use crate::commands::general_settings::HistoryPreferencesState;
 use crate::commands::proxy_settings::ProxyApplyState;
 use crate::commands::response_body_cache::ResponseBodyCache;
+use crate::commands::script_trust::{ScriptsSkippedOutput, withhold_untrusted_send_scripts};
 use crate::commands::scripting::{
     EnvironmentChangeOutput, ExecutionFailure, ScopedChangeOutput, ScriptEffects,
     ScriptErrorOutput, ScriptTestOutput, ScriptedRequest, run_post_response, run_pre_request,
@@ -255,6 +258,9 @@ pub struct ExecuteGrpcRequestOutput {
     pub script_logs: Vec<String>,
     pub script_error: Option<ScriptErrorOutput>,
     pub test_results: Vec<ScriptTestOutput>,
+    /// Scripts that did not run because they are not trusted (spec 0162).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scripts_skipped: Option<ScriptsSkippedOutput>,
     pub status: GrpcStatus,
     pub duration_ms: u64,
     /// Received messages, in bytes on the wire.
@@ -711,6 +717,7 @@ pub async fn execute_grpc_request(
     history: State<'_, HistoryPreferencesState>,
     usage: State<'_, UsageHub>,
     secrets: State<'_, LocalSecrets>,
+    script_trust: State<'_, ScriptTrustStore>,
 ) -> Result<ExecuteGrpcRequestOutput, ExecutionFailure<GrpcCommandError>> {
     let mut input = input;
     input.connection.authentication = resolve_inherited_authentication(
@@ -718,6 +725,15 @@ pub async fn execute_grpc_request(
         input.connection.request_id.as_deref(),
         Some(&input.connection.root_path),
         &secrets,
+    )
+    .await;
+    let scripts_skipped = withhold_untrusted_send_scripts(
+        &script_trust,
+        &secrets,
+        &input.connection.root_path,
+        input.connection.request_id.as_deref(),
+        &mut input.pre_request_script,
+        &mut input.post_response_script,
     )
     .await;
     let started = std::time::Instant::now();
@@ -882,6 +898,7 @@ pub async fn execute_grpc_request(
             script_logs: std::mem::take(&mut effects.logs),
             test_results: std::mem::take(&mut effects.tests),
             script_error,
+            scripts_skipped: scripts_skipped.clone(),
             body: response_body_output(
                 &execution_id,
                 summary.body,

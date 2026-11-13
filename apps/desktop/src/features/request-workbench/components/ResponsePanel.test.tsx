@@ -56,6 +56,26 @@ describe('ResponsePanel — testes de script', () => {
   })
 })
 
+describe('ResponsePanel — scripts not run (spec 0162)', () => {
+  it('shows a badge that opens the Scripts tab', () => {
+    const onShowScripts = vi.fn()
+    const execution = success([])
+    if (execution.status === 'success') {
+      execution.result = { ...execution.result, scriptsSkipped: { reason: 'workspace', preRequest: true, postResponse: false } }
+    }
+    render(<ResponsePanel execution={execution} onClear={() => {}} layout="bottom" onToggleLayout={() => {}} onShowScripts={onShowScripts} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Scripts não executados/ }))
+    expect(onShowScripts).toHaveBeenCalled()
+  })
+
+  it('shows no badge when the scripts ran', () => {
+    renderPanel(success([]))
+
+    expect(screen.queryByText('Scripts não executados')).not.toBeInTheDocument()
+  })
+})
+
 describe('ResponsePanel — globo de conexão', () => {
   function withConnection(connection: ConnectionInfo): ExecutionState {
     const state = success([])

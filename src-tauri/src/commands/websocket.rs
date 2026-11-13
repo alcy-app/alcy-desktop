@@ -15,7 +15,7 @@ use alcy_domain::{
 };
 use alcy_rest::ReqwestRestExecutor;
 use alcy_scripting::ScriptWebSocketRequest;
-use alcy_storage::{GeneralSettingsStore, LocalSecrets};
+use alcy_storage::{GeneralSettingsStore, LocalSecrets, ScriptTrustStore};
 use alcy_websocket::{
     ConnectError, ConnectInput, Connection, Direction, Handshake, MessageFormat, Outgoing,
     SendError, SessionAction, SessionEvent, SessionMode, Transcript, TranscriptMessage,
@@ -40,6 +40,7 @@ use crate::commands::execute_rest_request::{
 use crate::commands::execution_registry::ExecutionRegistry;
 use crate::commands::general_settings::HistoryPreferencesState;
 use crate::commands::response_body_cache::ResponseBodyCache;
+use crate::commands::script_trust::{ScriptsSkippedOutput, withhold_untrusted_send_scripts};
 use crate::commands::scripting::{
     EnvironmentChangeOutput, ExecutionFailure, ScopedChangeOutput, ScriptEffects,
     ScriptErrorOutput, ScriptTestOutput, ScriptedRequest, closed_by_name, run_post_response,
@@ -230,6 +231,9 @@ pub struct ExecuteWebSocketRequestOutput {
     pub script_logs: Vec<String>,
     pub script_error: Option<ScriptErrorOutput>,
     pub test_results: Vec<ScriptTestOutput>,
+    /// Scripts that did not run because they are not trusted (spec 0162).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scripts_skipped: Option<ScriptsSkippedOutput>,
 }
 
 /// Builds the domain request: URL, route parameters, headers and every
@@ -443,6 +447,7 @@ pub async fn execute_websocket_request(
     history: State<'_, HistoryPreferencesState>,
     usage: State<'_, UsageHub>,
     secrets: State<'_, LocalSecrets>,
+    script_trust: State<'_, ScriptTrustStore>,
 ) -> Result<ExecuteWebSocketRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let mut input = input;
     input.authentication = resolve_inherited_authentication(
@@ -450,6 +455,15 @@ pub async fn execute_websocket_request(
         input.request_id.as_deref(),
         Some(&input.root_path),
         &secrets,
+    )
+    .await;
+    let scripts_skipped = withhold_untrusted_send_scripts(
+        &script_trust,
+        &secrets,
+        &input.root_path,
+        input.request_id.as_deref(),
+        &mut input.pre_request_script,
+        &mut input.post_response_script,
     )
     .await;
     let execution_id = input.execution_id.clone();
@@ -470,7 +484,11 @@ pub async fn execute_websocket_request(
         &history,
         &secrets,
     )
-    .await;
+    .await
+    .map(|output| ExecuteWebSocketRequestOutput {
+        scripts_skipped,
+        ..output
+    });
     match &result {
         Ok(output) => log::info!(
             target: "alcy::request",
@@ -687,6 +705,7 @@ async fn execute_inner(
         script_logs: std::mem::take(&mut effects.logs),
         test_results: std::mem::take(&mut effects.tests),
         script_error,
+        scripts_skipped: None,
     })
 }
 

@@ -11,8 +11,11 @@ use alcy_domain::{
     ExampleResponseHeader, Folder, FolderError, GrpcCall, GrpcSchemaSource, HeaderEntry,
     HeaderError, LabelColor, ProtocolId, Request, RequestDocument, RequestExample, RouteParameter,
     SavedRequest, SavedRequestError, WebSocketCall, WebSocketCollect, WebSocketMessageFormat,
+    WorkspaceScriptTrust,
 };
-use alcy_storage::{ApiDocsStore, CollectionsStore, FlowStore, LocalSecrets, StorageError};
+use alcy_storage::{
+    ApiDocsStore, CollectionsStore, FlowStore, LocalSecrets, ScriptTrustStore, StorageError,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::environments::{EnvironmentDto, EnvironmentVariableDto, environment_to_dto};
@@ -280,6 +283,10 @@ pub struct CollectionDto {
     /// Rótulos da coleção (ADR 0060). Ausente em DTOs antigos.
     #[serde(default)]
     pub labels: Vec<CollectionLabelDto>,
+    /// Imported without trusting its scripts (spec 0162). A save keeps the
+    /// value on disk; only `set_collection_script_trust` changes it.
+    #[serde(default)]
+    pub untrusted_scripts: bool,
 }
 
 /// Rótulo de coleção: `color` é a chave da paleta (`gray`, `red`, ...).
@@ -627,6 +634,7 @@ fn collection_to_dto(collection: &Collection) -> CollectionDto {
                 color: label.color.as_key().to_string(),
             })
             .collect(),
+        untrusted_scripts: collection.untrusted_scripts(),
     }
 }
 
@@ -688,6 +696,7 @@ pub(crate) fn collection_from_dto(
                 .with_variables(variables)
         })
         .and_then(|collection| collection.with_labels(labels))
+        .map(|collection| collection.with_untrusted_scripts(dto.untrusted_scripts))
         .map_err(|error: CollectionError| invalid(error))
 }
 
@@ -748,7 +757,7 @@ fn prune_orphan_docs(
 
 /// Ver `ordered_save`: o autosave dispara gravações em sequência, e uma
 /// mais antiga nunca pode sobrescrever uma mais nova.
-static COLLECTION_SAVES: OrderedSaves = OrderedSaves::new();
+pub(crate) static COLLECTION_SAVES: OrderedSaves = OrderedSaves::new();
 
 #[tauri::command]
 pub async fn save_collections(
@@ -778,7 +787,7 @@ fn save_collections_inner(
         .collect::<Result<Vec<_>, _>>()?;
 
     let store = CollectionsStore::new(root, secrets);
-    store.save(&collections)?;
+    store.save_keeping_script_trust(collections)?;
     Ok(())
 }
 
@@ -969,6 +978,10 @@ pub struct CommitPreparedImportInput {
     /// The review's variable choices; absent keeps the import as parsed.
     #[serde(default)]
     pub variables: Option<Vec<VariableSelectionDto>>,
+    /// The person chose to trust the imported scripts (spec 0162). Ignored
+    /// unless the workspace itself is trusted.
+    #[serde(default)]
+    pub trust_scripts: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1233,13 +1246,17 @@ pub async fn commit_prepared_import(
     prepared: tauri::State<'_, PreparedImports>,
     docs: tauri::State<'_, ApiDocsStore>,
     usage: tauri::State<'_, UsageHub>,
+    script_trust: tauri::State<'_, ScriptTrustStore>,
 ) -> Result<ImportCollectionsOutput, CollectionsCommandError> {
     let CommitPreparedImportInput {
         id,
         root_path,
         include_documentation,
         variables,
+        trust_scripts,
     } = input;
+    let trust_scripts = trust_scripts
+        && script_trust.workspace(Path::new(&root_path)) == WorkspaceScriptTrust::Trusted;
     let entry = prepared
         .entries
         .lock()
@@ -1257,7 +1274,14 @@ pub async fn commit_prepared_import(
     let format = UsageIdentifier::new(prepared_format(&entry.imported));
     let target = DocsTarget::new(&docs, root_path);
     let result = run_blocking(move || {
-        commit_with_variables(entry.imported, &target, include_documentation, variables)
+        let mut output =
+            commit_with_variables(entry.imported, &target, include_documentation, variables)?;
+        if trust_scripts {
+            for collection in &mut output.collections {
+                collection.untrusted_scripts = false;
+            }
+        }
+        Ok(output)
     })
     .await;
     usage.record(UsageEvent::ImportFinished {
@@ -1664,8 +1688,16 @@ fn import_collections_from_imported(
             reason: warning.reason.clone(),
         })
         .collect();
-    let mut collections: Vec<CollectionDto> =
-        imported.collections.iter().map(collection_to_dto).collect();
+    // Every import starts untrusted whatever the source file says (spec
+    // 0162); only the review's "trust" choice clears the mark.
+    let mut collections: Vec<CollectionDto> = imported
+        .collections
+        .iter()
+        .map(|collection| CollectionDto {
+            untrusted_scripts: collection.has_scripts(),
+            ..collection_to_dto(collection)
+        })
+        .collect();
     if include_documentation && let Some(docs) = imported.docs {
         let source_id = target.store.upsert_source(&target.root, docs)?;
         for collection in &mut collections {
@@ -1868,6 +1900,7 @@ mod tests {
 
     fn sample_collections() -> Vec<CollectionDto> {
         vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -1935,6 +1968,7 @@ mod tests {
             },
         }];
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -1965,6 +1999,7 @@ mod tests {
             raw_language: RawBodyLanguageInput::Json,
         });
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -1997,6 +2032,7 @@ mod tests {
             expected_messages: Some(0),
         });
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2035,6 +2071,7 @@ mod tests {
             deadline_ms: Some(3_000),
         });
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2077,6 +2114,7 @@ mod tests {
             ],
         });
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2102,6 +2140,7 @@ mod tests {
         request.protocol = "rest".to_string();
         request.body = "{}".to_string();
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2130,6 +2169,7 @@ mod tests {
     fn save_rejects_an_empty_collection_name() {
         let root = temp_root();
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2202,6 +2242,7 @@ mod tests {
     fn save_rejects_duplicate_sibling_folder_names() {
         let root = temp_root();
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2241,6 +2282,7 @@ mod tests {
         let mut request = sample_saved_request("request-1", "Ping");
         request.protocol = "soap".to_string();
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2265,6 +2307,7 @@ mod tests {
         let mut request = sample_saved_request("request-1", "Ping");
         request.endpoint = "".to_string();
         let dtos = vec![CollectionDto {
+            untrusted_scripts: false,
             variables: vec![],
             labels: vec![],
             authentication: SavedRequestAuthenticationDto::Inherit,
@@ -2774,6 +2817,54 @@ collection:
         assert_eq!(imported.collections, sample_collections());
         assert!(imported.environments.is_empty());
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn an_import_marks_collections_with_scripts_whatever_the_file_says() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("export.alcy.json");
+        let mut scripted = sample_collections().remove(0);
+        scripted.requests[0].pre_request_script = "al.environment.set('a', '1')".to_string();
+        let mut plain = sample_collections().remove(0);
+        plain.id = "collection-2".to_string();
+        // A file that claims its scripts are trusted, and one that marks a
+        // collection without scripts.
+        scripted.untrusted_scripts = false;
+        plain.untrusted_scripts = true;
+        export_collections_inner(path.clone(), vec![scripted, plain]).unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+
+        let imported = import_collections_from_text_inner(
+            ImportCollectionsFromTextInput {
+                root_path: temp_root_path(),
+                content: raw,
+            },
+            &ApiDocsStore::new(),
+        )
+        .await
+        .unwrap();
+
+        assert!(imported.collections[0].untrusted_scripts);
+        assert!(!imported.collections[1].untrusted_scripts);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_save_keeps_the_mark_and_only_the_trust_command_changes_it() {
+        let root = temp_root();
+        let mut marked = sample_collections();
+        marked[0].untrusted_scripts = true;
+        save_collections_inner(root.clone(), marked, test_secrets()).unwrap();
+
+        // An edit coming from the interface says "trusted": the disk wins.
+        save_collections_inner(root.clone(), sample_collections(), test_secrets()).unwrap();
+        let store = CollectionsStore::new(root.clone(), test_secrets());
+        assert!(store.load().unwrap()[0].untrusted_scripts());
+
+        assert!(store.set_script_trust("collection-1", true).unwrap());
+        assert!(!store.load().unwrap()[0].untrusted_scripts());
         fs::remove_dir_all(&root).ok();
     }
 

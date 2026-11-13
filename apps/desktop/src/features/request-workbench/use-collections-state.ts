@@ -25,6 +25,7 @@ import type { EnvironmentDto } from '../../bindings/list-environments'
 import { registerBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { pickExportFile } from '../../bindings/pick-export-file'
 import { saveCollections } from '../../bindings/save-collections'
+import { setCollectionScriptTrust } from '../../bindings/script-trust'
 import { useCommittedState } from '../../shared/use-committed-state'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { useToast } from '../../shared/ui/use-toast'
@@ -232,6 +233,7 @@ export function treeFromDto(nodes: (CollectionDto | FolderDto)[]): TreeNode[] {
     authentication: node.authentication,
     variables: node.variables ?? [],
     ...('labels' in node && node.labels?.length ? { labels: node.labels } : {}),
+    ...('untrustedScripts' in node && node.untrustedScripts ? { untrustedScripts: true } : {}),
   }))
 }
 
@@ -245,6 +247,7 @@ function folderDtoFromNode(node: TreeNode): CollectionDto {
     authentication: node.authentication,
     variables: node.variables,
     ...(node.labels?.length ? { labels: node.labels } : {}),
+    ...(node.untrustedScripts ? { untrustedScripts: true } : {}),
   }
 }
 
@@ -738,13 +741,38 @@ export function useCollectionsState(
   )
 
   const commitPreparedCollection = useCallback(
-    async (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[]): Promise<ImportOutcome> => {
-      const result = await commitPreparedImport(id, workspaceRootPath, includeDocumentation, variables)
+    async (id: string, includeDocumentation: boolean, variables?: ImportVariableSelectionDto[], trustScripts = false): Promise<ImportOutcome> => {
+      const result = await commitPreparedImport(id, workspaceRootPath, includeDocumentation, variables, trustScripts)
       if (!result.ok) return { ok: false, message: result.error.message }
       applyImportedCollections(result.value, false)
       return { ok: true, scripts: importScriptStats(result.value) }
     },
     [applyImportedCollections, workspaceRootPath],
+  )
+
+  /** Trusts or revokes the scripts of a collection (spec 0162). The mark lives in the collection
+   * file, so the change reaches everyone who receives the workspace. */
+  const setCollectionScriptsTrusted = useCallback(
+    async (id: string, trusted: boolean) => {
+      // The collection must be on disk before its mark can change there.
+      await flushPendingSave()
+      const result = await setCollectionScriptTrust(workspaceRootPath, id, trusted)
+      if (!result.ok) {
+        showToast(t('scriptTrust.changeFailed', { message: result.error.message }), 'error')
+        return false
+      }
+      setCollections((current) =>
+        current.map((node) => {
+          if (node.id !== id) return node
+          const next = { ...node }
+          if (trusted) delete next.untrustedScripts
+          else next.untrustedScripts = true
+          return next
+        }),
+      )
+      return true
+    },
+    [flushPendingSave, workspaceRootPath, showToast, t],
   )
 
   return {
@@ -796,6 +824,7 @@ export function useCollectionsState(
     prepareCollectionsFromUrl,
     prepareCollectionsFromText,
     commitPreparedCollection,
+    setCollectionScriptsTrusted,
     flush: flushPendingSave,
   }
 }

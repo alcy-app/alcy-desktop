@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -51,6 +52,10 @@ struct PersistedCollection {
     /// Aditivo (ADR 0060): omitido quando vazio, como `variables`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     labels: Vec<PersistedLabel>,
+    /// Additive (spec 0162): present only on a collection imported without
+    /// trusting its scripts, so other collections do not change on disk.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    untrusted_scripts: bool,
 }
 
 /// Rótulo de coleção. A cor é a chave da paleta; uma chave desconhecida
@@ -398,6 +403,75 @@ impl CollectionsStore {
             &self.secrets_path,
             &self.secrets,
         )
+    }
+
+    /// Saves an edit of the collections without changing whether their
+    /// scripts are trusted (spec 0162): a collection already on disk keeps
+    /// its mark, whatever the edit carries. Only a new collection brings its
+    /// own (an import marks it, a collection created in the app does not).
+    pub fn save_keeping_script_trust(
+        &self,
+        collections: Vec<Collection>,
+    ) -> Result<(), StorageError> {
+        let on_disk = self.script_trust_marks()?;
+        let collections: Vec<Collection> = collections
+            .into_iter()
+            .map(|collection| match on_disk.get(&collection.id) {
+                Some(untrusted) => collection.with_untrusted_scripts(*untrusted),
+                None => collection,
+            })
+            .collect();
+        self.save(&collections)
+    }
+
+    /// Sets whether the scripts of one collection are trusted, leaving the
+    /// rest of the file as it is. `false` when there is no such collection.
+    pub fn set_script_trust(
+        &self,
+        collection_id: &str,
+        trusted: bool,
+    ) -> Result<bool, StorageError> {
+        let mut collections = self.load()?;
+        let Some(collection) = collections
+            .iter_mut()
+            .find(|collection| collection.id == collection_id)
+        else {
+            return Ok(false);
+        };
+        *collection = collection.clone().with_untrusted_scripts(!trusted);
+        self.save(&collections)?;
+        Ok(true)
+    }
+
+    /// Collection id → mark, read without opening secrets. A missing file
+    /// has no marks; an unreadable one fails, so a save never drops marks
+    /// it could not see.
+    fn script_trust_marks(&self) -> Result<HashMap<String, bool>, StorageError> {
+        #[derive(Deserialize)]
+        struct Marks {
+            #[serde(default)]
+            collections: Vec<Mark>,
+        }
+        #[derive(Deserialize)]
+        struct Mark {
+            id: String,
+            #[serde(default)]
+            untrusted_scripts: bool,
+        }
+        let raw = match fs::read(&self.manifest_path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(HashMap::new());
+            }
+            Err(error) => return Err(StorageError::Read(error.to_string())),
+        };
+        let marks: Marks = serde_json::from_slice(&raw)
+            .map_err(|error| StorageError::Corrupted(error.to_string()))?;
+        Ok(marks
+            .collections
+            .into_iter()
+            .map(|mark| (mark.id, mark.untrusted_scripts))
+            .collect())
     }
 }
 
@@ -960,6 +1034,7 @@ fn collection_from_persisted(persisted: PersistedCollection) -> Result<Collectio
                 .with_variables(variables)
         })
         .and_then(|collection| collection.with_labels(labels))
+        .map(|collection| collection.with_untrusted_scripts(persisted.untrusted_scripts))
         .map_err(|error| StorageError::Corrupted(error.to_string()))
 }
 
@@ -1047,6 +1122,7 @@ fn persisted_from_collection(collection: &Collection) -> PersistedCollection {
         authentication: persisted_from_authentication(&collection.authentication),
         variables: persisted_from_variables(collection.variables()),
         labels: persisted_from_labels(collection.labels()),
+        untrusted_scripts: collection.untrusted_scripts(),
     }
 }
 
@@ -1678,6 +1754,67 @@ mod tests {
         let written = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
         assert!(written.contains("\"color\": \"green\""));
         assert_eq!(store.load().unwrap(), collections);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_untrusted_scripts_mark_round_trips_and_is_omitted_when_false() {
+        let root = temp_root();
+        let store = CollectionsStore::new(root.clone(), test_secrets());
+
+        store.save(&sample_collections()).unwrap();
+        let written = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert!(!written.contains("untrusted_scripts"));
+        assert!(!store.load().unwrap()[0].untrusted_scripts());
+
+        let marked: Vec<_> = sample_collections()
+            .into_iter()
+            .map(|collection| collection.with_untrusted_scripts(true))
+            .collect();
+        store.save(&marked).unwrap();
+        let written = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert!(written.contains("\"untrusted_scripts\": true"));
+        assert_eq!(store.load().unwrap(), marked);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_edit_keeps_the_script_trust_mark_on_disk() {
+        let root = temp_root();
+        let store = CollectionsStore::new(root.clone(), test_secrets());
+        let marked: Vec<_> = sample_collections()
+            .into_iter()
+            .map(|collection| collection.with_untrusted_scripts(true))
+            .collect();
+        store.save(&marked).unwrap();
+
+        // The edit says "trusted"; the disk wins.
+        store
+            .save_keeping_script_trust(sample_collections())
+            .unwrap();
+        assert!(store.load().unwrap()[0].untrusted_scripts());
+
+        // Only the dedicated change clears it.
+        assert!(store.set_script_trust("collection-1", true).unwrap());
+        assert!(!store.load().unwrap()[0].untrusted_scripts());
+        store.save_keeping_script_trust(marked).unwrap();
+        assert!(!store.load().unwrap()[0].untrusted_scripts());
+        assert!(!store.set_script_trust("missing", false).unwrap());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_new_collection_brings_its_own_script_trust_mark() {
+        let root = temp_root();
+        let store = CollectionsStore::new(root.clone(), test_secrets());
+        let imported: Vec<_> = sample_collections()
+            .into_iter()
+            .map(|collection| collection.with_untrusted_scripts(true))
+            .collect();
+
+        store.save_keeping_script_trust(imported).unwrap();
+
+        assert!(store.load().unwrap()[0].untrusted_scripts());
         fs::remove_dir_all(&root).ok();
     }
 
