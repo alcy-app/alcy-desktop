@@ -13,11 +13,13 @@ import {
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
 import { Button } from '../../shared/ui/Button'
 import { IconButton } from '../../shared/ui/IconButton'
-import { CloseIcon, PlusIcon, RefreshIcon } from '../../shared/ui/icons'
+import { Input } from '../../shared/ui/Input'
+import { CloseIcon, PlusIcon, RefreshIcon, SearchIcon } from '../../shared/ui/icons'
 import { ShortcutCaptureModal, type CaptureEvaluation } from './ShortcutCaptureModal'
 import { ShortcutKeys } from './ShortcutKeys'
 import { formatComboForDisplay } from './shortcut-display'
 import { SHORTCUT_GROUPS } from './shortcut-groups'
+import { normalizeSearch } from './settings-navigation'
 
 interface SlotRef {
   action: ShortcutAction
@@ -30,18 +32,35 @@ export function ShortcutsSection() {
   const { t } = useLanguage()
   const { bindings, assignShortcut, removeShortcut, resetShortcut, resetAllShortcuts } = useShortcuts()
   const [capturing, setCapturing] = useState<SlotRef | null>(null)
-  // Ao fechar a captura o foco volta para a célula editada, que pode ter
-  // trocado de botão ("Adicionar" vira o atalho gravado).
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  // Return focus to the edited slot, or to search if its new binding no longer matches.
   const [focusSlot, setFocusSlot] = useState<SlotRef | null>(null)
   const tableRef = useRef<HTMLTableElement>(null)
 
   useEffect(() => {
     if (!focusSlot) return
-    tableRef.current?.querySelector<HTMLButtonElement>(`[data-slot="${focusSlot.action}-${focusSlot.slot}"]`)?.focus()
+    const slot = tableRef.current?.querySelector<HTMLButtonElement>(`[data-slot="${focusSlot.action}-${focusSlot.slot}"]`)
+    ;(slot ?? searchRef.current)?.focus()
   }, [focusSlot])
 
   const actionLabel = (action: ShortcutAction) => t(`settings.shortcuts.action.${action}`)
   const allDefault = SHORTCUT_ACTIONS.every((action) => isDefaultBinding(bindings, action))
+  const terms = normalizeSearch(query).replace(/\s*\+\s*/g, '+').split(/\s+/).filter(Boolean)
+  const groups = SHORTCUT_GROUPS.map((group) => ({
+    ...group,
+    actions: group.actions.filter((action) => {
+      const combos = bindings[action].map((combo) => normalizeSearch(formatComboForDisplay(combo, t)))
+      const text = normalizeSearch([
+        actionLabel(action),
+        t(`settings.shortcuts.group.${group.id}`),
+        ...combos,
+      ].join(' '))
+      return terms.every((term) => term.includes('+')
+        ? combos.some((combo) => combo === term || combo.startsWith(`${term} `))
+        : text.includes(term))
+    }),
+  })).filter((group) => group.actions.length > 0)
 
   const evaluate = ({ action, slot }: SlotRef) => (combo: KeyCombo): CaptureEvaluation => {
     const validation = validateCombo(combo, action)
@@ -82,7 +101,7 @@ export function ShortcutsSection() {
       )
     }
 
-    // Só a primeira célula vazia oferece "Adicionar": a lista não tem buracos.
+    // Only the first empty slot offers Add: bindings have no gaps.
     if (slot !== bindings[action].length) return <span className="settings-shortcut-empty">—</span>
 
     return (
@@ -102,7 +121,18 @@ export function ShortcutsSection() {
   return (
     <div className="settings-shortcuts" data-testid="shortcut-settings">
       <p className="settings-proxy-hint">{t('settings.shortcuts.hint')}</p>
-      <table ref={tableRef} className="settings-shortcuts-table">
+      <div className="settings-search settings-shortcuts-search" onKeyDown={(event) => {
+        if (event.key === 'Escape' && query) {
+          event.stopPropagation()
+          setQuery('')
+          searchRef.current?.focus()
+        }
+      }}>
+        <SearchIcon size={14} />
+        <Input ref={searchRef} type="search" value={query} aria-label={t('settings.shortcuts.search')} placeholder={t('settings.shortcuts.search')} onChange={(event) => setQuery(event.target.value)} />
+        {query && <IconButton icon={<CloseIcon size={12} />} label={t('settings.searchClear')} onClick={() => { setQuery(''); searchRef.current?.focus() }} />}
+      </div>
+      {groups.length === 0 ? <p className="settings-proxy-hint" role="status">{t('settings.shortcuts.searchEmpty')}</p> : <table ref={tableRef} className="settings-shortcuts-table">
         <thead>
           <tr>
             <th scope="col" className="settings-shortcuts-col-action">{t('settings.shortcuts.columnAction')}</th>
@@ -113,7 +143,7 @@ export function ShortcutsSection() {
             </th>
           </tr>
         </thead>
-        {SHORTCUT_GROUPS.map((group) => (
+        {groups.map((group) => (
           <tbody key={group.id}>
             <tr className="settings-shortcuts-group">
               <th scope="colgroup" colSpan={4}>
@@ -140,7 +170,7 @@ export function ShortcutsSection() {
             ))}
           </tbody>
         ))}
-      </table>
+      </table>}
       <div className="settings-proxy-actions">
         <Button variant="ghost" disabled={allDefault} onClick={resetAllShortcuts}>
           {t('settings.shortcuts.restoreAll')}

@@ -90,12 +90,82 @@ beforeEach(() => {
 
 const renderOpen = () => {
   const result = render(<SettingsMenu open onOpenChange={() => {}} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Rede' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Rede e certificados' }))
   return result
 }
 
+describe('SettingsMenu — search and shared preferences', () => {
+  it('finds accented labels, navigates with the keyboard and focuses the setting', async () => {
+    render(<SettingsMenu open onOpenChange={() => {}} />)
+    const search = screen.getByRole('searchbox', { name: 'Buscar opções…' })
+    fireEvent.change(search, { target: { value: 'RETENCAO' } })
+    const results = screen.getByRole('list', { name: 'Resultados da busca' })
+    expect(within(results).getByRole('button', { name: 'Retenção do histórico Dados e privacidade' })).toBeVisible()
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(within(results).getAllByRole('button')[0]).toHaveFocus()
+    fireEvent.click(document.activeElement!)
+    expect(screen.getByRole('button', { name: 'Dados e privacidade' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByTestId('history-retention-settings')).toHaveFocus()
+    expect(search).toHaveValue('')
+    expect(await screen.findByRole('spinbutton', { name: 'Retenção do histórico em dias' })).toBeVisible()
+  })
+
+  it('clears an empty search with Escape without closing the modal and excludes disabled tools', () => {
+    flags.localGit = false
+    const onOpenChange = vi.fn()
+    render(<SettingsMenu open onOpenChange={onOpenChange} />)
+    const search = screen.getByRole('searchbox')
+    fireEvent.change(search, { target: { value: 'git' } })
+    expect(screen.getByText('Nenhuma opção encontrada. Tente outro termo.')).toBeVisible()
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(search).toHaveValue('')
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.getByRole('navigation')).toBeVisible()
+  })
+
+  it('preserves a proxy draft while using search and supports clearing results', async () => {
+    renderOpen()
+    await waitFor(() => expect(getProxySettings).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('radio', { name: 'Script PAC' }))
+    fireEvent.change(screen.getByLabelText('URL do script'), { target: { value: 'https://example.com/draft.pac' } })
+    const search = screen.getByRole('searchbox')
+    fireEvent.change(search, { target: { value: 'timeout' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(screen.getByTestId('general-settings')).toHaveFocus()
+    fireEvent.change(search, { target: { value: 'proxy' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Limpar busca' }))
+    expect(search).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Rede e certificados' }))
+    expect(screen.getByLabelText('URL do script')).toHaveValue('https://example.com/draft.pac')
+    expect(saveProxySettings).not.toHaveBeenCalled()
+  })
+
+  it('serializes saves across pages using the latest successful snapshot', async () => {
+    const updated = { requestTimeoutSeconds: 30, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false }
+    let finishFirst!: (value: { ok: true; value: typeof updated }) => void
+    saveGeneralSettings.mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve }))
+    saveGeneralSettings.mockImplementationOnce(async (input) => ({ ok: true, value: input }))
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
+    const timeout = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
+    await waitFor(() => expect(timeout).toBeEnabled())
+    fireEvent.change(timeout, { target: { value: '30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Retenção do histórico em dias' }), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar retenção do histórico' }))
+    expect(saveGeneralSettings).toHaveBeenCalledTimes(1)
+    finishFirst({ ok: true, value: updated })
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenLastCalledWith({ ...updated, historyRetentionDays: 3 }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar retenção do histórico' })).toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Requisições' }))
+    expect(timeout).toHaveValue(30)
+    expect(getGeneralSettings).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('SettingsMenu — proxy', () => {
-  it('só mostra o campo de URL no modo PAC e mantém "Aplicar" desabilitado sem mudanças', async () => {
+  it('shows the URL only for PAC and disables Apply without changes', async () => {
     renderOpen()
     const apply = await screen.findByRole('button', { name: 'Aplicar' })
     expect(apply).toBeDisabled()
@@ -109,7 +179,7 @@ describe('SettingsMenu — proxy', () => {
     expect(apply).toBeEnabled()
   })
 
-  it('aplica o proxy do sistema', async () => {
+  it('applies the system proxy', async () => {
     saveProxySettings.mockResolvedValue({ ok: true, value: { mode: 'system', pacUrl: null, error: null } })
     renderOpen()
 
@@ -120,7 +190,7 @@ describe('SettingsMenu — proxy', () => {
     expect(await screen.findByText('Configuração de proxy aplicada.')).toBeInTheDocument()
   })
 
-  it('testa o script PAC e mostra o erro devolvido', async () => {
+  it('tests the PAC script and displays the returned error', async () => {
     testProxySettings.mockResolvedValueOnce({ ok: true })
     testProxySettings.mockResolvedValueOnce({ ok: false, error: { kind: 'pac', message: 'resposta HTTP 404' } })
     renderOpen()
@@ -136,7 +206,7 @@ describe('SettingsMenu — proxy', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('resposta HTTP 404')
   })
 
-  it('reflete a configuração salva, mesmo carregada depois de o modal abrir', async () => {
+  it('reflects saved settings loaded after opening the modal', async () => {
     getProxySettings.mockResolvedValue({ ok: true, value: { mode: 'pac', pacUrl: 'https://corp/p.pac', error: null } })
     renderOpen()
 
@@ -144,7 +214,7 @@ describe('SettingsMenu — proxy', () => {
     expect(screen.getByRole('radio', { name: 'Script PAC' })).toBeChecked()
   })
 
-  it('avisa quando a configuração salva não pôde ser aplicada', async () => {
+  it('warns when saved proxy settings could not be applied', async () => {
     getProxySettings.mockResolvedValue({
       ok: true,
       value: { mode: 'pac', pacUrl: 'https://corp/p.pac', error: 'resposta HTTP 500' },
@@ -156,8 +226,8 @@ describe('SettingsMenu — proxy', () => {
 })
 
 
-describe('SettingsMenu — tooltip do botão', () => {
-  it('não mostra o tooltip do botão ao passar o mouse sobre o modal aberto', async () => {
+describe('SettingsMenu — trigger tooltip', () => {
+  it('does not show the trigger tooltip when hovering the modal', async () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     // React mouse events cross the modal portal to its ancestors.
     fireEvent.mouseEnter(screen.getByRole('dialog'))
@@ -165,31 +235,27 @@ describe('SettingsMenu — tooltip do botão', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
-  it('mostra o tooltip ao passar o mouse sobre o botão', async () => {
+  it('shows the tooltip when hovering the trigger', async () => {
     render(<SettingsMenu open={false} onOpenChange={() => {}} />)
     fireEvent.mouseEnter(screen.getByRole('button', { name: 'Configurações' }))
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Configurações')
   })
 })
 
-describe('SettingsMenu — categorias', () => {
-  it('abre a aba de atualizações na categoria inicial pedida', () => {
+describe('SettingsMenu — categories', () => {
+  it('opens About at the updates section for the legacy destination', () => {
     render(<SettingsMenu open initialCategory="updates" onOpenChange={() => {}} />)
-    expect(screen.getByRole('heading', { name: 'Atualizações' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Sobre o Alcy' })).toBeVisible()
     expect(screen.getByTestId('update-settings')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Atualizações' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Sobre o Alcy' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('desabilita a aba de atualizações com a feature flag desligada e explica no tooltip', async () => {
+  it('keeps About available without the updater', () => {
     flags.updates = false
-    render(<SettingsMenu open onOpenChange={() => {}} />)
-    const updates = screen.getByRole('button', { name: 'Atualizações' })
-    expect(updates).toBeDisabled()
-    // The disabled button cannot receive hover; its host triggers the tooltip.
-    fireEvent.mouseEnter(updates.parentElement!)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Funcionalidade desabilitada')
-    fireEvent.click(updates)
-    expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
+    render(<SettingsMenu open initialCategory="updates" onOpenChange={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Sobre o Alcy' })).toBeEnabled()
+    expect(screen.getByRole('heading', { name: 'Sobre o Alcy' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Ver novidades' })).toBeDisabled()
     expect(screen.queryByTestId('update-settings')).not.toBeInTheDocument()
   })
 
@@ -198,10 +264,10 @@ describe('SettingsMenu — categorias', () => {
     render(<SettingsMenu open initialCategory="git" onOpenChange={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Git' })).not.toBeInTheDocument()
     expect(getGitIdentity).not.toHaveBeenCalled()
-    // Requesting it as the initial category falls back to General instead of an empty page.
-    expect(screen.getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
+    // Requesting it as the initial category falls back to Interface instead of an empty page.
+    expect(screen.getByRole('button', { name: 'Interface' })).toHaveAttribute('aria-current', 'page')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
     expect(screen.queryByText('Sincronização do workspace')).not.toBeInTheDocument()
     expect(getSecuritySettings).not.toHaveBeenCalled()
   })
@@ -212,13 +278,13 @@ describe('SettingsMenu — categorias', () => {
     expect(screen.getByRole('button', { name: 'Git' })).toHaveAttribute('aria-current', 'page')
     expect(await screen.findByText('Os commits serão assinados por Ana <ana@example.com>.')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
     expect(await screen.findByText('Sincronização do workspace')).toBeInTheDocument()
   })
 
-  it('liga e desliga as sugestões da documentação importada na hora, sem "Aplicar"', async () => {
+  it('toggles imported schema suggestions immediately', async () => {
     window.localStorage.removeItem('alcy:schema-autocomplete')
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const toggle = await screen.findByRole('checkbox', { name: 'Habilitar sugestões da documentação importada' })
     expect(toggle).toBeChecked()
 
@@ -229,10 +295,10 @@ describe('SettingsMenu — categorias', () => {
     window.localStorage.removeItem('alcy:schema-autocomplete')
   })
 
-  it('abre as novidades da versão e fecha as configurações', () => {
+  it('opens release notes and closes settings', () => {
     const onOpenChange = vi.fn()
     const onOpenReleaseNotes = vi.fn()
-    render(<SettingsMenu open onOpenChange={onOpenChange} onOpenReleaseNotes={onOpenReleaseNotes} />)
+    render(<SettingsMenu open initialCategory="about" onOpenChange={onOpenChange} onOpenReleaseNotes={onOpenReleaseNotes} />)
 
     expect(screen.getByText(`Veja o que mudou na versão ${__APP_VERSION__} do Alcy.`)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Ver novidades' }))
@@ -241,42 +307,42 @@ describe('SettingsMenu — categorias', () => {
     expect(onOpenReleaseNotes).toHaveBeenCalledTimes(1)
   })
 
-  it('desabilita as novidades quando a versão não tem notas', () => {
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+  it('disables release notes when unavailable', () => {
+    render(<SettingsMenu open initialCategory="about" onOpenChange={() => {}} />)
 
     expect(screen.getByRole('button', { name: 'Ver novidades' })).toBeDisabled()
     expect(screen.getByText(`A versão ${__APP_VERSION__} não tem novidades registradas.`)).toBeInTheDocument()
   })
 
-  it('abre diretamente na categoria solicitada pelo atalho', () => {
+  it('opens the category requested by the shortcut', () => {
     render(<SettingsMenu open initialCategory="git" onOpenChange={() => {}} />)
     expect(screen.getByRole('dialog')).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Git' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByRole('radio', { name: 'Claro' })).not.toBeInTheDocument()
   })
 
-  it('abre em Geral, a primeira categoria, e alterna categorias sem perder o rascunho do proxy', async () => {
+  it('opens Interface first and preserves proxy drafts across pages', async () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     const categories = screen.getByRole('navigation', { name: 'Categorias de configuração' })
-    expect(within(categories).getAllByRole('button')[0]).toHaveTextContent('Geral')
+    expect(within(categories).getAllByRole('button')[0]).toHaveTextContent('Interface')
     expect(screen.getByRole('dialog')).toHaveFocus()
-    expect(await screen.findByTestId('general-settings')).toBeVisible()
-    fireEvent.click(screen.getByRole('button', { name: 'Aparência' }))
+    expect(screen.getByRole('radio', { name: 'Português (Brasil)' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Interface' }))
     expect(screen.getByRole('radio', { name: 'Claro' })).toBeVisible()
     expect(screen.getByRole('radio', { name: 'Padrão do sistema' })).toBeVisible()
     expect(screen.queryByRole('radio', { name: 'Sistema' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Rede' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Rede e certificados' }))
     await waitFor(() => expect(getProxySettings).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('radio', { name: 'Script PAC' }))
     fireEvent.change(screen.getByLabelText('URL do script'), { target: { value: 'https://corp/draft.pac' } })
     fireEvent.click(screen.getByRole('button', { name: 'Git' }))
     expect(screen.queryByRole('button', { name: 'Aplicar' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Rede' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Rede e certificados' }))
     expect(screen.getByLabelText('URL do script')).toHaveValue('https://corp/draft.pac')
     expect(saveProxySettings).not.toHaveBeenCalled()
   })
 
-  it('mantém o ciclo de foco nos controles visíveis e habilitados', async () => {
+  it('traps focus in visible enabled controls', async () => {
     render(<SettingsMenu open initialCategory="appearance" onOpenChange={() => {}} />)
     await waitFor(() => expect(getProxySettings).toHaveBeenCalled())
     const close = screen.getByRole('button', { name: 'Fechar' })
@@ -288,7 +354,7 @@ describe('SettingsMenu — categorias', () => {
     expect(close).toHaveFocus()
   })
 
-  it('permite mudar idioma em Geral e restaurar a escala', () => {
+  it('changes language in Interface and restores scale', () => {
     render(<SettingsMenu open initialCategory="appearance" onOpenChange={() => {}} />)
     const textScale = screen.getByRole('slider', { name: 'Escala do texto' })
     const iconScale = screen.getByRole('slider', { name: 'Escala dos ícones' })
@@ -303,15 +369,15 @@ describe('SettingsMenu — categorias', () => {
     fireEvent.click(resetIcon)
     expect(iconScale).toHaveValue('1')
     expect(screen.queryByRole('button', { name: 'Idioma' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Geral' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Interface' }))
     fireEvent.click(screen.getByRole('radio', { name: 'English' }))
-    expect(screen.getByRole('heading', { name: 'General' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Network' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Interface' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Network & certificates' })).toBeVisible()
   })
 })
 
-describe('SettingsMenu — verificação de certificado', () => {
-  it('verifica certificados por padrão e salva a desativação com aviso', async () => {
+describe('SettingsMenu — certificate verification', () => {
+  it('verifies certificates by default and warns when disabled', async () => {
     saveTlsSettings.mockResolvedValue({ ok: true, value: { verifyCertificates: false } })
     renderOpen()
 
@@ -327,7 +393,7 @@ describe('SettingsMenu — verificação de certificado', () => {
     expect(screen.getByText(/aceitarão qualquer certificado/)).toBeVisible()
   })
 
-  it('mantém a verificação marcada quando salvar falha', async () => {
+  it('keeps verification enabled when saving fails', async () => {
     saveTlsSettings.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'disco cheio' } })
     renderOpen()
 
@@ -340,11 +406,11 @@ describe('SettingsMenu — verificação de certificado', () => {
   })
 })
 
-describe('SettingsMenu — segurança', () => {
-  it('oculta dados sensíveis do HAR por padrão e permite o opt-out com aviso', () => {
+describe('SettingsMenu — security', () => {
+  it('redacts HAR data by default and warns on opt-out', () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
-    expect(screen.getByRole('heading', { name: 'Segurança' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
+    expect(screen.getByRole('heading', { name: 'Dados e privacidade' })).toBeVisible()
 
     const redact = screen.getByRole('checkbox', { name: 'Ocultar dados sensíveis no HAR' })
     expect(redact).toBeChecked()
@@ -356,10 +422,10 @@ describe('SettingsMenu — segurança', () => {
     expect(window.localStorage.getItem('alcy:security:har-redact-sensitive')).toBe('false')
   })
 
-  it('não versiona valores sensíveis por padrão e salva o opt-out com aviso', async () => {
+  it('protects sensitive values by default and warns on opt-out', async () => {
     saveSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: true } })
     render(<SettingsMenu open onOpenChange={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
 
     const protect = screen.getByRole('checkbox', { name: 'Não enviar valores sensíveis' })
     await waitFor(() => expect(protect).toBeEnabled())
@@ -373,10 +439,10 @@ describe('SettingsMenu — segurança', () => {
     expect(screen.getByText(/serão enviados em texto claro/)).toBeVisible()
   })
 
-  it('mostra o erro ao salvar a proteção de valores sensíveis', async () => {
+  it('shows errors saving sensitive value protection', async () => {
     saveSecuritySettings.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'disco cheio' } })
     render(<SettingsMenu open onOpenChange={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Segurança' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
 
     const protect = screen.getByRole('checkbox', { name: 'Não enviar valores sensíveis' })
     await waitFor(() => expect(protect).toBeEnabled())
@@ -387,9 +453,9 @@ describe('SettingsMenu — segurança', () => {
   })
 })
 
-describe('SettingsMenu — geral', () => {
-  it('mostra o timeout salvo, 60 segundos por padrão, com "Aplicar" desabilitado sem mudanças', async () => {
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+describe('SettingsMenu — general preferences', () => {
+  it('shows the saved timeout and disables Apply without changes', async () => {
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
     expect(seconds).toHaveValue(60)
@@ -398,9 +464,9 @@ describe('SettingsMenu — geral', () => {
     expect(screen.getByRole('button', { name: 'Restaurar padrão' })).toBeDisabled()
   })
 
-  it('aplica um novo timeout em segundos', async () => {
+  it('applies a new timeout in seconds', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 15, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
 
@@ -412,9 +478,9 @@ describe('SettingsMenu — geral', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('desabilita o timeout', async () => {
+  it('disables timeout', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
 
@@ -425,9 +491,9 @@ describe('SettingsMenu — geral', () => {
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false }))
   })
 
-  it('restaura o padrão a partir de um timeout desabilitado', async () => {
+  it('restores the default from a disabled timeout', async () => {
     getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const disable = await screen.findByRole('checkbox', { name: 'Desabilitar timeout' })
     await waitFor(() => expect(disable).toBeChecked())
 
@@ -438,8 +504,8 @@ describe('SettingsMenu — geral', () => {
     expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled()
   })
 
-  it('bloqueia valores fora do intervalo', async () => {
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+  it('rejects values outside the allowed range', async () => {
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
 
@@ -450,9 +516,9 @@ describe('SettingsMenu — geral', () => {
     }
   })
 
-  it('mostra o erro quando o timeout não pode ser salvo', async () => {
+  it('shows timeout save errors', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'disco cheio' } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
 
@@ -462,9 +528,9 @@ describe('SettingsMenu — geral', () => {
     expect(await screen.findByText('Não foi possível salvar o timeout: disco cheio')).toBeInTheDocument()
   })
 
-  it('aplica um novo limite de resposta mantendo o timeout salvo', async () => {
+  it('applies a response limit while preserving timeout', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 10, historyRetentionDays: 7, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const megabytes = await screen.findByRole('spinbutton', { name: 'Limite de resposta em MB' })
     await waitFor(() => expect(megabytes).toBeEnabled())
     expect(megabytes).toHaveValue(50)
@@ -476,10 +542,10 @@ describe('SettingsMenu — geral', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar limite de resposta' })).toBeDisabled())
   })
 
-  it('aplicar o timeout preserva o limite de resposta salvo', async () => {
+  it('preserves the response limit when applying timeout', async () => {
     getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false } })
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 30, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
 
@@ -490,9 +556,9 @@ describe('SettingsMenu — geral', () => {
     expect(screen.getByRole('spinbutton', { name: 'Limite de resposta em MB' })).toHaveValue(200)
   })
 
-  it('desabilita o limite de resposta', async () => {
+  it('disables the response limit', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const megabytes = await screen.findByRole('spinbutton', { name: 'Limite de resposta em MB' })
     await waitFor(() => expect(megabytes).toBeEnabled())
 
@@ -503,10 +569,10 @@ describe('SettingsMenu — geral', () => {
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false }))
   })
 
-  it('aplica uma retenção menor do histórico e pede para recarregar o histórico', async () => {
+  it('reduces history retention and requests a history reload', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 3, saveHistoryResponses: false } })
     const onHistoryRetentionChange = vi.fn()
-    render(<SettingsMenu open onOpenChange={() => {}} onHistoryRetentionChange={onHistoryRetentionChange} />)
+    render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} onHistoryRetentionChange={onHistoryRetentionChange} />)
     const days = await screen.findByRole('spinbutton', { name: 'Retenção do histórico em dias' })
     await waitFor(() => expect(days).toBeEnabled())
     expect(days).toHaveValue(7)
@@ -518,9 +584,9 @@ describe('SettingsMenu — geral', () => {
     await waitFor(() => expect(onHistoryRetentionChange).toHaveBeenCalledTimes(1))
   })
 
-  it('desativar o histórico grava zero dias', async () => {
+  it('saves zero days when history is disabled', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
     const days = await screen.findByRole('spinbutton', { name: 'Retenção do histórico em dias' })
     await waitFor(() => expect(days).toBeEnabled())
 
@@ -531,17 +597,17 @@ describe('SettingsMenu — geral', () => {
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false }))
   })
 
-  it('mostra o histórico desativado quando a retenção salva é zero', async () => {
+  it('shows history disabled for zero saved retention', async () => {
     getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
 
     const disable = await screen.findByRole('checkbox', { name: 'Desativar histórico' })
     await waitFor(() => expect(disable).toBeChecked())
     expect(screen.getByRole('spinbutton', { name: 'Retenção do histórico em dias' })).toBeDisabled()
   })
 
-  it('não aceita retenção acima de 7 dias', async () => {
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+  it('rejects history retention above seven days', async () => {
+    render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
     const days = await screen.findByRole('spinbutton', { name: 'Retenção do histórico em dias' })
     await waitFor(() => expect(days).toBeEnabled())
 
@@ -551,9 +617,9 @@ describe('SettingsMenu — geral', () => {
     expect(screen.getByRole('button', { name: 'Aplicar retenção do histórico' })).toBeDisabled()
   })
 
-  it('não salva respostas no histórico por padrão e liga a opção na hora', async () => {
+  it('keeps history responses off by default and enables them immediately', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
     const toggle = await screen.findByRole('checkbox', { name: 'Salvar respostas no histórico' })
     await waitFor(() => expect(toggle).toBeEnabled())
     expect(toggle).not.toBeChecked()
@@ -566,16 +632,16 @@ describe('SettingsMenu — geral', () => {
     await waitFor(() => expect(toggle).toBeChecked())
   })
 
-  it('mostra o erro quando o timeout salvo não pode ser carregado', async () => {
+  it('shows timeout loading errors', async () => {
     getGeneralSettings.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'arquivo corrompido' } })
-    render(<SettingsMenu open onOpenChange={() => {}} />)
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
 
     expect(await screen.findByText('Não foi possível carregar o timeout salvo: arquivo corrompido')).toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: 'Timeout em segundos' })).toBeDisabled()
   })
 })
 
-describe('SettingsMenu — atalhos', () => {
+describe('SettingsMenu — shortcuts', () => {
   const openShortcuts = (onOpenChange: (open: boolean) => void = () => {}) => {
     render(<SettingsMenu open onOpenChange={onOpenChange} />)
     fireEvent.click(screen.getByRole('button', { name: 'Atalhos' }))
@@ -585,7 +651,7 @@ describe('SettingsMenu — atalhos', () => {
   const captureClosed = (action: string) =>
     waitFor(() => expect(screen.queryByRole('dialog', { name: `Atalho de ${action}` })).not.toBeInTheDocument())
 
-  it('lista as ações numa tabela com os atalhos padrão', () => {
+  it('lists actions with default shortcuts', () => {
     openShortcuts()
     const table = screen.getByRole('table')
     const [head, ...groups] = within(table).getAllByRole('rowgroup')
@@ -619,7 +685,47 @@ describe('SettingsMenu — atalhos', () => {
     expect(screen.getByRole('button', { name: 'Restaurar todos os padrões' })).toBeDisabled()
   })
 
-  it('grava um botão do mouse no atalho do menu de blocos, e só nele', async () => {
+  it('filters shortcuts by action and group ignoring accents, and clears without closing settings', () => {
+    const onOpenChange = vi.fn()
+    openShortcuts(onOpenChange)
+    const search = screen.getByRole('searchbox', { name: 'Buscar ação, grupo ou combinação…' })
+    const allRows = screen.getAllByRole('rowheader').length
+    fireEvent.change(search, { target: { value: 'PROXIMA' } })
+    expect(screen.getAllByRole('rowheader')).toHaveLength(1)
+    expect(screen.getByRole('rowheader', { name: 'Próxima aba' })).toBeVisible()
+    fireEvent.change(search, { target: { value: 'REQUISICOES' } })
+    expect(screen.getAllByRole('rowheader').map((row) => row.textContent)).toEqual(['Enviar requisição', 'Salvar requisição', 'Nova requisição'])
+    expect(screen.queryByText('Flows', { selector: 'th' })).not.toBeInTheDocument()
+    fireEvent.change(search, { target: { value: 'no-matching-shortcuts' } })
+    expect(screen.getByRole('status')).toHaveTextContent('Nenhum atalho encontrado. Tente outro termo.')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(search).toHaveValue('')
+    expect(screen.getAllByRole('rowheader')).toHaveLength(allRows)
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(stored()).toBeNull()
+  })
+
+  it('searches current combinations and returns focus to search if editing removes the match', async () => {
+    openShortcuts()
+    const search = screen.getByRole('searchbox', { name: 'Buscar ação, grupo ou combinação…' })
+    fireEvent.change(search, { target: { value: 'ctrl + s' } })
+    expect(screen.getAllByRole('rowheader')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Ctrl+S de Salvar requisição' }))
+    fireEvent.keyDown(capture(), { key: 'F4' })
+    fireEvent.keyDown(capture(), { key: 'Enter' })
+    await captureClosed('Salvar requisição')
+    expect(search).toHaveFocus()
+    expect(screen.getByRole('status')).toHaveTextContent('Nenhum atalho encontrado.')
+    fireEvent.change(search, { target: { value: 'f4' } })
+    expect(screen.getByRole('button', { name: 'Alterar atalho F4 de Salvar requisição' })).toBeVisible()
+    fireEvent.click(within(screen.getByTestId('shortcut-settings')).getByRole('button', { name: 'Limpar busca' }))
+    expect(search).toHaveValue('')
+    expect(search).toHaveFocus()
+    expect(stored().bindings.saveRequest).toEqual(['F4'])
+  })
+
+  it('records a mouse button only for the blocks menu shortcut', async () => {
     openShortcuts()
     expect(screen.queryByLabelText('Área para gravar um botão do mouse')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Botão direito de Abrir menu de blocos (flows)' }))
@@ -637,7 +743,7 @@ describe('SettingsMenu — atalhos', () => {
     expect(screen.queryByLabelText('Área para gravar um botão do mouse')).toBeNull()
   })
 
-  it('troca um atalho pela modal, adiciona um alternativo, remove e restaura o padrão', async () => {
+  it('edits shortcuts and adds removes and restores alternatives', async () => {
     openShortcuts()
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Ctrl+S de Salvar requisição' }))
     expect(screen.getByRole('dialog', { name: 'Atalho de Salvar requisição' })).toBeVisible()
@@ -665,7 +771,7 @@ describe('SettingsMenu — atalhos', () => {
     expect(stored()).toBeNull()
   })
 
-  it('grava Enter quando nada foi pressionado ainda e confirma com o Enter seguinte', async () => {
+  it('captures Enter first and confirms on the next Enter', async () => {
     openShortcuts()
     fireEvent.click(screen.getByRole('button', { name: 'Adicionar atalho para Próxima aba' }))
     fireEvent.keyDown(capture(), { key: 'F6' })
@@ -680,7 +786,7 @@ describe('SettingsMenu — atalhos', () => {
     expect(screen.getByRole('button', { name: 'Substituir' })).toBeEnabled()
   })
 
-  it('avisa do conflito com outra ação e move o atalho ao substituir', async () => {
+  it('warns about shortcut conflicts and moves the binding when replaced', async () => {
     openShortcuts()
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Enter de Enviar requisição' }))
     fireEvent.keyDown(capture(), { key: 's', ctrlKey: true })
@@ -693,7 +799,7 @@ describe('SettingsMenu — atalhos', () => {
     expect(stored()).toEqual({ version: 1, bindings: { sendRequest: ['Ctrl+S', 'Ctrl+Enter'], saveRequest: [] } })
   })
 
-  it('fecha só a modal de captura com Esc, sem gravar e sem fechar as configurações', async () => {
+  it('closes only the capture modal with Escape without saving', async () => {
     const onOpenChange = vi.fn()
     openShortcuts(onOpenChange)
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Tab de Próxima aba' }))
@@ -711,7 +817,7 @@ describe('SettingsMenu — atalhos', () => {
     expect(stored()).toBeNull()
   })
 
-  it('recusa combinações reservadas, sem modificador ou repetidas na mesma ação', () => {
+  it('rejects reserved unmodified and duplicate shortcuts', () => {
     openShortcuts()
     fireEvent.click(screen.getByRole('button', { name: 'Adicionar atalho para Salvar requisição' }))
     fireEvent.keyDown(capture(), { key: 'c', ctrlKey: true })

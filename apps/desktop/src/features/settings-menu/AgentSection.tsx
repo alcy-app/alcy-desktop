@@ -145,21 +145,21 @@ export function AgentSection() {
   return (
     <div className="settings-agent">
       <section className="settings-section settings-agent-preferences">
-        <div>
+        <div data-setting="agent-chat" tabIndex={-1}>
           <label className="settings-checkbox">
             <Checkbox checked={chatEnabled} onChange={(event) => setChatEnabled(event.target.checked)} />
             <span>{t('settings.agent.enableChat')}</span>
           </label>
           <p className="settings-proxy-hint">{t('settings.agent.enableChatHint')}</p>
         </div>
-        <div>
+        <div data-setting="agent-context" tabIndex={-1}>
           <label className="settings-checkbox">
             <Checkbox checked={contextOptionsDisabled} onChange={(event) => setContextOptionsDisabled(event.target.checked)} />
             <span>{t('settings.agent.disableContextOptions')}</span>
           </label>
           <p className="settings-proxy-hint">{t('settings.agent.disableContextOptionsHint')}</p>
         </div>
-        <div>
+        <div data-setting="agent-dock" tabIndex={-1}>
           <p className="settings-section-label">{t('settings.agent.dockLabel')}</p>
           <SegmentedControl<AgentDock>
             ariaLabel={t('settings.agent.dockLabel')}
@@ -171,7 +171,7 @@ export function AgentSection() {
           <p className="settings-proxy-hint">{t('settings.agent.dockHint')}</p>
         </div>
       </section>
-      <section className="settings-section settings-agent-intro">
+      <section className="settings-section settings-agent-intro" data-setting="agent-providers" tabIndex={-1}>
         <div>
           <p className="settings-section-label">{t('settings.agent.title')}</p>
           <p className="settings-proxy-hint">{t('settings.agent.subtitle')}</p>

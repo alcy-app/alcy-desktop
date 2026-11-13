@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { ProxyMode } from '../../bindings/get-proxy-settings'
 import { useProxy } from '../../shared/proxy/use-proxy'
 import { useSecurityPreferences } from '../../shared/security/use-security-preferences'
@@ -20,10 +20,16 @@ import { Modal } from '../../shared/ui/Modal'
 import { RangeSlider } from '../../shared/ui/RangeSlider'
 import { SegmentedControl } from '../../shared/ui/SegmentedControl'
 import { Tooltip } from '../../shared/ui/Tooltip'
-import { AlertIcon, BranchIcon, CheckIcon, ComponentsIcon, EyeIcon, GearIcon, KeyboardIcon, LockIcon, ProxyIcon, RefreshIcon, SparkleIcon } from '../../shared/ui/icons'
+import { AlertIcon, CheckIcon, GearIcon } from '../../shared/ui/icons'
 import { UpdatesSection } from '../updates/UpdatesSection'
 import { AgentSection } from './AgentSection'
-import { GeneralSection } from './GeneralSection'
+import { RequestSettings, HistorySettings, ReleaseNotesSetting } from './GeneralSection'
+import { useGeneralSettings } from './use-general-settings'
+import { SettingsNavigation } from './SettingsNavigation'
+import { settingsDestination, type SettingsCategory, type SettingsPage } from './settings-navigation'
+import { APP_VERSION } from '../../shared/app-version'
+import alcyIcon from '../../assets/alcy-app-icon.svg'
+export type { SettingsCategory } from './settings-navigation'
 import { CustomCaCertificatesSection } from './CustomCaCertificatesSection'
 import { SensitiveSyncSection } from './SensitiveSyncSection'
 import { GitIdentitySection } from './GitIdentitySection'
@@ -40,7 +46,7 @@ interface SettingsMenuProps {
   open: boolean
   initialCategory?: SettingsCategory
   onOpenChange: (open: boolean) => void
-  /** Opens the release notes tab; without it, the button in General is disabled. */
+  /** Opens the release notes tab; without it, the button in About is disabled. */
   onOpenReleaseNotes?: () => void
   /** Reloads history after a new retention setting is applied. */
   onHistoryRetentionChange?: () => void
@@ -49,7 +55,7 @@ interface SettingsMenuProps {
 export function SettingsMenu({
   open,
   onOpenChange,
-  initialCategory = 'general',
+  initialCategory = 'interface',
   onOpenReleaseNotes,
   onHistoryRetentionChange,
 }: SettingsMenuProps) {
@@ -116,85 +122,76 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
     applyThemePreference(value)
     trackUsage({ name: 'settings_changed', category: 'appearance', key: 'theme' })
   }
-  const [category, setCategory] = useState<SettingsCategory>(isCategoryDisabled(initialCategory) ? 'general' : initialCategory)
+  const [destination, setDestination] = useState(() => settingsDestination(initialCategory))
+  const category = destination.page
   const contentRef = useRef<HTMLDivElement>(null)
+  const general = useGeneralSettings()
   const id = useId()
+
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    if (!destination.target) { content.scrollTop = 0; return }
+    const target = content.querySelector<HTMLElement>(`[data-setting="${destination.target}"]`)
+    target?.scrollIntoView?.({ block: 'start' })
+    target?.focus({ preventScroll: true })
+  }, [destination])
+
+  const navigate = (page: SettingsPage, target?: string) => setDestination({ page, target })
+  const panel = (page: SettingsPage, children: ReactNode) => (
+    <div id={`${id}-${page}`} hidden={category !== page} className="settings-page">{children}</div>
+  )
+  const group = (title: string, children: ReactNode) => (
+    <section className="settings-group"><h4 className="settings-group-title">{title}</h4>{children}</section>
+  )
+  const anchor = (target: string, children: ReactNode) => (
+    <div data-setting={target} tabIndex={-1} className="settings-anchor">{children}</div>
+  )
 
   return (
     <Modal title={t('settings.modalTitle')} closeAriaLabel={t('settings.close')} onClose={onClose} className="settings-modal">
       <div className="settings-layout">
-        <nav className="settings-navigation" aria-label={t('settings.categories')}>
-          {CATEGORIES.filter(({ key }) => !isCategoryHidden(key)).map(({ key, icon: Icon }) => {
-            const disabled = isCategoryDisabled(key)
-            const item = (
-              <button
-                key={key}
-                type="button"
-                disabled={disabled}
-                aria-current={category === key ? 'page' : undefined}
-                aria-controls={disabled ? undefined : `${id}-${key}`}
-                className="settings-navigation-item"
-                onClick={() => {
-                  setCategory(key)
-                  if (contentRef.current) contentRef.current.scrollTop = 0
-                }}
-              >
-                <Icon size={15} />
-                <span>{t(`settings.category.${key}`)}</span>
-              </button>
-            )
-            return disabled ? (
-              <Tooltip key={key} label={t('settings.featureDisabled')} className="settings-navigation-tooltip">
-                {item}
-              </Tooltip>
-            ) : (
-              item
-            )
-          })}
-        </nav>
+        <SettingsNavigation page={category} panelId={id} onNavigate={navigate} />
         <div ref={contentRef} className="settings-content">
           <header className="settings-page-header">
             <h3>{t(`settings.category.${category}`)}</h3>
+            <p>{t(`settings.description.${category}`)}</p>
           </header>
-          <div id={`${id}-general`} hidden={category !== 'general'}>
-            <section className="settings-section settings-preference">
-              <div>
-                <p className="settings-section-label">{t('settings.languageLabel')}</p>
-              </div>
-              <SegmentedControl<Language>
-                ariaLabel={t('settings.languageLabel')}
-                value={language}
-                onChange={setLanguage}
-                options={LANGUAGES.map((option) => ({ value: option, label: LANGUAGE_NAMES[option] }))}
-              />
-            </section>
-            <GeneralSection onOpenReleaseNotes={onOpenReleaseNotes} onHistoryRetentionChange={onHistoryRetentionChange} />
-          </div>
-          <div id={`${id}-appearance`} hidden={category !== 'appearance'}>
-            <section className="settings-section settings-preference">
-              <div>
+          {panel('interface', <>
+            {group(t('settings.section.language'), anchor('language', <section className="settings-section settings-preference">
+              <div><p className="settings-section-label">{t('settings.languageLabel')}</p></div>
+              <SegmentedControl<Language> ariaLabel={t('settings.languageLabel')} value={language} onChange={setLanguage}
+                options={LANGUAGES.map((option) => ({ value: option, label: LANGUAGE_NAMES[option] }))} />
+            </section>))}
+            {group(t('settings.section.appearance'), <>
+              {anchor('theme', <section className="settings-section settings-theme-section">
                 <p className="settings-section-label">{t('settings.themeLabel')}</p>
-              </div>
-              <div className="settings-theme-options" role="radiogroup" aria-label={t('settings.themeLabel')}>
-                {THEME_PREFERENCES.map((option) => (
-                  <ThemeOption key={option} theme={option} label={t(`settings.theme.${option}`)} active={option === themePreference} onSelect={setThemePreference} />
-                ))}
-              </div>
-            </section>
-            <ScaleSetting label={t('settings.textScaleLabel')} value={textScale} onChange={setTextScale} />
-            <ScaleSetting label={t('settings.iconScaleLabel')} value={iconScale} onChange={setIconScale} />
-          </div>
-          <div id={`${id}-shortcuts`} hidden={category !== 'shortcuts'}><ShortcutsSection /></div>
-          <div id={`${id}-network`} hidden={category !== 'network'}><ProxySection /><TlsVerificationSection /><CustomCaCertificatesSection /></div>
-          <div id={`${id}-security`} hidden={category !== 'security'}><SecuritySection /></div>
-          {FEATURE_FLAGS.usageEvents && <div id={`${id}-telemetry`} hidden={category !== 'telemetry'}><TelemetrySection /></div>}
-          {FEATURE_FLAGS.agent && <div id={`${id}-agent`} hidden={category !== 'agent'}><AgentSection /></div>}
-          {FEATURE_FLAGS.localGit && <div id={`${id}-git`} hidden={category !== 'git'}><GitIdentitySection /></div>}
-          {FEATURE_FLAGS.updates && (
-            <div id={`${id}-updates`} hidden={category !== 'updates'}>
-              <UpdatesSection />
-            </div>
-          )}
+                <div className="settings-theme-options" role="radiogroup" aria-label={t('settings.themeLabel')}>
+                  {THEME_PREFERENCES.map((option) => <ThemeOption key={option} theme={option} label={t(`settings.theme.${option}`)} active={option === themePreference} onSelect={setThemePreference} />)}
+                </div>
+              </section>)}
+              {anchor('text-scale', <ScaleSetting label={t('settings.textScaleLabel')} value={textScale} onChange={setTextScale} />)}
+              {anchor('icon-scale', <ScaleSetting label={t('settings.iconScaleLabel')} value={iconScale} onChange={setIconScale} />)}
+            </>)}
+          </>)}
+          {panel('shortcuts', anchor('shortcuts', <ShortcutsSection />))}
+          {panel('requests', group(t('settings.section.execution'), <RequestSettings {...general} />))}
+          {panel('network', <>
+            {group(t('settings.section.connection'), anchor('proxy', <ProxySection />))}
+            {group(t('settings.section.certificates'), <>{anchor('tls', <TlsVerificationSection />)}{anchor('certificates', <CustomCaCertificatesSection />)}</>)}
+          </>)}
+          {panel('privacy', <>
+            {group(t('settings.section.history'), <HistorySettings {...general} onHistoryRetentionChange={onHistoryRetentionChange} />)}
+            {group(t('settings.section.protection'), <SecuritySection />)}
+            {FEATURE_FLAGS.usageEvents && group(t('settings.category.telemetry'), anchor('telemetry', <TelemetrySection />))}
+          </>)}
+          {FEATURE_FLAGS.agent && panel('agent', <AgentSection />)}
+          {FEATURE_FLAGS.localGit && panel('git', anchor('git', <GitIdentitySection />))}
+          {panel('about', <>
+            <div className="settings-about-brand"><img className="settings-about-mark" src={alcyIcon} alt="" /><div><strong>Alcy</strong><p>{t('settings.installedVersion', { version: APP_VERSION })}</p></div></div>
+            {group(t('settings.section.release'), anchor('release-notes', <ReleaseNotesSetting onOpen={onOpenReleaseNotes} />))}
+            {FEATURE_FLAGS.updates && group(t('settings.category.updates'), anchor('updates', <UpdatesSection />))}
+          </>)}
         </div>
       </div>
     </Modal>
@@ -232,34 +229,6 @@ function ScaleSetting({ label, value, onChange }: ScaleSettingProps) {
       </div>
     </section>
   )
-}
-
-const CATEGORIES = [
-  { key: 'general', icon: GearIcon },
-  { key: 'appearance', icon: ComponentsIcon },
-  { key: 'shortcuts', icon: KeyboardIcon },
-  { key: 'network', icon: ProxyIcon },
-  { key: 'security', icon: LockIcon },
-  { key: 'telemetry', icon: EyeIcon },
-  { key: 'agent', icon: SparkleIcon },
-  { key: 'git', icon: BranchIcon },
-  { key: 'updates', icon: RefreshIcon },
-] as const
-
-export type SettingsCategory = (typeof CATEGORIES)[number]['key']
-
-/** Features whose flag is off are left out of the menu. */
-function isCategoryHidden(key: SettingsCategory): boolean {
-  if (key === 'git') return !FEATURE_FLAGS.localGit
-  if (key === 'agent') return !FEATURE_FLAGS.agent
-  if (key === 'telemetry') return !FEATURE_FLAGS.usageEvents
-  return false
-}
-
-/** Other disabled features stay in the menu, but disabled. */
-function isCategoryDisabled(key: SettingsCategory): boolean {
-  if (key === 'updates') return !FEATURE_FLAGS.updates
-  return isCategoryHidden(key)
 }
 
 function ProxySection() {
@@ -371,7 +340,7 @@ function SecuritySection() {
 
   return (
     <>
-      <section className="settings-section settings-preference">
+      <section className="settings-section settings-preference" data-setting="har" tabIndex={-1}>
         <div>
           <p className="settings-section-label">{t('settings.securityHarLabel')}</p>
         </div>
@@ -392,7 +361,7 @@ function SecuritySection() {
           )}
         </div>
       </section>
-      {isVersionControlEnabled() && <SensitiveSyncSection />}
+      {isVersionControlEnabled() && <div className="settings-anchor" data-setting="sensitive-sync" tabIndex={-1}><SensitiveSyncSection /></div>}
     </>
   )
 }
@@ -410,13 +379,28 @@ function ThemeOption({ theme, label, active, onSelect }: ThemeOptionProps) {
       type="button"
       role="radio"
       aria-checked={active}
+      tabIndex={active ? 0 : -1}
       className={active ? 'settings-theme-option settings-theme-option--active' : 'settings-theme-option'}
       onClick={() => onSelect(theme)}
+      onKeyDown={(event) => {
+        const index = THEME_PREFERENCES.indexOf(theme)
+        let next: number
+        switch (event.key) {
+          case 'ArrowRight': case 'ArrowDown': next = (index + 1) % THEME_PREFERENCES.length; break
+          case 'ArrowLeft': case 'ArrowUp': next = (index + THEME_PREFERENCES.length - 1) % THEME_PREFERENCES.length; break
+          case 'Home': next = 0; break
+          case 'End': next = THEME_PREFERENCES.length - 1; break
+          default: return
+        }
+        event.preventDefault()
+        onSelect(THEME_PREFERENCES[next])
+        event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus()
+      }}
     >
-      <span className="settings-theme-swatches" aria-hidden="true">
-        {THEME_PREVIEW[theme].map((color) => (
-          <span key={color} className="settings-theme-swatch" style={{ backgroundColor: color }} />
-        ))}
+      <span className="settings-theme-preview" aria-hidden="true" style={{ backgroundColor: THEME_PREVIEW[theme][0], color: THEME_PREVIEW[theme][2] }}>
+        <span className="settings-theme-preview-sidebar" style={{ backgroundColor: THEME_PREVIEW[theme][1] }}><i /><i /><i /></span>
+        <span className="settings-theme-preview-body"><i style={{ backgroundColor: THEME_PREVIEW[theme][3] }} /><i /><i /></span>
+        {theme === 'system' && <span className="settings-theme-preview-dark" style={{ backgroundColor: THEME_PREVIEW.dark[0], color: THEME_PREVIEW.dark[2] }}><i /><i /></span>}
       </span>
       <span className="settings-theme-name">{label}{active && <CheckIcon size={12} />}</span>
     </button>

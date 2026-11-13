@@ -5456,7 +5456,7 @@ describe('RequestWorkbench', () => {
     expect(await screen.findByText('Campo "doesNotExist" não existe em "Query".')).toBeInTheDocument()
   })
 
-  it('abre o menu de configurações, troca o idioma para inglês e traduz a interface', async () => {
+  it('opens settings, switches to English and translates the interface', async () => {
     render()
     await screen.findByLabelText('Ambiente')
     await createRequestFromEmptyState()
@@ -5464,14 +5464,15 @@ describe('RequestWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Configurações' }))
 
     const dialog = screen.getByRole('dialog', { name: 'Configurações' })
-    expect(within(dialog).getByRole('button', { name: 'Geral' })).toHaveAttribute('aria-current', 'page')
+    expect(within(dialog).getByRole('button', { name: 'Interface' })).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Requisições' }))
     expect(await within(dialog).findByRole('spinbutton', { name: 'Timeout em segundos' })).toHaveValue(60)
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Aparência' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Interface' }))
     expect(within(dialog).getByRole('radio', { name: 'Claro' })).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Escuro' }))
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(window.localStorage.getItem('alcy:theme')).toBe('dark')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Geral' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Interface' }))
     expect(within(dialog).getByRole('radio', { name: 'Português (Brasil)' })).toHaveAttribute('aria-checked', 'true')
     expect(within(dialog).getByRole('radio', { name: 'English' })).toHaveAttribute('aria-checked', 'false')
 
@@ -5526,13 +5527,14 @@ describe('RequestWorkbench', () => {
     expect(screen.queryByRole('heading', { name: 'Novidades da versão 9.9.9' })).not.toBeInTheDocument()
   })
 
-  it('abre as novidades da versão pelas configurações gerais', async () => {
+  it('opens release notes from About Alcy', async () => {
     render()
     await screen.findByLabelText('Ambiente')
     await createRequestFromEmptyState()
 
     fireEvent.click(screen.getByRole('button', { name: 'Configurações' }))
     const dialog = screen.getByRole('dialog', { name: 'Configurações' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Sobre o Alcy' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Ver novidades' }))
 
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

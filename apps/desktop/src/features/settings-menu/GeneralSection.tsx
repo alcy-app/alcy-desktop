@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react'
-import { getGeneralSettings, type GeneralSettingsDto } from '../../bindings/get-general-settings'
-import { saveGeneralSettings } from '../../bindings/save-general-settings'
+import { useState } from 'react'
+import type { GeneralSettingsState } from './use-general-settings'
 import { APP_VERSION } from '../../shared/app-version'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { useSchemaAutocomplete } from '../../shared/schema-autocomplete/use-schema-autocomplete'
@@ -9,13 +8,13 @@ import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Input } from '../../shared/ui/Input'
 
-/** Espelham `DEFAULT_REQUEST_TIMEOUT_SECONDS` e `MAX_REQUEST_TIMEOUT_SECONDS` (`alcy-domain`). */
+/** Mirror `DEFAULT_REQUEST_TIMEOUT_SECONDS` and `MAX_REQUEST_TIMEOUT_SECONDS` (`alcy-domain`). */
 export const DEFAULT_REQUEST_TIMEOUT_SECONDS = 60
 export const MAX_REQUEST_TIMEOUT_SECONDS = 3600
-/** Espelham `DEFAULT_RESPONSE_SIZE_LIMIT_MB` e `MAX_RESPONSE_SIZE_LIMIT_MB` (`alcy-domain`). */
+/** Mirror `DEFAULT_RESPONSE_SIZE_LIMIT_MB` and `MAX_RESPONSE_SIZE_LIMIT_MB` (`alcy-domain`). */
 export const DEFAULT_RESPONSE_SIZE_LIMIT_MB = 50
 export const MAX_RESPONSE_SIZE_LIMIT_MB = 4096
-/** Espelham `DEFAULT_HISTORY_RETENTION_DAYS` e `MAX_HISTORY_RETENTION_DAYS` (`alcy-domain`). */
+/** Mirror `DEFAULT_HISTORY_RETENTION_DAYS` and `MAX_HISTORY_RETENTION_DAYS` (`alcy-domain`). */
 export const DEFAULT_HISTORY_RETENTION_DAYS = 7
 export const MAX_HISTORY_RETENTION_DAYS = 7
 
@@ -25,44 +24,13 @@ function parseWholeNumber(draft: string, max: number): number | null {
   return value >= 1 && value <= max ? value : null
 }
 
-interface GeneralSectionProps {
-  /** Ausente quando o changelog embutido não tem a seção da versão atual. */
-  onOpenReleaseNotes?: () => void
-  /** Chamado depois de aplicar uma nova retenção, que já pode ter podado o histórico. */
-  onHistoryRetentionChange?: () => void
-}
-
 type SaveOutcome = { ok: true } | { ok: false; message: string }
 
-export function GeneralSection({ onOpenReleaseNotes, onHistoryRetentionChange }: GeneralSectionProps) {
+export function RequestSettings({ saved, loadError, save }: GeneralSettingsState) {
   const { t } = useLanguage()
-  const [saved, setSaved] = useState<GeneralSettingsDto | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void getGeneralSettings().then((result) => {
-      if (cancelled) return
-      if (result.ok) setSaved(result.value)
-      else setLoadError(result.error.message)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  /** As preferências são gravadas juntas: aplicar um campo reenvia os outros como estão salvos. */
-  const save = async (patch: Partial<GeneralSettingsDto>): Promise<SaveOutcome> => {
-    if (saved === null) return { ok: false, message: '' }
-    const result = await saveGeneralSettings({ ...saved, ...patch })
-    if (!result.ok) return { ok: false, message: result.error.message }
-    setSaved(result.value)
-    return { ok: true }
-  }
-
   return (
     <>
-      <section className="settings-section settings-preference" data-testid="general-settings">
+      <section className="settings-section settings-preference" data-testid="general-settings" data-setting="timeout" tabIndex={-1}>
         <div>
           <p className="settings-section-label">{t('settings.timeoutLabel')}</p>
           <p className="settings-proxy-hint">{t('settings.timeoutHint')}</p>
@@ -81,7 +49,7 @@ export function GeneralSection({ onOpenReleaseNotes, onHistoryRetentionChange }:
           onApply={(requestTimeoutSeconds) => save({ requestTimeoutSeconds })}
         />
       </section>
-      <section className="settings-section settings-preference" data-testid="response-size-limit-settings">
+      <section className="settings-section settings-preference" data-testid="response-size-limit-settings" data-setting="response-limit" tabIndex={-1}>
         <div>
           <p className="settings-section-label">{t('settings.responseLimitLabel')}</p>
           <p className="settings-proxy-hint">{t('settings.responseLimitHint')}</p>
@@ -102,13 +70,22 @@ export function GeneralSection({ onOpenReleaseNotes, onHistoryRetentionChange }:
           onApply={(responseSizeLimitMb) => save({ responseSizeLimitMb })}
         />
       </section>
-      <section className="settings-section settings-preference" data-testid="history-retention-settings">
+      <SchemaAutocompleteSetting />
+    </>
+  )
+}
+
+export function HistorySettings({ saved, loadError, save, onHistoryRetentionChange }: GeneralSettingsState & { onHistoryRetentionChange?: () => void }) {
+  const { t } = useLanguage()
+  return (
+    <>
+      <section className="settings-section settings-preference" data-testid="history-retention-settings" data-setting="history" tabIndex={-1}>
         <div>
           <p className="settings-section-label">{t('settings.historyRetentionLabel')}</p>
           <p className="settings-proxy-hint">{t('settings.historyRetentionHint')}</p>
         </div>
         <LimitSetting
-          // Zero dias desativa o histórico: aparece como a opção "Desativar histórico".
+          // Zero days disables history and is represented by the disable option.
           savedValue={saved === null ? undefined : saved.historyRetentionDays || null}
           defaultValue={DEFAULT_HISTORY_RETENTION_DAYS}
           max={MAX_HISTORY_RETENTION_DAYS}
@@ -132,14 +109,12 @@ export function GeneralSection({ onOpenReleaseNotes, onHistoryRetentionChange }:
         savedValue={saved === null ? undefined : saved.saveHistoryResponses}
         onApply={(saveHistoryResponses) => save({ saveHistoryResponses })}
       />
-      <SchemaAutocompleteSetting />
-      <ReleaseNotesSetting onOpen={onOpenReleaseNotes} />
     </>
   )
 }
 
 interface LimitSettingProps {
-  /** `undefined` enquanto as preferências não carregaram; `null` = desabilitado. */
+  /** `undefined` while loading; `null` means disabled. */
   savedValue: number | null | undefined
   defaultValue: number
   max: number
@@ -150,13 +125,13 @@ interface LimitSettingProps {
   invalidMessage: string
   loadError: string | null
   saveErrorMessage: (message: string) => string
-  /** Nomes acessíveis dos botões quando há mais de um limite na mesma tela. */
+  /** Accessible button names when several limits share a page. */
   applyAriaLabel?: string
   restoreAriaLabel?: string
   onApply: (value: number | null) => Promise<SaveOutcome>
 }
 
-/** Um valor inteiro com mínimo de 1, que também pode ser desabilitado (`null`). */
+/** A positive integer that can also be disabled (`null`). */
 function LimitSetting({
   savedValue,
   defaultValue,
@@ -177,8 +152,7 @@ function LimitSetting({
   const [disabled, setDisabled] = useState(false)
   const [busy, setBusy] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  // O rascunho acompanha o valor salvo sempre que ele muda (carregamento e
-  // cada "Aplicar"), sem efeito: ajuste de estado durante a renderização.
+  // Synchronize drafts when saved values change, including initial loading.
   const [syncedValue, setSyncedValue] = useState<number | null | undefined>(undefined)
   if (savedValue !== syncedValue) {
     setSyncedValue(savedValue)
@@ -263,12 +237,12 @@ function LimitSetting({
   )
 }
 
-/** Aplica na hora, sem "Aplicar": vale para os próximos envios. */
+/** Applies immediately to subsequent requests. */
 function SaveHistoryResponsesSetting({
   savedValue,
   onApply,
 }: {
-  /** `undefined` enquanto as preferências não carregaram. */
+  /** `undefined` while preferences are loading. */
   savedValue: boolean | undefined
   onApply: (value: boolean) => Promise<SaveOutcome>
 }) {
@@ -277,7 +251,7 @@ function SaveHistoryResponsesSetting({
   const [saveError, setSaveError] = useState<string | null>(null)
 
   return (
-    <section className="settings-section settings-preference" data-testid="save-history-responses-settings">
+    <section className="settings-section settings-preference" data-testid="save-history-responses-settings" data-setting="history-responses" tabIndex={-1}>
       <div>
         <p className="settings-section-label">{t('settings.saveHistoryResponsesLabel')}</p>
         <p className="settings-proxy-hint">{t('settings.saveHistoryResponsesHint')}</p>
@@ -303,12 +277,12 @@ function SaveHistoryResponsesSetting({
   )
 }
 
-/** Preferência local (não passa pelo backend): aplica na hora, sem "Aplicar". */
+/** Local presentation preference; applies immediately. */
 function SchemaAutocompleteSetting() {
   const { t } = useLanguage()
   const { enabled, setEnabled } = useSchemaAutocomplete()
   return (
-    <section className="settings-section settings-preference">
+    <section className="settings-section settings-preference" data-setting="autocomplete" tabIndex={-1}>
       <div>
         <p className="settings-section-label">{t('settings.schemaAutocompleteLabel')}</p>
         <p className="settings-proxy-hint">{t('settings.schemaAutocompleteHint')}</p>
@@ -321,7 +295,7 @@ function SchemaAutocompleteSetting() {
   )
 }
 
-function ReleaseNotesSetting({ onOpen }: { onOpen?: () => void }) {
+export function ReleaseNotesSetting({ onOpen }: { onOpen?: () => void }) {
   const { t } = useLanguage()
   return (
     <section className="settings-section settings-preference">
