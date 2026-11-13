@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use alcy_storage::{StorageError, TabSessionStore};
+use alcy_storage::{LocalSecrets, StorageError, TabSessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -35,12 +35,18 @@ impl From<StorageError> for TabSessionError {
     }
 }
 
-fn load_tab_session_inner(input: LoadTabSessionInput) -> Result<Option<Value>, TabSessionError> {
-    Ok(TabSessionStore::new(PathBuf::from(input.root_path)).load()?)
+fn load_tab_session_inner(
+    input: LoadTabSessionInput,
+    secrets: LocalSecrets,
+) -> Result<Option<Value>, TabSessionError> {
+    Ok(TabSessionStore::new(PathBuf::from(input.root_path), secrets).load()?)
 }
 
-fn save_tab_session_inner(input: SaveTabSessionInput) -> Result<(), TabSessionError> {
-    TabSessionStore::new(PathBuf::from(input.root_path)).save(&input.session)?;
+fn save_tab_session_inner(
+    input: SaveTabSessionInput,
+    secrets: LocalSecrets,
+) -> Result<(), TabSessionError> {
+    TabSessionStore::new(PathBuf::from(input.root_path), secrets).save(input.session)?;
     Ok(())
 }
 
@@ -48,16 +54,22 @@ fn save_tab_session_inner(input: SaveTabSessionInput) -> Result<(), TabSessionEr
 #[tauri::command]
 pub async fn load_tab_session(
     input: LoadTabSessionInput,
+    secrets: tauri::State<'_, LocalSecrets>,
 ) -> Result<Option<Value>, TabSessionError> {
+    let secrets = LocalSecrets::clone(&secrets);
     let result: Result<Option<Value>, TabSessionError> =
-        async { run_blocking(move || load_tab_session_inner(input)).await }.await;
+        async { run_blocking(move || load_tab_session_inner(input, secrets)).await }.await;
     crate::logging::logged("alcy::workspace", "restaurar abas", result)
 }
 
 #[tauri::command]
-pub async fn save_tab_session(input: SaveTabSessionInput) -> Result<(), TabSessionError> {
+pub async fn save_tab_session(
+    input: SaveTabSessionInput,
+    secrets: tauri::State<'_, LocalSecrets>,
+) -> Result<(), TabSessionError> {
+    let secrets = LocalSecrets::clone(&secrets);
     let result: Result<(), TabSessionError> =
-        async { run_blocking(move || save_tab_session_inner(input)).await }.await;
+        async { run_blocking(move || save_tab_session_inner(input, secrets)).await }.await;
     crate::logging::logged("alcy::workspace", "salvar sessão de abas", result)
 }
 
@@ -94,28 +106,40 @@ mod tests {
         let session = json!({ "version": 1, "activeTabId": null, "tabs": [] });
 
         assert_eq!(
-            load_tab_session_inner(LoadTabSessionInput {
-                root_path: root_path.clone()
-            }),
+            load_tab_session_inner(
+                LoadTabSessionInput {
+                    root_path: root_path.clone()
+                },
+                crate::commands::test_secrets::test_secrets()
+            ),
             Ok(None)
         );
-        save_tab_session_inner(SaveTabSessionInput {
-            root_path: root_path.clone(),
-            session: session.clone(),
-        })
+        save_tab_session_inner(
+            SaveTabSessionInput {
+                root_path: root_path.clone(),
+                session: session.clone(),
+            },
+            crate::commands::test_secrets::test_secrets(),
+        )
         .unwrap();
         assert_eq!(
-            load_tab_session_inner(LoadTabSessionInput { root_path }),
+            load_tab_session_inner(
+                LoadTabSessionInput { root_path },
+                crate::commands::test_secrets::test_secrets()
+            ),
             Ok(Some(session))
         );
     }
 
     #[test]
     fn reports_an_invalid_session_as_a_storage_error() {
-        let result = save_tab_session_inner(SaveTabSessionInput {
-            root_path: temp_root(),
-            session: json!({ "tabs": [] }),
-        });
+        let result = save_tab_session_inner(
+            SaveTabSessionInput {
+                root_path: temp_root(),
+                session: json!({ "tabs": [] }),
+            },
+            crate::commands::test_secrets::test_secrets(),
+        );
         assert!(matches!(result, Err(TabSessionError::Storage { .. })));
     }
 }

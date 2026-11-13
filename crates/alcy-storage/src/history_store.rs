@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use alcy_app::is_only_placeholders;
 use alcy_domain::{
     Authentication, BodyEncoding, BodyPayload, Endpoint, FormDataField, FormDataFieldValue,
     HeaderEntry, HistoryEntry, HistoryFailureKind, HistoryOutcome, HttpMethod, ProtocolId,
@@ -19,6 +20,7 @@ use crate::collections_store::{
     PersistedGrpcCall, PersistedWebSocketCall, grpc_from_persisted, persisted_from_grpc,
     persisted_from_websocket, protocol_from_str, protocol_to_str, websocket_from_persisted,
 };
+use crate::local_secrets::{LazyKeys, LocalSecrets};
 use crate::storage_error::StorageError;
 
 const CURRENT_MANIFEST_VERSION: u32 = 2;
@@ -86,6 +88,11 @@ pub enum HistorySummaryOutcome {
 struct PersistedManifest {
     version: u32,
     entries: Vec<PersistedIndexEntry>,
+    /// Additive (spec 0161): `true` once every detail file had its literal
+    /// authentication secret sealed. Indexes written before lack it, and the
+    /// first read seals the details they point to.
+    #[serde(default)]
+    secrets_sealed: bool,
 }
 
 /// Mesmo formato de `PersistedManifest`, emprestando as entradas — gravar
@@ -94,6 +101,7 @@ struct PersistedManifest {
 struct PersistedManifestRef<'a> {
     version: u32,
     entries: &'a [PersistedIndexEntry],
+    secrets_sealed: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -142,7 +150,13 @@ struct PersistedDetail<'a> {
     body: Cow<'a, str>,
     variables: String,
     headers: Vec<PersistedHeader>,
+    /// Its secret field goes empty when the value is literal; the value is
+    /// then in `sealed_secret`.
     authentication: PersistedAuthentication,
+    /// Additive (spec 0161): the literal secret of `authentication`, sealed
+    /// with the local key. Details written before hold it in plain text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sealed_secret: Option<String>,
     outcome: PersistedOutcomeDetail<'a>,
     #[serde(default = "default_persisted_method")]
     method: String,
@@ -234,6 +248,20 @@ enum PersistedAuthentication {
     },
 }
 
+impl PersistedAuthentication {
+    /// The field that holds the secret (token, password, client secret or
+    /// custom header value), when the variant has one.
+    fn secret_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::CustomHeader { value, .. } => Some(value),
+            Self::Bearer { token } => Some(token),
+            Self::Basic { password, .. } | Self::Digest { password, .. } => Some(password),
+            Self::OAuth2ClientCredentials { client_secret, .. } => Some(client_secret),
+            Self::None | Self::Inherit => None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct PersistedResponseHeader {
     name: String,
@@ -320,18 +348,24 @@ enum PersistedOutcomeV1 {
 ///
 /// A retenção é um parâmetro do chamador, não uma constante interna: os
 /// commands passam a retenção configurada na aba "Geral".
+///
+/// The literal secret of a detail's authentication is sealed with the local
+/// key (spec 0161): the history is this person's, but it sits in the
+/// workspace folder, which may be synced.
 pub struct HistoryStore {
     manifest_path: PathBuf,
     detail_dir: PathBuf,
     retention: Duration,
+    secrets: LocalSecrets,
 }
 
 impl HistoryStore {
-    pub fn new(root: PathBuf, retention: Duration) -> Self {
+    pub fn new(root: PathBuf, retention: Duration, secrets: LocalSecrets) -> Self {
         Self {
             manifest_path: root.join(MANIFEST_FILE_NAME),
             detail_dir: root.join(DETAIL_DIR_NAME),
             retention,
+            secrets,
         }
     }
 
@@ -476,6 +510,10 @@ impl HistoryStore {
             CURRENT_MANIFEST_VERSION => {
                 let manifest: PersistedManifest = serde_json::from_value(value)
                     .map_err(|error| StorageError::Corrupted(error.to_string()))?;
+                if !manifest.secrets_sealed {
+                    self.seal_legacy_details()?;
+                    self.write_manifest(&manifest.entries)?;
+                }
                 Ok(manifest.entries)
             }
             1 => self.migrate_from_v1(value),
@@ -508,6 +546,7 @@ impl HistoryStore {
         let manifest = PersistedManifestRef {
             version: CURRENT_MANIFEST_VERSION,
             entries: index,
+            secrets_sealed: true,
         };
 
         write_atomic_json(&self.manifest_path, &manifest)
@@ -526,19 +565,49 @@ impl HistoryStore {
                 StorageError::Read(error.to_string())
             }
         })?;
-        let detail: PersistedDetail = serde_json::from_str(&raw)
+        let mut detail: PersistedDetail = serde_json::from_str(&raw)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
 
         if detail.version != CURRENT_DETAIL_VERSION {
             return Err(StorageError::UnsupportedVersion(detail.version));
         }
 
+        open_secret(&mut detail, &mut LazyKeys::new(&self.secrets))?;
         Ok(detail)
     }
 
     fn write_detail(&self, entry: &HistoryEntry) -> Result<(), StorageError> {
-        let detail = detail_from_entry(entry);
+        let mut detail = detail_from_entry(entry);
+        seal_secret(&mut detail, &mut LazyKeys::new(&self.secrets))?;
         write_atomic_json(&self.detail_path(&entry.id), &detail)
+    }
+
+    /// Rewrites the detail files that still hold a literal secret (written
+    /// before spec 0161) with it sealed. Files that cannot be read or parsed
+    /// are left as they are: reading them reports the problem.
+    fn seal_legacy_details(&self) -> Result<(), StorageError> {
+        let entries = match fs::read_dir(&self.detail_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(StorageError::Read(error.to_string())),
+        };
+        let mut keys = LazyKeys::new(&self.secrets);
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(raw) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(mut detail) = serde_json::from_str::<PersistedDetail>(&raw) else {
+                continue;
+            };
+            if detail.version == CURRENT_DETAIL_VERSION && seal_secret(&mut detail, &mut keys)? {
+                write_atomic_json(&path, &detail)?;
+            }
+        }
+        Ok(())
     }
 
     /// Remove o arquivo de detalhe de uma entrada podada por retenção.
@@ -547,6 +616,32 @@ impl HistoryStore {
     fn remove_detail(&self, id: &str) {
         let _ = fs::remove_file(self.detail_path(id));
     }
+}
+
+/// Moves a literal secret of `detail` into `sealed_secret`. Returns whether
+/// there was one; a reference (`{{…}}`) or an empty value stays in place.
+fn seal_secret(detail: &mut PersistedDetail, keys: &mut LazyKeys) -> Result<bool, StorageError> {
+    let Some(secret) = detail.authentication.secret_mut() else {
+        return Ok(false);
+    };
+    if is_only_placeholders(secret) {
+        return Ok(false);
+    }
+    detail.sealed_secret = Some(keys.seal(&std::mem::take(secret))?);
+    Ok(true)
+}
+
+/// Puts the sealed secret back in its field; empty when this key cannot
+/// open it (the workspace came from another machine).
+fn open_secret(detail: &mut PersistedDetail, keys: &mut LazyKeys) -> Result<(), StorageError> {
+    let Some(sealed) = detail.sealed_secret.take() else {
+        return Ok(());
+    };
+    let value = keys.open(&[sealed])?.unwrap_or_default();
+    if let Some(secret) = detail.authentication.secret_mut() {
+        *secret = value;
+    }
+    Ok(())
 }
 
 /// Sem nenhuma das duas chaves, nada pertence — evita casar entradas
@@ -977,6 +1072,7 @@ fn detail_from_entry(entry: &HistoryEntry) -> PersistedDetail<'_> {
         variables: entry.request.variables.clone(),
         headers: persisted_from_headers(&entry.request.headers),
         authentication: persisted_from_authentication(&entry.request.authentication),
+        sealed_secret: None,
         outcome,
         method: method_to_str(entry.request.method).to_string(),
         body_type: body_fields.body_type,
@@ -1154,6 +1250,8 @@ fn entry_from_v1(persisted: PersistedHistoryEntryV1) -> Result<HistoryEntry, Sto
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth_secrets::tests::{SECRET, every_authentication, has_secret};
+    use crate::local_secrets::tests::{FakeKeyring, temp_key_path, test_secrets};
     use alcy_domain::{
         GrpcCall, GrpcSchemaSource, WebSocketCall, WebSocketCollect, WebSocketMessageFormat,
     };
@@ -1161,6 +1259,29 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// The same local key for every store in these tests, as on one machine.
+    fn secrets() -> LocalSecrets {
+        static SECRETS: std::sync::OnceLock<LocalSecrets> = std::sync::OnceLock::new();
+        SECRETS.get_or_init(test_secrets).clone()
+    }
+
+    /// Secrets whose keyring fails: using them proves the key was requested.
+    fn secrets_that_must_not_be_used() -> LocalSecrets {
+        LocalSecrets::new(
+            Box::new(FakeKeyring {
+                failing: true,
+                ..FakeKeyring::default()
+            }),
+            temp_key_path(),
+        )
+    }
+
+    fn bearer(token: &str) -> Authentication {
+        Authentication::Bearer {
+            token: token.to_string(),
+        }
+    }
 
     fn temp_root() -> PathBuf {
         let nanos = SystemTime::now()
@@ -1245,7 +1366,7 @@ mod tests {
 
     #[test]
     fn keeps_a_body_within_the_limit_whole_and_not_truncated() {
-        let store = HistoryStore::new(temp_root(), week());
+        let store = HistoryStore::new(temp_root(), week(), secrets());
         store
             .record(entry_with_response_body(
                 "small",
@@ -1262,7 +1383,7 @@ mod tests {
 
     #[test]
     fn truncates_a_text_body_over_the_limit_at_a_char_boundary() {
-        let store = HistoryStore::new(temp_root(), week());
+        let store = HistoryStore::new(temp_root(), week(), secrets());
         // "é" ocupa 2 bytes: com um prefixo de 1 byte, o limite cai no meio
         // de um caractere e precisa recuar.
         let body = format!("x{}", "é".repeat(MAX_PERSISTED_RESPONSE_BODY_BYTES));
@@ -1279,7 +1400,7 @@ mod tests {
 
     #[test]
     fn drops_a_binary_body_over_the_limit() {
-        let store = HistoryStore::new(temp_root(), week());
+        let store = HistoryStore::new(temp_root(), week(), secrets());
         let body = "A".repeat(MAX_PERSISTED_RESPONSE_BODY_BYTES + 4);
         store
             .record(entry_with_response_body(
@@ -1295,7 +1416,7 @@ mod tests {
     #[test]
     fn reads_a_detail_written_before_body_truncated_existed_as_not_truncated() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(entry_with_response_body(
                 "old",
@@ -1317,7 +1438,7 @@ mod tests {
             .map(|index| {
                 let root = root.clone();
                 std::thread::spawn(move || {
-                    let store = HistoryStore::new(root, week());
+                    let store = HistoryStore::new(root, week(), secrets());
                     store
                         .record(success_entry(&format!("entry-{index}"), millis_now()))
                         .unwrap();
@@ -1328,7 +1449,7 @@ mod tests {
             handle.join().unwrap();
         }
 
-        let summaries = HistoryStore::new(root.clone(), week())
+        let summaries = HistoryStore::new(root.clone(), week(), secrets())
             .load_summaries()
             .unwrap();
         assert_eq!(summaries.len(), 16);
@@ -1342,7 +1463,7 @@ mod tests {
 
     #[test]
     fn load_summaries_returns_an_empty_list_when_the_manifest_does_not_exist() {
-        let store = HistoryStore::new(temp_root(), week());
+        let store = HistoryStore::new(temp_root(), week(), secrets());
 
         assert!(store.load_summaries().unwrap().is_empty());
     }
@@ -1350,7 +1471,7 @@ mod tests {
     #[test]
     fn record_then_load_entry_round_trips_a_successful_entry_with_its_response_body() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let entry = success_entry("entry-1", millis_now());
 
         store.record(entry.clone()).unwrap();
@@ -1364,7 +1485,7 @@ mod tests {
     #[test]
     fn record_round_trips_a_network_failure() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let entry = HistoryEntry::new(
             "entry-1",
             sample_request(),
@@ -1386,7 +1507,7 @@ mod tests {
     #[test]
     fn load_summaries_never_carries_the_response_body() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -1403,7 +1524,7 @@ mod tests {
 
     #[test]
     fn load_entry_returns_none_for_an_unknown_id() {
-        let store = HistoryStore::new(temp_root(), week());
+        let store = HistoryStore::new(temp_root(), week(), secrets());
 
         assert_eq!(store.load_entry("missing").unwrap(), None);
     }
@@ -1411,7 +1532,7 @@ mod tests {
     #[test]
     fn record_inserts_new_entries_first() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
 
         store
             .record(success_entry("entry-1", SystemTime::now()))
@@ -1431,7 +1552,7 @@ mod tests {
     #[test]
     fn record_prunes_entries_older_than_the_retention_window() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(60));
+        let store = HistoryStore::new(root.clone(), Duration::from_secs(60), secrets());
         let old_entry = success_entry("entry-old", SystemTime::now() - Duration::from_secs(120));
 
         store.record(old_entry).unwrap();
@@ -1450,7 +1571,7 @@ mod tests {
     #[test]
     fn record_removes_the_detail_file_of_a_pruned_entry() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(60));
+        let store = HistoryStore::new(root.clone(), Duration::from_secs(60), secrets());
         let old_entry = success_entry("entry-old", SystemTime::now() - Duration::from_secs(120));
 
         store.record(old_entry).unwrap();
@@ -1467,7 +1588,7 @@ mod tests {
     #[test]
     fn prune_applies_a_shorter_retention_to_existing_entries_but_keeps_baselines() {
         let root = temp_root();
-        let seeding = HistoryStore::new(root.clone(), week());
+        let seeding = HistoryStore::new(root.clone(), week(), secrets());
         let old = SystemTime::now() - Duration::from_secs(120);
         seeding
             .record(
@@ -1482,7 +1603,7 @@ mod tests {
             .set_baseline(Some("req-1"), None, Some("entry-baseline"))
             .unwrap();
 
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(60));
+        let store = HistoryStore::new(root.clone(), Duration::from_secs(60), secrets());
         store.prune().unwrap();
 
         let ids: Vec<String> = store
@@ -1494,7 +1615,7 @@ mod tests {
         assert_eq!(ids, vec!["entry-new", "entry-baseline"]);
         assert!(!root.join(DETAIL_DIR_NAME).join("entry-old.json").exists());
 
-        HistoryStore::new(root.clone(), Duration::ZERO)
+        HistoryStore::new(root.clone(), Duration::ZERO, secrets())
             .prune()
             .unwrap();
         let ids: Vec<String> = store
@@ -1511,7 +1632,7 @@ mod tests {
     #[test]
     fn an_entry_without_response_details_roundtrips_its_summary_only() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let entry = success_entry("entry-1", millis_now());
         let HistoryOutcome::Success(original) = &entry.outcome else {
             unreachable!()
@@ -1553,7 +1674,7 @@ mod tests {
     #[test]
     fn an_entry_with_its_response_is_not_marked_as_omitted() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -1574,7 +1695,7 @@ mod tests {
     #[test]
     fn prune_without_a_history_does_not_create_one() {
         let root = temp_root();
-        HistoryStore::new(root.clone(), Duration::ZERO)
+        HistoryStore::new(root.clone(), Duration::ZERO, secrets())
             .prune()
             .unwrap();
         assert!(!root.join(MANIFEST_FILE_NAME).exists());
@@ -1584,7 +1705,7 @@ mod tests {
     #[test]
     fn save_does_not_leave_a_temporary_file_behind() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
 
         store
             .record(success_entry("entry-1", SystemTime::now()))
@@ -1607,7 +1728,7 @@ mod tests {
         let root = temp_root();
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join(MANIFEST_FILE_NAME), "not json").unwrap();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
 
         let error = store.load_summaries().unwrap_err();
 
@@ -1625,7 +1746,7 @@ mod tests {
             r#"{"version": 99, "entries": []}"#,
         )
         .unwrap();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
 
         let error = store.load_summaries().unwrap_err();
 
@@ -1640,7 +1761,7 @@ mod tests {
     #[test]
     fn load_entry_fails_with_not_found_when_the_detail_file_is_missing() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", SystemTime::now()))
             .unwrap();
@@ -1650,6 +1771,123 @@ mod tests {
 
         assert!(matches!(error, StorageError::NotFound(_)));
 
+        fs::remove_dir_all(&root).ok();
+    }
+
+    fn entry_with_authentication(id: &str, authentication: Authentication) -> HistoryEntry {
+        let mut entry = success_entry(id, millis_now());
+        entry.request.authentication = authentication;
+        entry
+    }
+
+    fn detail_file(root: &Path, id: &str) -> String {
+        fs::read_to_string(root.join(DETAIL_DIR_NAME).join(format!("{id}.json"))).unwrap()
+    }
+
+    #[test]
+    fn every_authentication_keeps_its_secret_out_of_the_detail_file() {
+        let root = temp_root();
+        let store = HistoryStore::new(root.clone(), week(), secrets());
+        for (index, authentication) in every_authentication(SECRET).into_iter().enumerate() {
+            let id = format!("entry-{index}");
+
+            store
+                .record(entry_with_authentication(&id, authentication.clone()))
+                .unwrap();
+
+            let file = detail_file(&root, &id);
+            assert!(!file.contains(SECRET), "{authentication:?}: {file}");
+            assert_eq!(file.contains("sealed_secret"), has_secret(&authentication));
+            let loaded = store.load_entry(&id).unwrap().unwrap();
+            assert_eq!(loaded.request.authentication, authentication);
+        }
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_reference_stays_in_the_detail_file_without_touching_the_keyring() {
+        let root = temp_root();
+        let store = HistoryStore::new(root.clone(), week(), secrets_that_must_not_be_used());
+        let authentication = Authentication::Bearer {
+            token: "{{token}}".to_string(),
+        };
+
+        store
+            .record(entry_with_authentication("entry-1", authentication.clone()))
+            .unwrap();
+
+        assert!(detail_file(&root, "entry-1").contains("{{token}}"));
+        let loaded = store.load_entry("entry-1").unwrap().unwrap();
+        assert_eq!(loaded.request.authentication, authentication);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_secret_sealed_by_another_key_loads_empty() {
+        let root = temp_root();
+        HistoryStore::new(root.clone(), week(), secrets())
+            .record(entry_with_authentication("entry-1", bearer(SECRET)))
+            .unwrap();
+
+        let loaded = HistoryStore::new(root.clone(), week(), test_secrets())
+            .load_entry("entry-1")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(loaded.request.authentication, bearer(""));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_first_read_seals_every_legacy_detail_once() {
+        let root = temp_root();
+        let store = HistoryStore::new(root.clone(), week(), secrets());
+        let authentications = every_authentication(SECRET);
+        for (index, authentication) in authentications.iter().enumerate() {
+            store
+                .record(entry_with_authentication(
+                    &format!("entry-{index}"),
+                    authentication.clone(),
+                ))
+                .unwrap();
+        }
+        // As written before spec 0161: plain secrets and no flag in the index.
+        for (index, authentication) in authentications.iter().enumerate() {
+            let id = format!("entry-{index}");
+            let mut detail: Value = serde_json::from_str(&detail_file(&root, &id)).unwrap();
+            let fields = detail.as_object_mut().unwrap();
+            fields.remove("sealed_secret");
+            fields.insert(
+                "authentication".to_string(),
+                serde_json::to_value(persisted_from_authentication(authentication)).unwrap(),
+            );
+            fs::write(
+                root.join(DETAIL_DIR_NAME).join(format!("{id}.json")),
+                detail.to_string(),
+            )
+            .unwrap();
+        }
+        let manifest = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        fs::write(
+            root.join(MANIFEST_FILE_NAME),
+            manifest.replace(r#","secrets_sealed":true"#, ""),
+        )
+        .unwrap();
+        assert!(detail_file(&root, "entry-3").contains(SECRET));
+
+        assert_eq!(store.load_summaries().unwrap().len(), authentications.len());
+
+        for (index, authentication) in authentications.iter().enumerate() {
+            let id = format!("entry-{index}");
+            assert!(
+                !detail_file(&root, &id).contains(SECRET),
+                "{authentication:?}"
+            );
+            let loaded = store.load_entry(&id).unwrap().unwrap();
+            assert_eq!(&loaded.request.authentication, authentication);
+        }
+        let manifest = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
+        assert!(manifest.contains(r#""secrets_sealed":true"#), "{manifest}");
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1678,7 +1916,7 @@ mod tests {
             }]
         }"#;
         fs::write(root.join(MANIFEST_FILE_NAME), v1_json).unwrap();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
 
         let summaries = store.load_summaries().unwrap();
 
@@ -1711,6 +1949,7 @@ mod tests {
         let raw_manifest = fs::read_to_string(root.join(MANIFEST_FILE_NAME)).unwrap();
         assert!(raw_manifest.contains("\"version\":2"));
         assert!(root.join(DETAIL_DIR_NAME).join("entry-1.json").exists());
+        assert!(!detail_file(&root, "entry-1").contains(r#""token":"secret""#));
 
         fs::remove_dir_all(&root).ok();
     }
@@ -1718,7 +1957,7 @@ mod tests {
     #[test]
     fn record_then_load_entry_round_trips_a_rest_request_with_a_non_post_method() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let request = Request::new(
             Endpoint::new("https://api.example.com/users").unwrap(),
             RequestDocument::new(ProtocolId::Rest, ""),
@@ -1751,7 +1990,7 @@ mod tests {
     #[test]
     fn record_then_load_entry_round_trips_a_grpc_request() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let request = Request::new(
             Endpoint::new("localhost:50051").unwrap(),
             RequestDocument::new(ProtocolId::Grpc, r#"{"name": "ana"}"#),
@@ -1792,7 +2031,7 @@ mod tests {
     #[test]
     fn record_then_load_entry_round_trips_a_websocket_request() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let request = Request::new(
             Endpoint::new("wss://echo.example.com/socket").unwrap(),
             RequestDocument::new(ProtocolId::WebSocket, r#"{"op": "ping"}"#),
@@ -1835,7 +2074,7 @@ mod tests {
     #[test]
     fn record_then_load_entry_round_trips_a_base64_encoded_response_body() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let response =
             Response::new_binary(200, 12, 3, "YWJj", vec![], ResponseMetadata::default());
         let entry = HistoryEntry::new(
@@ -1859,7 +2098,7 @@ mod tests {
     #[test]
     fn load_entry_defaults_to_text_encoding_for_a_detail_file_without_an_encoding_field() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -1887,7 +2126,7 @@ mod tests {
     #[test]
     fn load_entry_defaults_to_post_for_a_detail_file_without_a_method_field() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -1907,7 +2146,7 @@ mod tests {
     #[test]
     fn load_entry_fails_with_corrupted_for_an_unknown_method() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -1980,7 +2219,7 @@ mod tests {
 
         for body in bodies {
             let root = temp_root();
-            let store = HistoryStore::new(root.clone(), week());
+            let store = HistoryStore::new(root.clone(), week(), secrets());
             let entry = entry_with_body("entry-1", body.clone(), millis_now());
 
             store.record(entry.clone()).unwrap();
@@ -1999,7 +2238,7 @@ mod tests {
     #[test]
     fn load_entry_defaults_to_raw_json_for_a_detail_file_without_a_body_type_field() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -2024,7 +2263,7 @@ mod tests {
     #[test]
     fn load_entry_fails_with_corrupted_for_an_unknown_body_type() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -2052,7 +2291,7 @@ mod tests {
     #[test]
     fn record_then_load_entry_round_trips_the_source() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         let entry = send_entry("entry-1", Some("req-1"), Some("tab-1"));
 
         store.record(entry.clone()).unwrap();
@@ -2070,7 +2309,7 @@ mod tests {
     #[test]
     fn loads_an_index_entry_written_without_the_send_history_fields() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("entry-1", millis_now()))
             .unwrap();
@@ -2090,7 +2329,7 @@ mod tests {
     #[test]
     fn load_sends_matches_by_request_id_or_tab_id() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(success_entry("no-source", millis_now()))
             .unwrap();
@@ -2127,7 +2366,7 @@ mod tests {
     #[test]
     fn set_baseline_marks_one_send_per_request_and_can_clear_it() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store.record(send_entry("a", Some("req-1"), None)).unwrap();
         store.record(send_entry("b", Some("req-1"), None)).unwrap();
         store
@@ -2162,7 +2401,7 @@ mod tests {
     #[test]
     fn set_baseline_fails_with_not_found_for_a_send_of_another_request() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store.record(send_entry("a", Some("req-1"), None)).unwrap();
 
         let error = store
@@ -2177,12 +2416,12 @@ mod tests {
     #[test]
     fn record_keeps_a_baseline_older_than_the_retention_window() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(60));
+        let store = HistoryStore::new(root.clone(), Duration::from_secs(60), secrets());
         let old = success_entry("entry-old", SystemTime::now() - Duration::from_secs(120))
             .with_source(Some("req-1".to_string()), None);
         let old_plain = success_entry("entry-plain", SystemTime::now() - Duration::from_secs(120));
         // Gravadas com retenção longa para não serem podadas na própria gravação.
-        let seeding = HistoryStore::new(root.clone(), week());
+        let seeding = HistoryStore::new(root.clone(), week(), secrets());
         seeding.record(old).unwrap();
         seeding.record(old_plain).unwrap();
         store
@@ -2208,7 +2447,7 @@ mod tests {
     #[test]
     fn loads_an_index_entry_that_still_has_a_fingerprint_field() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), week());
+        let store = HistoryStore::new(root.clone(), week(), secrets());
         store
             .record(send_entry("entry-1", Some("req-1"), None))
             .unwrap();

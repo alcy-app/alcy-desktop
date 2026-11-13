@@ -9,7 +9,7 @@ use alcy_app::{
     compare_responses,
 };
 use alcy_domain::HistoryRetention;
-use alcy_storage::{HistoryStore, HistorySummary, StorageError};
+use alcy_storage::{HistoryStore, HistorySummary, LocalSecrets, StorageError};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -119,10 +119,13 @@ pub struct ResponseComparisonDto {
 pub async fn list_request_sends(
     input: ListRequestSendsInput,
     history: State<'_, HistoryPreferencesState>,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<Vec<RequestSendDto>, HistoryCommandError> {
     let retention = history.get().retention;
+    let secrets = LocalSecrets::clone(&secrets);
     let result: Result<Vec<RequestSendDto>, HistoryCommandError> =
-        async { run_blocking(move || list_request_sends_inner(input, retention)).await }.await;
+        async { run_blocking(move || list_request_sends_inner(input, retention, secrets)).await }
+            .await;
     crate::logging::logged("alcy::history", "listar envios", result)
 }
 
@@ -130,17 +133,23 @@ pub async fn list_request_sends(
 #[tauri::command]
 pub async fn compare_request_sends(
     input: CompareRequestSendsInput,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<ResponseComparisonDto, HistoryCommandError> {
+    let secrets = LocalSecrets::clone(&secrets);
     let result: Result<ResponseComparisonDto, HistoryCommandError> =
-        async { run_blocking(move || compare_request_sends_inner(input)).await }.await;
+        async { run_blocking(move || compare_request_sends_inner(input, secrets)).await }.await;
     crate::logging::logged("alcy::history", "comparar envios", result)
 }
 
 /// Marca (ou desmarca, com `id: null`) o baseline dos envios da requisição.
 #[tauri::command]
-pub async fn set_send_baseline(input: SetSendBaselineInput) -> Result<(), HistoryCommandError> {
+pub async fn set_send_baseline(
+    input: SetSendBaselineInput,
+    secrets: State<'_, LocalSecrets>,
+) -> Result<(), HistoryCommandError> {
+    let secrets = LocalSecrets::clone(&secrets);
     let result: Result<(), HistoryCommandError> =
-        async { run_blocking(move || set_send_baseline_inner(input)).await }.await;
+        async { run_blocking(move || set_send_baseline_inner(input, secrets)).await }.await;
     crate::logging::logged("alcy::history", "marcar envio de referência", result)
 }
 
@@ -157,15 +166,20 @@ async fn run_blocking<T: Send + 'static>(
         })
 }
 
-fn store_for(root_path: String) -> HistoryStore {
-    HistoryStore::new(PathBuf::from(root_path), DEFAULT_HISTORY_RETENTION)
+fn store_for(root_path: String, secrets: LocalSecrets) -> HistoryStore {
+    HistoryStore::new(PathBuf::from(root_path), DEFAULT_HISTORY_RETENTION, secrets)
 }
 
 fn list_request_sends_inner(
     input: ListRequestSendsInput,
     retention: HistoryRetention,
+    secrets: LocalSecrets,
 ) -> Result<Vec<RequestSendDto>, HistoryCommandError> {
-    let store = HistoryStore::new(PathBuf::from(input.root_path), retention.duration());
+    let store = HistoryStore::new(
+        PathBuf::from(input.root_path),
+        retention.duration(),
+        secrets,
+    );
     if let Err(error) = store.prune() {
         log::warn!(target: "alcy::history", "falha ao podar o histórico: {error}");
     }
@@ -175,8 +189,9 @@ fn list_request_sends_inner(
 
 fn compare_request_sends_inner(
     input: CompareRequestSendsInput,
+    secrets: LocalSecrets,
 ) -> Result<ResponseComparisonDto, HistoryCommandError> {
-    let store = store_for(input.root_path);
+    let store = store_for(input.root_path, secrets);
     let base = store
         .load_entry(&input.base_id)?
         .ok_or(HistoryCommandError::NotFound)?;
@@ -193,8 +208,11 @@ fn compare_request_sends_inner(
     )))
 }
 
-fn set_send_baseline_inner(input: SetSendBaselineInput) -> Result<(), HistoryCommandError> {
-    store_for(input.root_path)
+fn set_send_baseline_inner(
+    input: SetSendBaselineInput,
+    secrets: LocalSecrets,
+) -> Result<(), HistoryCommandError> {
+    store_for(input.root_path, secrets)
         .set_baseline(
             input.request_id.as_deref(),
             input.tab_id.as_deref(),
@@ -307,9 +325,13 @@ mod tests {
         ));
         let entry = HistoryEntry::new(id, request, outcome, SystemTime::now())
             .with_source(request_id.map(str::to_string), tab_id.map(str::to_string));
-        HistoryStore::new(root.to_path_buf(), Duration::from_secs(3600))
-            .record(entry)
-            .unwrap();
+        HistoryStore::new(
+            root.to_path_buf(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .record(entry)
+        .unwrap();
     }
 
     fn root_path(root: &Path) -> String {
@@ -330,6 +352,7 @@ mod tests {
                 tab_id: Some("tab-1".to_string()),
             },
             HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
         )
         .unwrap();
 
@@ -365,13 +388,17 @@ mod tests {
             Vec::new(),
             ResponseMetadata::default(),
         ));
-        HistoryStore::new(root.clone(), Duration::from_secs(3600))
-            .record(
-                HistoryEntry::new("a", request, outcome, SystemTime::now())
-                    .with_source(Some("req-1".to_string()), None)
-                    .without_response_details(),
-            )
-            .unwrap();
+        HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .record(
+            HistoryEntry::new("a", request, outcome, SystemTime::now())
+                .with_source(Some("req-1".to_string()), None)
+                .without_response_details(),
+        )
+        .unwrap();
 
         let sends = list_request_sends_inner(
             ListRequestSendsInput {
@@ -380,6 +407,7 @@ mod tests {
                 tab_id: None,
             },
             HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
         )
         .unwrap();
 
@@ -410,15 +438,22 @@ mod tests {
         let summary_only = HistoryEntry::new("new", request, outcome, SystemTime::now())
             .with_source(Some("req-1".to_string()), None)
             .without_response_details();
-        HistoryStore::new(root.clone(), Duration::from_secs(3600))
-            .record(summary_only)
-            .unwrap();
+        HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .record(summary_only)
+        .unwrap();
 
-        let result = compare_request_sends_inner(CompareRequestSendsInput {
-            root_path: root_path(&root),
-            base_id: "old".to_string(),
-            target_id: "new".to_string(),
-        });
+        let result = compare_request_sends_inner(
+            CompareRequestSendsInput {
+                root_path: root_path(&root),
+                base_id: "old".to_string(),
+                target_id: "new".to_string(),
+            },
+            crate::commands::test_secrets::test_secrets(),
+        );
 
         assert_eq!(result.unwrap_err(), HistoryCommandError::ResponseNotStored);
         fs::remove_dir_all(&root).ok();
@@ -430,11 +465,14 @@ mod tests {
         record(&root, "old", Some("req-1"), None, r#"{"a":1,"b":2}"#);
         record(&root, "new", Some("req-1"), None, r#"{"b":2,"a":1}"#);
 
-        let comparison = compare_request_sends_inner(CompareRequestSendsInput {
-            root_path: root_path(&root),
-            base_id: "old".to_string(),
-            target_id: "new".to_string(),
-        })
+        let comparison = compare_request_sends_inner(
+            CompareRequestSendsInput {
+                root_path: root_path(&root),
+                base_id: "old".to_string(),
+                target_id: "new".to_string(),
+            },
+            crate::commands::test_secrets::test_secrets(),
+        )
         .unwrap();
 
         assert!(!comparison.identical);
@@ -453,11 +491,14 @@ mod tests {
         let root = temp_root();
         record(&root, "old", Some("req-1"), None, "{}");
 
-        let error = compare_request_sends_inner(CompareRequestSendsInput {
-            root_path: root_path(&root),
-            base_id: "old".to_string(),
-            target_id: "missing".to_string(),
-        })
+        let error = compare_request_sends_inner(
+            CompareRequestSendsInput {
+                root_path: root_path(&root),
+                base_id: "old".to_string(),
+                target_id: "missing".to_string(),
+            },
+            crate::commands::test_secrets::test_secrets(),
+        )
         .unwrap_err();
 
         assert_eq!(error, HistoryCommandError::NotFound);
@@ -478,6 +519,7 @@ mod tests {
                     tab_id: None,
                 },
                 HistoryRetention::default(),
+                crate::commands::test_secrets::test_secrets(),
             )
             .unwrap()
             .into_iter()
@@ -486,12 +528,15 @@ mod tests {
             .collect()
         };
         let set = |id: Option<&str>| {
-            set_send_baseline_inner(SetSendBaselineInput {
-                root_path: root_path(&root),
-                request_id: Some("req-1".to_string()),
-                tab_id: None,
-                id: id.map(str::to_string),
-            })
+            set_send_baseline_inner(
+                SetSendBaselineInput {
+                    root_path: root_path(&root),
+                    request_id: Some("req-1".to_string()),
+                    tab_id: None,
+                    id: id.map(str::to_string),
+                },
+                crate::commands::test_secrets::test_secrets(),
+            )
         };
 
         set(Some("a")).unwrap();

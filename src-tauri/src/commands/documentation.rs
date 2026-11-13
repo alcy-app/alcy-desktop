@@ -159,6 +159,7 @@ struct NativeDocumentSources {
     sessions: PathBuf,
     live: HashMap<String, Vec<alcy_app::AgentMessage>>,
     redaction: Vec<String>,
+    secrets: alcy_storage::LocalSecrets,
 }
 impl alcy_app::DocumentationSources for NativeDocumentSources {
     fn list(&self) -> DocumentResult<Vec<DocumentSource>> {
@@ -186,9 +187,13 @@ impl alcy_app::DocumentationSources for NativeDocumentSources {
                 );
             }
         }
-        for entry in HistoryStore::new(PathBuf::from(&self.root), Duration::from_secs(604800))
-            .load_summaries()
-            .map_err(fail)?
+        for entry in HistoryStore::new(
+            PathBuf::from(&self.root),
+            Duration::from_secs(604800),
+            self.secrets.clone(),
+        )
+        .load_summaries()
+        .map_err(fail)?
         {
             choices.push(DocumentSource {
                 kind: "request".into(),
@@ -214,7 +219,14 @@ impl alcy_app::DocumentationSources for NativeDocumentSources {
         Ok(choices)
     }
     fn read(&self, kind: &str, id: &str) -> DocumentResult<String> {
-        let text = source_text(&self.root, &self.sessions, &self.live, kind, id)?;
+        let text = source_text(
+            &self.root,
+            &self.sessions,
+            &self.live,
+            &self.secrets,
+            kind,
+            id,
+        )?;
         Ok(self.redact_text(&text))
     }
     fn redact_text(&self, text: &str) -> String {
@@ -238,10 +250,12 @@ fn execute(
         "get" | "list" | "asset" | "delete" | "guide" | "themes" | "outline"
     );
     let redaction = if needs_redaction {
-        let loaded =
-            alcy_storage::EnvironmentStore::new(PathBuf::from(&input.root_path), secret_store)
-                .load()
-                .map_err(fail)?;
+        let loaded = alcy_storage::EnvironmentStore::new(
+            PathBuf::from(&input.root_path),
+            secret_store.clone(),
+        )
+        .load()
+        .map_err(fail)?;
         loaded
             .snapshot
             .environments
@@ -258,6 +272,7 @@ fn execute(
         sessions,
         live,
         redaction,
+        secrets: secret_store,
     };
     alcy_app::execute_document_operation(&store, &sources, themes, input, uploaded, cancelled)
 }
@@ -266,6 +281,7 @@ fn source_text(
     root: &str,
     sessions: &std::path::Path,
     live: &HashMap<String, Vec<alcy_app::AgentMessage>>,
+    secrets: &alcy_storage::LocalSecrets,
     kind: &str,
     id: &str,
 ) -> DocumentResult<String> {
@@ -289,13 +305,17 @@ fn source_text(
             alcy_app::ContentBlock::ToolResult { content, is_error, .. } => json!({"result":serde_json::from_str::<Value>(content).unwrap_or_else(|_| json!(content)),"isError":is_error}),
         }).collect::<Vec<_>>()})).collect::<Vec<_>>())
     } else if kind == "request" {
-        let entry = HistoryStore::new(PathBuf::from(root), Duration::from_secs(604800))
-            .load_entry(id)
-            .map_err(|error| match error {
-                alcy_storage::StorageError::NotFound(_) => DocumentationError::NotFound,
-                _ => fail(error),
-            })?
-            .ok_or(DocumentationError::NotFound)?;
+        let entry = HistoryStore::new(
+            PathBuf::from(root),
+            Duration::from_secs(604800),
+            secrets.clone(),
+        )
+        .load_entry(id)
+        .map_err(|error| match error {
+            alcy_storage::StorageError::NotFound(_) => DocumentationError::NotFound,
+            _ => fail(error),
+        })?
+        .ok_or(DocumentationError::NotFound)?;
         let auth = match &entry.request.authentication {
             Authentication::Bearer { token } => json!({"token":token}),
             Authentication::Basic { username, password }
@@ -381,6 +401,7 @@ mod tests {
                 ],
             )]),
             redaction: vec!["example-sensitive-value".into()],
+            secrets: crate::commands::test_secrets::test_secrets(),
         };
         let text = source.read("chat", "live").unwrap();
         assert!(text.contains("Earlier message"));

@@ -24,6 +24,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Security
 
 - Tokens, senhas e outros segredos digitados na autenticação de coleções, requisições e flows não vão mais para o git: ficam criptografados neste computador. Para compartilhar um segredo com o time, use uma variável de ambiente sensível.
+- Esses segredos também ficam criptografados no histórico de envios e nas abas reabertas ao abrir o workspace, que antes os guardavam em texto na pasta do workspace.
 
 ## [0.10.0] - 2026-11-10
 

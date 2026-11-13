@@ -6,7 +6,7 @@ use alcy_graphql::interpret_graphql_errors;
 use alcy_storage::{
     CollectionRunHistoryStore, CollectionRunRecord, CollectionRunStatus, FlowRunHistoryStore,
     FlowRunRecord, FlowRunStatus, HistoryStore, HistorySummary, HistorySummaryOutcome,
-    LoadFlowRunSummary, RecordedPlanItem, RecordedRunOptions, StorageError,
+    LoadFlowRunSummary, LocalSecrets, RecordedPlanItem, RecordedRunOptions, StorageError,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -343,10 +343,14 @@ fn detail_from_entry(entry: HistoryEntry, body_cache: &ResponseBodyCache) -> His
 pub async fn list_history(
     input: ListHistoryInput,
     history: State<'_, HistoryPreferencesState>,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<Vec<HistoryEntrySummaryDto>, HistoryCommandError> {
     let retention = history.get().retention;
-    let result =
-        run_blocking(move || list_history_inner(PathBuf::from(input.root_path), retention)).await;
+    let secrets = LocalSecrets::clone(&secrets);
+    let result = run_blocking(move || {
+        list_history_inner(PathBuf::from(input.root_path), retention, secrets)
+    })
+    .await;
     crate::logging::logged("alcy::history", "listar histórico", result)
 }
 
@@ -366,8 +370,9 @@ async fn run_blocking<T: Send + 'static>(
 fn list_history_inner(
     root: PathBuf,
     retention: HistoryRetention,
+    secrets: LocalSecrets,
 ) -> Result<Vec<HistoryEntrySummaryDto>, HistoryCommandError> {
-    let requests = HistoryStore::new(root.clone(), retention.duration());
+    let requests = HistoryStore::new(root.clone(), retention.duration(), secrets);
     let runs = FlowRunHistoryStore::new(root.clone(), retention.duration());
     let collection_runs = CollectionRunHistoryStore::new(root.clone(), retention.duration());
     // Best effort: a pruning failure must not prevent listing available entries.
@@ -654,17 +659,23 @@ fn get_flow_run_history_inner(
 pub async fn get_history_entry(
     input: GetHistoryEntryInput,
     body_cache: State<'_, ResponseBodyCache>,
+    secrets: State<'_, LocalSecrets>,
 ) -> Result<HistoryEntryDetailDto, HistoryCommandError> {
     let root = PathBuf::from(input.root_path);
     let id = input.id;
-    let result = run_blocking(move || load_history_entry(root, &id))
+    let secrets = LocalSecrets::clone(&secrets);
+    let result = run_blocking(move || load_history_entry(root, &id, secrets))
         .await
         .map(|entry| detail_from_entry(entry, &body_cache));
     crate::logging::logged("alcy::history", "abrir entrada do histórico", result)
 }
 
-fn load_history_entry(root: PathBuf, id: &str) -> Result<HistoryEntry, HistoryCommandError> {
-    HistoryStore::new(root, DEFAULT_HISTORY_RETENTION)
+fn load_history_entry(
+    root: PathBuf,
+    id: &str,
+    secrets: LocalSecrets,
+) -> Result<HistoryEntry, HistoryCommandError> {
+    HistoryStore::new(root, DEFAULT_HISTORY_RETENTION, secrets)
         .load_entry(id)?
         .ok_or(HistoryCommandError::NotFound)
 }
@@ -676,7 +687,8 @@ fn get_history_entry_inner(
     id: &str,
     body_cache: &ResponseBodyCache,
 ) -> Result<HistoryEntryDetailDto, HistoryCommandError> {
-    load_history_entry(root, id).map(|entry| detail_from_entry(entry, body_cache))
+    load_history_entry(root, id, crate::commands::test_secrets::test_secrets())
+        .map(|entry| detail_from_entry(entry, body_cache))
 }
 
 #[cfg(test)]
@@ -737,7 +749,12 @@ mod tests {
     fn lists_no_entries_when_nothing_is_persisted() {
         let root = temp_root();
 
-        let entries = list_history_inner(root.clone(), HistoryRetention::default()).unwrap();
+        let entries = list_history_inner(
+            root.clone(),
+            HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .unwrap();
 
         assert!(entries.is_empty());
 
@@ -820,11 +837,20 @@ mod tests {
         FlowRunHistoryStore::new(root.clone(), Duration::from_secs(3600))
             .record(&flow_run_record("run-1"))
             .unwrap();
-        HistoryStore::new(root.clone(), Duration::from_secs(3600))
-            .record(success_entry("entry-1"))
-            .unwrap();
+        HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .record(success_entry("entry-1"))
+        .unwrap();
 
-        let entries = list_history_inner(root.clone(), HistoryRetention::default()).unwrap();
+        let entries = list_history_inner(
+            root.clone(),
+            HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .unwrap();
         let origins: Vec<_> = entries
             .iter()
             .map(|entry| serde_json::to_value(entry).unwrap()["origin"].clone())
@@ -852,20 +878,32 @@ mod tests {
         FlowRunHistoryStore::new(root.clone(), Duration::from_secs(3600))
             .record(&flow_run_record("run-1"))
             .unwrap();
-        HistoryStore::new(root.clone(), Duration::from_secs(3600))
-            .record(success_entry("entry-1"))
-            .unwrap();
+        HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .record(success_entry("entry-1"))
+        .unwrap();
 
         let disabled = HistoryRetention::days(0).unwrap();
         assert!(
-            list_history_inner(root.clone(), disabled)
-                .unwrap()
-                .is_empty()
+            list_history_inner(
+                root.clone(),
+                disabled,
+                crate::commands::test_secrets::test_secrets()
+            )
+            .unwrap()
+            .is_empty()
         );
         assert!(
-            list_history_inner(root.clone(), HistoryRetention::default())
-                .unwrap()
-                .is_empty()
+            list_history_inner(
+                root.clone(),
+                HistoryRetention::default(),
+                crate::commands::test_secrets::test_secrets()
+            )
+            .unwrap()
+            .is_empty()
         );
 
         fs::remove_dir_all(&root).ok();
@@ -958,7 +996,12 @@ mod tests {
             })
             .unwrap();
 
-        let entries = list_history_inner(root.clone(), HistoryRetention::default()).unwrap();
+        let entries = list_history_inner(
+            root.clone(),
+            HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .unwrap();
         let json = serde_json::to_value(&entries[0]).unwrap();
         assert_eq!(json["origin"], "runner");
         assert_eq!(json["scopeName"], "Loja");
@@ -989,10 +1032,19 @@ mod tests {
     #[test]
     fn lists_a_summary_without_body_or_request_content() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(3600));
+        let store = HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        );
         store.record(success_entry("entry-1")).unwrap();
 
-        let entries = list_history_inner(root.clone(), HistoryRetention::default()).unwrap();
+        let entries = list_history_inner(
+            root.clone(),
+            HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .unwrap();
 
         assert_eq!(entries.len(), 1);
         let entry = as_collection(&entries[0]);
@@ -1014,7 +1066,11 @@ mod tests {
     #[test]
     fn gets_the_full_detail_of_an_entry_including_the_response_body() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(3600));
+        let store = HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        );
         store.record(success_entry("entry-1")).unwrap();
         let cache = ResponseBodyCache::default();
 
@@ -1046,7 +1102,11 @@ mod tests {
     #[test]
     fn windows_a_response_body_above_the_threshold_under_a_prefixed_handle() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(3600));
+        let store = HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        );
         let large_body = "x".repeat(LARGE_RESPONSE_BODY_THRESHOLD_BYTES + 1);
         let response = Response::new(200, 10, &large_body, vec![], ResponseMetadata::default());
         store
@@ -1083,7 +1143,11 @@ mod tests {
     #[test]
     fn gets_the_method_of_a_rest_entry() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(3600));
+        let store = HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        );
         let request = Request::new(
             Endpoint::new("https://api.example.com/users").unwrap(),
             RequestDocument::new(ProtocolId::Rest, "{\"name\":\"acme\"}"),
@@ -1128,10 +1192,19 @@ mod tests {
     #[test]
     fn serializes_the_summary_success_outcome_with_camel_case_keys() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(3600));
+        let store = HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        );
         store.record(success_entry("entry-1")).unwrap();
 
-        let entries = list_history_inner(root.clone(), HistoryRetention::default()).unwrap();
+        let entries = list_history_inner(
+            root.clone(),
+            HistoryRetention::default(),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .unwrap();
         let json = serde_json::to_value(&as_collection(&entries[0]).outcome).unwrap();
 
         assert!(
@@ -1161,7 +1234,11 @@ mod tests {
     #[test]
     fn serializes_the_detail_success_outcome_with_camel_case_keys() {
         let root = temp_root();
-        let store = HistoryStore::new(root.clone(), Duration::from_secs(3600));
+        let store = HistoryStore::new(
+            root.clone(),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        );
         store.record(success_entry("entry-1")).unwrap();
 
         let cache = ResponseBodyCache::default();

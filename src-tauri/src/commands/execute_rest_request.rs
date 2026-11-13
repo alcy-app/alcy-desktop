@@ -636,6 +636,7 @@ pub async fn execute_rest_request(
         &body_cache,
         &session_cookies.0,
         history.get(),
+        &secrets,
     )
     .await;
     match &result {
@@ -677,6 +678,7 @@ async fn execute_rest_request_inner(
     body_cache: &ResponseBodyCache,
     cookies: &CookieJar,
     history: HistoryPreferences,
+    secrets: &alcy_storage::LocalSecrets,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let mut input = input;
     strip_body_comments(&mut input.body);
@@ -753,6 +755,7 @@ async fn execute_rest_request_inner(
             history_outcome,
             history_source,
             history,
+            secrets,
         ));
     }
 
@@ -1080,6 +1083,7 @@ mod tests {
             &ResponseBodyCache::default(),
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1113,6 +1117,7 @@ mod tests {
             &body_cache,
             &jar,
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err();
@@ -1143,6 +1148,7 @@ mod tests {
             &body_cache,
             &jar,
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1181,6 +1187,7 @@ mod tests {
             &body_cache,
             &jar,
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1191,6 +1198,7 @@ mod tests {
             &body_cache,
             &jar,
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1238,6 +1246,7 @@ mod tests {
             &ResponseBodyCache::default(),
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1279,6 +1288,7 @@ mod tests {
             &ResponseBodyCache::default(),
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1331,6 +1341,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1406,6 +1417,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1445,6 +1457,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err()
@@ -1477,6 +1490,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1510,6 +1524,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1553,6 +1568,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1598,6 +1614,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1647,6 +1664,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1679,6 +1697,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1715,6 +1734,7 @@ mod tests {
                 &body_cache_for_task,
                 &CookieJar::default(),
                 HistoryPreferences::default(),
+                &crate::commands::test_secrets::test_secrets(),
             )
             .await
         });
@@ -1728,9 +1748,13 @@ mod tests {
     }
 
     fn history_entries(root_path: &str) -> Vec<HistorySummary> {
-        HistoryStore::new(PathBuf::from(root_path), Duration::from_secs(3600))
-            .load_summaries()
-            .unwrap()
+        HistoryStore::new(
+            PathBuf::from(root_path),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .load_summaries()
+        .unwrap()
     }
 
     async fn wait_for_history_entries(root_path: &str, expected_len: usize) -> Vec<HistorySummary> {
@@ -1767,6 +1791,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1802,17 +1827,86 @@ mod tests {
             &ResponseBodyCache::default(),
             &CookieJar::default(),
             history,
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
         wait_for_history_entries(&root_path, 1).await;
 
-        let entry = HistoryStore::new(PathBuf::from(&root_path), Duration::from_secs(3600))
-            .load_entry("exec-1")
-            .unwrap()
-            .unwrap();
+        let entry = HistoryStore::new(
+            PathBuf::from(&root_path),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .load_entry("exec-1")
+        .unwrap()
+        .unwrap();
         fs_cleanup(&root_path);
         entry
+    }
+
+    /// Every file under `root` that contains `text`.
+    fn files_containing(root: &Path, text: &str) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        let mut folders = vec![root.to_path_buf()];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    folders.push(path);
+                } else if std::fs::read_to_string(&path).is_ok_and(|text_in| text_in.contains(text))
+                {
+                    found.push(path);
+                }
+            }
+        }
+        found
+    }
+
+    #[tokio::test]
+    async fn a_literal_token_sent_stays_out_of_every_workspace_file() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        let mut input = valid_input();
+        input.endpoint_url = server.uri();
+        input.authentication = AuthenticationInput::Bearer {
+            token: "s3cr3t-Vh7Qk".to_string(),
+        };
+        let root_path = input.root_path.clone();
+        let secrets = crate::commands::test_secrets::test_secrets();
+
+        execute_rest_request_inner(
+            input,
+            &ExecutionRegistry::default(),
+            &ReqwestRestExecutor::new(),
+            &ResponseBodyCache::default(),
+            &CookieJar::default(),
+            HistoryPreferences::default(),
+            &secrets,
+        )
+        .await
+        .unwrap();
+        wait_for_history_entries(&root_path, 1).await;
+
+        assert!(files_containing(Path::new(&root_path), "s3cr3t-Vh7Qk").is_empty());
+        let entry = HistoryStore::new(
+            PathBuf::from(&root_path),
+            Duration::from_secs(3600),
+            secrets,
+        )
+        .load_entry("exec-1")
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            entry.request.authentication,
+            alcy_domain::Authentication::Bearer {
+                token: "s3cr3t-Vh7Qk".to_string()
+            }
+        );
+        fs_cleanup(&root_path);
     }
 
     #[tokio::test]
@@ -1864,6 +1958,7 @@ mod tests {
             &ResponseBodyCache::default(),
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1919,6 +2014,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1983,6 +2079,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err();
@@ -2020,6 +2117,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err();
@@ -2053,6 +2151,7 @@ mod tests {
                 retention: HistoryRetention::days(0).unwrap(),
                 save_responses: true,
             },
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err();
@@ -2091,6 +2190,7 @@ mod tests {
                 &body_cache_for_task,
                 &CookieJar::default(),
                 HistoryPreferences::default(),
+                &crate::commands::test_secrets::test_secrets(),
             )
             .await
         });

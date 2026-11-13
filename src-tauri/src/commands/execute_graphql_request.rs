@@ -545,6 +545,7 @@ pub async fn execute_graphql_request(
         &body_cache,
         &session_cookies.0,
         history.get(),
+        &secrets,
     )
     .await;
     match &result {
@@ -587,6 +588,7 @@ async fn execute_graphql_request_inner(
     body_cache: &ResponseBodyCache,
     cookies: &CookieJar,
     history: HistoryPreferences,
+    secrets: &LocalSecrets,
 ) -> Result<ExecuteGraphqlRequestOutput, ExecutionFailure<ExecuteGraphqlRequestError>> {
     let mut input = input;
     let execution_id = input.execution_id.clone();
@@ -657,6 +659,7 @@ async fn execute_graphql_request_inner(
             history_outcome,
             history_source,
             history,
+            secrets,
         ));
     }
 
@@ -801,8 +804,13 @@ pub(crate) fn record_history(
     outcome: HistoryOutcome,
     source: (Option<String>, Option<String>),
     history: HistoryPreferences,
+    secrets: &LocalSecrets,
 ) -> tauri::async_runtime::JoinHandle<()> {
-    let store = HistoryStore::new(PathBuf::from(root_path), history.retention.duration());
+    let store = HistoryStore::new(
+        PathBuf::from(root_path),
+        history.retention.duration(),
+        secrets.clone(),
+    );
     let (request_id, tab_id) = source;
     let mut entry = HistoryEntry::new(id, request.clone(), outcome, SystemTime::now())
         .with_source(request_id, tab_id);
@@ -976,6 +984,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1020,6 +1029,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1064,6 +1074,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1110,6 +1121,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1142,6 +1154,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err()
@@ -1176,6 +1189,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1212,6 +1226,7 @@ mod tests {
                 &body_cache_for_task,
                 &CookieJar::default(),
                 HistoryPreferences::default(),
+                &crate::commands::test_secrets::test_secrets(),
             )
             .await
         });
@@ -1225,9 +1240,13 @@ mod tests {
     }
 
     fn history_entries(root_path: &str) -> Vec<HistorySummary> {
-        HistoryStore::new(PathBuf::from(root_path), Duration::from_secs(3600))
-            .load_summaries()
-            .unwrap()
+        HistoryStore::new(
+            PathBuf::from(root_path),
+            Duration::from_secs(3600),
+            crate::commands::test_secrets::test_secrets(),
+        )
+        .load_summaries()
+        .unwrap()
     }
 
     /// History writes are asynchronous; tests retry until persistence rather than assume command return means the file exists.
@@ -1264,6 +1283,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap();
@@ -1298,6 +1318,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err();
@@ -1335,6 +1356,7 @@ mod tests {
             &body_cache,
             &CookieJar::default(),
             HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
         )
         .await
         .unwrap_err();
@@ -1380,6 +1402,7 @@ mod tests {
                 &body_cache_for_task,
                 &CookieJar::default(),
                 HistoryPreferences::default(),
+                &crate::commands::test_secrets::test_secrets(),
             )
             .await
         });

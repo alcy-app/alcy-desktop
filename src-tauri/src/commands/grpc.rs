@@ -861,6 +861,7 @@ pub async fn execute_grpc_request(
                     history_outcome,
                     history_source,
                     preferences,
+                    &secrets,
                 ));
             }
         }

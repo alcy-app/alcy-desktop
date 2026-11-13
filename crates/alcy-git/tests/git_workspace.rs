@@ -1137,3 +1137,125 @@ async fn documents_datasets_and_mock_servers_travel_with_the_workspace() {
     bia.link = applied.link;
     assert_eq!(text(&bia, DATASET).as_deref(), Some("id\n2\n"));
 }
+
+const LEGACY_SECRET: &str = "s3cr3t-Vh7Qk";
+
+/// One request per authentication variant, each with `secret` in its secret
+/// field when it has one.
+fn collections_with_every_authentication(secret: &str) -> Vec<alcy_domain::Collection> {
+    use alcy_domain::{
+        Authentication, Collection, Endpoint, ProtocolId, Request, RequestDocument, SavedRequest,
+    };
+    let authentications = [
+        Authentication::None,
+        Authentication::Inherit,
+        Authentication::CustomHeader {
+            name: "X-Api-Key".to_string(),
+            value: secret.to_string(),
+        },
+        Authentication::Bearer {
+            token: secret.to_string(),
+        },
+        Authentication::Basic {
+            username: "ana".to_string(),
+            password: secret.to_string(),
+        },
+        Authentication::Digest {
+            username: "ana".to_string(),
+            password: secret.to_string(),
+        },
+        Authentication::OAuth2ClientCredentials {
+            client_id: "client-1".to_string(),
+            client_secret: secret.to_string(),
+            token_url: "https://auth.example.com/token".to_string(),
+            scope: "read".to_string(),
+        },
+    ];
+    let requests = authentications
+        .into_iter()
+        .enumerate()
+        .map(|(index, authentication)| {
+            let request = Request::new(
+                Endpoint::new("https://api.example.com").unwrap(),
+                RequestDocument::new(ProtocolId::Rest, ""),
+                "",
+                vec![],
+                authentication,
+            );
+            SavedRequest::new(format!("r{index}"), format!("Request {index}"), request).unwrap()
+        })
+        .collect();
+    vec![Collection::new("c", "API", vec![], requests).unwrap()]
+}
+
+/// Every file of the workspace folder outside `.git` that contains `text`.
+fn workspace_files_containing(root: &Path, text: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut folders = vec![root.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != ".git") {
+                    folders.push(path);
+                }
+            } else if std::fs::read(&path)
+                .unwrap()
+                .windows(text.len())
+                .any(|window| window == text.as_bytes())
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+#[tokio::test]
+async fn a_legacy_workspace_with_committed_secrets_stops_committing_them() {
+    let keys = tempfile::tempdir().unwrap();
+    let secrets = personal_secrets(keys.path());
+    let legacy = collections_with_every_authentication(LEGACY_SECRET);
+    // An older Alcy wrote and committed the secrets in plain text.
+    let mut ana = seeded("Ana");
+    alcy_storage::export_collections(&ana.root.join(COLLECTIONS), &legacy).unwrap();
+    ana.commit("Legacy").await;
+    let legacy_commit = history(&ana.root, 0, 1).unwrap().commits[0].id.clone();
+    let committed = file_versions(&ana.root, &legacy_commit, COLLECTIONS).unwrap();
+    assert!(
+        String::from_utf8(committed.at_commit.unwrap())
+            .unwrap()
+            .contains(LEGACY_SECRET)
+    );
+
+    // This version lists the collections and commits through the app's view.
+    let store = alcy_storage::CollectionsStore::new(ana.root.clone(), secrets.clone());
+    assert_eq!(store.load_and_seal().unwrap(), legacy);
+    assert!(workspace_files_containing(&ana.root, LEGACY_SECRET).is_empty());
+    let synced = SyncedWorkspaceFiles::new(
+        DiskWorkspaceFiles::new(ana.root.clone()),
+        secrets.clone(),
+        false,
+    );
+    let status = version_status(&synced, &ana.remote(), &ana.link)
+        .await
+        .unwrap();
+    assert_eq!(state(&status, COLLECTIONS), FileState::LocalModified);
+    let outcome = push_changes(&synced, &ana.remote(), &status.link, "Seal secrets")
+        .await
+        .unwrap();
+    ana.link = outcome.link;
+
+    let head = history(&ana.root, 0, 1).unwrap().commits[0].id.clone();
+    let committed = file_versions(&ana.root, &head, COLLECTIONS).unwrap();
+    assert!(
+        !String::from_utf8(committed.at_commit.unwrap())
+            .unwrap()
+            .contains(LEGACY_SECRET)
+    );
+    assert_eq!(index_paths(&ana.root), [COLLECTIONS, MANIFEST]);
+    assert_eq!(store.load().unwrap(), legacy);
+    // A clone gets the references and the other fields, not the secrets.
+    let bia = Workspace::cloned_from_folder("Bia", &ana.root).await;
+    assert!(workspace_files_containing(&bia.root, LEGACY_SECRET).is_empty());
+}

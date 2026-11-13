@@ -278,7 +278,7 @@ fn secrets_to_json(sealed: &SealedSlots) -> Result<Option<Vec<u8>>, StorageError
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -474,6 +474,178 @@ mod tests {
         assert!(sealed.contains("flow:flow-1/node:node-1"), "{sealed}");
         assert_eq!(store.load().unwrap(), snapshot);
         fs::remove_dir_all(&root).ok();
+    }
+
+    /// A secret no other field of `every_authentication` contains.
+    pub(crate) const SECRET: &str = "s3cr3t-Vh7Qk";
+
+    /// Every authentication variant, with `secret` in its secret field (the
+    /// variants that have one), for tests that check it never reaches a file.
+    pub(crate) fn every_authentication(secret: &str) -> Vec<Authentication> {
+        vec![
+            Authentication::None,
+            Authentication::Inherit,
+            Authentication::CustomHeader {
+                name: "X-Api-Key".to_string(),
+                value: secret.to_string(),
+            },
+            bearer(secret),
+            Authentication::Basic {
+                username: "ana".to_string(),
+                password: secret.to_string(),
+            },
+            Authentication::Digest {
+                username: "ana".to_string(),
+                password: secret.to_string(),
+            },
+            Authentication::OAuth2ClientCredentials {
+                client_id: "client-1".to_string(),
+                client_secret: secret.to_string(),
+                token_url: "https://auth.example.com/token".to_string(),
+                scope: "read".to_string(),
+            },
+        ]
+    }
+
+    pub(crate) fn has_secret(authentication: &Authentication) -> bool {
+        !matches!(
+            authentication,
+            Authentication::None | Authentication::Inherit
+        )
+    }
+
+    /// The same authentication at the collection, a folder and a request.
+    fn collections_with(authentication: &Authentication) -> Vec<Collection> {
+        let folder = Folder::new("folder-1", "Orders", vec![], vec![])
+            .unwrap()
+            .with_authentication(authentication.clone());
+        vec![
+            Collection::new(
+                "collection-1",
+                "API",
+                vec![folder],
+                vec![
+                    SavedRequest::new("request-1", "Ping", request(authentication.clone()))
+                        .unwrap(),
+                ],
+            )
+            .unwrap()
+            .with_authentication(authentication.clone()),
+        ]
+    }
+
+    #[test]
+    fn every_authentication_keeps_its_secret_out_of_the_collections_file() {
+        for authentication in every_authentication(SECRET) {
+            let root = temp_root();
+            let secrets = test_secrets();
+            let store = CollectionsStore::new(root.clone(), secrets.clone());
+            let saved = collections_with(&authentication);
+
+            store.save(&saved).unwrap();
+
+            let file = manifest(&root);
+            assert!(!file.contains(SECRET), "{authentication:?}: {file}");
+            let portable = SECRET_FIELDS
+                .portable_view(file.as_bytes(), None, &secrets, false)
+                .unwrap();
+            assert!(!String::from_utf8(portable).unwrap().contains(SECRET));
+            if let Ok(sealed) = fs::read_to_string(root.join(COLLECTIONS_SECRETS_FILE)) {
+                assert!(!sealed.contains(SECRET), "{sealed}");
+            }
+            assert_eq!(
+                root.join(COLLECTIONS_SECRETS_FILE).exists(),
+                has_secret(&authentication),
+                "{authentication:?}"
+            );
+            assert_eq!(store.load().unwrap(), saved, "{authentication:?}");
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
+    fn every_authentication_keeps_a_reference_in_the_collections_file() {
+        for authentication in every_authentication("{{api_secret}}") {
+            let root = temp_root();
+            let store = CollectionsStore::new(root.clone(), secrets_that_must_not_be_used());
+            let saved = collections_with(&authentication);
+
+            store.save(&saved).unwrap();
+
+            if has_secret(&authentication) {
+                assert!(
+                    manifest(&root).contains("{{api_secret}}"),
+                    "{authentication:?}"
+                );
+            }
+            assert!(!root.join(COLLECTIONS_SECRETS_FILE).exists());
+            assert_eq!(store.load().unwrap(), saved, "{authentication:?}");
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
+    fn every_authentication_is_sealed_when_listing_a_legacy_collections_file() {
+        for authentication in every_authentication(SECRET) {
+            let root = temp_root();
+            let store = CollectionsStore::new(root.clone(), test_secrets());
+            let legacy = collections_with(&authentication);
+            crate::export_collections(&root.join("alcy-collections.json"), &legacy).unwrap();
+
+            assert_eq!(store.load_and_seal().unwrap(), legacy, "{authentication:?}");
+
+            assert!(!manifest(&root).contains(SECRET), "{authentication:?}");
+            assert_eq!(store.load().unwrap(), legacy, "{authentication:?}");
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
+    fn every_authentication_keeps_its_secret_out_of_the_flows_file() {
+        for authentication in every_authentication(SECRET) {
+            let root = temp_root();
+            let store = FlowStore::new(root.clone(), test_secrets());
+            let snapshot = flows_with(&authentication);
+
+            store.save(&snapshot).unwrap();
+
+            let file = fs::read_to_string(root.join("alcy-flows.json")).unwrap();
+            assert!(!file.contains(SECRET), "{authentication:?}: {file}");
+            assert_eq!(
+                root.join("alcy-flows-secrets.json").exists(),
+                has_secret(&authentication),
+                "{authentication:?}"
+            );
+            assert_eq!(store.load().unwrap(), snapshot, "{authentication:?}");
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    /// A flow with one inline request using `authentication`.
+    fn flows_with(authentication: &Authentication) -> FlowsSnapshot {
+        let node = FlowNode {
+            id: "node-1".to_string(),
+            kind: FlowNodeKind::InlineRequest {
+                request: Box::new(
+                    SavedRequest::new("inline-1", "Login", request(authentication.clone()))
+                        .unwrap(),
+                ),
+            },
+            position: FlowPosition { x: 0.0, y: 0.0 },
+        };
+        let flow = alcy_domain::Flow::new(
+            "flow-1",
+            "Login",
+            vec![node],
+            vec![],
+            UNIX_EPOCH,
+            UNIX_EPOCH,
+        )
+        .unwrap();
+        FlowsSnapshot {
+            flows: vec![flow],
+            folders: vec![],
+        }
     }
 
     fn file_with_token(token: &str) -> Vec<u8> {

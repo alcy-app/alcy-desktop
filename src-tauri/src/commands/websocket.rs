@@ -468,6 +468,7 @@ pub async fn execute_websocket_request(
         &session_cookies.0,
         &body_cache,
         &history,
+        &secrets,
     )
     .await;
     match &result {
@@ -513,6 +514,7 @@ async fn execute_inner(
     cookies: &CookieJar,
     body_cache: &ResponseBodyCache,
     history: &HistoryPreferencesState,
+    secrets: &LocalSecrets,
 ) -> Result<ExecuteWebSocketRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let execution_id = input.execution_id.clone();
     let root_path = input.root_path.clone();
@@ -612,6 +614,7 @@ async fn execute_inner(
             history_outcome,
             history_source,
             preferences,
+            secrets,
         ));
     }
 
