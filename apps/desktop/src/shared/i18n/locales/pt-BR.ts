@@ -951,6 +951,7 @@ const ptBR = {
   'scriptTrust.collectionTitle': 'Confiar nos scripts de {name}?',
   'scriptTrust.collectionDescription': 'Esta coleção foi importada sem confiar nos scripts. Scripts leem todas as variáveis, inclusive as sensíveis, e podem mudar para onde a requisição vai. A confiança vale para todos que recebem a coleção.',
   'scriptTrust.origin': 'Pasta: {origin}',
+  'scriptTrust.npmPackages': 'Ao confiar, estes {count} pacote(s) npm são baixados do esm.sh quando os scripts rodarem:',
   'scriptTrust.viewScripts': 'Ver scripts ({count})',
   'scriptTrust.moreScripts': 'Mais {count} requisição(ões) com scripts.',
   'scriptTrust.trustWorkspace': 'Confiar no workspace',

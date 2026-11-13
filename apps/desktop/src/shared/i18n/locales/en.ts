@@ -957,6 +957,7 @@ const en: Record<TranslationKey, string> = {
   'scriptTrust.collectionTitle': 'Trust the scripts of {name}?',
   'scriptTrust.collectionDescription': 'This collection was imported without trusting its scripts. Scripts read every variable, sensitive ones included, and can change where a request goes. Trusting it applies to everyone who receives the collection.',
   'scriptTrust.origin': 'Folder: {origin}',
+  'scriptTrust.npmPackages': 'Once trusted, these {count} npm package(s) are downloaded from esm.sh when the scripts run:',
   'scriptTrust.viewScripts': 'View scripts ({count})',
   'scriptTrust.moreScripts': '{count} more request(s) with scripts.',
   'scriptTrust.trustWorkspace': 'Trust workspace',

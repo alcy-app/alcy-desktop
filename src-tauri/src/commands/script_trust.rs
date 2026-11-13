@@ -317,6 +317,50 @@ mod tests {
         assert_eq!((skipped, pre.as_str()), (None, "a"));
     }
 
+    /// Runs `source` as a pre-request script of a plain request.
+    async fn run_pre(source: &str) -> Result<(), crate::commands::scripting::ScriptErrorOutput> {
+        let request = Request::new(
+            Endpoint::new("https://api.example.com").unwrap(),
+            RequestDocument::new(ProtocolId::Rest, ""),
+            "",
+            vec![],
+            Authentication::None,
+        );
+        crate::commands::scripting::run_pre_request(
+            source,
+            &mut crate::commands::scripting::ScriptedRequest::from_request(&request),
+            &mut Vec::new(),
+            &mut [],
+            &mut crate::commands::scripting::ScriptEffects::default(),
+        )
+        .await
+    }
+
+    /// npm packages are downloaded only when the script that requires them
+    /// runs (spec 0128), so a withheld script must never reach the package
+    /// cache. The cache is not initialized in tests: reaching it fails.
+    #[tokio::test]
+    async fn untrusted_scripts_never_download_npm_packages() {
+        let npm = "const pad = require('npm:left-pad@1.3.0')";
+        let reached_packages = run_pre(npm).await.unwrap_err();
+        assert!(
+            reached_packages
+                .message
+                .contains("cache de pacotes não inicializada"),
+            "{}",
+            reached_packages.message
+        );
+
+        let (root, trust) = setup(true);
+        trust.set_workspace(&root, true).unwrap();
+        for trust in [ScriptTrustStore::new(root.join("undecided.json")), trust] {
+            let (skipped, pre, post) = withhold(&trust, &root, Some("request-1"), npm, npm).await;
+            assert!(skipped.is_some());
+            assert_eq!(run_pre(&pre).await, Ok(()));
+            assert_eq!(run_pre(&post).await, Ok(()));
+        }
+    }
+
     #[tokio::test]
     async fn a_send_without_scripts_reports_nothing() {
         let (root, trust) = setup(true);

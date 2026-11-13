@@ -19,6 +19,27 @@ export function scriptedRequests(node: TreeNode, path: string[] = []): { path: s
   ]
 }
 
+/** npm packages the scripts require with a literal `require('npm:…')`, without the prefix or
+ * repetitions, in order of appearance: the ones trusting the scripts lets the app download from
+ * esm.sh when they run (spec 0128). Mirrors `npm_requests` in `alcy-scripting`. */
+export function npmPackages(scripts: string[]): string[] {
+  const found: string[] = []
+  for (const source of scripts) {
+    for (let at = source.indexOf('require('); at !== -1; at = source.indexOf('require(', at + 1)) {
+      const rest = source.slice(at + 'require('.length).trimStart()
+      const quote = rest[0]
+      if (quote !== "'" && quote !== '"' && quote !== '`') continue
+      const end = rest.indexOf(quote, 1)
+      if (end === -1) continue
+      const literal = rest.slice(1, end)
+      if (!literal.startsWith('npm:')) continue
+      const name = literal.slice('npm:'.length).trim()
+      if (name !== '' && !name.includes('$') && !found.includes(name)) found.push(name)
+    }
+  }
+  return found
+}
+
 /** The collection (root node) holding the request, or `null` for an unsaved tab or an unknown id. */
 export function collectionOfRequest(collections: TreeNode[], requestId: string | null): TreeNode | null {
   if (requestId === null) return null

@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
 import { ChevronDownIcon, ChevronRightIcon, LockIcon } from '../../../shared/ui/icons'
 import { Modal } from '../../../shared/ui/Modal'
 import type { RequestSummary } from '../collection-tree'
+import { npmPackages } from '../script-trust'
 import './script-trust.css'
 
 /** Requests listed in the review; a workspace or collection with more shows how many were left out. */
@@ -30,14 +31,18 @@ interface ScriptTrustDialogProps {
 
 /**
  * Asks whether to trust scripts the person did not write (spec 0162). "Do not trust" is the
- * default: it has the focus, Enter does not confirm, and closing the dialog declines. The scripts
- * can be read before deciding.
+ * default: it has the focus, Enter does not confirm, and closing the dialog declines. The scripts,
+ * and the npm packages trusting them lets the app download, can be read before deciding.
  */
 export function ScriptTrustDialog({ title, description, origin, entries, confirmLabel, declineLabel, onConfirm, onDecline }: ScriptTrustDialogProps) {
   const { t } = useLanguage()
   const [showScripts, setShowScripts] = useState(false)
   const confirmed = useRef(false)
   const listed = entries.slice(0, MAX_LISTED)
+  const packages = useMemo(
+    () => npmPackages(entries.flatMap(({ request }) => [request.content.preRequestScript, request.content.postResponseScript])),
+    [entries],
+  )
 
   return (
     <Modal
@@ -55,6 +60,18 @@ export function ScriptTrustDialog({ title, description, origin, entries, confirm
             <span>{description}</span>
           </p>
           {origin && <p className="script-trust-origin">{t('scriptTrust.origin', { origin })}</p>}
+          {packages.length > 0 && (
+            <div className="script-trust-packages">
+              <p>{t('scriptTrust.npmPackages', { count: packages.length })}</p>
+              <ul>
+                {packages.map((name) => (
+                  <li key={name}>
+                    <code>{`npm:${name}`}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <button type="button" className="script-trust-toggle" aria-expanded={showScripts} onClick={() => setShowScripts((current) => !current)}>
             {showScripts ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
             <span>{t('scriptTrust.viewScripts', { count: entries.length })}</span>

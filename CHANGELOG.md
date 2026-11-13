@@ -25,7 +25,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 - Tokens, senhas e outros segredos digitados na autenticação de coleções, requisições e flows não vão mais para o git: ficam criptografados neste computador. Para compartilhar um segredo com o time, use uma variável de ambiente sensível.
 - Esses segredos também ficam criptografados no histórico de envios e nas abas reabertas ao abrir o workspace, que antes os guardavam em texto na pasta do workspace.
-- **Confiança em scripts**: scripts de coleções importadas e de workspaces abertos pela primeira vez só rodam depois que você confia neles. Até lá, as requisições são enviadas sem os scripts, e o Alcy mostra um cadeado na aba Scripts e avisa na resposta.
+- **Confiança em scripts**: scripts de coleções importadas e de workspaces abertos pela primeira vez só rodam depois que você confia neles. Até lá, as requisições são enviadas sem os scripts, e o Alcy mostra um cadeado na aba Scripts e avisa na resposta. Antes de confiar, dá para ver os scripts e os pacotes npm que eles vão baixar.
 
 ## [0.10.0] - 2026-11-10
 

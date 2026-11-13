@@ -320,6 +320,42 @@ for (const file of tlsRoots.flatMap((dir) => collectFiles(dir, (name) => name.en
   }
 }
 
+// npm packages for scripts (spec 0128, ADR 0061) are downloaded only while
+// running a script, after the trust check has withheld untrusted ones (spec
+// 0162). The downloader is used from one reviewed place, and only from the
+// function that runs a script: fetching packages anywhere else (on import, to
+// prefetch, for completions) would bypass the trust check.
+const PACKAGES_HOST = 'src-tauri/src/commands/scripting.rs'
+for (const file of rustRoots.flatMap((dir) => collectFiles(dir, (name) => name.endsWith('.rs')))) {
+  const path = relative(ROOT, file).split(sep).join('/')
+  if (path === PACKAGES_HOST || path.startsWith('crates/alcy-script-packages/')) continue
+  readFileSync(file, 'utf8')
+    .split('\n')
+    .forEach((line, index) => {
+      if (!line.trimStart().startsWith('//') && /\balcy_script_packages\b/.test(line)) {
+        fail(`${path}:${index + 1}: npm packages for scripts may only be fetched from ${PACKAGES_HOST} (spec 0162).`)
+      }
+    })
+}
+{
+  const host = read(PACKAGES_HOST)
+  const runner = host.match(/\nasync fn run_blocking\([\s\S]*?\n\}\n/)?.[0] ?? ''
+  const calls = (source) =>
+    source
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//') && !/\bfn script_packages\(/.test(line))
+      .filter((line) => /(?<![\w:])script_packages\(/.test(line)).length
+  if (calls(host) !== 1 || calls(runner) !== 1) {
+    fail(`${PACKAGES_HOST}: script_packages must be called once, from run_blocking, so untrusted scripts never download npm packages (spec 0162).`)
+  }
+  for (const downloader of ['resolve_packages(', 'fetch_from_esm_sh(']) {
+    const outside = host.slice(0, host.indexOf('\nasync fn script_packages(')) + host.slice(host.indexOf('\nasync fn run_blocking('))
+    if (outside.includes(downloader)) {
+      fail(`${PACKAGES_HOST}: ${downloader.slice(0, -1)} may only be called from script_packages (spec 0162).`)
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error('Invariantes de segurança violadas:')
   for (const message of failures) console.error(`  - ${message}`)

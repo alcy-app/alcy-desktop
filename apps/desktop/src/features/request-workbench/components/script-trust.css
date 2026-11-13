@@ -145,3 +145,29 @@
 .rw-scripts-tab-label svg {
   color: var(--warning);
 }
+
+.script-trust-packages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+.script-trust-packages p {
+  margin: 0;
+}
+
+.script-trust-packages ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  max-height: 96px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.script-trust-packages code {
+  overflow-wrap: anywhere;
+}
