@@ -2,8 +2,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use alcy_domain::{
-    DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_RESPONSE_SIZE_LIMIT_MB, GeneralSettings,
-    HistoryRetention, RequestTimeout, ResponseSizeLimit,
+    DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_K6_IMPORT_LIMIT_KB, DEFAULT_RESPONSE_SIZE_LIMIT_MB,
+    GeneralSettings, HistoryRetention, K6ImportLimit, RequestTimeout, ResponseSizeLimit,
 };
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_http_proxy::ProxyError;
@@ -26,6 +26,13 @@ pub struct GeneralSettingsDto {
     /// Guarda corpo e headers das respostas no histórico; desligado por padrão.
     #[serde(default)]
     pub save_history_responses: bool,
+    /// Largest k6 script the load test import accepts, in KB.
+    #[serde(default = "default_k6_import_limit_kb")]
+    pub k6_import_limit_kb: u32,
+}
+
+fn default_k6_import_limit_kb() -> u32 {
+    DEFAULT_K6_IMPORT_LIMIT_KB
 }
 
 fn default_response_size_limit_mb() -> Option<u32> {
@@ -98,6 +105,7 @@ fn to_dto(settings: &GeneralSettings) -> GeneralSettingsDto {
         },
         history_retention_days: settings.history_retention.as_days(),
         save_history_responses: settings.save_history_responses,
+        k6_import_limit_kb: settings.k6_import_limit.as_kilobytes(),
     }
 }
 
@@ -124,11 +132,17 @@ fn from_dto(dto: &GeneralSettingsDto) -> Result<GeneralSettings, GeneralSettings
                 message: error.to_string(),
             }
         })?;
+    let k6_import_limit = K6ImportLimit::kilobytes(dto.k6_import_limit_kb).map_err(|error| {
+        GeneralSettingsCommandError::Invalid {
+            message: error.to_string(),
+        }
+    })?;
     Ok(GeneralSettings {
         request_timeout,
         response_size_limit,
         history_retention,
         save_history_responses: dto.save_history_responses,
+        k6_import_limit,
     })
 }
 
@@ -271,6 +285,7 @@ mod tests {
             response_size_limit_mb: Some(DEFAULT_RESPONSE_SIZE_LIMIT_MB),
             history_retention_days: DEFAULT_HISTORY_RETENTION_DAYS,
             save_history_responses: false,
+            k6_import_limit_kb: DEFAULT_K6_IMPORT_LIMIT_KB,
         }
     }
 
@@ -282,7 +297,8 @@ mod tests {
                 "requestTimeoutSeconds": null,
                 "responseSizeLimitMb": 50,
                 "historyRetentionDays": 7,
-                "saveHistoryResponses": false
+                "saveHistoryResponses": false,
+                "k6ImportLimitKb": 512
             })
         );
         assert_eq!(
@@ -291,13 +307,15 @@ mod tests {
                 response_size_limit_mb: None,
                 history_retention_days: 0,
                 save_history_responses: true,
+                k6_import_limit_kb: 2048,
             })
             .unwrap(),
             serde_json::json!({
                 "requestTimeoutSeconds": 60,
                 "responseSizeLimitMb": null,
                 "historyRetentionDays": 0,
-                "saveHistoryResponses": true
+                "saveHistoryResponses": true,
+                "k6ImportLimitKb": 2048
             })
         );
     }
@@ -314,6 +332,34 @@ mod tests {
             parsed.history_retention_days,
             DEFAULT_HISTORY_RETENTION_DAYS
         );
+        assert_eq!(parsed.k6_import_limit_kb, DEFAULT_K6_IMPORT_LIMIT_KB);
+    }
+
+    #[test]
+    fn saves_the_k6_import_limit_and_rejects_an_out_of_range_one() {
+        let (store, path) = temp_store();
+        let (graphql, rest) = (ReqwestGraphqlExecutor::new(), ReqwestRestExecutor::new());
+        let history = HistoryPreferencesState::default();
+        let raised = GeneralSettingsDto {
+            k6_import_limit_kb: 1024,
+            ..dto(Some(60))
+        };
+        assert_eq!(
+            save_settings(&store, &graphql, &rest, &history, &raised).unwrap(),
+            raised
+        );
+        for out_of_range in [0, 2049] {
+            let invalid = GeneralSettingsDto {
+                k6_import_limit_kb: out_of_range,
+                ..dto(Some(60))
+            };
+            assert!(matches!(
+                save_settings(&store, &graphql, &rest, &history, &invalid),
+                Err(GeneralSettingsCommandError::Invalid { .. })
+            ));
+        }
+        assert_eq!(to_dto(&store.load().unwrap()), raised);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -352,6 +398,7 @@ mod tests {
             response_size_limit_mb: None,
             history_retention_days: DEFAULT_HISTORY_RETENTION_DAYS,
             save_history_responses: false,
+            k6_import_limit_kb: DEFAULT_K6_IMPORT_LIMIT_KB,
         };
 
         assert_eq!(

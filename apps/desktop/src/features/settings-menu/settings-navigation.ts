@@ -49,6 +49,7 @@ export const SETTINGS_INDEX: SettingEntry[] = [
   { page: 'shortcuts', target: 'shortcuts', label: 'settings.category.shortcuts', keywords: 'keyboard teclado mouse shortcuts atalhos' },
   { page: 'requests', target: 'timeout', label: 'settings.timeoutLabel', hint: 'settings.timeoutHint' },
   { page: 'requests', target: 'response-limit', label: 'settings.responseLimitLabel', hint: 'settings.responseLimitHint' },
+  { page: 'requests', target: 'k6-import-limit', label: 'settings.k6ImportLimitLabel', hint: 'settings.k6ImportLimitHint', keywords: 'k6 import importação script carga load' },
   { page: 'requests', target: 'autocomplete', label: 'settings.schemaAutocompleteLabel', hint: 'settings.schemaAutocompleteHint' },
   { page: 'network', target: 'proxy', label: 'settings.proxyLabel', keywords: 'pac url script system sistema proxy' },
   { page: 'network', target: 'tls', label: 'settings.tlsVerifyLabel', hint: 'settings.tlsVerifyHint', keywords: 'ssl tls https' },

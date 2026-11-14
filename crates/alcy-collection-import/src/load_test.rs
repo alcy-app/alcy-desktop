@@ -26,6 +26,33 @@ const MAX_REQUESTS: usize = 10_000;
 const MAX_THRESHOLD_CONNECTIONS: usize = 10_000;
 const MAX_JMETER_XML_DEPTH: usize = 128;
 const MAX_JMETER_XML_NODES: usize = 50_000;
+/// Bracket nesting (`(`, `[`, `{`, `${`) accepted in a k6 script. The
+/// JavaScript parser recurses once per level on the native stack, and an
+/// overflow aborts the whole app; real scripts stay far below this.
+const MAX_K6_NESTING_DEPTH: usize = 256;
+/// Native stack of the k6 analysis thread per byte of the size limit. Other
+/// recursive constructs (`!`, `if`, ternaries, arrows, TS generics) are
+/// bounded only by the source size; the worst measured one takes ~120 bytes
+/// of stack per source byte, so this keeps a 2x margin. The size is reserved,
+/// not used: only pathological input touches it.
+const K6_STACK_BYTES_PER_SOURCE_BYTE: usize = 256;
+/// Smallest analysis stack, for small limits.
+const MIN_K6_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+/// Limits of a load test import that this person can change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadImportLimits {
+    /// Largest k6 script accepted, in bytes; never above the 2 MB ceiling.
+    pub k6_source_bytes: usize,
+}
+
+impl Default for LoadImportLimits {
+    fn default() -> Self {
+        Self {
+            k6_source_bytes: alcy_domain::DEFAULT_K6_IMPORT_LIMIT_KB as usize * 1024,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadImportFormat {
@@ -66,6 +93,10 @@ pub enum LoadTestImportError {
     NotRecognized,
     #[error("arquivo excede o limite de {MAX_SOURCE_BYTES} bytes")]
     TooLarge,
+    #[error(
+        "o script k6 passa do limite de {limit_kb} KB; o limite pode ser alterado em Configurações › Requisições"
+    )]
+    K6TooLarge { limit_kb: usize },
     #[error("importação incompatível: {diagnostics:?}")]
     Incompatible {
         diagnostics: Vec<LoadImportDiagnostic>,
@@ -82,6 +113,16 @@ pub fn analyze_load_test(
     source: &str,
     now: SystemTime,
 ) -> Result<LoadImportAnalysis, LoadTestImportError> {
+    analyze_load_test_with_limits(name, source, now, LoadImportLimits::default())
+}
+
+/// [`analyze_load_test`] with the limits this person chose.
+pub fn analyze_load_test_with_limits(
+    name: &str,
+    source: &str,
+    now: SystemTime,
+    limits: LoadImportLimits,
+) -> Result<LoadImportAnalysis, LoadTestImportError> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(LoadTestImportError::TooLarge);
     }
@@ -91,10 +132,51 @@ pub fn analyze_load_test(
         || name.to_ascii_lowercase().ends_with(".ts")
         || source.contains("k6")
     {
-        analyze_k6(name, source, now)
+        let limit = limits.k6_source_bytes.min(MAX_SOURCE_BYTES);
+        if source.len() > limit {
+            return Err(LoadTestImportError::K6TooLarge {
+                limit_kb: limit / 1024,
+            });
+        }
+        analyze_k6_on_its_own_stack(name, source, now, limit)
     } else {
         Err(LoadTestImportError::NotRecognized)
     }
+}
+
+/// Runs the k6 analysis on a thread whose stack grows with the size limit
+/// (see [`K6_STACK_BYTES_PER_SOURCE_BYTE`]): the caller's 2 MiB worker stack
+/// is not enough for deeply nested scripts, and overflowing it aborts the
+/// app instead of failing the import.
+fn analyze_k6_on_its_own_stack(
+    name: &str,
+    source: &str,
+    now: SystemTime,
+    limit: usize,
+) -> Result<LoadImportAnalysis, LoadTestImportError> {
+    let stack = limit
+        .saturating_mul(K6_STACK_BYTES_PER_SOURCE_BYTE)
+        .max(MIN_K6_STACK_BYTES);
+    let failed = |message: String| LoadTestImportError::Incompatible {
+        diagnostics: vec![diag(source, 0, message)],
+    };
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("alcy-k6-import".to_string())
+            .stack_size(stack)
+            .spawn_scoped(scope, || analyze_k6(name, source, now))
+            .map_err(|error| {
+                failed(format!(
+                    "não foi possível iniciar a análise do script: {error}"
+                ))
+            })?
+            .join()
+            .unwrap_or_else(|_| {
+                Err(failed(
+                    "a análise do script terminou inesperadamente".to_string(),
+                ))
+            })
+    })
 }
 
 fn analyze_k6(
@@ -2195,6 +2277,123 @@ fn diag(source: &str, offset: usize, message: impl Into<String>) -> LoadImportDi
 mod tests {
     use super::*;
     use std::time::UNIX_EPOCH;
+
+    fn k6_body(body: &str) -> String {
+        format!("import http from 'k6/http';\nexport default function () {{ {body} }}\n")
+    }
+
+    fn nesting_diagnostic(result: Result<LoadImportAnalysis, LoadTestImportError>) -> bool {
+        matches!(result, Err(LoadTestImportError::Incompatible { diagnostics })
+            if diagnostics.iter().any(|d| d.message.contains("aninhamento")))
+    }
+
+    // Before the nesting limit and the analysis thread, each of these
+    // overflowed the caller's stack and aborted the whole app.
+    #[test]
+    fn deep_bracket_nesting_is_refused_instead_of_crashing() {
+        let depth = 10_000;
+        for body in [
+            format!(
+                "http.get({}'https://a.test'{});",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            ),
+            format!("const a = {}{};", "[".repeat(depth), "]".repeat(depth)),
+            format!("const a = {}1{};", "{a:".repeat(depth), "}".repeat(depth)),
+            format!(
+                "{}http.get('https://a.test');{}",
+                "{".repeat(depth),
+                "}".repeat(depth)
+            ),
+            format!("const a = {}x{};", "`${".repeat(depth), "}`".repeat(depth)),
+        ] {
+            let source = k6_body(&body);
+            assert!(
+                nesting_diagnostic(analyze_load_test("deep.js", &source, UNIX_EPOCH)),
+                "{}",
+                &body[..40]
+            );
+        }
+    }
+
+    #[test]
+    fn deep_nesting_without_brackets_does_not_crash() {
+        let not = k6_body(&format!("const a = {}true;", "!".repeat(400_000)));
+        let generics = format!(
+            "import http from 'k6/http';\ntype T = {}number{};\nexport default function () {{ http.get('https://a.test'); }}\n",
+            "Array<".repeat(60_000),
+            ">".repeat(60_000)
+        );
+        let chain = k6_body(&format!("const a = {}1;", "x ? 1 : ".repeat(60_000)));
+        for (name, source) in [
+            ("not.js", not),
+            ("generics.ts", generics),
+            ("ternary.js", chain),
+        ] {
+            assert!(source.len() < 512 * 1024, "{name}");
+            // Any outcome is fine; reaching it is the point.
+            let _ = analyze_load_test(name, &source, UNIX_EPOCH);
+        }
+    }
+
+    #[test]
+    fn k6_scripts_over_the_chosen_limit_are_refused() {
+        let source = k6_body(&format!(
+            "// {}\nhttp.get('https://a.test');",
+            "x".repeat(600 * 1024)
+        ));
+        assert_eq!(
+            analyze_load_test("big.js", &source, UNIX_EPOCH).unwrap_err(),
+            LoadTestImportError::K6TooLarge { limit_kb: 512 }
+        );
+        let raised = LoadImportLimits {
+            k6_source_bytes: 1024 * 1024,
+        };
+        assert!(analyze_load_test_with_limits("big.js", &source, UNIX_EPOCH, raised).is_ok());
+        // The 2 MB ceiling still applies whatever the setting says.
+        let unbounded = LoadImportLimits {
+            k6_source_bytes: usize::MAX,
+        };
+        let huge = k6_body(&"x".repeat(3 * 1024 * 1024));
+        assert_eq!(
+            analyze_load_test_with_limits("huge.js", &huge, UNIX_EPOCH, unbounded).unwrap_err(),
+            LoadTestImportError::TooLarge
+        );
+    }
+
+    #[test]
+    fn the_k6_limit_does_not_apply_to_jmeter() {
+        let source = format!(
+            "<jmeterTestPlan version=\"1.2\"><!-- {} --><hashTree/></jmeterTestPlan>",
+            "x".repeat(1024 * 1024)
+        );
+        assert!(!matches!(
+            analyze_load_test("plan.jmx", &source, UNIX_EPOCH),
+            Err(LoadTestImportError::K6TooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn nesting_ignores_text_comments_and_escapes() {
+        let deep = |depth: usize| "(".repeat(depth);
+        assert_eq!(k6_syntax::nesting_overflow(&deep(3), 3), None);
+        assert_eq!(k6_syntax::nesting_overflow(&deep(4), 3), Some(3));
+        for text in [
+            "'((((' + \"[[[[\"",
+            "`{{{{ (((( ` + 1",
+            "// ((((\n1",
+            "/* [[[[ */ 1",
+            r"/\(\(\(\(/.test(x)",
+            r"'it\'s ((((('",
+        ] {
+            assert_eq!(k6_syntax::nesting_overflow(text, 3), None, "{text}");
+        }
+        assert_eq!(
+            k6_syntax::nesting_overflow("`${`${`${`${x}`}`}`}`", 3),
+            Some(10)
+        );
+        assert_eq!(k6_syntax::nesting_overflow("f(a)(b)(c)(d)[e]{f}", 1), None);
+    }
 
     fn load_configs(analysis: &LoadImportAnalysis, kind: LoadNodeKind) -> Vec<serde_json::Value> {
         analysis

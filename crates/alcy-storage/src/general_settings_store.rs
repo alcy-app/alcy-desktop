@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use alcy_domain::{
-    DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_RESPONSE_SIZE_LIMIT_MB, GeneralSettings,
-    HistoryRetention, RequestTimeout, ResponseSizeLimit,
+    DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_K6_IMPORT_LIMIT_KB, DEFAULT_RESPONSE_SIZE_LIMIT_MB,
+    GeneralSettings, HistoryRetention, K6ImportLimit, RequestTimeout, ResponseSizeLimit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,12 @@ struct PersistedFile {
     /// que sempre guardava as respostas: continua guardando (`true`).
     #[serde(default = "saved_before_the_option_existed")]
     save_history_responses: bool,
+    #[serde(default = "default_k6_import_limit_kb")]
+    k6_import_limit_kb: u32,
+}
+
+fn default_k6_import_limit_kb() -> u32 {
+    DEFAULT_K6_IMPORT_LIMIT_KB
 }
 
 fn saved_before_the_option_existed() -> bool {
@@ -79,11 +85,14 @@ impl GeneralSettingsStore {
         };
         let history_retention = HistoryRetention::days(file.history_retention_days)
             .map_err(|error| StorageError::Corrupted(error.to_string()))?;
+        let k6_import_limit = K6ImportLimit::kilobytes(file.k6_import_limit_kb)
+            .map_err(|error| StorageError::Corrupted(error.to_string()))?;
         Ok(GeneralSettings {
             request_timeout,
             response_size_limit,
             history_retention,
             save_history_responses: file.save_history_responses,
+            k6_import_limit,
         })
     }
 
@@ -117,6 +126,7 @@ impl GeneralSettingsStore {
             },
             history_retention_days: settings.history_retention.as_days(),
             save_history_responses: settings.save_history_responses,
+            k6_import_limit_kb: settings.k6_import_limit.as_kilobytes(),
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|error| StorageError::Write(error.to_string()))?;
@@ -257,6 +267,30 @@ mod tests {
         };
         store.save(&settings).unwrap();
         assert_eq!(store.load().unwrap(), settings);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_k6_import_limit_defaults_when_missing_and_round_trips() {
+        let path = temp_path();
+        fs::write(&path, r#"{"version":1,"requestTimeoutSeconds":30}"#).unwrap();
+        let store = GeneralSettingsStore::new(path.clone());
+        assert_eq!(
+            store.load().unwrap().k6_import_limit,
+            K6ImportLimit::default()
+        );
+        let settings = GeneralSettings {
+            k6_import_limit: K6ImportLimit::kilobytes(2048).unwrap(),
+            ..GeneralSettings::default()
+        };
+        store.save(&settings).unwrap();
+        assert_eq!(store.load().unwrap(), settings);
+        fs::write(
+            &path,
+            r#"{"version":1,"requestTimeoutSeconds":30,"k6ImportLimitKb":0}"#,
+        )
+        .unwrap();
+        assert!(matches!(store.load(), Err(StorageError::Corrupted(_))));
         let _ = fs::remove_file(path);
     }
 

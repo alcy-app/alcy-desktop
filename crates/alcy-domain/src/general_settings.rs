@@ -13,6 +13,10 @@ pub const MAX_RESPONSE_SIZE_LIMIT_MB: u32 = 4096;
 /// Retenção padrão do histórico de execuções, que também é a maior aceita.
 pub const DEFAULT_HISTORY_RETENTION_DAYS: u32 = 7;
 pub const MAX_HISTORY_RETENTION_DAYS: u32 = 7;
+/// Largest k6 script accepted by the load test import, by default.
+pub const DEFAULT_K6_IMPORT_LIMIT_KB: u32 = 512;
+/// Highest k6 limit accepted: the import's ceiling for any load test file.
+pub const MAX_K6_IMPORT_LIMIT_KB: u32 = 2048;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RequestTimeoutError {
@@ -23,6 +27,12 @@ pub enum RequestTimeoutError {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ResponseSizeLimitError {
     #[error("o limite de resposta deve ficar entre 1 e {MAX_RESPONSE_SIZE_LIMIT_MB} MB")]
+    OutOfRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum K6ImportLimitError {
+    #[error("o limite de scripts k6 deve ficar entre 1 e {MAX_K6_IMPORT_LIMIT_KB} KB")]
     OutOfRange,
 }
 
@@ -101,6 +111,35 @@ impl Default for ResponseSizeLimit {
     }
 }
 
+/// Largest k6 script the load test import accepts. There is no "disabled"
+/// value: the analysis stack is sized from this limit, so it stays bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct K6ImportLimit(u32);
+
+impl K6ImportLimit {
+    pub fn kilobytes(kilobytes: u32) -> Result<Self, K6ImportLimitError> {
+        if (1..=MAX_K6_IMPORT_LIMIT_KB).contains(&kilobytes) {
+            Ok(Self(kilobytes))
+        } else {
+            Err(K6ImportLimitError::OutOfRange)
+        }
+    }
+
+    pub fn as_kilobytes(self) -> u32 {
+        self.0
+    }
+
+    pub fn bytes(self) -> usize {
+        self.0 as usize * 1024
+    }
+}
+
+impl Default for K6ImportLimit {
+    fn default() -> Self {
+        Self(DEFAULT_K6_IMPORT_LIMIT_KB)
+    }
+}
+
 /// Quanto tempo uma chamada pode levar, da conexão ao fim do corpo da
 /// resposta, antes de falhar com timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,11 +185,36 @@ pub struct GeneralSettings {
     /// versão anterior continua com as respostas guardadas
     /// (`GeneralSettingsStore::ensure_first_run_defaults`).
     pub save_history_responses: bool,
+    pub k6_import_limit: K6ImportLimit,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_k6_import_limit_defaults_to_512_kb_and_stays_in_range() {
+        assert_eq!(
+            GeneralSettings::default().k6_import_limit.bytes(),
+            512 * 1024
+        );
+        assert_eq!(
+            K6ImportLimit::kilobytes(1).map(K6ImportLimit::as_kilobytes),
+            Ok(1)
+        );
+        assert_eq!(
+            K6ImportLimit::kilobytes(MAX_K6_IMPORT_LIMIT_KB).map(K6ImportLimit::bytes),
+            Ok(2048 * 1024)
+        );
+        assert_eq!(
+            K6ImportLimit::kilobytes(0),
+            Err(K6ImportLimitError::OutOfRange)
+        );
+        assert_eq!(
+            K6ImportLimit::kilobytes(MAX_K6_IMPORT_LIMIT_KB + 1),
+            Err(K6ImportLimitError::OutOfRange)
+        );
+    }
 
     #[test]
     fn defaults_to_sixty_seconds() {

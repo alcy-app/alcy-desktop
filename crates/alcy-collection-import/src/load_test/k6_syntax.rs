@@ -13,7 +13,10 @@ use oxc_ast::ast::{
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
 
-use super::{K6MetricDefinition, K6StaticImport, LoadImportDiagnostic, LoadTestImportError, diag};
+use super::{
+    K6MetricDefinition, K6StaticImport, LoadImportDiagnostic, LoadTestImportError,
+    MAX_K6_NESTING_DEPTH, diag,
+};
 
 pub(super) struct K6Syntax {
     pub imports: Vec<K6StaticImport>,
@@ -42,9 +45,103 @@ struct StaticBody<'a> {
     offset: usize,
 }
 
+/// Where bracket nesting (`(`, `[`, `{` and `${` in templates) first goes
+/// deeper than `max`, before the parser recurses on it. Text inside strings,
+/// templates and comments does not count, nor an escaped character (`\(` in a
+/// regex). Regex literals are otherwise read as code: an unbalanced bracket in
+/// one only makes the count higher, never lets real nesting through.
+pub(super) fn nesting_overflow(source: &str, max: usize) -> Option<usize> {
+    /// What an open `}`, `)` or `]` closes, or a template being read.
+    enum Frame {
+        Bracket,
+        TemplateExpression,
+        Template,
+    }
+    let bytes = source.as_bytes();
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut depth = 0usize;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let next = bytes.get(index + 1).copied();
+        if matches!(stack.last(), Some(Frame::Template)) {
+            match (byte, next) {
+                (b'\\', _) => index += 1,
+                (b'`', _) => {
+                    stack.pop();
+                }
+                (b'$', Some(b'{')) => {
+                    depth += 1;
+                    if depth > max {
+                        return Some(index);
+                    }
+                    stack.push(Frame::TemplateExpression);
+                    index += 1;
+                }
+                _ => {}
+            }
+            index += 1;
+            continue;
+        }
+        match (byte, next) {
+            (b'\\', _) => index += 1,
+            (b'\'' | b'"', _) => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != byte && bytes[index] != b'\n' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+            }
+            (b'`', _) => stack.push(Frame::Template),
+            (b'/', Some(b'/')) => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            (b'/', Some(b'*')) => {
+                index += 2;
+                while index < bytes.len() && !bytes[index..].starts_with(b"*/") {
+                    index += 1;
+                }
+                index += 1;
+            }
+            (b'(' | b'[' | b'{', _) => {
+                depth += 1;
+                if depth > max {
+                    return Some(index);
+                }
+                stack.push(Frame::Bracket);
+            }
+            (b')' | b']' | b'}', _) => {
+                if matches!(
+                    stack.last(),
+                    Some(Frame::Bracket | Frame::TemplateExpression)
+                ) {
+                    stack.pop();
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
 /// Inspect syntax without evaluating it. Unknown statements cannot disappear
 /// during lowering, and nested callbacks cannot become unconditional requests.
 pub(super) fn parse_k6_syntax(name: &str, source: &str) -> Result<K6Syntax, LoadTestImportError> {
+    if let Some(offset) = nesting_overflow(source, MAX_K6_NESTING_DEPTH) {
+        return Err(LoadTestImportError::Incompatible {
+            diagnostics: vec![diag(
+                source,
+                offset,
+                format!("aninhamento passa de {MAX_K6_NESTING_DEPTH} níveis"),
+            )],
+        });
+    }
     let source_type =
         SourceType::from_path(name.to_ascii_lowercase()).unwrap_or_else(|_| SourceType::mjs());
     let allocator = Allocator::default();

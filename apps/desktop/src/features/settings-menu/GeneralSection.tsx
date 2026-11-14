@@ -14,6 +14,9 @@ export const MAX_REQUEST_TIMEOUT_SECONDS = 3600
 /** Mirror `DEFAULT_RESPONSE_SIZE_LIMIT_MB` and `MAX_RESPONSE_SIZE_LIMIT_MB` (`alcy-domain`). */
 export const DEFAULT_RESPONSE_SIZE_LIMIT_MB = 50
 export const MAX_RESPONSE_SIZE_LIMIT_MB = 4096
+/** Mirror `DEFAULT_K6_IMPORT_LIMIT_KB` and `MAX_K6_IMPORT_LIMIT_KB` (`alcy-domain`). */
+export const DEFAULT_K6_IMPORT_LIMIT_KB = 512
+export const MAX_K6_IMPORT_LIMIT_KB = 2048
 /** Mirror `DEFAULT_HISTORY_RETENTION_DAYS` and `MAX_HISTORY_RETENTION_DAYS` (`alcy-domain`). */
 export const DEFAULT_HISTORY_RETENTION_DAYS = 7
 export const MAX_HISTORY_RETENTION_DAYS = 7
@@ -70,6 +73,25 @@ export function RequestSettings({ saved, loadError, save }: GeneralSettingsState
           onApply={(responseSizeLimitMb) => save({ responseSizeLimitMb })}
         />
       </section>
+      <section className="settings-section settings-preference" data-testid="k6-import-limit-settings" data-setting="k6-import-limit" tabIndex={-1}>
+        <div>
+          <p className="settings-section-label">{t('settings.k6ImportLimitLabel')}</p>
+          <p className="settings-proxy-hint">{t('settings.k6ImportLimitHint')}</p>
+        </div>
+        <LimitSetting
+          savedValue={saved === null ? undefined : saved.k6ImportLimitKb}
+          defaultValue={DEFAULT_K6_IMPORT_LIMIT_KB}
+          max={MAX_K6_IMPORT_LIMIT_KB}
+          inputAriaLabel={t('settings.k6ImportLimitAria')}
+          unit={t('settings.k6ImportLimitUnit')}
+          invalidMessage={t('settings.k6ImportLimitInvalid', { max: MAX_K6_IMPORT_LIMIT_KB })}
+          loadError={loadError && t('settings.k6ImportLimitLoadError', { message: loadError })}
+          saveErrorMessage={(message) => t('settings.k6ImportLimitSaveError', { message })}
+          applyAriaLabel={t('settings.k6ImportLimitApplyAria')}
+          restoreAriaLabel={t('settings.k6ImportLimitRestoreAria')}
+          onApply={(k6ImportLimitKb) => save({ k6ImportLimitKb: k6ImportLimitKb ?? DEFAULT_K6_IMPORT_LIMIT_KB })}
+        />
+      </section>
       <SchemaAutocompleteSetting />
     </>
   )
@@ -120,8 +142,9 @@ interface LimitSettingProps {
   max: number
   inputAriaLabel: string
   unit: string
-  disableLabel: string
-  disabledHint: string
+  /** Without it, the limit cannot be disabled and no checkbox is shown. */
+  disableLabel?: string
+  disabledHint?: string
   invalidMessage: string
   loadError: string | null
   saveErrorMessage: (message: string) => string
@@ -131,7 +154,7 @@ interface LimitSettingProps {
   onApply: (value: number | null) => Promise<SaveOutcome>
 }
 
-/** A positive integer that can also be disabled (`null`). */
+/** A positive integer that can also be disabled (`null`) when `disableLabel` is given. */
 function LimitSetting({
   savedValue,
   defaultValue,
@@ -201,18 +224,20 @@ function LimitSetting({
         />
         <span>{unit}</span>
       </div>
-      <label className="settings-checkbox">
-        <Checkbox
-          checked={disabled}
-          disabled={locked}
-          onChange={(event) => {
-            setDisabled(event.target.checked)
-            setSaveError(null)
-          }}
-        />
-        <span>{disableLabel}</span>
-      </label>
-      {disabled && <p className="settings-proxy-hint">{disabledHint}</p>}
+      {disableLabel !== undefined && (
+        <label className="settings-checkbox">
+          <Checkbox
+            checked={disabled}
+            disabled={locked}
+            onChange={(event) => {
+              setDisabled(event.target.checked)
+              setSaveError(null)
+            }}
+          />
+          <span>{disableLabel}</span>
+        </label>
+      )}
+      {disabled && disabledHint && <p className="settings-proxy-hint">{disabledHint}</p>}
       {invalid && <InlineAlert>{invalidMessage}</InlineAlert>}
       {loadError && <InlineAlert>{loadError}</InlineAlert>}
       {saveError && <InlineAlert>{saveError}</InlineAlert>}

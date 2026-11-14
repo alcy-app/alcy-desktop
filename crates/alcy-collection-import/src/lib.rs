@@ -22,8 +22,8 @@ mod variable_review;
 use docs::{DocsCollector, ParameterFields};
 
 pub use load_test::{
-    LoadImportAnalysis, LoadImportDiagnostic, LoadImportFormat, LoadImportRequest,
-    LoadTestImportError, analyze_load_test,
+    LoadImportAnalysis, LoadImportDiagnostic, LoadImportFormat, LoadImportLimits,
+    LoadImportRequest, LoadTestImportError, analyze_load_test, analyze_load_test_with_limits,
 };
 pub use png_text::{IMPORT_PNG_KEYWORD, is_png, png_text};
 use script_translation::{ScriptDialect, scope_segment, translate};

@@ -82,7 +82,7 @@ beforeEach(() => {
   getTlsSettings.mockResolvedValue({ ok: true, value: { verifyCertificates: true } })
   getGeneralSettings.mockReset()
   saveGeneralSettings.mockReset()
-  getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
+  getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
   getSecuritySettings.mockReset()
   saveSecuritySettings.mockReset()
   getSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: false, allowBodyFilesOutsideWorkspace: false } })
@@ -141,7 +141,7 @@ describe('SettingsMenu — search and shared preferences', () => {
   })
 
   it('serializes saves across pages using the latest successful snapshot', async () => {
-    const updated = { requestTimeoutSeconds: 30, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false }
+    const updated = { requestTimeoutSeconds: 30, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }
     let finishFirst!: (value: { ok: true; value: typeof updated }) => void
     saveGeneralSettings.mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve }))
     saveGeneralSettings.mockImplementationOnce(async (input) => ({ ok: true, value: input }))
@@ -486,7 +486,7 @@ describe('SettingsMenu — general preferences', () => {
   })
 
   it('applies a new timeout in seconds', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 15, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 15, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
@@ -494,13 +494,13 @@ describe('SettingsMenu — general preferences', () => {
     fireEvent.change(seconds, { target: { value: '15' } })
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 15, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 15, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
   it('disables timeout', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
@@ -509,11 +509,11 @@ describe('SettingsMenu — general preferences', () => {
     expect(seconds).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
   })
 
   it('restores the default from a disabled timeout', async () => {
-    getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
+    getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: null, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const disable = await screen.findByRole('checkbox', { name: 'Desabilitar timeout' })
     await waitFor(() => expect(disable).toBeChecked())
@@ -550,7 +550,7 @@ describe('SettingsMenu — general preferences', () => {
   })
 
   it('applies a response limit while preserving timeout', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 10, historyRetentionDays: 7, saveHistoryResponses: false } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 10, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const megabytes = await screen.findByRole('spinbutton', { name: 'Limite de resposta em MB' })
     await waitFor(() => expect(megabytes).toBeEnabled())
@@ -559,13 +559,35 @@ describe('SettingsMenu — general preferences', () => {
     fireEvent.change(megabytes, { target: { value: '10' } })
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar limite de resposta' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 10, historyRetentionDays: 7, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 10, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar limite de resposta' })).toBeDisabled())
   })
 
+  it('applies a k6 import limit that cannot be disabled and rejects out-of-range values', async () => {
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 1024 } })
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
+    const kilobytes = await screen.findByRole('spinbutton', { name: 'Limite de importação de scripts k6 em KB' })
+    await waitFor(() => expect(kilobytes).toBeEnabled())
+    expect(kilobytes).toHaveValue(512)
+    const section = screen.getByTestId('k6-import-limit-settings')
+    expect(within(section).queryByRole('checkbox')).not.toBeInTheDocument()
+    const apply = screen.getByRole('button', { name: 'Aplicar limite de importação k6' })
+
+    for (const invalid of ['0', '2049']) {
+      fireEvent.change(kilobytes, { target: { value: invalid } })
+      expect(await within(section).findByText('Informe um número inteiro entre 1 e 2048 KB.')).toBeInTheDocument()
+      expect(apply).toBeDisabled()
+    }
+
+    fireEvent.change(kilobytes, { target: { value: '1024' } })
+    fireEvent.click(apply)
+
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 1024 }))
+  })
+
   it('preserves the response limit when applying timeout', async () => {
-    getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false } })
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 30, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false } })
+    getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 30, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const seconds = await screen.findByRole('spinbutton', { name: 'Timeout em segundos' })
     await waitFor(() => expect(seconds).toBeEnabled())
@@ -573,12 +595,12 @@ describe('SettingsMenu — general preferences', () => {
     fireEvent.change(seconds, { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 30, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 30, responseSizeLimitMb: 200, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
     expect(screen.getByRole('spinbutton', { name: 'Limite de resposta em MB' })).toHaveValue(200)
   })
 
   it('disables the response limit', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const megabytes = await screen.findByRole('spinbutton', { name: 'Limite de resposta em MB' })
     await waitFor(() => expect(megabytes).toBeEnabled())
@@ -587,11 +609,11 @@ describe('SettingsMenu — general preferences', () => {
     expect(megabytes).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar limite de resposta' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
   })
 
   it('reduces history retention and requests a history reload', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 3, saveHistoryResponses: false } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 3, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     const onHistoryRetentionChange = vi.fn()
     render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} onHistoryRetentionChange={onHistoryRetentionChange} />)
     const days = await screen.findByRole('spinbutton', { name: 'Retenção do histórico em dias' })
@@ -601,12 +623,12 @@ describe('SettingsMenu — general preferences', () => {
     fireEvent.change(days, { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar retenção do histórico' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 3, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 3, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
     await waitFor(() => expect(onHistoryRetentionChange).toHaveBeenCalledTimes(1))
   })
 
   it('saves zero days when history is disabled', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
     const days = await screen.findByRole('spinbutton', { name: 'Retenção do histórico em dias' })
     await waitFor(() => expect(days).toBeEnabled())
@@ -615,11 +637,11 @@ describe('SettingsMenu — general preferences', () => {
     expect(days).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Aplicar retenção do histórico' }))
 
-    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false }))
+    await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
   })
 
   it('shows history disabled for zero saved retention', async () => {
-    getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false } })
+    getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
 
     const disable = await screen.findByRole('checkbox', { name: 'Desativar histórico' })
@@ -639,7 +661,7 @@ describe('SettingsMenu — general preferences', () => {
   })
 
   it('keeps history responses off by default and enables them immediately', async () => {
-    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true } })
+    saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
     const toggle = await screen.findByRole('checkbox', { name: 'Salvar respostas no histórico' })
     await waitFor(() => expect(toggle).toBeEnabled())
@@ -648,7 +670,7 @@ describe('SettingsMenu — general preferences', () => {
     fireEvent.click(toggle)
 
     await waitFor(() =>
-      expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true }),
+      expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true, k6ImportLimitKb: 512 }),
     )
     await waitFor(() => expect(toggle).toBeChecked())
   })

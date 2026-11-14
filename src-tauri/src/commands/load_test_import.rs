@@ -4,10 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alcy_app::{LoadFlowError, content_hash, plan_load_flow};
 use alcy_collection_import::{
-    LoadImportAnalysis, LoadImportDiagnostic, LoadImportFormat, LoadTestImportError,
-    analyze_load_test,
+    LoadImportAnalysis, LoadImportDiagnostic, LoadImportFormat, LoadImportLimits,
+    LoadTestImportError, analyze_load_test_with_limits,
 };
-use alcy_storage::FlowStore;
+use alcy_storage::{FlowStore, GeneralSettingsStore};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::flows::{FlowDto, flow_to_dto};
@@ -82,13 +82,26 @@ impl From<LoadTestImportError> for LoadTestImportErrorDto {
     }
 }
 
+/// The import limits this person chose (Settings › Requests); the defaults
+/// when the settings cannot be read.
+pub(crate) fn load_import_limits(settings: &GeneralSettingsStore) -> LoadImportLimits {
+    settings
+        .load()
+        .map(|settings| LoadImportLimits {
+            k6_source_bytes: settings.k6_import_limit.bytes(),
+        })
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn analyze_load_test_import(
     input: AnalyzeLoadTestImportInput,
     picked: tauri::State<'_, PickedPaths>,
+    settings: tauri::State<'_, GeneralSettingsStore>,
 ) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
     require_picked(&picked, &input.source_path)?;
-    tauri::async_runtime::spawn_blocking(move || analyze_load_test_import_blocking(input))
+    let limits = load_import_limits(&settings);
+    tauri::async_runtime::spawn_blocking(move || analyze_load_test_import_blocking(input, limits))
         .await
         .map_err(|error| LoadTestImportErrorDto::InvalidSource {
             message: error.to_string(),
@@ -97,13 +110,14 @@ pub async fn analyze_load_test_import(
 
 fn analyze_load_test_import_blocking(
     input: AnalyzeLoadTestImportInput,
+    limits: LoadImportLimits,
 ) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
     crate::logging::logged_with(
         "alcy::load-import",
         "analisar importação de teste de carga",
         || {
             let (name, bytes) = read_source(&input.source_path)?;
-            analyze_load_test_source(&name, &bytes)
+            analyze_load_test_source(&name, &bytes, limits)
         },
     )
 }
@@ -123,12 +137,13 @@ fn require_picked(picked: &PickedPaths, source_path: &str) -> Result<(), LoadTes
 pub(crate) fn analyze_load_test_source(
     name: &str,
     bytes: &[u8],
+    limits: LoadImportLimits,
 ) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
     let source = std::str::from_utf8(bytes).map_err(|_| LoadTestImportErrorDto::InvalidSource {
         message: "o arquivo precisa estar em UTF-8".to_string(),
     })?;
-    let mut analysis =
-        analyze_load_test(name, source, SystemTime::now()).map_err(LoadTestImportErrorDto::from)?;
+    let mut analysis = analyze_load_test_with_limits(name, source, SystemTime::now(), limits)
+        .map_err(LoadTestImportErrorDto::from)?;
     validate_execution(&analysis)?;
     analysis.flow.id = provisional_flow_id(bytes);
     Ok(analysis_to_dto(analysis, content_hash(bytes)))
@@ -143,11 +158,13 @@ pub async fn commit_load_test_import(
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
     picked: tauri::State<'_, PickedPaths>,
+    settings: tauri::State<'_, GeneralSettingsStore>,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
     require_picked(&picked, &input.source_path)?;
     let secrets = alcy_storage::LocalSecrets::clone(&secrets);
+    let limits = load_import_limits(&settings);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        commit_load_test_import_with_format(input, secrets)
+        commit_load_test_import_with_format(input, secrets, limits)
     })
     .await
     .map_err(|error| LoadTestImportErrorDto::Storage {
@@ -182,13 +199,15 @@ fn commit_load_test_import_blocking(
     input: CommitLoadTestImportInput,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
     let secrets = crate::commands::test_secrets::test_secrets();
-    commit_load_test_import_with_format(input, secrets).map(|(flow, _)| flow)
+    commit_load_test_import_with_format(input, secrets, LoadImportLimits::default())
+        .map(|(flow, _)| flow)
 }
 
 /// The saved flow and the source format (`k6`, `jmeter`).
 fn commit_load_test_import_with_format(
     input: CommitLoadTestImportInput,
     secrets: alcy_storage::LocalSecrets,
+    limits: LoadImportLimits,
 ) -> Result<(FlowDto, &'static str), LoadTestImportErrorDto> {
     crate::logging::logged_with(
         "alcy::load-import",
@@ -203,8 +222,9 @@ fn commit_load_test_import_with_format(
                 std::str::from_utf8(&bytes).map_err(|_| LoadTestImportErrorDto::InvalidSource {
                     message: "o arquivo precisa estar em UTF-8".to_string(),
                 })?;
-            let mut analysis = analyze_load_test(&name, source, SystemTime::now())
-                .map_err(LoadTestImportErrorDto::from)?;
+            let mut analysis =
+                analyze_load_test_with_limits(&name, source, SystemTime::now(), limits)
+                    .map_err(LoadTestImportErrorDto::from)?;
             validate_execution(&analysis)?;
             analysis.flow.id = committed_flow_id();
 
@@ -396,11 +416,14 @@ fn diagnostic_to_dto(diagnostic: LoadImportDiagnostic) -> LoadImportDiagnosticDt
 
 #[cfg(test)]
 mod tests {
+    use super::commit_load_test_import_blocking as commit_load_test_import;
     use super::*;
-    use super::{
-        analyze_load_test_import_blocking as analyze_load_test_import,
-        commit_load_test_import_blocking as commit_load_test_import,
-    };
+
+    fn analyze_load_test_import(
+        input: AnalyzeLoadTestImportInput,
+    ) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
+        analyze_load_test_import_blocking(input, LoadImportLimits::default())
+    }
     use crate::commands::test_secrets::test_secrets;
     use std::future::pending;
     use std::sync::Mutex;

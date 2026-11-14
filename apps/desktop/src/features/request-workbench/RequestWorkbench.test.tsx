@@ -227,7 +227,7 @@ vi.mock('../../bindings/get-proxy-settings', () => ({
   getProxySettings: (...args: unknown[]) => getProxySettings(...args),
 }))
 vi.mock('../../bindings/get-general-settings', () => ({
-  getGeneralSettings: () => Promise.resolve({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } }),
+  getGeneralSettings: () => Promise.resolve({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 } }),
 }))
 
 vi.mock('../../bindings/execute-graphql-request', () => ({

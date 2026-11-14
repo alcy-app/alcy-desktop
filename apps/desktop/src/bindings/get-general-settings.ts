@@ -9,6 +9,8 @@ export interface GeneralSettingsDto {
   historyRetentionDays: number
   /** Guarda corpo e headers das respostas no histórico; desligado por padrão. */
   saveHistoryResponses: boolean
+  /** Largest k6 script the load test import accepts, in KB (no "disabled" value). */
+  k6ImportLimitKb: number
 }
 
 export type GeneralSettingsCommandError =

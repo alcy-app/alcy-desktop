@@ -16,10 +16,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Changed
 
 - Com parte do texto selecionada, Ctrl+/ e Ctrl+; comentam só o trecho selecionado (`/* */`), não mais a linha inteira.
+- Scripts k6 importados como teste de carga podem ter até 512 KB. O limite pode ser alterado em Configurações › Requisições.
 
 ### Fixed
 
 - Fazer pull com mesclagem num workspace git que não versiona ambientes não apaga mais os ambientes de quem os versiona.
+- Importar um script k6 com muitos parênteses ou blocos aninhados não fecha mais o Alcy.
 
 ### Security
 

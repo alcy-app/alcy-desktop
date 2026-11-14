@@ -76,10 +76,11 @@ pub use flow::{
 };
 pub use flow_folder::{FlowFolder, FlowFoldersError, validate_flow_folders};
 pub use general_settings::{
-    DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    DEFAULT_HISTORY_RETENTION_DAYS, DEFAULT_K6_IMPORT_LIMIT_KB, DEFAULT_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_RESPONSE_SIZE_LIMIT_MB, GeneralSettings, HistoryRetention, HistoryRetentionError,
-    MAX_HISTORY_RETENTION_DAYS, MAX_REQUEST_TIMEOUT_SECONDS, MAX_RESPONSE_SIZE_LIMIT_MB,
-    RequestTimeout, RequestTimeoutError, ResponseSizeLimit, ResponseSizeLimitError,
+    K6ImportLimit, K6ImportLimitError, MAX_HISTORY_RETENTION_DAYS, MAX_K6_IMPORT_LIMIT_KB,
+    MAX_REQUEST_TIMEOUT_SECONDS, MAX_RESPONSE_SIZE_LIMIT_MB, RequestTimeout, RequestTimeoutError,
+    ResponseSizeLimit, ResponseSizeLimitError,
 };
 pub use git_identity::{GitIdentity, GitIdentityError, GitIdentitySettings};
 pub use grpc_call::{GrpcCall, GrpcSchemaSource};

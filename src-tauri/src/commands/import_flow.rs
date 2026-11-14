@@ -4,8 +4,11 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::flows::{FlowDto, FlowInput, FlowsError, flow_from_input, flow_to_dto};
+use alcy_collection_import::LoadImportLimits;
+use alcy_storage::GeneralSettingsStore;
+
 use super::load_test_import::{
-    LoadTestImportAnalysisDto, LoadTestImportErrorDto, analyze_load_test_source,
+    LoadTestImportAnalysisDto, LoadTestImportErrorDto, analyze_load_test_source, load_import_limits,
 };
 use super::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 
@@ -29,6 +32,7 @@ pub enum FlowImportAnalysisDto {
 pub async fn analyze_flow_import(
     input: ImportFlowInput,
     picked: tauri::State<'_, PickedPaths>,
+    settings: tauri::State<'_, GeneralSettingsStore>,
 ) -> Result<FlowImportAnalysisDto, LoadTestImportErrorDto> {
     // Only a file from the open dialog or a drop is read (ADR 0081).
     if !picked.allows(Path::new(&input.source_path)) {
@@ -36,14 +40,20 @@ pub async fn analyze_flow_import(
             message: NOT_PICKED_MESSAGE.into(),
         });
     }
-    tauri::async_runtime::spawn_blocking(move || analyze_import(Path::new(&input.source_path)))
-        .await
-        .map_err(|error| LoadTestImportErrorDto::InvalidSource {
-            message: error.to_string(),
-        })?
+    let limits = load_import_limits(&settings);
+    tauri::async_runtime::spawn_blocking(move || {
+        analyze_import(Path::new(&input.source_path), limits)
+    })
+    .await
+    .map_err(|error| LoadTestImportErrorDto::InvalidSource {
+        message: error.to_string(),
+    })?
 }
 
-fn analyze_import(path: &Path) -> Result<FlowImportAnalysisDto, LoadTestImportErrorDto> {
+fn analyze_import(
+    path: &Path,
+    limits: LoadImportLimits,
+) -> Result<FlowImportAnalysisDto, LoadTestImportErrorDto> {
     let convert_error = |error| match error {
         FlowsError::Invalid { message } => LoadTestImportErrorDto::InvalidSource { message },
         FlowsError::Storage { message } => LoadTestImportErrorDto::Storage { message },
@@ -66,7 +76,7 @@ fn analyze_import(path: &Path) -> Result<FlowImportAnalysisDto, LoadTestImportEr
         .ok_or_else(|| LoadTestImportErrorDto::InvalidSource {
             message: "Invalid import filename".into(),
         })?;
-    analyze_load_test_source(name, &bytes)
+    analyze_load_test_source(name, &bytes, limits)
         .map(|analysis| FlowImportAnalysisDto::LoadTest { analysis })
 }
 
@@ -163,7 +173,7 @@ mod tests {
         let renamed = root.join("renamed.js");
         std::fs::copy(&path, &renamed).unwrap();
         assert!(matches!(
-            analyze_import(&renamed).unwrap(),
+            analyze_import(&renamed, LoadImportLimits::default()).unwrap(),
             FlowImportAnalysisDto::Alcy { .. }
         ));
         assert!(!root.join("alcy-flows.json").exists());
@@ -203,7 +213,8 @@ mod tests {
         for (name, source, format) in [("script.json", k6, "k6"), ("plan.xml", jmeter, "jmeter")] {
             let path = root.join(name);
             std::fs::write(&path, source).unwrap();
-            let FlowImportAnalysisDto::LoadTest { analysis } = analyze_import(&path).unwrap()
+            let FlowImportAnalysisDto::LoadTest { analysis } =
+                analyze_import(&path, LoadImportLimits::default()).unwrap()
             else {
                 panic!("expected a load source")
             };
