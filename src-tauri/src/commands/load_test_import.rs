@@ -11,6 +11,7 @@ use alcy_storage::FlowStore;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::flows::{FlowDto, flow_to_dto};
+use crate::commands::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 
 const ASSET_DIRECTORY: &str = "alcy-flow-assets";
 const MAX_IMPORT_SOURCE_BYTES: u64 = 2 * 1024 * 1024;
@@ -84,7 +85,9 @@ impl From<LoadTestImportError> for LoadTestImportErrorDto {
 #[tauri::command]
 pub async fn analyze_load_test_import(
     input: AnalyzeLoadTestImportInput,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<LoadTestImportAnalysisDto, LoadTestImportErrorDto> {
+    require_picked(&picked, &input.source_path)?;
     tauri::async_runtime::spawn_blocking(move || analyze_load_test_import_blocking(input))
         .await
         .map_err(|error| LoadTestImportErrorDto::InvalidSource {
@@ -103,6 +106,17 @@ fn analyze_load_test_import_blocking(
             analyze_load_test_source(&name, &bytes)
         },
     )
+}
+
+/// The source comes only from the open dialog or a drop (ADR 0081).
+fn require_picked(picked: &PickedPaths, source_path: &str) -> Result<(), LoadTestImportErrorDto> {
+    if picked.allows(Path::new(source_path)) {
+        Ok(())
+    } else {
+        Err(LoadTestImportErrorDto::InvalidSource {
+            message: NOT_PICKED_MESSAGE.to_string(),
+        })
+    }
 }
 
 /// Analyze an already bounded source for the unified flow file selector.
@@ -128,7 +142,9 @@ pub async fn commit_load_test_import(
     input: CommitLoadTestImportInput,
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<FlowDto, LoadTestImportErrorDto> {
+    require_picked(&picked, &input.source_path)?;
     let secrets = alcy_storage::LocalSecrets::clone(&secrets);
     let result = tauri::async_runtime::spawn_blocking(move || {
         commit_load_test_import_with_format(input, secrets)

@@ -105,8 +105,6 @@ const ALLOWED_PERMISSIONS = new Set([
   'core:window:allow-close',
   'core:window:allow-start-dragging',
   'core:window:allow-is-maximized',
-  'dialog:allow-open',
-  'dialog:allow-save',
 ])
 
 const capabilitiesDir = join(ROOT, 'src-tauri/capabilities')
@@ -390,6 +388,83 @@ for (const file of rustRoots.flatMap((dir) => collectFiles(dir, (name) => name.e
       fail(`${PACKAGES_HOST}: ${downloader.slice(0, -1)} may only be called from script_packages (spec 0162).`)
     }
   }
+}
+
+// File paths never come trusted from the WebView (ADR 0081, spec 0164).
+// Native dialogs open in the backend only: the WebView has no dialog
+// permission and the frontend does not import the dialog plugin. A command
+// that saves a file the person chooses opens the save dialog itself; one that
+// reads a file the person points at accepts only paths in `PickedPaths`
+// (picked in the backend's open dialog or dropped on the window); and the
+// invoke handler refuses a `rootPath` that is not a known workspace.
+for (const file of collectFiles(join(ROOT, 'apps/desktop/src'), (name) => /\.(ts|tsx)$/.test(name))) {
+  const path = relative(ROOT, file).split(sep).join('/')
+  readFileSync(file, 'utf8')
+    .split('\n')
+    .forEach((line, index) => {
+      if (/@tauri-apps\/plugin-dialog/.test(line)) {
+        fail(`${path}:${index + 1}: native dialogs open in the backend (pick_paths, save_dialog), never from the WebView (ADR 0081).`)
+      }
+    })
+}
+{
+  const lib = read('src-tauri/src/lib.rs')
+  for (const guard of ['guard_workspace_roots(', '.on_window_event(record_dropped_paths)', '.manage(PickedPaths::default())']) {
+    if (!lib.includes(guard)) fail(`src-tauri/src/lib.rs: lost \`${guard}\` (ADR 0081).`)
+  }
+}
+// Commands reading a path field of their input must check it against the
+// picked paths. Body files follow their own grants (spec 0163).
+const PICKED_PATH_CHECK = /\bpicked\.allows\(|(?<!fn )\brequire_picked\(|\broots\.allows\(/
+const INPUT_PATH_FIELD = /\binput\.(path|paths|source_path|data_file_path|file_path)\b/
+for (const file of collectFiles(join(ROOT, 'src-tauri/src/commands'), (name) => name.endsWith('.rs'))) {
+  const path = relative(ROOT, file).split(sep).join('/')
+  if (path === 'src-tauri/src/commands/body_files.rs') continue
+  const production = readFileSync(file, 'utf8')
+    .split(/^#\[cfg\(test\)\]/m)[0]
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+  const reads = production.findIndex((line) => INPUT_PATH_FIELD.test(line))
+  if (reads >= 0 && !production.some((line) => PICKED_PATH_CHECK.test(line))) {
+    fail(`${path}:${reads + 1}: a path from the command input is used without checking it against PickedPaths (ADR 0081).`)
+  }
+}
+// The commands that take a path the person picked, each checking it in its
+// own body: a helper that checks is not enough if the command stops calling it.
+function commandBody(source, name) {
+  const start = source.search(new RegExp(`\\npub (async )?fn ${name}\\(`))
+  if (start < 0) return null
+  const end = source.indexOf('\n}\n', start)
+  return source.slice(start, end < 0 ? undefined : end)
+}
+for (const [path, commands] of [
+  ['src-tauri/src/commands/collections.rs', ['import_collections', 'prepare_import_from_path', 'expand_import_paths']],
+  ['src-tauri/src/commands/import_flow.rs', ['analyze_flow_import', 'import_flow']],
+  ['src-tauri/src/commands/load_test_import.rs', ['analyze_load_test_import', 'commit_load_test_import']],
+  ['src-tauri/src/commands/load_dataset_assets.rs', ['copy_load_dataset_asset']],
+  ['src-tauri/src/commands/documentation.rs', ['documentation']],
+  ['src-tauri/src/commands/custom_ca_certificates.rs', ['add_custom_ca_certificate']],
+  ['src-tauri/src/commands/execute_collection_run.rs', ['execute_collection_run']],
+  ['src-tauri/src/commands/local_git.rs', ['clone_git_workspace', 'trust_git_folder']],
+]) {
+  const source = read(path)
+  for (const name of commands) {
+    const body = commandBody(source, name)
+    if (body === null) fail(`${path}: command \`${name}\` not found; update the ADR 0081 list in this sensor.`)
+    else if (!PICKED_PATH_CHECK.test(body)) fail(`${path}: \`${name}\` lost its PickedPaths check (ADR 0081).`)
+  }
+}
+for (const path of [
+  'src-tauri/src/commands/save_response_body.rs',
+  'src-tauri/src/commands/export_har.rs',
+  'src-tauri/src/commands/export_png.rs',
+  'src-tauri/src/commands/export_webclient.rs',
+  'src-tauri/src/commands/export_flow.rs',
+  'src-tauri/src/commands/export_collection_run_report.rs',
+  'src-tauri/src/commands/collections.rs',
+  'src-tauri/src/commands/documentation.rs',
+]) {
+  if (!read(path).includes('choose_save_path(')) fail(`${path}: lost the backend save dialog (\`choose_save_path\`, ADR 0081).`)
 }
 
 if (failures.length > 0) {
