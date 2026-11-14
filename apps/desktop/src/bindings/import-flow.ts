@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickPath } from './pick-paths'
 import type { FlowDto } from './list-flows'
 import type { LoadTestImportAnalysisDto } from './load-test-import'
 
@@ -9,8 +9,7 @@ export async function pickFlowImportFile(loadTestingEnabled: boolean): Promise<s
   const filter = loadTestingEnabled
     ? { name: 'Alcy / k6 / JMeter', extensions: ['json', 'js', 'ts', 'jmx', 'xml'] }
     : { name: 'Alcy Flow', extensions: ['json'] }
-  const selected = await open({ directory: false, multiple: false, filters: [filter] })
-  return typeof selected === 'string' ? selected : selected?.[0] ?? null
+  return pickPath({ filters: [filter] })
 }
 
 /** Decode and validate without saving or executing the imported graph. */

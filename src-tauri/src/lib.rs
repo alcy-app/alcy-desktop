@@ -88,6 +88,7 @@ use commands::mock_servers::{
 };
 use commands::notify_when_unfocused::notify_when_unfocused;
 use commands::open_external_url::open_external_url;
+use commands::picked_paths::{PickedPaths, pick_paths, record_dropped_paths};
 use commands::preview_load_flow::preview_load_flow;
 use commands::proxy_settings::{
     ProxyApplyState, apply_saved_settings, get_proxy_settings, save_proxy_settings,
@@ -231,6 +232,9 @@ pub fn run_with(extensions: Vec<Extension>) {
         .manage(AgentHttpClient::new())
         .manage(AgentRuns::default())
         .manage(PendingUpdate::default())
+        .manage(PickedPaths::default())
+        // Dropped files count as picked: read commands accept them (ADR 0081).
+        .on_window_event(record_dropped_paths)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // Only Rust uses it (notify_when_unfocused); the WebView gets no notification permission.
@@ -420,6 +424,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 send_websocket_message,
                 close_websocket,
                 check_body_files,
+                pick_paths,
                 cancel_graphql_request,
                 list_environments,
                 save_environments,

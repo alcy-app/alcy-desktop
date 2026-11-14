@@ -45,6 +45,7 @@ pub mod mock_servers;
 pub mod notify_when_unfocused;
 pub mod open_external_url;
 pub mod ordered_save;
+pub mod picked_paths;
 pub mod preview_load_flow;
 pub mod protocol_dispatching_executor;
 pub mod proxy_settings;

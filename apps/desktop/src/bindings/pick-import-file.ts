@@ -1,23 +1,18 @@
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickPath, pickPaths } from './pick-paths'
 
-/** Abre o diálogo nativo para escolher um ou mais documentos importáveis. O
- * formato de cada arquivo é decidido pelo backend a partir do conteúdo, não
- * da extensão; um arquivo de coleção Bruno em árvore (`bruno.json`, `.bru`)
- * importa a coleção inteira. */
-export async function pickImportFiles(): Promise<string[]> {
-  const selected = await open({
-    directory: false,
+/** Opens the native dialog to choose one or more importable documents. The
+ * backend decides each file's format from its content, not its extension; a
+ * Bruno tree collection file (`bruno.json`, `.bru`) imports the whole
+ * collection. */
+export function pickImportFiles(): Promise<string[]> {
+  return pickPaths({
     multiple: true,
     filters: [{ name: 'Alcy / OpenAPI / Postman / Bruno / Insomnia / HAR / cURL / wget', extensions: ['json', 'yaml', 'yml', 'bru', 'har', 'sh', 'txt'] }],
   })
-  if (selected === null) return []
-  return typeof selected === 'string' ? [selected] : selected
 }
 
-/** Abre o diálogo nativo para escolher uma pasta; o backend expande a pasta
- * nos arquivos importáveis dentro dela (`expandImportPaths`). */
-export async function pickImportFolder(): Promise<string | null> {
-  const selected = await open({ directory: true, multiple: false })
-  if (selected === null) return null
-  return typeof selected === 'string' ? selected : (selected[0] ?? null)
+/** Opens the native dialog to choose a folder; the backend expands it into
+ * the importable files inside it (`expandImportPaths`). */
+export function pickImportFolder(): Promise<string | null> {
+  return pickPath({ directory: true })
 }

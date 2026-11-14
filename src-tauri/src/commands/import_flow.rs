@@ -7,6 +7,7 @@ use super::flows::{FlowDto, FlowInput, FlowsError, flow_from_input, flow_to_dto}
 use super::load_test_import::{
     LoadTestImportAnalysisDto, LoadTestImportErrorDto, analyze_load_test_source,
 };
+use super::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 
 // Match the individual collection and load-source import limit.
 const MAX_IMPORT_BYTES: u64 = 2 * 1024 * 1024;
@@ -27,7 +28,14 @@ pub enum FlowImportAnalysisDto {
 #[tauri::command]
 pub async fn analyze_flow_import(
     input: ImportFlowInput,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<FlowImportAnalysisDto, LoadTestImportErrorDto> {
+    // Only a file from the open dialog or a drop is read (ADR 0081).
+    if !picked.allows(Path::new(&input.source_path)) {
+        return Err(LoadTestImportErrorDto::InvalidSource {
+            message: NOT_PICKED_MESSAGE.into(),
+        });
+    }
     tauri::async_runtime::spawn_blocking(move || analyze_import(Path::new(&input.source_path)))
         .await
         .map_err(|error| LoadTestImportErrorDto::InvalidSource {
@@ -77,7 +85,13 @@ fn storage(error: std::io::Error) -> FlowsError {
 /// Read and validate only. The frontend commits the imported graph through
 /// its explicit snapshot save, preserving pending edits and folder membership.
 #[tauri::command]
-pub async fn import_flow(input: ImportFlowInput) -> Result<FlowDto, FlowsError> {
+pub async fn import_flow(
+    input: ImportFlowInput,
+    picked: tauri::State<'_, PickedPaths>,
+) -> Result<FlowDto, FlowsError> {
+    if !picked.allows(Path::new(&input.source_path)) {
+        return Err(invalid(NOT_PICKED_MESSAGE));
+    }
     let result =
         tauri::async_runtime::spawn_blocking(move || read_import(Path::new(&input.source_path)))
             .await

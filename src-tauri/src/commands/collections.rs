@@ -24,6 +24,7 @@ use crate::commands::execute_rest_request::{
 };
 use crate::commands::import_fetcher::ImportFetcher;
 use crate::commands::ordered_save::OrderedSaves;
+use crate::commands::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 use crate::commands::save_dialog::{
     SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
 };
@@ -1115,6 +1116,16 @@ fn store_prepared_import(
     Ok(output)
 }
 
+/// Import files come only from the open dialog or a drop on the window
+/// (ADR 0081): an invented path is refused before anything is read.
+fn require_picked(picked: &PickedPaths, path: &Path) -> Result<(), CollectionsCommandError> {
+    if picked.allows(path) {
+        Ok(())
+    } else {
+        Err(invalid(NOT_PICKED_MESSAGE))
+    }
+}
+
 /// Content that could not be read or recognized: the import ends here.
 fn import_failed(source: ImportSource) -> UsageEvent {
     UsageEvent::ImportFinished {
@@ -1182,22 +1193,23 @@ fn export_collections_inner(
     Ok(())
 }
 
-/// Importa coleções de um arquivo escolhido pelo usuário. O formato é
-/// detectado pelo conteúdo do arquivo, não pela extensão. O chamador insere
-/// as coleções retornadas no nível raiz do workspace aberto.
+/// Imports collections from a file the person picked. The format is
+/// detected from the content, not the extension. The caller inserts the
+/// returned collections at the root of the open workspace.
 ///
-/// Um documento OpenAPI grande (dezenas de MB, ex. a API REST do GitHub)
-/// pode levar da ordem de 1s para interpretar num build de desenvolvimento
-/// (sem otimizações) — `spawn_blocking` roda esse trabalho fora da runtime
-/// assíncrona do Tauri, para não travar a entrega de outros eventos/IPC
-/// enquanto isso acontece.
+/// A large OpenAPI document (tens of MB, e.g. GitHub's REST API) can take
+/// around 1s to parse in a development build (no optimizations), so
+/// `spawn_blocking` runs it off Tauri's async runtime and other events and
+/// IPC keep flowing meanwhile.
 #[tauri::command]
 pub async fn import_collections(
     input: ImportCollectionsInput,
     docs: tauri::State<'_, ApiDocsStore>,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<ImportCollectionsOutput, CollectionsCommandError> {
     let result: Result<ImportCollectionsOutput, CollectionsCommandError> = async {
         let path = PathBuf::from(input.path);
+        require_picked(&picked, &path)?;
         let target = DocsTarget::new(&docs, input.root_path);
         run_blocking(move || import_collections_inner(path, &target)).await
     }
@@ -1208,11 +1220,14 @@ pub async fn import_collections(
 #[tauri::command]
 pub async fn prepare_import_from_path(
     input: ImportCollectionsInput,
+    picked: tauri::State<'_, PickedPaths>,
     prepared: tauri::State<'_, PreparedImports>,
     usage: tauri::State<'_, UsageHub>,
 ) -> Result<PreparedImportOutput, CollectionsCommandError> {
     let root_path = input.root_path;
-    let imported = run_blocking(move || read_import_from_path(PathBuf::from(input.path)))
+    let path = PathBuf::from(input.path);
+    require_picked(&picked, &path)?;
+    let imported = run_blocking(move || read_import_from_path(path))
         .await
         .inspect_err(|_| usage.record(import_failed(ImportSource::File)))?;
     store_prepared_import(&prepared, imported, root_path, ImportSource::File)
@@ -1513,18 +1528,23 @@ pub struct ExpandImportPathsInput {
 /// um rascunho aberto, e pastas costumam ter imagens sem dados do Alcy.
 const IMPORTABLE_EXTENSIONS: [&str; 6] = ["json", "yaml", "yml", "har", "sh", "txt"];
 
-/// Troca cada pasta comum em `paths` pelos arquivos importáveis dentro dela
-/// (recursivamente), para a modal importá-los um a um e agrupar as falhas.
-/// Arquivos e raízes de coleção Bruno/OpenCollection passam como estão — a
-/// coleção em árvore continua sendo importada inteira por `import_collections`.
+/// Replaces each plain folder in `paths` with the importable files inside
+/// it (recursively), so the modal imports them one by one and groups the
+/// failures. Files and Bruno/OpenCollection roots pass as they are: a tree
+/// collection is still imported whole by `import_collections`.
 #[tauri::command]
 pub async fn expand_import_paths(
     input: ExpandImportPathsInput,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<Vec<String>, CollectionsCommandError> {
-    let result = run_blocking(move || {
-        expand_import_paths_inner(input.paths.into_iter().map(PathBuf::from).collect())
-    })
-    .await;
+    let paths: Vec<PathBuf> = input.paths.into_iter().map(PathBuf::from).collect();
+    let result = match paths
+        .iter()
+        .try_for_each(|path| require_picked(&picked, path))
+    {
+        Ok(()) => run_blocking(move || expand_import_paths_inner(paths)).await,
+        Err(error) => Err(error),
+    };
     crate::logging::logged("alcy::collections", "listar arquivos para importar", result)
 }
 

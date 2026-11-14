@@ -14,6 +14,8 @@ use alcy_storage::FlowStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::commands::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
+
 const FLOW_ASSETS_DIRECTORY: &str = "alcy-flow-assets";
 
 #[derive(Debug, Deserialize)]
@@ -63,14 +65,21 @@ pub enum LoadDatasetAssetError {
     },
 }
 
-/// Copia um CSV/JSON selecionado para o diretório do flow depois de validá-lo.
-/// O nome interno é derivado do conteúdo, sem reutilizar nenhum componente do
-/// caminho externo. A configuração persistida guarda somente o `assetId`.
+/// Copies a picked CSV/JSON into the flow's folder after validating it. The
+/// internal name comes from the content, reusing no component of the
+/// external path. The persisted configuration keeps only the `assetId`.
 #[tauri::command]
 pub fn copy_load_dataset_asset(
     input: CopyLoadDatasetAssetInput,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<CopyLoadDatasetAssetOutput, CopyLoadDatasetAssetError> {
+    // Only a file from the open dialog or a drop is copied (ADR 0081).
+    if !picked.allows(Path::new(&input.source_path)) {
+        return Err(CopyLoadDatasetAssetError::Invalid {
+            message: NOT_PICKED_MESSAGE.to_string(),
+        });
+    }
     if !is_single_component(&input.flow_id) {
         return Err(CopyLoadDatasetAssetError::Invalid {
             message: "identificador de flow inválido".to_string(),

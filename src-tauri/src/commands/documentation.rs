@@ -1,5 +1,6 @@
 //! Typed native adapter for workspace documents and selected historical sources.
 use super::agent::{AgentPaths, AgentRuns};
+use super::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 use super::save_dialog::{SaveFilter, choose_save_path, safe_file_name};
 use alcy_app::{
     DocumentResult, DocumentSource, DocumentationError, document_invalid, redact_document_value,
@@ -56,12 +57,17 @@ pub fn cancel_documentation_job(job_id: String, state: State<'_, DocumentationSt
 pub async fn documentation(
     mut input: DocumentationInput,
     window: tauri::WebviewWindow,
+    picked: State<'_, PickedPaths>,
     state: State<'_, DocumentationState>,
     paths: State<'_, AgentPaths>,
     runs: State<'_, AgentRuns>,
     local_secrets: State<'_, alcy_storage::LocalSecrets>,
     themes: State<'_, alcy_app::DocumentThemes>,
 ) -> DocumentResult<Value> {
+    // An image is imported only from the open dialog or a drop (ADR 0081).
+    if input.operation == "importImage" && !picked.allows(std::path::Path::new(&input.path)) {
+        return Err(document_invalid(NOT_PICKED_MESSAGE));
+    }
     if input.operation == "export" {
         match choose_export_path(&window, &input).await? {
             Some(path) => input.path = path,

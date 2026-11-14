@@ -1,5 +1,5 @@
 import { invokeResult } from './invoke-result'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickPath } from './pick-paths'
 
 export interface DocumentSource { kind: 'chat' | 'request'; id: string; label: string; atMs?: number }
 export interface DocumentAsset { id: string; caption: string }
@@ -78,9 +78,8 @@ export async function saveDocumentContent(rootPath: string, documentId: string, 
     return saved
   } finally { await cancelDocumentJob(jobId) }
 }
-export async function pickDocumentImage(): Promise<string | null> {
-  const result = await open({ multiple: false, directory: false, filters: [{ name: 'PNG / JPEG', extensions: ['png', 'jpg', 'jpeg'] }] })
-  return typeof result === 'string' ? result : null
+export function pickDocumentImage(): Promise<string | null> {
+  return pickPath({ filters: [{ name: 'PNG / JPEG', extensions: ['png', 'jpg', 'jpeg'] }] })
 }
 /** Exports the document where the person chooses in the save dialog the
  * backend opens (ADR 0081); `title` only names the suggested file. */

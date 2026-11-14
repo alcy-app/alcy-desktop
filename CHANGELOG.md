@@ -27,6 +27,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Esses segredos também ficam criptografados no histórico de envios e nas abas reabertas ao abrir o workspace, que antes os guardavam em texto na pasta do workspace.
 - **Confiança em scripts**: scripts de coleções importadas e de workspaces abertos pela primeira vez só rodam depois que você confia neles. Até lá, as requisições são enviadas sem os scripts, e o Alcy mostra um cadeado na aba Scripts e avisa na resposta. Antes de confiar, dá para ver os scripts e os pacotes npm que eles vão baixar.
 - **Salvar e exportar**: respostas, HAR, coleções, imagens, webclients, flows, relatórios e documentos só são gravados no lugar que você escolhe na janela de salvar. Nenhuma parte da interface consegue mais gravar esses arquivos em outro lugar sem passar por ela.
+- **Importar**: coleções, flows, datasets de carga e imagens de documentos só são lidos de arquivos que você escolheu na janela de abrir ou arrastou para o Alcy.
 
 ## [0.10.0] - 2026-11-10
 
