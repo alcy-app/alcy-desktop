@@ -47,7 +47,8 @@ pub use api_docs::{
 };
 pub use authentication::Authentication;
 pub use body_file_access::{
-    BodyFileAccess, BodyFileAccessStatus, path_is_within, points_outside_workspace, same_path,
+    BodyFileAccess, BodyFileAccessStatus, is_network_or_device_path, path_is_within,
+    points_outside_workspace, same_path,
 };
 pub use body_payload::{
     BodyPayload, FormDataField, FormDataFieldValue, RawBodyLanguage, UrlEncodedField,

@@ -11,7 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use alcy_app::{InstrumentedResponse, RequestExecutor};
 use alcy_domain::{
     BodyFileAccess, BodyFileAccessStatus, BodyPayload, ExecutionError, Request, Response,
-    resolve_file_path,
+    is_network_or_device_path, resolve_file_path,
 };
 use alcy_storage::{BodyFileGrantStore, SecuritySettingsStore};
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,15 @@ pub(crate) async fn authorize_body_files(
         if resolved.contains_key(path) {
             continue;
         }
+        if refused_before_disk(path, access) {
+            log::warn!(
+                target: "alcy::request",
+                "body file on a network share or device blocked (not picked in this workspace)"
+            );
+            return Err(ExecutionError::BodyFileNotAllowed {
+                path: path.to_string(),
+            });
+        }
         let joined = resolve_file_path(root, path);
         let canonical = tokio::fs::canonicalize(&joined).await.map_err(|error| {
             ExecutionError::BodyFileUnreadable {
@@ -82,6 +91,15 @@ pub(crate) async fn authorize_body_files(
             .cloned()
             .unwrap_or_else(|| resolve_file_path(root, path))
     }))
+}
+
+/// Whether `path` names a network share or device this person did not pick.
+/// Decided from the text: on Windows, any disk call on `\\host\share\…`
+/// (metadata, canonicalize, open) already authenticates to that host, so it
+/// must be refused before one. The setting that allows files outside the
+/// workspace does not cover it.
+fn refused_before_disk(path: &str, access: &BodyFileAccess) -> bool {
+    is_network_or_device_path(path) && !access.grants_network_path(path)
 }
 
 /// Executor wrapper that authorizes body files before delegating, for
@@ -198,6 +216,9 @@ async fn body_file_status(root: &Path, path: &str, access: &BodyFileAccess) -> B
     if path.is_empty() {
         return BodyFileStatus::Missing;
     }
+    if refused_before_disk(path, access) {
+        return BodyFileStatus::Blocked;
+    }
     let resolved = resolve_file_path(root, path);
     let is_file = tokio::fs::metadata(&resolved)
         .await
@@ -266,8 +287,9 @@ pub async fn pick_body_file(
 
 /// Folder of the current file when it exists, else the workspace.
 async fn starting_directory(root: &Path, current_path: Option<&str>) -> Option<PathBuf> {
+    // A network folder the person did not pick is never opened (spec 0165).
     let current = current_path
-        .filter(|path| !path.is_empty())
+        .filter(|path| !path.is_empty() && !is_network_or_device_path(path))
         .map(|path| PathBuf::from(resolve_file_path(root, path)))
         .and_then(|path| path.parent().map(Path::to_path_buf));
     for candidate in current.into_iter().chain([root.to_path_buf()]) {
@@ -364,12 +386,15 @@ async fn copy_body_file_inner(
     grants: &BodyFileGrantStore,
 ) -> Result<CopiedBodyFile, BodyFileCommandError> {
     let canonical_root = tokio::fs::canonicalize(root).await.map_err(io_error)?;
-    let canonical_file = tokio::fs::canonicalize(file).await.map_err(io_error)?;
     let access = BodyFileAccess::new(
         Some(canonical_root.clone()),
         false,
         grants.grants(&canonical_root),
     );
+    if refused_before_disk(&file.to_string_lossy(), &access) {
+        return Err(BodyFileCommandError::NotGranted);
+    }
+    let canonical_file = tokio::fs::canonicalize(file).await.map_err(io_error)?;
     if access.status_of(&canonical_file) != BodyFileAccessStatus::Granted {
         return Err(BodyFileCommandError::NotGranted);
     }
@@ -874,6 +899,88 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, BodyFileCommandError::NotGranted);
         assert!(!fixture.root.join("files/private.txt").exists());
+    }
+
+    // Spec 0165: a network share is refused from its text, before any disk
+    // call. Before the check, these paths reached `canonicalize`/`metadata`
+    // and failed as unreadable — on Windows, after authenticating to the host.
+    const SHARE_PATHS: [&str; 3] = [
+        r"\\attacker.invalid\share\avatar.png",
+        "//attacker.invalid/share/avatar.png",
+        r"\\?\UNC\attacker.invalid\share\avatar.png",
+    ];
+
+    #[tokio::test]
+    async fn a_network_share_is_refused_before_the_disk_even_when_outside_files_are_allowed() {
+        let fixture = Fixture::new();
+        for allow_outside in [false, true] {
+            for path in SHARE_PATHS {
+                let error = authorize_body_files(
+                    &form_file(path, true),
+                    &fixture.root,
+                    &fixture.access(allow_outside),
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(
+                    error,
+                    ExecutionError::BodyFileNotAllowed {
+                        path: path.to_string()
+                    },
+                    "{path}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_picked_network_file_passes_the_early_check() {
+        let fixture = Fixture::new();
+        let access = BodyFileAccess::new(
+            Some(std::fs::canonicalize(&fixture.root).unwrap()),
+            false,
+            vec![PathBuf::from(r"\\?\UNC\attacker.invalid\share\avatar.png")],
+        );
+        let error = authorize_body_files(&binary(SHARE_PATHS[0]), &fixture.root, &access)
+            .await
+            .unwrap_err();
+        // Past the early check it goes to the disk, where this test host
+        // cannot reach the share.
+        assert!(
+            matches!(error, ExecutionError::BodyFileUnreadable { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_body_tab_marks_a_network_share_blocked_without_touching_it() {
+        let fixture = Fixture::new();
+        let paths: Vec<String> = SHARE_PATHS.iter().map(|path| path.to_string()).collect();
+        let statuses = check_body_files_inner(&fixture.root, &paths, &fixture.access(true)).await;
+        assert_eq!(statuses, vec![BodyFileStatus::Blocked; SHARE_PATHS.len()]);
+    }
+
+    #[tokio::test]
+    async fn refuses_to_copy_a_network_share() {
+        let fixture = Fixture::new();
+        for path in SHARE_PATHS {
+            let error = copy_body_file_inner(&fixture.root, Path::new(path), &fixture.grants)
+                .await
+                .unwrap_err();
+            assert_eq!(error, BodyFileCommandError::NotGranted, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_picker_does_not_open_a_network_folder() {
+        let fixture = Fixture::new();
+        for path in SHARE_PATHS {
+            assert_eq!(
+                starting_directory(&fixture.root, Some(path)).await,
+                Some(fixture.root.clone()),
+                "{path}"
+            );
+        }
     }
 
     #[test]

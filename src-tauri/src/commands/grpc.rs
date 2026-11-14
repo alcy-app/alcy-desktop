@@ -524,6 +524,28 @@ fn schema_key(target: &GrpcTarget, source: &GrpcSchemaSource, root: &Path) -> St
     }
 }
 
+/// Proto files and import folders come from the collection. On Windows,
+/// reading one on a network share (`\\host\share\…`) authenticates to that
+/// host, so such paths are refused before the compiler touches them
+/// (spec 0165).
+fn refuse_network_proto_paths(
+    files: &[String],
+    import_paths: &[String],
+) -> Result<(), GrpcCommandError> {
+    match files
+        .iter()
+        .chain(import_paths)
+        .find(|path| alcy_domain::is_network_or_device_path(path))
+    {
+        Some(path) => Err(GrpcCommandError::Schema {
+            message: format!(
+                "{path}: .proto files on a network share are not read; copy them into the workspace"
+            ),
+        }),
+        None => Ok(()),
+    }
+}
+
 /// The schema for `source`: from this session's cache unless `refresh`,
 /// else compiled from files or reflected. Only reflection needs `channel`;
 /// `connect` opens one when it is `None`.
@@ -554,6 +576,7 @@ async fn schema_for(
             files,
             import_paths,
         } => {
+            refuse_network_proto_paths(files, import_paths)?;
             let root = root.to_path_buf();
             let files = files.clone();
             let import_paths = import_paths.clone();
@@ -1105,6 +1128,44 @@ fn response_of(outcome: &CallOutcome) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Spec 0165: before this check, the paths below reached the proto
+    // compiler, which on Windows authenticates to the share's host.
+    #[tokio::test]
+    async fn proto_files_on_a_network_share_are_refused_before_compiling() {
+        let target = GrpcTarget::parse("localhost:50051").unwrap();
+        let settings = ConnectionSettings {
+            custom_ca_pems: Vec::new(),
+            proxy: None,
+        };
+        let sources = [
+            (vec![r"\\attacker.invalid\share\api.proto"], vec![]),
+            (vec!["//attacker.invalid/share/api.proto"], vec![]),
+            (vec!["api.proto"], vec![r"\\attacker.invalid\share"]),
+        ];
+        for (files, import_paths) in sources {
+            let source = GrpcSchemaSource::ProtoFiles {
+                files: files.iter().map(|path| path.to_string()).collect(),
+                import_paths: import_paths.iter().map(|path| path.to_string()).collect(),
+            };
+            let error = schema_for(
+                &source,
+                &target,
+                Path::new("/ws"),
+                None,
+                &settings,
+                &[],
+                &GrpcSchemaCache::default(),
+                true,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(&error, GrpcCommandError::Schema { message } if message.contains("network share")),
+                "{error:?}"
+            );
+        }
+    }
 
     fn connection(
         authentication: AuthenticationInput,

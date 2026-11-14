@@ -354,6 +354,32 @@ for (const [path, guard] of [
   if (!read(path).includes(guard)) fail(`${path}: perdeu a autorização de arquivos de corpo (\`${guard}\`, spec 0163).`)
 }
 
+// Network shares (spec 0165): on Windows, any disk call on `\\host\share\…`
+// authenticates to that host, so a path from a collection is refused from its
+// text before the first disk call. Each function below must run its check
+// before the call that would touch the path.
+function functionBody(source, name) {
+  const start = source.search(new RegExp(`\\n(pub(\\(crate\\))? )?(async )?fn ${name}\\b`))
+  if (start < 0) return null
+  const end = source.indexOf('\n}\n', start)
+  return source.slice(start, end < 0 ? undefined : end)
+}
+for (const [path, name, guard, diskCall] of [
+  ['src-tauri/src/commands/body_files.rs', 'authorize_body_files', 'refused_before_disk(', 'tokio::fs::'],
+  ['src-tauri/src/commands/body_files.rs', 'body_file_status', 'refused_before_disk(', 'tokio::fs::'],
+  ['src-tauri/src/commands/body_files.rs', 'copy_body_file_inner', 'refused_before_disk(', 'tokio::fs::canonicalize(file)'],
+  ['src-tauri/src/commands/body_files.rs', 'starting_directory', 'is_network_or_device_path(', 'tokio::fs::'],
+  ['src-tauri/src/commands/grpc.rs', 'schema_for', 'refuse_network_proto_paths(', 'compile_workspace_proto_files('],
+]) {
+  const body = functionBody(read(path), name)
+  const guardAt = body?.indexOf(guard) ?? -1
+  const diskAt = body?.indexOf(diskCall) ?? -1
+  if (body === null) fail(`${path}: \`${name}\` not found; update the spec 0165 list in this sensor.`)
+  else if (guardAt < 0 || (diskAt >= 0 && guardAt > diskAt)) {
+    fail(`${path}: \`${name}\` must refuse network shares (\`${guard.slice(0, -1)}\`) before \`${diskCall}\` (spec 0165).`)
+  }
+}
+
 // npm packages for scripts (spec 0128, ADR 0061) are downloaded only while
 // running a script, after the trust check has withheld untrusted ones (spec
 // 0162). The downloader is used from one reviewed place, and only from the

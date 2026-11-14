@@ -30,6 +30,7 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Salvar e exportar**: respostas, HAR, coleções, imagens, webclients, flows, relatórios e documentos só são gravados no lugar que você escolhe na janela de salvar. Nenhuma parte da interface consegue mais gravar esses arquivos em outro lugar sem passar por ela.
 - **Importar**: coleções, flows, datasets de carga, imagens de documentos, certificados CA e o arquivo de dados do runner só são lidos de arquivos que você escolheu na janela de abrir ou arrastou para o Alcy.
 - **Pastas de workspace**: o Alcy só lê e grava em pastas de workspaces que você abriu, criou ou escolheu. Confiar numa pasta para o git também só vale para essas pastas.
+- Arquivos do corpo e arquivos `.proto` que apontam para uma pasta de rede (`\\servidor\pasta`) ficam bloqueados sem que o Alcy acesse o caminho, a menos que você tenha escolhido o arquivo. No Windows, só abrir esse caminho já enviava suas credenciais para o servidor.
 
 ## [0.10.0] - 2026-11-10
 

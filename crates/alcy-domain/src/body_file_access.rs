@@ -80,6 +80,39 @@ impl BodyFileAccess {
             BodyFileAccessStatus::Blocked
         }
     }
+
+    /// Whether `path`, a network share or device path (see
+    /// [`is_network_or_device_path`]), is a file this person picked,
+    /// decided from the text alone: touching the path to canonicalize it
+    /// would already authenticate to its host.
+    pub fn grants_network_path(&self, path: &str) -> bool {
+        let wanted = network_form(path);
+        self.grants
+            .iter()
+            .any(|grant| network_form(&grant.to_string_lossy()) == wanted)
+    }
+}
+
+/// Whether `path` names a network share or a device in Windows syntax
+/// (`\\server\share`, `//server/share`, `\\?\…`, `\\.\…`). On Windows,
+/// opening one connects to that host and authenticates as this person, so
+/// such a path is refused before any disk access unless it was picked.
+pub fn is_network_or_device_path(path: &str) -> bool {
+    let mut chars = path.chars();
+    matches!(
+        (chars.next(), chars.next()),
+        (Some('\\' | '/'), Some('\\' | '/'))
+    )
+}
+
+/// The form Windows gives a canonical network path (`\\?\UNC\server\…`),
+/// with `\` separators and lowercase, for comparing paths as text.
+fn network_form(path: &str) -> String {
+    let path = path.replace('/', "\\").to_lowercase();
+    match path.strip_prefix(r"\\") {
+        Some(rest) if !rest.starts_with(r"?\") => format!(r"\\?\unc\{rest}"),
+        _ => path,
+    }
 }
 
 /// Whether `path` is `root` or lies under it, comparing whole components
@@ -214,6 +247,48 @@ mod tests {
         for inside in ["files/photo.png", "./a.bin", "files/../a.bin", ""] {
             assert!(!points_outside_workspace(inside), "{inside}");
         }
+    }
+
+    #[test]
+    fn recognizes_network_and_device_paths_from_text() {
+        for network in [
+            r"\\server\share\file",
+            "//server/share/file",
+            r"\/server/share",
+            r"/\server\share",
+            r"\\?\C:\Users\Ana\a.bin",
+            r"\\.\pipe\name",
+            r"\\?\UNC\server\share\file",
+        ] {
+            assert!(is_network_or_device_path(network), "{network}");
+        }
+        for local in [
+            r"C:\Users\Ana\a.bin",
+            "/home/ana/a.bin",
+            "files/a.bin",
+            r"\Users\a.bin",
+            "",
+        ] {
+            assert!(!is_network_or_device_path(local), "{local}");
+        }
+    }
+
+    #[test]
+    fn a_picked_network_file_is_granted_in_any_spelling() {
+        let access = BodyFileAccess::new(
+            Some(root()),
+            false,
+            vec![PathBuf::from(r"\\?\UNC\Server\Share\report.pdf")],
+        );
+        assert!(access.grants_network_path(r"\\server\share\report.pdf"));
+        assert!(access.grants_network_path("//SERVER/Share/report.pdf"));
+        assert!(access.grants_network_path(r"\\?\UNC\server\share\report.pdf"));
+        assert!(!access.grants_network_path(r"\\server\share\other.pdf"));
+        assert!(!access.grants_network_path(r"\\other\share\report.pdf"));
+        assert!(
+            !BodyFileAccess::new(Some(root()), true, vec![])
+                .grants_network_path(r"\\server\share\report.pdf")
+        );
     }
 
     #[cfg(windows)]
