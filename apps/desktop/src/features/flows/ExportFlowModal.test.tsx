@@ -2,11 +2,9 @@ import { fireEvent, render, screen, waitFor } from '../../test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ExportFlowModal } from './ExportFlowModal'
 import { exportFlow, previewFlowExport } from '../../bindings/export-flow'
-import { pickExportFile } from '../../bindings/pick-export-file'
 import type { FlowExportPreview, FlowExportSource } from '../../bindings/export-flow'
 
 vi.mock('../../bindings/export-flow', () => ({ previewFlowExport: vi.fn(), exportFlow: vi.fn(), flowExportError: () => undefined }))
-vi.mock('../../bindings/pick-export-file', () => ({ pickExportFile: vi.fn() }))
 
 const source: FlowExportSource = {
   rootPath: '/workspace', environmentVariables: [],
@@ -16,8 +14,7 @@ const dependencies: FlowExportPreview = { requestCount: 1, variableCount: 2, emp
 
 beforeEach(() => {
   vi.mocked(previewFlowExport).mockReset().mockResolvedValue(dependencies)
-  vi.mocked(exportFlow).mockReset().mockResolvedValue(undefined)
-  vi.mocked(pickExportFile).mockReset().mockResolvedValue('/exports/example.flow.alcy.json')
+  vi.mocked(exportFlow).mockReset().mockResolvedValue('saved')
 })
 
 describe('ExportFlowModal', () => {
@@ -25,27 +22,26 @@ describe('ExportFlowModal', () => {
     const onClose = vi.fn()
     render(<ExportFlowModal source={source} onClose={onClose} />)
     await waitFor(() => expect(screen.getByRole('button', { name: label })).toBeEnabled())
-    expect(pickExportFile).not.toHaveBeenCalled()
+    expect(exportFlow).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: label }))
-    await waitFor(() => expect(exportFlow).toHaveBeenCalledWith(source, '/exports/example.flow.alcy.json', inline))
-    expect(pickExportFile).toHaveBeenCalledWith('Example', 'flow')
+    await waitFor(() => expect(exportFlow).toHaveBeenCalledWith(source, 'Example.flow.alcy.json', inline))
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
 
   it('directly exports flows without external dependencies', async () => {
     vi.mocked(previewFlowExport).mockResolvedValue({ ...dependencies, requestCount: 0, variableCount: 0, hasDependencies: false })
     render(<ExportFlowModal source={source} onClose={vi.fn()} />)
-    await waitFor(() => expect(exportFlow).toHaveBeenCalledWith(source, '/exports/example.flow.alcy.json', false))
+    await waitFor(() => expect(exportFlow).toHaveBeenCalledWith(source, 'Example.flow.alcy.json', false))
   })
 
-  it('does not export when the file picker is cancelled', async () => {
-    vi.mocked(pickExportFile).mockResolvedValue(null)
+  it('closes without an error when the save dialog is cancelled', async () => {
+    vi.mocked(exportFlow).mockResolvedValue('cancelled')
     const onClose = vi.fn()
     render(<ExportFlowModal source={source} onClose={onClose} />)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Manter referências' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Manter referências' }))
     await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(exportFlow).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('keeps unsupported conversions unavailable and explains empty values', async () => {

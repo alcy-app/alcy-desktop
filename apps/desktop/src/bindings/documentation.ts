@@ -1,5 +1,5 @@
 import { invokeResult } from './invoke-result'
-import { open, save } from '@tauri-apps/plugin-dialog'
+import { open } from '@tauri-apps/plugin-dialog'
 
 export interface DocumentSource { kind: 'chat' | 'request'; id: string; label: string; atMs?: number }
 export interface DocumentAsset { id: string; caption: string }
@@ -82,8 +82,11 @@ export async function pickDocumentImage(): Promise<string | null> {
   const result = await open({ multiple: false, directory: false, filters: [{ name: 'PNG / JPEG', extensions: ['png', 'jpg', 'jpeg'] }] })
   return typeof result === 'string' ? result : null
 }
-export async function pickDocumentExport(title: string, format: 'pdf' | 'md'): Promise<string | null> {
-  return save({ defaultPath: `${title.replace(/[<>:"/\\|?*]/g, '_')}.${format}`, filters: [{ name: format.toUpperCase(), extensions: [format] }] })
+/** Exports the document where the person chooses in the save dialog the
+ * backend opens (ADR 0081); `title` only names the suggested file. */
+export async function exportDocument(rootPath: string, documentId: string, revision: number, title: string, format: 'pdf' | 'md', jobId: string, language: string): Promise<{ cancelled: boolean }> {
+  const result = await documentCall<{ cancelled?: boolean }>(rootPath, 'export', { documentId, revision, title: title.replace(/[<>:"/\\|?*]/g, '_'), format, jobId, language })
+  return { cancelled: result.cancelled === true }
 }
 export async function listDocumentThemes(rootPath: string): Promise<DocumentThemeSummary[]> {
   return (await documentCall<{ themes?: DocumentThemeSummary[] }>(rootPath, 'themes')).themes ?? []

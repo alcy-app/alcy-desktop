@@ -9,8 +9,7 @@ import type { ExecuteGraphqlRequestOutput } from '../../bindings/execute-graphql
 import type { ExecuteRestRequestOutput } from '../../bindings/execute-rest-request'
 import { expandImportPaths } from '../../bindings/expand-import-paths'
 import { exportHar } from '../../bindings/export-har'
-import { pickExportFile } from '../../bindings/pick-export-file'
-import { pickResponseFile } from '../../bindings/pick-response-file'
+import { exportFileName } from '../../bindings/export-file-name'
 import { saveResponseBody } from '../../bindings/save-response-body'
 import { definedVariables } from '../environments/defined-variables'
 import { useEnvironmentsState } from '../environments/use-environments-state'
@@ -924,17 +923,16 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     [commandImportTabId, replaceTabContent, showToast, t, workbench.activeTabId, workspace.rootPath],
   )
 
-  /** Save response bodies to the chosen file. Large bodies cross IPC by handle while retained in the backend. */
+  /** Save response bodies where the person chooses in the backend's save dialog. Large bodies cross IPC by handle while retained in the backend. */
   const downloadResponse = async (value: ExecuteGraphqlRequestOutput | ExecuteRestRequestOutput, requestName: string) => {
-    const path = await pickResponseFile(responseFileName(requestName, value.headers, value.bodyEncoding), t('endpointBar.allFiles'))
-    if (path === null) return
     const result = await saveResponseBody({
-      path,
+      suggestedName: responseFileName(requestName, value.headers, value.bodyEncoding),
+      allFilesLabel: t('endpointBar.allFiles'),
       encoding: value.bodyEncoding,
       source: value.body.kind === 'inline' ? { kind: 'inline', body: value.body.body } : { kind: 'windowed', handle: value.body.handle },
     })
     if (result.ok) {
-      showToast(t('toasts.responseSaved'))
+      if (result.saved) showToast(t('toasts.responseSaved'))
     } else if (result.error.kind === 'notFound') {
       showToast(t('toasts.responseUnavailable'), 'error')
     } else {
@@ -1176,11 +1174,9 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     harExportingRef.current = true
     setHarExporting(true)
     try {
-      const path = await pickExportFile(t('devConsole.recorderFileName'), 'har')
-      if (path === null) return
-      const result = await exportHar(path, buildHar(recorderEntries))
+      const result = await exportHar(exportFileName(t('devConsole.recorderFileName'), 'har'), buildHar(recorderEntries))
       if (result.ok) {
-        showToast(t('toasts.harExported'))
+        if (result.saved) showToast(t('toasts.harExported'))
       } else {
         showToast(t('devConsole.harExportError', { message: result.error.message }), 'error')
       }

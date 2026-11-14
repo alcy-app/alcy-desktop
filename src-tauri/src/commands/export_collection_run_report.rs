@@ -4,7 +4,7 @@
 //! Assim as respostas não atravessam o IPC.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use alcy_storage::{
     CollectionRunHistoryStore, CollectionRunRecord, ReportContext, ReportFormat, ReportLanguage,
@@ -15,6 +15,9 @@ use tauri::AppHandle;
 
 use crate::commands::execute_collection_run::CollectionRunOutputs;
 use crate::commands::execute_graphql_request::DEFAULT_HISTORY_RETENTION;
+use crate::commands::save_dialog::{
+    SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
+};
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +42,9 @@ impl From<ReportFormatInput> for ReportFormat {
 pub struct ExportCollectionRunReportInput {
     pub root_path: String,
     pub run_id: String,
-    pub path: String,
+    /// No destination path: the backend asks for it in the save dialog
+    /// (ADR 0081).
+    pub suggested_name: String,
     pub format: ReportFormatInput,
     /// Idioma do app (`pt-BR` ou `en`); o relatório HTML segue o mesmo.
     #[serde(default)]
@@ -57,10 +62,24 @@ pub enum ExportCollectionRunReportError {
 pub async fn export_collection_run_report(
     input: ExportCollectionRunReportInput,
     app: AppHandle,
+    window: tauri::WebviewWindow,
     outputs: tauri::State<'_, CollectionRunOutputs>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
-) -> Result<(), ExportCollectionRunReportError> {
-    let result: Result<(), ExportCollectionRunReportError> = async {
+) -> Result<SaveOutcome, ExportCollectionRunReportError> {
+    let result: Result<SaveOutcome, ExportCollectionRunReportError> = async {
+        let (filter_name, extension) = match input.format {
+            ReportFormatInput::Html => ("HTML", "html"),
+            ReportFormatInput::Json => ("JSON", "json"),
+            ReportFormatInput::Junit => ("JUnit XML", "xml"),
+        };
+        let file_name = safe_file_name(&input.suggested_name, "run", Some(extension));
+        let filters = [SaveFilter {
+            name: filter_name,
+            extensions: &[extension],
+        }];
+        let Some(path) = choose_save_path(&window, file_name, &filters).await else {
+            return Ok(SaveOutcome::Cancelled);
+        };
         let in_memory = outputs.record(&input.run_id);
         let context = ReportContext {
             app_version: app.package_info().version.to_string(),
@@ -69,21 +88,25 @@ pub async fn export_collection_run_report(
                 _ => ReportLanguage::PtBr,
             },
         };
-        tauri::async_runtime::spawn_blocking(move || export_inner(input, in_memory, &context))
-            .await
-            .unwrap_or_else(|error| {
-                Err(ExportCollectionRunReportError::Storage {
-                    message: error.to_string(),
-                })
+        tauri::async_runtime::spawn_blocking(move || {
+            export_inner(input, &path, in_memory, &context)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            Err(ExportCollectionRunReportError::Storage {
+                message: error.to_string(),
             })
+        })?;
+        Ok(SaveOutcome::Saved)
     }
     .await;
-    crate::commands::usage_events::record_export(&usage, "runReport", &result);
+    record_saved_export(&usage, "runReport", &result);
     crate::logging::logged("alcy::export", "exportar relatório de execução", result)
 }
 
 fn export_inner(
     input: ExportCollectionRunReportInput,
+    path: &Path,
     in_memory: Option<CollectionRunRecord>,
     context: &ReportContext,
 ) -> Result<(), ExportCollectionRunReportError> {
@@ -100,7 +123,7 @@ fn export_inner(
         .ok_or(ExportCollectionRunReportError::NotFound)?,
     };
     let content = render_report(&record, input.format.into(), context);
-    fs::write(&input.path, content).map_err(|error| ExportCollectionRunReportError::Storage {
+    fs::write(path, content).map_err(|error| ExportCollectionRunReportError::Storage {
         message: error.to_string(),
     })
 }
@@ -174,12 +197,11 @@ mod tests {
         root: &std::path::Path,
         run_id: &str,
         format: ReportFormatInput,
-        file: &str,
     ) -> ExportCollectionRunReportInput {
         ExportCollectionRunReportInput {
             root_path: root.to_string_lossy().to_string(),
             run_id: run_id.to_string(),
-            path: root.join(file).to_string_lossy().to_string(),
+            suggested_name: "run".to_string(),
             format,
             language: Some("en".to_string()),
         }
@@ -190,7 +212,8 @@ mod tests {
         let root = temp_dir("memory");
 
         export_inner(
-            input(&root, "run-1", ReportFormatInput::Junit, "r.xml"),
+            input(&root, "run-1", ReportFormatInput::Junit),
+            &root.join("r.xml"),
             Some(record("run-1")),
             &context(),
         )
@@ -209,7 +232,8 @@ mod tests {
             .unwrap();
 
         export_inner(
-            input(&root, "old", ReportFormatInput::Html, "r.html"),
+            input(&root, "old", ReportFormatInput::Html),
+            &root.join("r.html"),
             None,
             &context(),
         )
@@ -222,7 +246,8 @@ mod tests {
 
         assert_eq!(
             export_inner(
-                input(&root, "missing", ReportFormatInput::Json, "r.json"),
+                input(&root, "missing", ReportFormatInput::Json),
+                &root.join("r.json"),
                 None,
                 &context()
             ),

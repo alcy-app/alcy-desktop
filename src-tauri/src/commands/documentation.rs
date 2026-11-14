@@ -1,5 +1,6 @@
 //! Typed native adapter for workspace documents and selected historical sources.
 use super::agent::{AgentPaths, AgentRuns};
+use super::save_dialog::{SaveFilter, choose_save_path, safe_file_name};
 use alcy_app::{
     DocumentResult, DocumentSource, DocumentationError, document_invalid, redact_document_value,
 };
@@ -51,14 +52,22 @@ pub fn cancel_documentation_job(job_id: String, state: State<'_, DocumentationSt
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn documentation(
-    input: DocumentationInput,
+    mut input: DocumentationInput,
+    window: tauri::WebviewWindow,
     state: State<'_, DocumentationState>,
     paths: State<'_, AgentPaths>,
     runs: State<'_, AgentRuns>,
     local_secrets: State<'_, alcy_storage::LocalSecrets>,
     themes: State<'_, alcy_app::DocumentThemes>,
 ) -> DocumentResult<Value> {
+    if input.operation == "export" {
+        match choose_export_path(&window, &input).await? {
+            Some(path) => input.path = path,
+            None => return Ok(json!({"exported": false, "cancelled": true})),
+        }
+    }
     let live = if matches!(
         input.operation.as_str(),
         "readSource" | "sources" | "selectSources" | "requestImage"
@@ -152,6 +161,32 @@ pub async fn documentation(
     .map_err(fail)?;
     state.jobs.lock().map_err(fail)?.remove(&job_id);
     result
+}
+
+/// The export destination comes from the save dialog, never from the
+/// interface (ADR 0081): whatever `path` the input carried is replaced.
+/// `None` when the person cancels.
+async fn choose_export_path(
+    window: &tauri::WebviewWindow,
+    input: &DocumentationInput,
+) -> DocumentResult<Option<String>> {
+    let (name, extension) = match input.format.as_str() {
+        "md" => ("MD", "md"),
+        "pdf" => ("PDF", "pdf"),
+        _ => return Err(document_invalid("Choose md or pdf.")),
+    };
+    let file_name = safe_file_name(&input.title, "document", Some(extension));
+    let filters = [SaveFilter {
+        name,
+        extensions: &[extension],
+    }];
+    let Some(path) = choose_save_path(window, file_name, &filters).await else {
+        return Ok(None);
+    };
+    path.into_os_string()
+        .into_string()
+        .map(Some)
+        .map_err(|_| document_invalid("The chosen path is not valid Unicode."))
 }
 
 struct NativeDocumentSources {

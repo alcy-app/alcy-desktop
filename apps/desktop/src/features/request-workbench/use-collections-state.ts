@@ -23,7 +23,7 @@ import type {
 } from '../../bindings/list-collections'
 import type { EnvironmentDto } from '../../bindings/list-environments'
 import { registerBeforeExit } from '../../shared/app-lifecycle/before-exit'
-import { pickExportFile } from '../../bindings/pick-export-file'
+import { exportFileName } from '../../bindings/export-file-name'
 import { saveCollections } from '../../bindings/save-collections'
 import { setCollectionScriptTrust } from '../../bindings/script-trust'
 import { useCommittedState } from '../../shared/use-committed-state'
@@ -616,12 +616,9 @@ export function useCollectionsState(
     async (id: string) => {
       const node = findNode(collections, id)
       if (!node) return
-      const path = await pickExportFile(node.name || t('collections.newCollectionName'))
-      if (path === null) return
-
-      const result = await exportCollections(path, [folderDtoFromNode(node)])
+      const result = await exportCollections(exportFileName(node.name || t('collections.newCollectionName')), [folderDtoFromNode(node)])
       if (result.ok) {
-        showToast(t('toasts.collectionExported'))
+        if (result.saved) showToast(t('toasts.collectionExported'))
       } else {
         showToast(t('collections.importExportError', { message: result.error.message }), 'error')
       }
@@ -638,12 +635,9 @@ export function useCollectionsState(
       if (nodes.length === 0) return
       const defaultName =
         nodes.length === 1 ? nodes[0].name || t('collections.newCollectionName') : t('collections.exportAllFileName')
-      const path = await pickExportFile(defaultName)
-      if (path === null) return
-
-      const result = await exportCollections(path, nodes.map(folderDtoFromNode))
+      const result = await exportCollections(exportFileName(defaultName), nodes.map(folderDtoFromNode))
       if (result.ok) {
-        showToast(t(nodes.length === 1 ? 'toasts.collectionExported' : 'toasts.collectionsExported'))
+        if (result.saved) showToast(t(nodes.length === 1 ? 'toasts.collectionExported' : 'toasts.collectionsExported'))
       } else {
         showToast(t('collections.importExportError', { message: result.error.message }), 'error')
       }
@@ -663,12 +657,9 @@ export function useCollectionsState(
   )
 
   const exportAll = useCallback(async () => {
-    const path = await pickExportFile(t('collections.exportAllFileName'))
-    if (path === null) return
-
-    const result = await exportCollections(path, collections.map(folderDtoFromNode))
+    const result = await exportCollections(exportFileName(t('collections.exportAllFileName')), collections.map(folderDtoFromNode))
     if (result.ok) {
-      showToast(t('toasts.collectionsExported'))
+      if (result.saved) showToast(t('toasts.collectionsExported'))
     } else {
       showToast(t('collections.importExportError', { message: result.error.message }), 'error')
     }

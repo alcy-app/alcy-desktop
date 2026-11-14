@@ -2,7 +2,6 @@ import { useState } from 'react'
 import type { FocusEvent } from 'react'
 import { exportCollectionRunReport } from '../../bindings/export-collection-run-report'
 import type { RunReportFormat } from '../../bindings/export-collection-run-report'
-import { pickReportFile } from '../../bindings/pick-report-file'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { MenuItem } from '../../shared/ui/Menu'
@@ -27,19 +26,18 @@ export function ReportExportMenu({ rootPath, runId, fileName }: ReportExportMenu
 
   const exportAs = async (format: RunReportFormat) => {
     setOpen(false)
-    const path = await pickReportFile(fileName, format)
-    if (!path) return
     setBusy(true)
-    const result = await exportCollectionRunReport({ rootPath, runId, path, format, language })
+    const suggestedName = fileName.trim().replace(/[^A-Za-z0-9-_ ]/g, '-') || 'run'
+    const result = await exportCollectionRunReport({ rootPath, runId, suggestedName, format, language })
     setBusy(false)
-    if (result.ok) showToast(t('runner.report.exported'))
-    else
+    if (!result.ok)
       showToast(
         result.error.kind === 'notFound'
           ? t('runner.report.notFound')
           : t('runner.report.failed', { message: result.error.message }),
         'error',
       )
+    else if (result.saved) showToast(t('runner.report.exported'))
   }
 
   const closeOnBlur = (event: FocusEvent<HTMLDivElement>) => {

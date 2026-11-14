@@ -1,6 +1,7 @@
 import { invokeResult, type CommandResult } from './invoke-result'
 import type { CollectionDto } from './list-collections'
 import type { EnvironmentVariableDto } from './list-environments'
+import type { SaveOutcome } from './save-outcome'
 
 /** O que exportar: a coleção inteira e, opcionalmente, a pasta dentro dela
  * (`src-tauri/src/commands/export_webclient.rs`). */
@@ -48,7 +49,8 @@ export type ExportWebclientError =
   | { kind: 'storage'; message: string }
 
 export interface ExportWebclientInput extends WebclientSelectionInput {
-  path: string
+  /** Filled in the save dialog the backend opens. */
+  suggestedName: string
   title: string
   transport: WebclientTransportMode
   includeSensitive: boolean
@@ -63,6 +65,6 @@ export function previewWebclientExport(
   return invokeResult('preview_webclient_export', { input: { ...selection, includeSensitive } })
 }
 
-export function exportWebclient(input: ExportWebclientInput): Promise<CommandResult<null, ExportWebclientError>> {
+export function exportWebclient(input: ExportWebclientInput): Promise<CommandResult<SaveOutcome, ExportWebclientError>> {
   return invokeResult('export_webclient', { input })
 }

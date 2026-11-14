@@ -53,6 +53,7 @@ pub mod release_response_body;
 pub mod remote_command;
 pub mod remote_content_cache;
 pub mod response_body_cache;
+pub mod save_dialog;
 pub mod save_response_body;
 pub mod script_trust;
 pub mod scripting;

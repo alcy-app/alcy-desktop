@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::collections::{CollectionDto, CollectionsCommandError, collection_from_dto};
 use crate::commands::environments::EnvironmentVariableDto;
+use crate::commands::save_dialog::{
+    SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
+};
 
 /// O que exportar. A coleção inteira vem do frontend (como no export no
 /// formato Alcy), para que a pasta herde variáveis e autenticação dos
@@ -67,7 +70,9 @@ impl From<TransportModeInput> for TransportMode {
 pub struct ExportWebclientInput {
     #[serde(flatten)]
     pub selection: WebclientSelectionInput,
-    pub path: String,
+    /// No destination path: the backend asks for it in the save dialog
+    /// (ADR 0081).
+    pub suggested_name: String,
     pub title: String,
     pub transport: TransportModeInput,
     pub include_sensitive: bool,
@@ -139,14 +144,26 @@ pub async fn preview_webclient_export(
     crate::logging::logged("alcy::export", "prévia do webclient", result)
 }
 
-/// Gera o webclient e grava no arquivo escolhido.
+/// Builds the web client and saves it where the person chooses in the save
+/// dialog.
 #[tauri::command]
 pub async fn export_webclient(
     input: ExportWebclientInput,
+    window: tauri::WebviewWindow,
     usage: tauri::State<'_, alcy_app::UsageHub>,
-) -> Result<(), ExportWebclientError> {
-    let result = run_blocking(move || export_inner(input)).await;
-    crate::commands::usage_events::record_export(&usage, "webclient", &result);
+) -> Result<SaveOutcome, ExportWebclientError> {
+    let file_name = safe_file_name(&input.suggested_name, "webclient", Some("html"));
+    let filters = [SaveFilter {
+        name: "HTML",
+        extensions: &["html"],
+    }];
+    let result = match choose_save_path(&window, file_name, &filters).await {
+        None => Ok(SaveOutcome::Cancelled),
+        Some(path) => run_blocking(move || export_inner(input, &path))
+            .await
+            .map(|()| SaveOutcome::Saved),
+    };
+    record_saved_export(&usage, "webclient", &result);
     crate::logging::logged("alcy::export", "exportar webclient", result)
 }
 
@@ -189,8 +206,7 @@ fn preview_inner(
     )?)
 }
 
-fn export_inner(input: ExportWebclientInput) -> Result<(), ExportWebclientError> {
-    let path = PathBuf::from(&input.path);
+fn export_inner(input: ExportWebclientInput, path: &Path) -> Result<(), ExportWebclientError> {
     let has_html_extension = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -216,7 +232,7 @@ fn export_inner(input: ExportWebclientInput) -> Result<(), ExportWebclientError>
         password: input.password,
     };
     let html = alcy_webclient::build_webclient(selection, &options)?;
-    write_atomic(&path, &html)
+    write_atomic(path, &html)
 }
 
 /// Grava num temporário ao lado e renomeia: um export interrompido não
@@ -326,10 +342,10 @@ mod tests {
         }
     }
 
-    fn export_input(path: &Path) -> ExportWebclientInput {
+    fn export_input() -> ExportWebclientInput {
         ExportWebclientInput {
             selection: selection(),
-            path: path.to_string_lossy().into_owned(),
+            suggested_name: "Items".into(),
             title: "Items".into(),
             transport: TransportModeInput::Auto,
             include_sensitive: false,
@@ -343,7 +359,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.join("items.html");
 
-        export_inner(export_input(&path)).unwrap();
+        export_inner(export_input(), &path).unwrap();
 
         let html = fs::read_to_string(&path).unwrap();
         assert!(html.contains("https://api.example.com"));
@@ -357,7 +373,7 @@ mod tests {
     fn requires_the_html_extension() {
         let dir = temp_dir();
 
-        let result = export_inner(export_input(&dir.join("items.txt")));
+        let result = export_inner(export_input(), &dir.join("items.txt"));
 
         assert!(matches!(result, Err(ExportWebclientError::Invalid { .. })));
     }
@@ -368,11 +384,11 @@ mod tests {
         let path = dir.join("items.html");
         let input = ExportWebclientInput {
             include_sensitive: true,
-            ..export_input(&path)
+            ..export_input()
         };
 
         assert_eq!(
-            export_inner(input),
+            export_inner(input, &path),
             Err(ExportWebclientError::SensitiveNotConfirmed)
         );
         assert!(!path.exists());

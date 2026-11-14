@@ -8,7 +8,7 @@ import {
   type WebclientTransportMode,
 } from '../../bindings/export-webclient'
 import type { CollectionDto } from '../../bindings/list-collections'
-import { pickExportFile } from '../../bindings/pick-export-file'
+import { exportFileName } from '../../bindings/export-file-name'
 import { definedVariables } from '../environments/defined-variables'
 import type { EnvironmentState } from '../environments/environments.types'
 
@@ -103,12 +103,10 @@ export function useWebclientExport(source: WebclientExportSource, environments: 
 
   const runExport = async (): Promise<ExportOutcome> => {
     if (!canExport) return { status: 'cancelled' }
-    const path = await pickExportFile(title.trim() || source.name, 'html')
-    if (path === null) return { status: 'cancelled' }
     setExporting(true)
     const result = await exportWebclient({
       ...selection,
-      path,
+      suggestedName: exportFileName(title.trim() || source.name, 'html'),
       title,
       transport,
       includeSensitive,
@@ -116,7 +114,8 @@ export function useWebclientExport(source: WebclientExportSource, environments: 
       password: password === '' ? null : password,
     })
     setExporting(false)
-    return result.ok ? { status: 'exported' } : { status: 'failed', error: result.error }
+    if (!result.ok) return { status: 'failed', error: result.error }
+    return result.value === 'saved' ? { status: 'exported' } : { status: 'cancelled' }
   }
 
   return {

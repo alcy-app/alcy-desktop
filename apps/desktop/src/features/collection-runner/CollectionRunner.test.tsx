@@ -15,11 +15,10 @@ vi.mock('../../bindings/execute-collection-run', () => ({
 }))
 vi.mock('../../bindings/cancel-collection-run', () => ({ cancelCollectionRun: vi.fn() }))
 vi.mock('../../bindings/get-collection-run-output', () => ({ getCollectionRunOutput: vi.fn(async () => null) }))
-const exportCollectionRunReport = vi.fn<(input: unknown) => Promise<{ ok: true }>>(async () => ({ ok: true }))
+const exportCollectionRunReport = vi.fn<(input: unknown) => Promise<{ ok: true; saved: boolean }>>(async () => ({ ok: true, saved: true }))
 vi.mock('../../bindings/export-collection-run-report', () => ({
   exportCollectionRunReport: (input: unknown) => exportCollectionRunReport(input),
 }))
-vi.mock('../../bindings/pick-report-file', () => ({ pickReportFile: vi.fn(async () => '/tmp/loja.html') }))
 
 function request(id: string, name: string, protocol: RequestProtocol = 'rest') {
   return { id, name, protocol, content: emptyRequestContent(protocol) }
@@ -287,7 +286,7 @@ describe('CollectionRunner historical reports', () => {
     })
 
     expect(exportCollectionRunReport).toHaveBeenCalledWith(
-      expect.objectContaining({ rootPath: '/ws', runId: 'run-2', path: '/tmp/loja.html', format: 'junit' }),
+      expect.objectContaining({ rootPath: '/ws', runId: 'run-2', suggestedName: expect.any(String), format: 'junit' }),
     )
     expect(await screen.findByText('Relatório salvo.')).toBeInTheDocument()
   })

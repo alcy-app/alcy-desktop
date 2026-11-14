@@ -1,19 +1,21 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { SaveOutcome } from './save-outcome'
 
 export interface ExportPngError {
   kind: 'invalid' | 'storage'
   message: string
 }
 
-export type ExportPngResult = { ok: true } | { ok: false; error: ExportPngError }
+export type ExportPngResult = { ok: true; saved: boolean } | { ok: false; error: ExportPngError }
 
-/** Grava a imagem de compartilhamento no caminho escolhido. Os bytes vão
- * como corpo binário cru da IPC (sem virar array JSON) e o caminho num
- * header, codificado porque headers só aceitam ASCII (ADR 0029). */
-export async function exportPng(path: string, bytes: Uint8Array): Promise<ExportPngResult> {
+/** Saves the share image where the person chooses in the save dialog the
+ * backend opens. The bytes go as the raw IPC body (not a JSON array) and the
+ * suggested name in a header, encoded because headers only take ASCII
+ * (ADR 0029). */
+export async function exportPng(suggestedName: string, bytes: Uint8Array): Promise<ExportPngResult> {
   try {
-    await invoke('export_png', bytes, { headers: { 'x-alcy-path': encodeURIComponent(path) } })
-    return { ok: true }
+    const outcome = await invoke<SaveOutcome>('export_png', bytes, { headers: { 'x-alcy-file-name': encodeURIComponent(suggestedName) } })
+    return { ok: true, saved: outcome === 'saved' }
   } catch (error) {
     return { ok: false, error: error as ExportPngError }
   }

@@ -11,7 +11,6 @@ import { SCREENSHOT_PALETTES } from '../screenshot/screenshot-palette'
 import { ShareScreenshotModal } from './ShareScreenshotModal'
 
 const drawScreenshot = vi.fn()
-const pickExportFile = vi.fn()
 const exportPng = vi.fn()
 const serializeCollections = vi.fn()
 
@@ -30,9 +29,6 @@ vi.mock('../../../bindings/serialize-collections', () => ({
   serializeCollections: (...args: unknown[]) => serializeCollections(...args),
 }))
 
-vi.mock('../../../bindings/pick-export-file', () => ({
-  pickExportFile: (...args: unknown[]) => pickExportFile(...args),
-}))
 
 vi.mock('../../../bindings/export-png', () => ({
   exportPng: (...args: unknown[]) => exportPng(...args),
@@ -102,7 +98,6 @@ const lastPalette = () => drawScreenshot.mock.calls[drawScreenshot.mock.calls.le
 describe('ShareScreenshotModal', () => {
   beforeEach(() => {
     drawScreenshot.mockReset().mockReturnValue(true)
-    pickExportFile.mockReset()
     exportPng.mockReset()
     serializeCollections.mockReset().mockResolvedValue({ ok: true, value: '{"version":1}' })
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
@@ -115,8 +110,7 @@ describe('ShareScreenshotModal', () => {
 
   it('previews and saves a gRPC image with protocol labels and a reimportable request', async () => {
     const grpc = { ...emptyGrpcCall, service: 'test.Greeter', method: 'SayHello', message: '{"greeting":"Ada"}', deadlineMs: 2500 }
-    pickExportFile.mockResolvedValue('/tmp/grpc.png')
-    exportPng.mockResolvedValue({ ok: true })
+    exportPng.mockResolvedValue({ ok: true, saved: true })
     renderModal({ status: 'success', result: {
       status: { code: 0, codeName: 'OK', message: '' }, durationMs: 20, sizeBytes: 20, messageCount: 1,
       body: { kind: 'inline', body: '{"reply":"Hello"}' }, headers: [{ name: 'x-server', value: 'test' }], trailers: [{ name: 'x-trailer', value: 'done' }],
@@ -137,12 +131,11 @@ describe('ShareScreenshotModal', () => {
     expect(serializeCollections).toHaveBeenCalledWith([expect.objectContaining({ requests: [expect.objectContaining({
       protocol: 'grpc', body: grpc.message, grpc: { service: grpc.service, method: grpc.method, deadlineMs: 2500, schemaSource: { type: 'reflection' } },
     })] })])
-    expect(exportPng).toHaveBeenCalledWith('/tmp/grpc.png', expect.any(Uint8Array))
+    expect(exportPng).toHaveBeenCalledWith(expect.stringMatching(/\.png$/), expect.any(Uint8Array))
   })
 
   it('shares only a selected excerpt, with its context fields and its line range', async () => {
-    pickExportFile.mockResolvedValue('/tmp/trecho.png')
-    exportPng.mockResolvedValue({ ok: true })
+    exportPng.mockResolvedValue({ ok: true, saved: true })
     render(
       <ShareScreenshotModal
         tab={tab}
@@ -174,7 +167,7 @@ describe('ShareScreenshotModal', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Salvar PNG' }))
     expect(await screen.findByText('Imagem salva.')).toBeInTheDocument()
-    expect(pickExportFile).toHaveBeenCalledWith(expect.stringMatching(/^Listar usuários-L2-2-\d{8}-\d{4}$/), 'png')
+    expect(exportPng).toHaveBeenCalledWith(expect.stringMatching(/^Listar usu-rios-L2-2-\d{8}-\d{4}\.png$/), expect.any(Uint8Array))
   })
 
   it('desenha a prévia no tema escolhido e lembra as opções', async () => {
@@ -212,17 +205,15 @@ describe('ShareScreenshotModal', () => {
   })
 
   it('salva o PNG no arquivo escolhido', async () => {
-    pickExportFile.mockResolvedValue('/tmp/evidencia.png')
-    exportPng.mockResolvedValue({ ok: true })
+    exportPng.mockResolvedValue({ ok: true, saved: true })
     renderModal()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
 
     fireEvent.click(screen.getByRole('button', { name: 'Salvar PNG' }))
 
     expect(await screen.findByText('Imagem salva.')).toBeInTheDocument()
-    expect(pickExportFile).toHaveBeenCalledWith(expect.stringMatching(/^Listar usuários-\d{8}-\d{4}$/), 'png')
-    const [path, bytes] = exportPng.mock.calls[0] as [string, Uint8Array]
-    expect(path).toBe('/tmp/evidencia.png')
+    const [suggestedName, bytes] = exportPng.mock.calls[0] as [string, Uint8Array]
+    expect(suggestedName).toMatch(/^Listar usu-rios-\d{8}-\d{4}\.png$/)
     const text = new TextDecoder().decode(bytes)
     expect(text).toContain('iTXtalcy.collections')
     expect(text).toContain('{"version":1}')
@@ -233,8 +224,7 @@ describe('ShareScreenshotModal', () => {
   })
 
   it('salva a imagem sem dados de importação quando a opção é desmarcada', async () => {
-    pickExportFile.mockResolvedValue('/tmp/evidencia.png')
-    exportPng.mockResolvedValue({ ok: true })
+    exportPng.mockResolvedValue({ ok: true, saved: true })
     renderModal()
     const option = screen.getByRole('checkbox', { name: 'Incluir metadados para importação no Alcy' })
     expect(option).toBeChecked()
@@ -244,19 +234,18 @@ describe('ShareScreenshotModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Salvar PNG' }))
 
     expect(await screen.findByText('Imagem salva.')).toBeInTheDocument()
-    expect(exportPng).toHaveBeenCalledWith('/tmp/evidencia.png', new Uint8Array(MINIMAL_PNG))
+    expect(exportPng).toHaveBeenCalledWith(expect.stringMatching(/\.png$/), new Uint8Array(MINIMAL_PNG))
     expect(serializeCollections).not.toHaveBeenCalled()
   })
 
   it('pergunta se deve esvaziar campos suspeitos e exporta metadados sanitizados', async () => {
-    pickExportFile.mockResolvedValue('/tmp/login.png')
-    exportPng.mockResolvedValue({ ok: true })
+    exportPng.mockResolvedValue({ ok: true, saved: true })
     renderPasswordModal()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
 
     fireEvent.click(screen.getByRole('button', { name: 'Salvar PNG' }))
 
-    expect(pickExportFile).not.toHaveBeenCalled()
+    expect(exportPng).not.toHaveBeenCalled()
     const dialog = screen.getByRole('dialog', { name: 'Possível credencial nos metadados' })
     expect(dialog).toHaveTextContent('Deseja deixar os campos suspeitos vazios antes de exportar?')
 
@@ -271,8 +260,7 @@ describe('ShareScreenshotModal', () => {
   })
 
   it('permite exportar os metadados sem esvaziar os campos suspeitos', async () => {
-    pickExportFile.mockResolvedValue('/tmp/login.png')
-    exportPng.mockResolvedValue({ ok: true })
+    exportPng.mockResolvedValue({ ok: true, saved: true })
     renderPasswordModal()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
 
@@ -289,7 +277,6 @@ describe('ShareScreenshotModal', () => {
   })
 
   it('avisa quando os dados de importação não podem ser gerados', async () => {
-    pickExportFile.mockResolvedValue('/tmp/evidencia.png')
     serializeCollections.mockResolvedValue({ ok: false, error: { kind: 'invalid', message: 'nome vazio' } })
     renderModal()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())
@@ -301,7 +288,6 @@ describe('ShareScreenshotModal', () => {
   })
 
   it('mostra o erro ao falhar a gravação', async () => {
-    pickExportFile.mockResolvedValue('/tmp/evidencia.png')
     exportPng.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'disco cheio' } })
     renderModal()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Salvar PNG' })).toBeEnabled())

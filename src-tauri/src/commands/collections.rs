@@ -24,6 +24,9 @@ use crate::commands::execute_rest_request::{
 };
 use crate::commands::import_fetcher::ImportFetcher;
 use crate::commands::ordered_save::OrderedSaves;
+use crate::commands::save_dialog::{
+    SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -794,7 +797,9 @@ fn save_collections_inner(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportCollectionsInput {
-    pub path: String,
+    /// No destination path: the backend asks for it in the save dialog
+    /// (ADR 0081).
+    pub suggested_name: String,
     pub collections: Vec<CollectionDto>,
 }
 
@@ -1141,18 +1146,26 @@ pub struct ImportWarningDto {
     pub reason: String,
 }
 
-/// Exporta coleções (uma ou todas) para um arquivo escolhido pelo
-/// usuário, no "formato Alcy".
+/// Exports collections (one or all) in the Alcy format to a file the
+/// person chooses in the save dialog.
 #[tauri::command]
 pub async fn export_collections(
     input: ExportCollectionsInput,
+    window: tauri::WebviewWindow,
     usage: tauri::State<'_, UsageHub>,
-) -> Result<(), CollectionsCommandError> {
-    let result = run_blocking(move || {
-        export_collections_inner(PathBuf::from(input.path), input.collections)
-    })
-    .await;
-    crate::commands::usage_events::record_export(&usage, "alcy", &result);
+) -> Result<SaveOutcome, CollectionsCommandError> {
+    let file_name = safe_file_name(&input.suggested_name, "collection", Some("json"));
+    let filters = [SaveFilter {
+        name: "Alcy",
+        extensions: &["json"],
+    }];
+    let result = match choose_save_path(&window, file_name, &filters).await {
+        None => Ok(SaveOutcome::Cancelled),
+        Some(path) => run_blocking(move || export_collections_inner(path, input.collections))
+            .await
+            .map(|()| SaveOutcome::Saved),
+    };
+    record_saved_export(&usage, "alcy", &result);
     crate::logging::logged("alcy::collections", "exportar coleções", result)
 }
 

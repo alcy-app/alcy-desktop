@@ -1,16 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '../../test-utils'
 import { exportWebclient, previewWebclientExport, type WebclientSummary } from '../../bindings/export-webclient'
-import { pickExportFile } from '../../bindings/pick-export-file'
 import type { EnvironmentState } from '../environments/environments.types'
 import { ExportWebclientModal } from './ExportWebclientModal'
 
 vi.mock('../../bindings/export-webclient', () => ({
   previewWebclientExport: vi.fn(),
   exportWebclient: vi.fn(),
-}))
-vi.mock('../../bindings/pick-export-file', () => ({
-  pickExportFile: vi.fn(),
 }))
 
 const summary: WebclientSummary = {
@@ -49,8 +45,7 @@ function renderModal(onClose = vi.fn()) {
 
 beforeEach(() => {
   vi.mocked(previewWebclientExport).mockReset().mockResolvedValue({ ok: true, value: summary })
-  vi.mocked(exportWebclient).mockReset().mockResolvedValue({ ok: true, value: null })
-  vi.mocked(pickExportFile).mockReset().mockResolvedValue('/tmp/orders.html')
+  vi.mocked(exportWebclient).mockReset().mockResolvedValue({ ok: true, value: 'saved' })
 })
 
 describe('ExportWebclientModal', () => {
@@ -77,9 +72,8 @@ describe('ExportWebclientModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Exportar' }))
 
     await waitFor(() => expect(exportWebclient).toHaveBeenCalled())
-    expect(pickExportFile).toHaveBeenCalledWith('Orders', 'html')
     expect(vi.mocked(exportWebclient).mock.calls[0][0]).toMatchObject({
-      path: '/tmp/orders.html',
+      suggestedName: 'Orders.html',
       title: 'Orders',
       transport: 'auto',
       includeSensitive: false,

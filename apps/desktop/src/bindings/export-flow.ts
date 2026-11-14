@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { FlowDto, FlowsError } from './list-flows'
 import type { EnvironmentVariableDto } from './list-environments'
+import type { SaveOutcome } from './save-outcome'
 
 export interface FlowExportSource {
   rootPath: string
@@ -24,8 +25,9 @@ export async function previewFlowExport(source: FlowExportSource): Promise<FlowE
   return invoke('preview_flow_export', { input: sourceWithoutSecrets(source) })
 }
 
-export async function exportFlow(source: FlowExportSource, path: string, inline: boolean): Promise<void> {
-  return invoke('export_flow', { input: { ...sourceWithoutSecrets(source), path, inline } })
+/** Saves the flow where the person chooses in the save dialog the backend opens. */
+export async function exportFlow(source: FlowExportSource, suggestedName: string, inline: boolean): Promise<SaveOutcome> {
+  return invoke('export_flow', { input: { ...sourceWithoutSecrets(source), suggestedName, inline } })
 }
 
 export function flowExportError(error: unknown): string | undefined {

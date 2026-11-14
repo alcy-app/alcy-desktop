@@ -1,12 +1,18 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::save_dialog::{
+    SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
+};
+
+/// No destination path: the backend asks for it in the save dialog
+/// (ADR 0081).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportHarInput {
-    pub path: String,
+    pub suggested_name: String,
     pub content: String,
 }
 
@@ -17,16 +23,25 @@ pub enum ExportHarError {
     Storage { message: String },
 }
 
-/// Grava o HAR já serializado pelo frontend no arquivo escolhido pelo
-/// usuário. O conteúdo é limitado pela gravação em memória (ver
-/// `use-recorder-state.ts`), então não viola o invariante de dados grandes.
+/// Saves the HAR the frontend already serialized where the person chooses
+/// in the save dialog. The content is bounded by the in-memory recording
+/// (see `use-recorder-state.ts`), so it does not break the large-data
+/// invariant.
 #[tauri::command]
 pub async fn export_har(
     input: ExportHarInput,
+    window: tauri::WebviewWindow,
     usage: tauri::State<'_, alcy_app::UsageHub>,
-) -> Result<(), ExportHarError> {
-    let result: Result<(), ExportHarError> = async {
-        let path = PathBuf::from(input.path);
+) -> Result<SaveOutcome, ExportHarError> {
+    let result: Result<SaveOutcome, ExportHarError> = async {
+        let file_name = safe_file_name(&input.suggested_name, "session", Some("har"));
+        let filters = [SaveFilter {
+            name: "HAR",
+            extensions: &["har"],
+        }];
+        let Some(path) = choose_save_path(&window, file_name, &filters).await else {
+            return Ok(SaveOutcome::Cancelled);
+        };
         let content = input.content;
         tauri::async_runtime::spawn_blocking(move || write_har(&path, &content))
             .await
@@ -34,10 +49,11 @@ pub async fn export_har(
                 Err(ExportHarError::Storage {
                     message: error.to_string(),
                 })
-            })
+            })?;
+        Ok(SaveOutcome::Saved)
     }
     .await;
-    crate::commands::usage_events::record_export(&usage, "har", &result);
+    record_saved_export(&usage, "har", &result);
     crate::logging::logged("alcy::export", "exportar HAR", result)
 }
 
@@ -60,6 +76,7 @@ fn write_har(path: &Path, content: &str) -> Result<(), ExportHarError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 

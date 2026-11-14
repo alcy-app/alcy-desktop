@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { exportFlow, flowExportError, previewFlowExport, type FlowExportPreview, type FlowExportSource } from '../../bindings/export-flow'
-import { pickExportFile } from '../../bindings/pick-export-file'
+import { exportFileName } from '../../bindings/export-file-name'
 import { useLanguage } from '../../shared/i18n/use-language'
 import { Button } from '../../shared/ui/Button'
 import { Modal } from '../../shared/ui/Modal'
@@ -22,9 +22,7 @@ export function ExportFlowModal({ source, onClose }: { source: FlowExportSource;
     setBusy(true)
     setError(null)
     try {
-      const path = await pickExportFile(source.flow.name, 'flow')
-      if (!active.current) return
-      if (path) await exportFlow(source, path, inline)
+      await exportFlow(source, exportFileName(source.flow.name, 'flow'), inline)
       if (active.current) closeRef.current()
     } catch (cause) {
       if (active.current) setError(flowExportError(cause) ?? t('flows.export.error'))

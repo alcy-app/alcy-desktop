@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use alcy_app::{FlowExportContext, FlowExportRequest, PreparedFlowExport, prepare_flow_export};
 use alcy_domain::{
@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::collections::request_to_dto;
 use super::environments::EnvironmentVariableDto;
 use super::flows::{FlowInput, FlowsError, flow_from_input, flow_to_dto};
+use super::save_dialog::{
+    SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,7 +28,9 @@ pub struct FlowExportInput {
 pub struct WriteFlowExportInput {
     #[serde(flatten)]
     source: FlowExportInput,
-    path: String,
+    /// No destination path: the backend asks for it in the save dialog
+    /// (ADR 0081).
+    suggested_name: String,
     inline: bool,
 }
 
@@ -134,21 +139,34 @@ pub async fn preview_flow_export(
 #[tauri::command]
 pub async fn export_flow(
     input: WriteFlowExportInput,
+    window: tauri::WebviewWindow,
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, LocalSecrets>,
-) -> Result<(), FlowsError> {
+) -> Result<SaveOutcome, FlowsError> {
     let secrets = LocalSecrets::clone(&secrets);
-    let result = tauri::async_runtime::spawn_blocking(move || write_export(input, secrets))
+    let file_name = safe_file_name(&input.suggested_name, "flow", Some("json"));
+    let filters = [SaveFilter {
+        name: "Alcy Flow",
+        extensions: &["json"],
+    }];
+    let Some(path) = choose_save_path(&window, file_name, &filters).await else {
+        return Ok(SaveOutcome::Cancelled);
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || write_export(input, &path, secrets))
         .await
         .map_err(|e| FlowsError::Storage {
             message: e.to_string(),
-        })?;
-    super::usage_events::record_export(&usage, "flow", &result);
+        })?
+        .map(|()| SaveOutcome::Saved);
+    record_saved_export(&usage, "flow", &result);
     crate::logging::logged("alcy::export", "export flow", result)
 }
 
-fn write_export(input: WriteFlowExportInput, secrets: LocalSecrets) -> Result<(), FlowsError> {
-    let path = PathBuf::from(input.path);
+fn write_export(
+    input: WriteFlowExportInput,
+    path: &Path,
+    secrets: LocalSecrets,
+) -> Result<(), FlowsError> {
     if !path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("json"))
@@ -227,9 +245,10 @@ mod tests {
         write_export(
             WriteFlowExportInput {
                 source: input(&root),
-                path: path.to_string_lossy().into(),
+                suggested_name: "example".into(),
                 inline: true,
             },
+            &path,
             test_secrets(),
         )
         .unwrap();
@@ -264,9 +283,10 @@ mod tests {
             write_export(
                 WriteFlowExportInput {
                     source: input(&root),
-                    path: path.to_string_lossy().into(),
+                    suggested_name: "example".into(),
                     inline: true
                 },
+                &path,
                 test_secrets()
             )
             .is_err()
@@ -275,9 +295,10 @@ mod tests {
         write_export(
             WriteFlowExportInput {
                 source: input(&root),
-                path: path.to_string_lossy().into(),
+                suggested_name: "example".into(),
                 inline: false,
             },
+            &path,
             test_secrets(),
         )
         .unwrap();
@@ -286,9 +307,10 @@ mod tests {
             write_export(
                 WriteFlowExportInput {
                     source: input(&root),
-                    path: invalid_path.to_string_lossy().into(),
+                    suggested_name: "example".into(),
                     inline: false
                 },
+                &invalid_path,
                 test_secrets()
             )
             .is_err()

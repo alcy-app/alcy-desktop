@@ -1,19 +1,24 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request};
 
-/// Header com o caminho de destino, codificado com `encodeURIComponent`
-/// porque headers só aceitam ASCII (ver `bindings/export-png.ts`).
-const PATH_HEADER: &str = "x-alcy-path";
+use crate::commands::save_dialog::{
+    SaveFilter, SaveOutcome, choose_save_path, record_saved_export, safe_file_name,
+};
 
-/// Assinatura de todo arquivo PNG.
+/// Header with the suggested file name, encoded with `encodeURIComponent`
+/// because headers only take ASCII (see `bindings/export-png.ts`). The
+/// destination itself comes from the save dialog (ADR 0081).
+const FILE_NAME_HEADER: &str = "x-alcy-file-name";
+
+/// Signature at the start of every PNG file.
 const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 
-/// Teto do corpo aceito. A imagem de compartilhamento tem altura limitada no
-/// frontend (`screenshot-layout.ts`), então fica bem abaixo disso.
+/// Largest accepted body. The share image's height is capped in the
+/// frontend (`screenshot-layout.ts`), so it stays well below this.
 const MAX_PNG_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -29,44 +34,57 @@ fn invalid(message: &str) -> ExportPngError {
     }
 }
 
-/// Grava a imagem de compartilhamento da requisição (PNG gerado no
-/// frontend) no arquivo escolhido pelo usuário. Os bytes chegam como corpo
-/// binário cru da IPC, uma única vez e com teto de tamanho (ADR 0029).
+/// Saves the request's share image (a PNG made in the frontend) where the
+/// person chooses in the save dialog. The bytes arrive once as the raw IPC
+/// body, with a size cap (ADR 0029).
 #[tauri::command]
 pub async fn export_png(
     request: Request<'_>,
+    window: tauri::WebviewWindow,
     usage: tauri::State<'_, alcy_app::UsageHub>,
-) -> Result<(), ExportPngError> {
-    let result: Result<(), ExportPngError> = async {
-        let path = path_from_headers(&request)?;
+) -> Result<SaveOutcome, ExportPngError> {
+    let result: Result<SaveOutcome, ExportPngError> = async {
+        let file_name = file_name_from_headers(&request)?;
         let bytes = bytes_from_body(request.body())?;
+        check_png(&bytes)?;
+        let filters = [SaveFilter {
+            name: "PNG",
+            extensions: &["png"],
+        }];
+        let Some(path) = choose_save_path(&window, file_name, &filters).await else {
+            return Ok(SaveOutcome::Cancelled);
+        };
         tauri::async_runtime::spawn_blocking(move || write_png(&path, &bytes))
             .await
             .unwrap_or_else(|error| {
                 Err(ExportPngError::Storage {
                     message: error.to_string(),
                 })
-            })
+            })?;
+        Ok(SaveOutcome::Saved)
     }
     .await;
-    crate::commands::usage_events::record_export(&usage, "png", &result);
+    record_saved_export(&usage, "png", &result);
     crate::logging::logged("alcy::export", "exportar PNG", result)
 }
 
-fn path_from_headers(request: &Request<'_>) -> Result<PathBuf, ExportPngError> {
-    let encoded = request
+fn file_name_from_headers(request: &Request<'_>) -> Result<String, ExportPngError> {
+    let suggested = match request
         .headers()
-        .get(PATH_HEADER)
+        .get(FILE_NAME_HEADER)
         .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| invalid("caminho de destino ausente"))?;
-    let decoded = percent_decode_str(encoded)
-        .decode_utf8()
-        .map_err(|_| invalid("caminho de destino inválido"))?;
-    Ok(PathBuf::from(decoded.as_ref()))
+    {
+        Some(encoded) => percent_decode_str(encoded)
+            .decode_utf8()
+            .map_err(|_| invalid("nome de arquivo inválido"))?
+            .into_owned(),
+        None => String::new(),
+    };
+    Ok(safe_file_name(&suggested, "image", Some("png")))
 }
 
-/// Corpo cru; quando a IPC cai no transporte por `postMessage`, os bytes
-/// chegam como array JSON de números.
+/// Raw body; when the IPC falls back to the `postMessage` transport, the
+/// bytes arrive as a JSON array of numbers.
 fn bytes_from_body(body: &InvokeBody) -> Result<Vec<u8>, ExportPngError> {
     match body {
         InvokeBody::Raw(bytes) => Ok(bytes.clone()),
@@ -83,6 +101,18 @@ fn bytes_from_body(body: &InvokeBody) -> Result<Vec<u8>, ExportPngError> {
     }
 }
 
+/// Checked before the dialog opens, so invalid content never asks for a
+/// destination.
+fn check_png(bytes: &[u8]) -> Result<(), ExportPngError> {
+    if bytes.len() > MAX_PNG_BYTES {
+        return Err(invalid("a imagem excede o tamanho máximo"));
+    }
+    if !bytes.starts_with(&PNG_SIGNATURE) {
+        return Err(invalid("o conteúdo não é uma imagem PNG"));
+    }
+    Ok(())
+}
+
 fn write_png(path: &Path, bytes: &[u8]) -> Result<(), ExportPngError> {
     let has_png_extension = path
         .extension()
@@ -91,12 +121,7 @@ fn write_png(path: &Path, bytes: &[u8]) -> Result<(), ExportPngError> {
     if !has_png_extension {
         return Err(invalid("o arquivo deve ter a extensão .png"));
     }
-    if bytes.len() > MAX_PNG_BYTES {
-        return Err(invalid("a imagem excede o tamanho máximo"));
-    }
-    if !bytes.starts_with(&PNG_SIGNATURE) {
-        return Err(invalid("o conteúdo não é uma imagem PNG"));
-    }
+    check_png(bytes)?;
 
     fs::write(path, bytes).map_err(|error| ExportPngError::Storage {
         message: error.to_string(),
@@ -106,6 +131,7 @@ fn write_png(path: &Path, bytes: &[u8]) -> Result<(), ExportPngError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 

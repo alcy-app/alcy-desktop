@@ -158,9 +158,7 @@ async function preparedResult(result: { ok: true; value: PreparedTestValue } | {
     },
   }
 }
-const pickExportFile = vi.fn()
 const exportHar = vi.fn()
-const pickResponseFile = vi.fn()
 const saveResponseBody = vi.fn()
 const pickImportFiles = vi.fn()
 const pickImportFolder = vi.fn()
@@ -309,16 +307,8 @@ vi.mock('../../bindings/export-har', () => ({
   exportHar: (...args: unknown[]) => exportHar(...args),
 }))
 
-vi.mock('../../bindings/pick-response-file', () => ({
-  pickResponseFile: (...args: unknown[]) => pickResponseFile(...args),
-}))
-
 vi.mock('../../bindings/save-response-body', () => ({
   saveResponseBody: (...args: unknown[]) => saveResponseBody(...args),
-}))
-
-vi.mock('../../bindings/pick-export-file', () => ({
-  pickExportFile: (...args: unknown[]) => pickExportFile(...args),
 }))
 
 vi.mock('../../bindings/pick-import-file', () => ({
@@ -402,9 +392,7 @@ beforeEach(() => {
   importCollectionsFromUrl.mockReset()
   preparedImportValues.clear()
   preparedImportSequence = 0
-  pickExportFile.mockReset()
   exportHar.mockReset()
-  pickResponseFile.mockReset()
   saveResponseBody.mockReset()
   pickImportFiles.mockReset()
   pickImportFolder.mockReset()
@@ -435,11 +423,10 @@ beforeEach(() => {
     return { ok: true, value: null }
   })
   onFileDrop.mockResolvedValue(() => {})
-  exportCollections.mockResolvedValue({ ok: true })
+  exportCollections.mockResolvedValue({ ok: true, saved: true })
   importCollections.mockResolvedValue({ ok: true, value: { collections: [], environments: [] } })
   importCollectionsFromText.mockResolvedValue({ ok: true, value: { collections: [], environments: [] } })
   importCollectionsFromUrl.mockResolvedValue({ ok: true, value: { collections: [], environments: [] } })
-  pickExportFile.mockResolvedValue(null)
   pickImportFiles.mockResolvedValue([])
   pickImportFolder.mockResolvedValue(null)
   expandImportPaths.mockImplementation(async (paths: string[]) => ({ ok: true, value: paths }))
@@ -1377,8 +1364,7 @@ describe('RequestWorkbench', () => {
         graphqlErrors: [],
       },
     })
-    pickExportFile.mockResolvedValue('/tmp/session.har')
-    exportHar.mockResolvedValue({ ok: true })
+    exportHar.mockResolvedValue({ ok: true, saved: true })
 
     render()
     await screen.findByLabelText('Ambiente')
@@ -1395,9 +1381,8 @@ describe('RequestWorkbench', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Salvar .har' }))
     await waitFor(() => expect(exportHar).toHaveBeenCalledTimes(1))
-    expect(pickExportFile).toHaveBeenCalledWith('alcy-sessao', 'har')
-    const [path, content] = exportHar.mock.calls[0] as [string, string]
-    expect(path).toBe('/tmp/session.har')
+    const [suggestedName, content] = exportHar.mock.calls[0] as [string, string]
+    expect(suggestedName).toBe('alcy-sessao.har')
     expect(JSON.parse(content).log.entries).toHaveLength(1)
   })
 
@@ -1435,16 +1420,15 @@ describe('RequestWorkbench', () => {
 
     it('envia e grava o corpo inline no arquivo escolhido', async () => {
       executeGraphqlRequest.mockResolvedValue(successfulSend({ kind: 'inline', body: '{"data":{}}' }))
-      pickResponseFile.mockResolvedValue('/tmp/resposta.json')
-      saveResponseBody.mockResolvedValue({ ok: true })
+      saveResponseBody.mockResolvedValue({ ok: true, saved: true })
 
       await chooseDownloadResponse()
 
       expect(await screen.findByText('Resposta salva.')).toBeInTheDocument()
       expect(executeGraphqlRequest).toHaveBeenCalledTimes(1)
-      expect(pickResponseFile).toHaveBeenCalledWith(expect.stringMatching(/\.json$/), 'Todos os arquivos')
       expect(saveResponseBody).toHaveBeenCalledWith({
-        path: '/tmp/resposta.json',
+        suggestedName: expect.stringMatching(/\.json$/),
+        allFilesLabel: 'Todos os arquivos',
         encoding: 'text',
         source: { kind: 'inline', body: '{"data":{}}' },
       })
@@ -1456,23 +1440,23 @@ describe('RequestWorkbench', () => {
       executeGraphqlRequest.mockResolvedValue(
         successfulSend({ kind: 'windowed', handle: 'exec-1', totalBytes: 9_000_000, preview: '{"data"', previewNextOffset: 7 }),
       )
-      pickResponseFile.mockResolvedValue('/tmp/grande.json')
-      saveResponseBody.mockResolvedValue({ ok: true })
+      saveResponseBody.mockResolvedValue({ ok: true, saved: true })
 
       await chooseDownloadResponse()
 
       await waitFor(() => expect(saveResponseBody).toHaveBeenCalledTimes(1))
-      expect(saveResponseBody).toHaveBeenCalledWith({ path: '/tmp/grande.json', encoding: 'text', source: { kind: 'windowed', handle: 'exec-1' } })
+      expect(saveResponseBody).toHaveBeenCalledWith({ suggestedName: expect.any(String), allFilesLabel: 'Todos os arquivos', encoding: 'text', source: { kind: 'windowed', handle: 'exec-1' } })
     })
 
-    it('não grava nada quando o diálogo é cancelado', async () => {
+    it('não avisa nada quando o diálogo é cancelado', async () => {
       executeGraphqlRequest.mockResolvedValue(successfulSend({ kind: 'inline', body: '{}' }))
-      pickResponseFile.mockResolvedValue(null)
+      saveResponseBody.mockResolvedValue({ ok: true, saved: false })
 
       await chooseDownloadResponse()
 
-      await waitFor(() => expect(pickResponseFile).toHaveBeenCalledTimes(1))
-      expect(saveResponseBody).not.toHaveBeenCalled()
+      await waitFor(() => expect(saveResponseBody).toHaveBeenCalledTimes(1))
+      await findStatusText(/200/)
+      expect(screen.queryByText('Resposta salva.')).toBeNull()
     })
 
     it('não abre o diálogo quando o envio falha', async () => {
@@ -1482,12 +1466,11 @@ describe('RequestWorkbench', () => {
 
       await waitFor(() => expect(executeGraphqlRequest).toHaveBeenCalledTimes(1))
       await waitFor(() => expect(screen.getByRole('button', { name: 'Enviar' })).toBeInTheDocument())
-      expect(pickResponseFile).not.toHaveBeenCalled()
+      expect(saveResponseBody).not.toHaveBeenCalled()
     })
 
     it('avisa quando a resposta não está mais disponível no backend', async () => {
       executeGraphqlRequest.mockResolvedValue(successfulSend({ kind: 'inline', body: '{}' }))
-      pickResponseFile.mockResolvedValue('/tmp/resposta.json')
       saveResponseBody.mockResolvedValue({ ok: false, error: { kind: 'notFound' } })
 
       await chooseDownloadResponse()
@@ -1528,8 +1511,7 @@ describe('RequestWorkbench', () => {
           graphqlErrors: [],
         },
       })
-      pickExportFile.mockResolvedValue('/tmp/session.har')
-      exportHar.mockResolvedValue({ ok: true })
+      exportHar.mockResolvedValue({ ok: true, saved: true })
 
       render()
       await screen.findByLabelText('Ambiente')
@@ -1580,8 +1562,7 @@ describe('RequestWorkbench', () => {
           headers: [],
         },
       })
-      pickExportFile.mockResolvedValue('/tmp/session.har')
-      exportHar.mockResolvedValue({ ok: true })
+      exportHar.mockResolvedValue({ ok: true, saved: true })
 
       render()
       await screen.findByLabelText('Ambiente')
@@ -2749,7 +2730,6 @@ describe('RequestWorkbench', () => {
 
       it('exports folders directly when the webclient flag is disabled', async () => {
         featureFlags.webclientExport = false
-        pickExportFile.mockResolvedValue('/export/customer-api.alcy.json')
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -2764,17 +2744,15 @@ describe('RequestWorkbench', () => {
         openMenu('Nova pasta')
         fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
         await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith(
-          '/export/customer-api.alcy.json',
+          'Nova pasta.alcy.json',
           [expect.objectContaining({ name: 'Nova pasta', folders: [], requests: [] })],
         ))
-        expect(pickExportFile).toHaveBeenCalledWith('Nova pasta')
 
         expect(screen.queryByRole('menuitem', { name: 'Como webclient' })).toBeNull()
-        await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith('/export/customer-api.alcy.json', expect.any(Array)))
+        await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith('Nova pasta.alcy.json', expect.any(Array)))
       })
 
       it('exporta uma única Collection pelo menu "⋯"', async () => {
-        pickExportFile.mockResolvedValue('/export/customer-api.alcy.json')
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -2787,17 +2765,16 @@ describe('RequestWorkbench', () => {
         fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
         fireEvent.click(screen.getByRole('menuitem', { name: 'Formato Alcy' }))
 
-        expect(pickExportFile).toHaveBeenCalledWith('Nova Collection')
         await vi.waitFor(() =>
           expect(exportCollections).toHaveBeenCalledWith(
-            '/export/customer-api.alcy.json',
+            'Nova Collection.alcy.json',
             [expect.objectContaining({ name: 'Nova Collection', folders: [], requests: [] })],
           ),
         )
       })
 
-      it('cancela a exportação sem chamar o backend quando o diálogo de salvar é fechado', async () => {
-        pickExportFile.mockResolvedValue(null)
+      it('não avisa nada quando o diálogo de salvar é fechado', async () => {
+        exportCollections.mockResolvedValue({ ok: true, saved: false })
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -2810,12 +2787,11 @@ describe('RequestWorkbench', () => {
         fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar' }))
         fireEvent.click(screen.getByRole('menuitem', { name: 'Formato Alcy' }))
 
-        await vi.waitFor(() => expect(pickExportFile).toHaveBeenCalled())
-        expect(exportCollections).not.toHaveBeenCalled()
+        await vi.waitFor(() => expect(exportCollections).toHaveBeenCalled())
+        expect(screen.queryByText('Collection exportada.')).toBeNull()
       })
 
       it('exporta todas as Collections pelo "Exportar tudo" do menu "..."', async () => {
-        pickExportFile.mockResolvedValue('/export/workspace.alcy.json')
         render()
         await screen.findByLabelText('Ambiente')
         await createRequestFromEmptyState()
@@ -2827,9 +2803,8 @@ describe('RequestWorkbench', () => {
         openMoreMenu()
         fireEvent.click(within(collectionsSidebar()).getByRole('menuitem', { name: 'Exportar tudo' }))
 
-        expect(pickExportFile).toHaveBeenCalledWith('workspace')
         await vi.waitFor(() =>
-          expect(exportCollections).toHaveBeenCalledWith('/export/workspace.alcy.json', [
+          expect(exportCollections).toHaveBeenCalledWith('workspace.alcy.json', [
             expect.objectContaining({ name: 'Nova Collection' }),
           ]),
         )
@@ -3583,7 +3558,7 @@ describe('RequestWorkbench', () => {
         fireEvent.pointerDown(menuItem)
         fireEvent.click(menuItem)
 
-        expect(pickExportFile).toHaveBeenCalledWith('workspace')
+        await vi.waitFor(() => expect(exportCollections).toHaveBeenCalledWith('workspace.alcy.json', expect.any(Array)))
       })
 
       it('o "+" da sidebar abre o popover e cria um rascunho avulso mesmo sem nenhuma Collection existente', async () => {

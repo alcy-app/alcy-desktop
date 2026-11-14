@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'rea
 import type { AuthenticationInput } from '../../../bindings/execute-graphql-request'
 import { exportPng } from '../../../bindings/export-png'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
-import { pickExportFile } from '../../../bindings/pick-export-file'
+import { exportFileName } from '../../../bindings/export-file-name'
 import { serializeCollections } from '../../../bindings/serialize-collections'
 import type { LanguageContextValue } from '../../../shared/i18n/language-context'
 import { useLanguage } from '../../../shared/i18n/use-language'
@@ -240,14 +240,12 @@ export function ShareScreenshotModal({
     const canvas = canvasRef.current
     if (!canvas) return
     const baseName = excerpt ? `${requestName}-L${excerpt.firstLine}-${excerptLastLine(excerpt)}` : requestName
-    const path = await pickExportFile(suggestedFileName(baseName, capturedAt), 'png')
-    if (!path) return
     setBusy('save')
     try {
       const blob = await renderPng(canvas, clearSuspectedPasswords)
-      const result = await exportPng(path, new Uint8Array(await blob.arrayBuffer()))
-      if (result.ok) showToast(t('share.image.saveSuccess'))
-      else showToast(t('share.image.saveError', { message: result.error.message }), 'error')
+      const result = await exportPng(exportFileName(suggestedFileName(baseName, capturedAt), 'png'), new Uint8Array(await blob.arrayBuffer()))
+      if (!result.ok) showToast(t('share.image.saveError', { message: result.error.message }), 'error')
+      else if (result.saved) showToast(t('share.image.saveSuccess'))
     } catch (error) {
       showFailure(error, t('share.image.renderError'))
     } finally {

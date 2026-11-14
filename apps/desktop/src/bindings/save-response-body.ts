@@ -1,26 +1,30 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { ResponseBodyEncoding } from './execute-graphql-request'
+import type { SaveOutcome } from './save-outcome'
 
-/** De onde o backend lê o corpo: inteiro (`inline`, já cruzou a IPC) ou pelo
- * handle de um corpo grande retido no backend (`windowed`) — o corpo completo
- * não volta pela IPC. */
+/** Where the backend reads the body from: whole (`inline`, it already
+ * crossed the IPC) or by the handle of a large body kept in the backend
+ * (`windowed`) — the full body never goes back through the IPC. */
 export type SaveResponseBodySource = { kind: 'inline'; body: string } | { kind: 'windowed'; handle: string }
 
 export interface SaveResponseBodyInput {
-  path: string
+  /** Filled in the save dialog the backend opens. */
+  suggestedName: string
+  /** Label of the dialog's "all files" filter. */
+  allFilesLabel: string
   encoding: ResponseBodyEncoding
   source: SaveResponseBodySource
 }
 
 export type SaveResponseBodyError = { kind: 'notFound' } | { kind: 'invalid' | 'storage'; message: string }
 
-export type SaveResponseBodyResult = { ok: true } | { ok: false; error: SaveResponseBodyError }
+export type SaveResponseBodyResult = { ok: true; saved: boolean } | { ok: false; error: SaveResponseBodyError }
 
-/** Grava o corpo da resposta no arquivo escolhido ("Baixar resposta"). */
+/** Saves the response body where the person chooses ("Download response"). */
 export async function saveResponseBody(input: SaveResponseBodyInput): Promise<SaveResponseBodyResult> {
   try {
-    await invoke('save_response_body', { input })
-    return { ok: true }
+    const outcome = await invoke<SaveOutcome>('save_response_body', { input })
+    return { ok: true, saved: outcome === 'saved' }
   } catch (error) {
     return { ok: false, error: error as SaveResponseBodyError }
   }

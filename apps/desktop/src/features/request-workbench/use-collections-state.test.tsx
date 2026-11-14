@@ -8,13 +8,9 @@ import { useCollectionsState } from './use-collections-state'
 const listCollections = vi.fn()
 const saveCollections = vi.fn()
 const exportCollections = vi.fn()
-const pickExportFile = vi.fn()
 
 vi.mock('../../bindings/export-collections', () => ({
   exportCollections: (...args: unknown[]) => exportCollections(...args),
-}))
-vi.mock('../../bindings/pick-export-file', () => ({
-  pickExportFile: (...args: unknown[]) => pickExportFile(...args),
 }))
 
 vi.mock('../../bindings/list-collections', () => ({
@@ -118,16 +114,14 @@ describe('useCollectionsState — folder export', () => {
       ok: true,
       value: [{ id: 'c1', name: 'API', folders: [folder], requests: [], authentication: { type: 'inherit' } }],
     })
-    exportCollections.mockReset().mockResolvedValue({ ok: true })
-    pickExportFile.mockReset().mockResolvedValue('/export/orders.alcy.json')
+    exportCollections.mockReset().mockResolvedValue({ ok: true, saved: true })
     const { result } = renderHook(() => useCollectionsState('/workspace', vi.fn()), { wrapper })
     await waitFor(() => expect(result.current.loaded).toBe(true))
 
     await act(() => result.current.exportCollection('f1'))
-    expect(pickExportFile).toHaveBeenCalledWith('Orders')
-    expect(exportCollections).toHaveBeenLastCalledWith('/export/orders.alcy.json', [folder])
+    expect(exportCollections).toHaveBeenLastCalledWith('Orders.alcy.json', [folder])
 
     await act(() => result.current.exportCollectionsByIds(['f2', 'f1']))
-    expect(exportCollections).toHaveBeenLastCalledWith('/export/orders.alcy.json', [folder])
+    expect(exportCollections).toHaveBeenLastCalledWith('Orders.alcy.json', [folder])
   })
 })

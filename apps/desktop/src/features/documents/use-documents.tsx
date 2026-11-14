@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { cancelDocumentJob, documentCall, listDocumentThemes, pickDocumentExport, pickDocumentImage, readDocument, saveDocumentContent, uploadDocumentImage, type DocumentationRecord, type DocumentList, type DocumentRead, type DocumentSource, type DocumentThemeSummary } from '../../bindings/documentation'
+import { cancelDocumentJob, documentCall, listDocumentThemes, exportDocument, pickDocumentImage, readDocument, saveDocumentContent, uploadDocumentImage, type DocumentationRecord, type DocumentList, type DocumentRead, type DocumentSource, type DocumentThemeSummary } from '../../bindings/documentation'
 import type { PseudoTab } from '../../extensions/types'
 import { useLanguage } from '../../shared/i18n/use-language'
 import type { WorkbenchAgentHost } from '../agent/agent-host'
@@ -132,10 +132,12 @@ export function useDocuments(rootPath: string, enabled = true) {
     ensureClean(id)
     const doc = await readDocument(rootPath, id)
     if (expectedRevision !== undefined && doc.revision !== expectedRevision) throw new Error(t('documents.conflict'))
-    const path = await pickDocumentExport(doc.title, format)
-    if (!path || cancelEpoch.current !== epoch) return { cancelled: true }
+    if (cancelEpoch.current !== epoch) return { cancelled: true }
     const jobId = crypto.randomUUID(); activeJob.current = jobId; setJob(jobId)
-    try { return await documentCall(rootPath, 'export', { documentId: id, revision: doc.revision, path, format, jobId, language }) }
+    try {
+      const { cancelled } = await exportDocument(rootPath, id, doc.revision, doc.title, format, jobId, language)
+      return cancelled ? { cancelled: true } : { exported: true }
+    }
     finally { activeJob.current = null; setJob(null) }
   }, [rootPath, ensureClean, t, language])
   const captureImage = useCallback(async (id: string, revision: number, caption: string, input: Parameters<typeof captureDocumentRequest>[2], host: WorkbenchAgentHost | null = null) => {
