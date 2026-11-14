@@ -736,7 +736,8 @@ Global state should only exist when there are independent consumers and a clearl
 - capabilities follow least privilege;
 - the frontend gets no unrestricted access to the system;
 - secrets and sensitive headers do not show up in logs;
-- error messages for the interface do not reveal unnecessary internal details.
+- error messages for the interface do not reveal unnecessary internal details;
+- file paths are never trusted from the WebView (ADR 0081): a command that saves a file the person chooses opens the save dialog itself (`save_dialog`); a command that reads one accepts only paths picked in the open dialog the backend opens (`pick_paths`) or dropped on the window (`PickedPaths`); and the invoke handler refuses any `rootPath` that is neither a recent workspace nor a picked folder (`workspace_roots`), before the command runs.
 
 ## Evolution
 

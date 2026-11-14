@@ -129,6 +129,7 @@ use commands::websocket::{
     WebSocketSessions, close_websocket, execute_websocket_request, send_websocket_message,
 };
 use commands::workspace_operation_coordinator::WorkspaceOperationCoordinator;
+use commands::workspace_roots::{WorkspaceRoots, guard_workspace_roots};
 use commands::workspaces::{
     create_workspace, get_workspace_file_stamps, get_workspace_removal_options,
     list_recent_workspaces, open_workspace, open_workspace_folder, remove_workspace,
@@ -299,6 +300,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 log::warn!(target: "alcy::scripts", "script trust migration failed: {error}");
             }
             app.manage(script_trust);
+            app.manage(WorkspaceRoots::new(recent_workspaces.clone()));
             app.manage(recent_workspaces);
             app.manage(ProxySettingsStore::new(
                 app_data_dir.join("proxy-settings.json"),
@@ -392,7 +394,8 @@ pub fn run_with(extensions: Vec<Extension>) {
 
             Ok(())
         })
-        .invoke_handler(with_extension_commands(
+        // A `rootPath` must be a known workspace or a picked folder (ADR 0081).
+        .invoke_handler(guard_workspace_roots(with_extension_commands(
             extension_commands,
             extension_invokes,
             log_invocations(tauri::generate_handler![
@@ -572,7 +575,7 @@ pub fn run_with(extensions: Vec<Extension>) {
                 delete_session_cookie,
                 clear_session_cookies
             ]),
-        ))
+        )))
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {

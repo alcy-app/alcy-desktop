@@ -1,7 +1,7 @@
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickPath } from './pick-paths'
 
-/** Retorna o caminho escolhido, ou `null` se o usuário cancelar o diálogo. */
-export async function pickWorkspaceFolder(): Promise<string | null> {
-  const selected = await open({ directory: true, multiple: false })
-  return typeof selected === 'string' ? selected : null
+/** The chosen folder, or `null` when the person cancels. Picked through the
+ * backend, which then accepts it as a workspace root (ADR 0081). */
+export function pickWorkspaceFolder(): Promise<string | null> {
+  return pickPath({ directory: true })
 }

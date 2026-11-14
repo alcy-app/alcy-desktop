@@ -1,11 +1,6 @@
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickPath } from './pick-paths'
 
-/** Escolhe um bundle PEM de autoridades certificadoras para o cliente HTTP. */
-export async function pickCustomCaCertificate(): Promise<string | null> {
-  const selected = await open({
-    directory: false,
-    multiple: false,
-    filters: [{ name: 'PEM', extensions: ['pem', 'crt', 'cer'] }],
-  })
-  return typeof selected === 'string' ? selected : null
+/** Chooses a PEM bundle of certificate authorities for the HTTP client. */
+export function pickCustomCaCertificate(): Promise<string | null> {
+  return pickPath({ filters: [{ name: 'PEM', extensions: ['pem', 'crt', 'cer'] }] })
 }

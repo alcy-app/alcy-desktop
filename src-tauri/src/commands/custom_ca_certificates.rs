@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::import_fetcher::ImportFetcher;
+use super::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 use super::remote_command::RemoteHttpClients;
 
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
@@ -151,8 +152,16 @@ pub fn add_custom_ca_certificate(
     import_fetcher: State<'_, ImportFetcher>,
     agent: State<'_, AgentHttpClient>,
     usage: State<'_, alcy_app::UsageHub>,
+    picked: State<'_, PickedPaths>,
 ) -> Result<Vec<CustomCaCertificateDto>, CustomCaCertificateCommandError> {
     let result = crate::logging::logged_with("alcy::tls", "adicionar CA personalizada", || {
+        // The certificate file comes only from the open dialog or a drop
+        // (ADR 0081).
+        if !picked.allows(Path::new(&path)) {
+            return Err(CustomCaCertificateCommandError::File {
+                message: NOT_PICKED_MESSAGE.to_string(),
+            });
+        }
         let (name, pem) = read_pem(&path)?;
         let mut certificates = store.load().map_err(storage_error)?;
         if certificates.iter().any(|item| item.pem == pem) {

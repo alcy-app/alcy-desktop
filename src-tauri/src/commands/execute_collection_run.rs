@@ -32,6 +32,7 @@ use crate::commands::execute_rest_request::HttpMethodInput;
 use crate::commands::flow_execution_registry::{FlowExecutionRegistry, WatchCancellation};
 use crate::commands::flow_run_outputs::FlowNodeOutput;
 use crate::commands::general_settings::{HistoryPreferences, HistoryPreferencesState};
+use crate::commands::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 use crate::commands::protocol_dispatching_executor::ProtocolDispatchingExecutor;
 use crate::commands::scripting::{EnvironmentChangeOutput, ScopedChangeOutput, ScriptTestOutput};
 
@@ -580,7 +581,19 @@ pub async fn execute_collection_run(
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
     script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
+    picked: tauri::State<'_, PickedPaths>,
 ) -> Result<(), ExecuteCollectionRunError> {
+    // The data file comes only from the open dialog or a drop (ADR 0081).
+    if let Some(path) = input
+        .data_file_path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        && !picked.allows(Path::new(path))
+    {
+        return Err(ExecuteCollectionRunError::DataFile {
+            message: NOT_PICKED_MESSAGE.to_string(),
+        });
+    }
     let run_id = input.run_id.clone();
     let workspace_trust = script_trust.workspace(Path::new(&input.root_path));
     let started = std::time::Instant::now();

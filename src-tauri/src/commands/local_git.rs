@@ -16,11 +16,13 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
 use super::execution_registry::ExecutionRegistry;
+use super::picked_paths::{NOT_PICKED_MESSAGE, PickedPaths};
 use super::remote_command::{RemoteCommandError, cancellable};
 use super::version_control::{
     DEFAULT_GIT_BRANCH, StructuredFileChangesDto, VersionControlFiles, structured_changes_dto,
 };
 use super::workspace_operation_coordinator::WorkspaceOperationCoordinator;
+use super::workspace_roots::WorkspaceRoots;
 use super::workspaces::{
     WORKSPACES_FOLDER_NAME, WorkspaceDto, next_available_path, record_recent_in_order,
     workspace_to_dto,
@@ -618,7 +620,18 @@ pub struct TrustGitFolderInput {
 /// Trusts a folder git refused over its ownership. Only after the person
 /// confirmed it: a repository of someone else's can run code during a clone.
 #[tauri::command]
-pub async fn trust_git_folder(input: TrustGitFolderInput) -> Result<(), RemoteCommandError> {
+pub async fn trust_git_folder(
+    input: TrustGitFolderInput,
+    roots: State<'_, WorkspaceRoots>,
+    picked: State<'_, PickedPaths>,
+) -> Result<(), RemoteCommandError> {
+    // Only a picked folder or a known workspace can be trusted (ADR 0081):
+    // the interface cannot add an arbitrary folder to git's safe list.
+    if !roots.allows(&input.path, &picked) {
+        return Err(RemoteCommandError::Invalid {
+            message: NOT_PICKED_MESSAGE.to_string(),
+        });
+    }
     let result = alcy_git::trust_folder(&input.path)
         .await
         .map_err(RemoteCommandError::from);
@@ -668,8 +681,16 @@ pub async fn clone_git_workspace(
     recent_store: State<'_, RecentWorkspacesStore>,
     git: State<'_, LocalGitProvider>,
     usage: State<'_, alcy_app::UsageHub>,
+    picked: State<'_, PickedPaths>,
 ) -> Result<WorkspaceDto, RemoteCommandError> {
     let result: Result<WorkspaceDto, RemoteCommandError> = async {
+        // A folder to clone from comes only from the open dialog or a drop
+        // (ADR 0081).
+        if input.from_folder && !picked.allows(Path::new(&input.url)) {
+            return Err(RemoteCommandError::Invalid {
+                message: NOT_PICKED_MESSAGE.to_string(),
+            });
+        }
         let url = alcy_git::validate_remote_url(&input.url)?;
         let workspaces = app
             .path()

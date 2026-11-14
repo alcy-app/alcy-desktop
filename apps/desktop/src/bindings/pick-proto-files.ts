@@ -1,16 +1,12 @@
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickPath, pickPaths } from './pick-paths'
 
 /** Chooses `.proto` files for a gRPC request (spec 0129). Only the paths
  * come back; the backend reads and compiles the files. */
-export async function pickProtoFiles(): Promise<string[]> {
-  const selected = await open({ directory: false, multiple: true, filters: [{ name: 'Protocol Buffers', extensions: ['proto'] }] })
-  if (selected === null) return []
-  return typeof selected === 'string' ? [selected] : selected
+export function pickProtoFiles(): Promise<string[]> {
+  return pickPaths({ multiple: true, filters: [{ name: 'Protocol Buffers', extensions: ['proto'] }] })
 }
 
 /** Chooses a folder searched for the `.proto` files' imports. */
-export async function pickProtoImportFolder(): Promise<string | null> {
-  const selected = await open({ directory: true, multiple: false })
-  if (selected === null) return null
-  return typeof selected === 'string' ? selected : (selected[0] ?? null)
+export function pickProtoImportFolder(): Promise<string | null> {
+  return pickPath({ directory: true })
 }
