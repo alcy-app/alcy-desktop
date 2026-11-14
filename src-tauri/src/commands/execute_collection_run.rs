@@ -581,6 +581,8 @@ pub async fn execute_collection_run(
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
     script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
+    security_settings: tauri::State<'_, alcy_storage::SecuritySettingsStore>,
+    body_file_grants: tauri::State<'_, alcy_storage::BodyFileGrantStore>,
     picked: tauri::State<'_, PickedPaths>,
 ) -> Result<(), ExecuteCollectionRunError> {
     // The data file comes only from the open dialog or a drop (ADR 0081).
@@ -596,6 +598,12 @@ pub async fn execute_collection_run(
     }
     let run_id = input.run_id.clone();
     let workspace_trust = script_trust.workspace(Path::new(&input.root_path));
+    let body_files = super::body_files::load_body_file_access(
+        Path::new(&input.root_path),
+        &security_settings,
+        &body_file_grants,
+    )
+    .await;
     let started = std::time::Instant::now();
     log::info!(
         target: "alcy::runner",
@@ -614,6 +622,7 @@ pub async fn execute_collection_run(
         history.get(),
         alcy_storage::LocalSecrets::clone(&secrets),
         workspace_trust,
+        body_files,
     )
     .await;
     match &result {
@@ -667,6 +676,7 @@ async fn execute_collection_run_inner(
     history: HistoryPreferences,
     secrets: alcy_storage::LocalSecrets,
     workspace_trust: WorkspaceScriptTrust,
+    body_files: alcy_domain::BodyFileAccess,
 ) -> Result<CollectionRunCounts, ExecuteCollectionRunError> {
     if input.request_ids.is_empty() {
         return Err(ExecuteCollectionRunError::EmptyPlan);
@@ -722,6 +732,7 @@ async fn execute_collection_run_inner(
             graphql: graphql_executor,
             rest: rest_executor,
             workspace_root: Path::new(&input.root_path),
+            body_files: &body_files,
         },
         cookies: options.share_cookies.then(CookieJar::default),
         runtime_variables: Mutex::new(Vec::new()),

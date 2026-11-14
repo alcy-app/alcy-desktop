@@ -301,6 +301,12 @@ export function ImportCollectionModal({
                       )}
                     </div>
                   )}
+                  {item.summary.outsideFileCount > 0 && (
+                    <p className="import-modal-scripts-warning">
+                      <LockIcon size={12} />
+                      <span>{t('collections.importOutsideFiles', { count: item.summary.outsideFileCount })}</span>
+                    </p>
+                  )}
                   {item.summary.supportsDocumentation && (
                     <div className="import-modal-options" role="radiogroup" aria-label={t('collections.importContentLabel')}>
                       <label className={item.includeDocumentation ? 'import-modal-option import-modal-option--selected' : 'import-modal-option'}>

@@ -21,7 +21,10 @@ use commands::agent::{
 };
 use commands::api_docs::get_request_docs;
 use commands::app_logs::{AppLogLocation, write_frontend_logs};
-use commands::body_files::check_body_files;
+use commands::body_files::{
+    check_body_files, clear_body_file_grants, copy_body_file_into_workspace,
+    count_body_file_grants, pick_body_file,
+};
 use commands::cancel_flow::cancel_flow;
 use commands::cancel_graphql_request::cancel_graphql_request;
 use commands::cancel_load_flow::cancel_load_flow;
@@ -326,6 +329,9 @@ pub fn run_with(extensions: Vec<Extension>) {
             app.manage(SecuritySettingsStore::new(
                 app_data_dir.join("security-settings.json"),
             ));
+            app.manage(alcy_storage::BodyFileGrantStore::new(
+                app_data_dir.join("body-file-grants.json"),
+            ));
             let custom_ca_store =
                 CustomCaCertificateStore::new(app_data_dir.join("custom-ca-certificates.json"));
             apply_saved_custom_ca_certificates(
@@ -427,7 +433,11 @@ pub fn run_with(extensions: Vec<Extension>) {
                 send_websocket_message,
                 close_websocket,
                 check_body_files,
+                pick_body_file,
                 pick_paths,
+                copy_body_file_into_workspace,
+                count_body_file_grants,
+                clear_body_file_grants,
                 cancel_graphql_request,
                 list_environments,
                 save_environments,

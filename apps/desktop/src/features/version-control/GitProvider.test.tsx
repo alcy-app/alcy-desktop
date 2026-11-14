@@ -149,7 +149,7 @@ describe('git in the workspace — starting', () => {
     expect(await screen.findByText(/eles também vão para o repositório, em texto claro/)).toBeInTheDocument()
 
     // Turning the protection back on in the settings updates the open form.
-    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: false }))
+    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: false, allowBodyFilesOutsideWorkspace: false }))
     expect(screen.getByText('Valores de variáveis sensíveis ficam fora do repositório.')).toBeInTheDocument()
   })
 })

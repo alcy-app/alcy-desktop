@@ -25,6 +25,13 @@ pub enum ExecutionError {
     /// sistema operacional.
     #[error("requisição inválida: não foi possível ler o arquivo \"{path}\": {detail}")]
     BodyFileUnreadable { path: String, detail: String },
+    /// Body file outside the workspace that this person did not pick for
+    /// it (spec 0163). Refused before the file is opened. `path` is the one
+    /// saved in the request.
+    #[error(
+        "requisição inválida: o arquivo \"{path}\" está fora do workspace e não foi escolhido nele"
+    )]
+    BodyFileNotAllowed { path: String },
     #[error("{0}")]
     Script(String),
     #[error("execução cancelada")]

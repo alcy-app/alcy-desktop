@@ -320,6 +320,42 @@ for (const file of tlsRoots.flatMap((dir) => collectFiles(dir, (name) => name.en
   }
 }
 
+// Body files of REST requests (spec 0163): a collection decides their path,
+// and it arrives through imports, clones and pulls. Sends turn a saved path
+// into one the executor opens only in `authorize_body_files`, which refuses
+// files outside the workspace that this person did not pick. Resolving body
+// paths anywhere else, or reading files in `alcy-rest` beyond the three
+// reviewed reads, would bypass that check.
+const BODY_FILE_RESOLVERS = new Set(['crates/alcy-domain/src/body_payload.rs', 'src-tauri/src/commands/body_files.rs'])
+for (const file of rustRoots.flatMap((dir) => collectFiles(dir, (name) => name.endsWith('.rs')))) {
+  const path = relative(ROOT, file).split(sep).join('/')
+  if (BODY_FILE_RESOLVERS.has(path)) continue
+  readFileSync(file, 'utf8')
+    .split('\n')
+    .forEach((line, index) => {
+      if (line.trimStart().startsWith('//')) return
+      if (/\bresolve_file_path\s*\(/.test(line)) {
+        fail(`${path}:${index + 1}: caminho de arquivo de corpo resolvido fora de \`authorize_body_files\` (spec 0163) exige revisão de segurança.`)
+      }
+    })
+}
+const REST_EXECUTOR = 'crates/alcy-rest/src/lib.rs'
+const restProduction = read(REST_EXECUTOR).split(/^#\[cfg\(test\)\]/m)[0]
+const restFileReads = restProduction
+  .split('\n')
+  .filter((line) => !line.trimStart().startsWith('//'))
+  .filter((line) => /\b(tokio::fs|std::fs|fs::read|File::open|Part::file)\b/.test(line)).length
+if (restFileReads !== 3) {
+  fail(`${REST_EXECUTOR}: ${restFileReads} leituras de arquivo (esperadas 3, as de arquivos de corpo autorizados pela spec 0163); uma leitura nova exige revisão de segurança.`)
+}
+for (const [path, guard] of [
+  ['src-tauri/src/commands/protocol_dispatching_executor.rs', 'authorize_body_files'],
+  ['src-tauri/src/commands/execute_rest_request.rs', 'authorize_body_files'],
+  ['src-tauri/src/commands/execute_load_flow.rs', 'BodyFileGuard'],
+]) {
+  if (!read(path).includes(guard)) fail(`${path}: perdeu a autorização de arquivos de corpo (\`${guard}\`, spec 0163).`)
+}
+
 // npm packages for scripts (spec 0128, ADR 0061) are downloaded only while
 // running a script, after the trust check has withheld untrusted ones (spec
 // 0162). The downloader is used from one reviewed place, and only from the

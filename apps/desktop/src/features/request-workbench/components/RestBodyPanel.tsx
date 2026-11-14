@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { RawBodyLanguage } from '../../../bindings/execute-rest-request'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
-import { checkBodyFiles } from '../../../bindings/check-body-files'
-import { pickBodyFile } from '../../../bindings/pick-body-file'
+import { checkBodyFiles, type BodyFileStatus } from '../../../bindings/check-body-files'
+import type { CommandResult } from '../../../bindings/invoke-result'
+import {
+  copyBodyFileIntoWorkspace,
+  pickBodyFile,
+  type BodyFileCommandError,
+  type PickedBodyFile,
+} from '../../../bindings/pick-body-file'
 import type { BulkRow } from '../../../shared/bulk-edit'
 import { useLanguage } from '../../../shared/i18n/use-language'
-import { bodyFilePaths, codeLanguageForRaw, toWorkspaceRelativePath } from '../body-state'
+import { onSecuritySettingsChanged } from '../../../shared/security/sensitive-sync'
+import { Button } from '../../../shared/ui/Button'
+import { bodyFilePaths, codeLanguageForRaw, fileNameOf } from '../body-state'
 import { rawBodyFormatter } from '../request-body-format'
+import { formatSize } from '../response-summary'
 import type { BodyState, BodyType, FormDataEntry, UrlEncodedEntry } from '../request-workbench.types'
 import type { BodySchema } from '../schema-completions'
 import { BinaryBodyPanel } from './BinaryBodyPanel'
@@ -24,34 +33,45 @@ const BODY_TYPES = [
   { value: 'binary', labelKey: 'requestBody.typeBinary' },
 ] as const satisfies readonly { value: BodyType; labelKey: string }[]
 
-/** Caminhos (dentre `paths`) que não existem nesta máquina — reconsultado
- * quando a lista muda e quando a janela volta ao foco (o usuário pode ter
- * criado/movido o arquivo em outro programa). */
-function useMissingBodyFiles(
+/** State of each body file path (missing, blocked…), checked again when the
+ * list changes, when the window regains focus (the file may have been
+ * created or moved in another program), when the security settings change,
+ * and when `refresh` changes (a file was just picked or copied). */
+function useBodyFileStatuses(
   paths: string[],
   rootPath: string,
-  checkFiles: (rootPath: string, paths: string[]) => Promise<boolean[]>,
-): ReadonlySet<string> {
+  checkFiles: (rootPath: string, paths: string[]) => Promise<BodyFileStatus[]>,
+  refresh: number,
+): ReadonlyMap<string, BodyFileStatus> {
   const key = paths.join('\n')
-  const [missing, setMissing] = useState<ReadonlySet<string>>(() => new Set())
+  const [statuses, setStatuses] = useState<ReadonlyMap<string, BodyFileStatus>>(() => new Map())
 
   useEffect(() => {
     const current = key ? key.split('\n') : []
     let cancelled = false
     const check = () => {
-      void checkFiles(rootPath, current).then((exists) => {
-        if (!cancelled) setMissing(new Set(current.filter((_, index) => exists[index] === false)))
+      void checkFiles(rootPath, current).then((result) => {
+        if (!cancelled) setStatuses(new Map(current.map((path, index) => [path, result[index] ?? 'ok'])))
       })
     }
     check()
     window.addEventListener('focus', check)
+    const unsubscribe = onSecuritySettingsChanged(check)
     return () => {
       cancelled = true
       window.removeEventListener('focus', check)
+      unsubscribe()
     }
-  }, [key, rootPath, checkFiles])
+  }, [key, rootPath, checkFiles, refresh])
 
-  return missing
+  return statuses
+}
+
+/** A file just picked outside the workspace, offered to be copied into it. */
+interface CopyOffer {
+  picked: PickedBodyFile
+  apply: (path: string) => void
+  error: string | null
 }
 
 interface RestBodyPanelProps {
@@ -75,10 +95,12 @@ interface RestBodyPanelProps {
   /** Schema do corpo (documentação importada) para sugerir chaves e valores
    * no corpo raw JSON; `null`/ausente = sem sugestões. */
   bodySchema?: BodySchema | null
-  /** Injetável para testes; o diálogo nativo por padrão. */
-  pickFile?: () => Promise<string | null>
-  /** Injetável para testes; consulta o backend por padrão. */
-  checkFiles?: (rootPath: string, paths: string[]) => Promise<boolean[]>
+  /** Injectable for tests; the native dialog through the backend by default. */
+  pickFile?: (rootPath: string, currentPath: string) => Promise<PickedBodyFile | null>
+  /** Injectable for tests; asks the backend by default. */
+  checkFiles?: (rootPath: string, paths: string[]) => Promise<BodyFileStatus[]>
+  /** Injectable for tests; copies through the backend by default. */
+  copyFile?: (rootPath: string, filePath: string) => Promise<CommandResult<{ path: string }, BodyFileCommandError>>
   /** Exposes the raw body editor to the agent (ADR 0064); only the workbench sets it. */
   agentEditors?: boolean
   /** Keeps the raw editor's undo history across remounts (see `RequestBodyPanel`). */
@@ -107,15 +129,39 @@ export function RestBodyPanel({
   historyKey,
   pickFile = pickBodyFile,
   checkFiles = checkBodyFiles,
+  copyFile = copyBodyFileIntoWorkspace,
 }: RestBodyPanelProps) {
   const { t } = useLanguage()
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
   const filePaths = useMemo(() => bodyFilePaths(body), [body])
-  const missingFiles = useMissingBodyFiles(filePaths, rootPath, checkFiles)
+  const [refresh, setRefresh] = useState(0)
+  const fileStatuses = useBodyFileStatuses(filePaths, rootPath, checkFiles, refresh)
+  const [copyOffer, setCopyOffer] = useState<CopyOffer | null>(null)
+  const [copying, setCopying] = useState(false)
 
-  const pickWorkspaceFile = async () => {
-    const path = await pickFile()
-    return path ? toWorkspaceRelativePath(path, rootPath) : null
+  // The backend saves a file inside the workspace with a relative path and
+  // grants one outside it for this workspace (spec 0163).
+  const pickInto = (currentPath: string, apply: (path: string) => void) => {
+    void pickFile(rootPath, currentPath).then((picked) => {
+      if (!picked) return
+      apply(picked.path)
+      setRefresh((value) => value + 1)
+      setCopyOffer(picked.outsideWorkspace ? { picked, apply, error: null } : null)
+    })
+  }
+
+  const copyIntoWorkspace = async (offer: CopyOffer) => {
+    setCopying(true)
+    const result = await copyFile(rootPath, offer.picked.path)
+    setCopying(false)
+    if (result.ok) {
+      offer.apply(result.value.path)
+      setCopyOffer(null)
+      setRefresh((value) => value + 1)
+    } else {
+      const message = result.error.kind === 'notGranted' ? t('requestBody.copyNotGranted') : result.error.message
+      setCopyOffer({ ...offer, error: message })
+    }
   }
 
   const languageOptions: SelectOption<RawBodyLanguage>[] = [
@@ -174,6 +220,28 @@ export function RestBodyPanel({
       </div>
 
       <div className="rw-body-content">
+        {copyOffer && (body.type === 'formData' || body.type === 'binary') && (
+          <div className="rw-body-copy-offer" role="status">
+            <div className="rw-body-copy-offer-text">
+              <span>
+                {t('requestBody.copyOffer', {
+                  name: fileNameOf(copyOffer.picked.path),
+                  size: formatSize(copyOffer.picked.sizeBytes),
+                })}
+              </span>
+              <span className="rw-body-copy-offer-hint">{t('requestBody.copyOfferHint')}</span>
+              {copyOffer.error && <span className="rw-body-copy-offer-error">{copyOffer.error}</span>}
+            </div>
+            <div className="rw-body-copy-offer-actions">
+              <Button variant="primary" disabled={copying} onClick={() => void copyIntoWorkspace(copyOffer)}>
+                {t('requestBody.copyIntoWorkspace')}
+              </Button>
+              <Button variant="ghost" onClick={() => setCopyOffer(null)}>
+                {t('requestBody.keepPath')}
+              </Button>
+            </div>
+          </div>
+        )}
         {body.type === 'none' && <p className="rw-body-empty">{t('requestBody.noneHint')}</p>}
         {body.type === 'raw' && (
           <RequestBodyPanel
@@ -204,8 +272,8 @@ export function RestBodyPanel({
             onAdd={onAddFormData}
             onUpdate={onUpdateFormData}
             onRemove={onRemoveFormData}
-            onPickFile={pickWorkspaceFile}
-            missingFiles={missingFiles}
+            onPickFile={pickInto}
+            fileStatuses={fileStatuses}
             environmentVariables={environmentVariables}
           />
         )}
@@ -213,8 +281,8 @@ export function RestBodyPanel({
           <BinaryBodyPanel
             filePath={body.binaryFilePath}
             onChange={onBinaryFileChange}
-            onPickFile={pickWorkspaceFile}
-            missing={missingFiles.has(body.binaryFilePath)}
+            onPickFile={pickInto}
+            status={fileStatuses.get(body.binaryFilePath)}
           />
         )}
       </div>

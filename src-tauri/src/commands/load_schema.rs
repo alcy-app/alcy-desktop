@@ -93,6 +93,10 @@ impl From<ExecutionError> for LoadSchemaError {
                 message: detail,
                 cause: Some(InvalidRequestCause::BodyFileUnreadable { path }),
             },
+            ExecutionError::BodyFileNotAllowed { path } => Self::InvalidRequest {
+                message: ExecutionError::BodyFileNotAllowed { path: path.clone() }.to_string(),
+                cause: Some(InvalidRequestCause::BodyFileNotAllowed { path }),
+            },
             // A introspection é enviada sem limite de tamanho (ver
             // `build_introspection_request`): o schema é necessário inteiro.
             error @ ExecutionError::ResponseTooLarge { .. } => Self::InvalidRequest {

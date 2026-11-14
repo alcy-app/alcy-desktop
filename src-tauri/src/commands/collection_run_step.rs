@@ -289,6 +289,7 @@ mod tests {
                 graphql: &graphql,
                 rest: &rest,
                 workspace_root: Path::new("."),
+                body_files: &crate::commands::body_files::NO_BODY_FILES,
             },
             cookies: None,
             runtime_variables: Mutex::default(),

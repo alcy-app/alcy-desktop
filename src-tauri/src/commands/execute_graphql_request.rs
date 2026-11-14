@@ -376,6 +376,10 @@ impl From<ExecutionError> for ExecuteGraphqlRequestError {
                 message: detail,
                 cause: Some(InvalidRequestCause::BodyFileUnreadable { path }),
             },
+            ExecutionError::BodyFileNotAllowed { path } => Self::InvalidRequest {
+                message: ExecutionError::BodyFileNotAllowed { path: path.clone() }.to_string(),
+                cause: Some(InvalidRequestCause::BodyFileNotAllowed { path }),
+            },
             // Only flow executors emit this; interactive commands handle script phase/message separately.
             ExecutionError::Script(message) => Self::InvalidRequest {
                 message,
@@ -791,6 +795,7 @@ pub(crate) fn history_outcome_from(
         Err(ExecutionError::InvalidVariables(_))
         | Err(ExecutionError::InvalidRequest(_))
         | Err(ExecutionError::BodyFileUnreadable { .. })
+        | Err(ExecutionError::BodyFileNotAllowed { .. })
         | Err(ExecutionError::Script(_))
         // Size-limited downloads have no retained response; offer unlimited resend.
         | Err(ExecutionError::ResponseTooLarge { .. })

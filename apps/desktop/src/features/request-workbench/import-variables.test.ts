@@ -20,6 +20,7 @@ function summary(overrides: Partial<PreparedImportDto> = {}): PreparedImportDto 
     environmentCount: 2,
     supportsDocumentation: false,
     scriptCount: 0,
+    outsideFileCount: 0,
     warningCount: 0,
     environmentNames: ['Dev', 'Prod'],
     collectionNames: ['Customer API'],

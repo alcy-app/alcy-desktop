@@ -80,6 +80,10 @@ interface ResponsePanelProps {
   onSaveAsExample?: () => void
   /** Opens the Scripts tab, from the badge of a send whose scripts did not run (spec 0162). */
   onShowScripts?: () => void
+  /** Opens the Body tab, from a send refused for a blocked body file (spec 0163). */
+  onShowBody?: () => void
+  /** Opens Settings › Security, from a send refused for a blocked body file. */
+  onOpenSecuritySettings?: () => void
 }
 
 export interface ResponseMonitorControl {
@@ -124,6 +128,8 @@ export const ResponsePanel = memo(function ResponsePanel({
   onShareSelection,
   onSaveAsExample,
   onShowScripts,
+  onShowBody,
+  onOpenSecuritySettings,
 }: ResponsePanelProps) {
   const { t, language } = useLanguage()
   const { showToast } = useToast()
@@ -521,6 +527,23 @@ export const ResponsePanel = memo(function ResponsePanel({
                 <Button variant="ghost" onClick={onResendWithoutLimit}>
                   {t('response.resendWithoutLimit')}
                 </Button>
+              )}
+            {displayed?.status === 'error' &&
+              displayed.error.kind === 'invalidRequest' &&
+              displayed.error.cause?.type === 'bodyFileNotAllowed' &&
+              view.kind === 'current' && (
+                <div className="rw-response-failure-actions">
+                  {onShowBody && (
+                    <Button variant="ghost" onClick={onShowBody}>
+                      {t('requestBody.chooseFileAgain')}
+                    </Button>
+                  )}
+                  {onOpenSecuritySettings && (
+                    <Button variant="ghost" onClick={onOpenSecuritySettings}>
+                      {t('response.openSecuritySettings')}
+                    </Button>
+                  )}
+                </div>
               )}
           </div>
         )}

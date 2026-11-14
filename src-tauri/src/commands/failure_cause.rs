@@ -12,12 +12,24 @@ use serde::Serialize;
 pub enum InvalidRequestCause {
     EmptyEndpoint,
     EmptyHeaderName,
-    InvalidHeaderName { name: String },
-    InvalidHeaderValue { name: String },
-    MissingVariable { name: String },
+    InvalidHeaderName {
+        name: String,
+    },
+    InvalidHeaderValue {
+        name: String,
+    },
+    MissingVariable {
+        name: String,
+    },
     EmptyVariableName,
     InvalidVariableName,
-    BodyFileUnreadable { path: String },
+    BodyFileUnreadable {
+        path: String,
+    },
+    /// Outside the workspace and not picked for it (spec 0163).
+    BodyFileNotAllowed {
+        path: String,
+    },
 }
 
 impl InvalidRequestCause {

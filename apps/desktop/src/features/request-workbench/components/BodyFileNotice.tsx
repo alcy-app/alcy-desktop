@@ -1,18 +1,22 @@
+import type { BodyFileStatus } from '../../../bindings/check-body-files'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { AlertIcon } from '../../../shared/ui/icons'
-import { isAbsolutePath } from '../body-state'
 
 interface BodyFileNoticeProps {
   path: string
-  missing: boolean
+  /** From the backend; `undefined` while it is being checked. */
+  status: BodyFileStatus | undefined
+  /** Opens the file dialog again, offered when the file is blocked. */
+  onPick: () => void
 }
 
-/** Aviso sobre o arquivo de um corpo: ausente nesta máquina (o envio vai
- * falhar) ou fora do workspace (o caminho absoluto fica salvo e pode não
- * existir em outras máquinas). Nada quando está tudo certo. */
-export function BodyFileNotice({ path, missing }: BodyFileNoticeProps) {
+/** Notice next to a body file: missing on this machine (the send fails),
+ * blocked (outside the workspace and not picked here, spec 0163), or outside
+ * the workspace but readable (the absolute path is saved and may not exist
+ * on other machines). Nothing when all is well. */
+export function BodyFileNotice({ path, status, onPick }: BodyFileNoticeProps) {
   const { t } = useLanguage()
-  if (missing) {
+  if (status === 'missing') {
     return (
       <span className="rw-body-file-notice rw-body-file-notice--missing" title={t('requestBody.fileMissingTitle', { path })}>
         <AlertIcon size={12} />
@@ -20,7 +24,18 @@ export function BodyFileNotice({ path, missing }: BodyFileNoticeProps) {
       </span>
     )
   }
-  if (isAbsolutePath(path)) {
+  if (status === 'blocked') {
+    return (
+      <span className="rw-body-file-notice rw-body-file-notice--missing" title={t('requestBody.fileBlockedTitle', { path })}>
+        <AlertIcon size={12} />
+        {t('requestBody.fileBlocked')}
+        <button type="button" className="rw-body-file-notice-action" onClick={onPick}>
+          {t('requestBody.chooseFileAgain')}
+        </button>
+      </span>
+    )
+  }
+  if (status === 'outsideAllowed') {
     return (
       <span className="rw-body-file-notice" title={t('requestBody.fileOutsideWorkspaceTitle')}>
         {t('requestBody.fileOutsideWorkspace')}

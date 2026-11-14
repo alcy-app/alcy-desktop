@@ -57,6 +57,7 @@ export const SETTINGS_INDEX: SettingEntry[] = [
   { page: 'privacy', target: 'history-responses', label: 'settings.saveHistoryResponsesLabel', hint: 'settings.saveHistoryResponsesHint' },
   { page: 'privacy', target: 'har', label: 'settings.securityHarLabel', hint: 'settings.securityHarRedactHint' },
   { page: 'privacy', target: 'sensitive-sync', label: 'settings.securitySyncLabel', hint: 'settings.securitySyncProtectHint', available: isVersionControlEnabled },
+  { page: 'privacy', target: 'body-files', label: 'settings.securityBodyFilesLabel', hint: 'settings.securityBodyFilesHint', keywords: 'arquivo file upload form-data binary workspace' },
   { page: 'privacy', target: 'telemetry', label: 'settings.telemetryLabel', keywords: 'telemetria telemetry dados uso usage privacidade privacy', available: () => FEATURE_FLAGS.usageEvents },
   { page: 'agent', target: 'agent-chat', label: 'settings.agent.enableChat', hint: 'settings.agent.enableChatHint' },
   { page: 'agent', target: 'agent-context', label: 'settings.agent.disableContextOptions', hint: 'settings.agent.disableContextOptionsHint' },

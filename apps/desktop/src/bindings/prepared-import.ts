@@ -12,6 +12,9 @@ export interface PreparedImportDto {
   environmentCount: number
   supportsDocumentation: boolean
   scriptCount: number
+  /** Body file fields pointing outside the workspace: blocked until the
+   * file is picked again (spec 0163). */
+  outsideFileCount: number
   warningCount: number
   /** Variables the review offers (spec 0130). */
   variables: ImportVariableCandidateDto[]

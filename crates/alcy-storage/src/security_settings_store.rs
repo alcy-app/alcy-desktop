@@ -13,6 +13,9 @@ const CURRENT_VERSION: u32 = 1;
 struct PersistedFile {
     version: u32,
     sync_sensitive_values: bool,
+    /// Added by spec 0163; files written before it load as off.
+    #[serde(default)]
+    allow_body_files_outside_workspace: bool,
 }
 
 /// Lê e grava as preferências de segurança do app (arquivo único e
@@ -43,6 +46,7 @@ impl SecuritySettingsStore {
 
         Ok(SecuritySettings {
             sync_sensitive_values: file.sync_sensitive_values,
+            allow_body_files_outside_workspace: file.allow_body_files_outside_workspace,
         })
     }
 
@@ -50,6 +54,7 @@ impl SecuritySettingsStore {
         let file = PersistedFile {
             version: CURRENT_VERSION,
             sync_sensitive_values: settings.sync_sensitive_values,
+            allow_body_files_outside_workspace: settings.allow_body_files_outside_workspace,
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|error| StorageError::Write(error.to_string()))?;
@@ -95,13 +100,29 @@ mod tests {
     fn roundtrips_the_preference() {
         let path = temp_path();
         let store = SecuritySettingsStore::new(path.clone());
-        for sync_sensitive_values in [true, false] {
+        for (sync_sensitive_values, allow_body_files_outside_workspace) in
+            [(true, false), (false, true), (false, false)]
+        {
             let settings = SecuritySettings {
                 sync_sensitive_values,
+                allow_body_files_outside_workspace,
             };
             store.save(&settings).unwrap();
             assert_eq!(store.load().unwrap(), settings);
         }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_file_without_the_body_file_preference_loads_it_off() {
+        let path = temp_path();
+        let store = SecuritySettingsStore::new(path.clone());
+        fs::write(&path, r#"{"version":1,"syncSensitiveValues":true}"#).unwrap();
+
+        let settings = store.load().unwrap();
+
+        assert!(settings.sync_sensitive_values);
+        assert!(!settings.allow_body_files_outside_workspace);
         let _ = fs::remove_file(path);
     }
 

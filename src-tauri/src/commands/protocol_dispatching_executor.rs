@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use alcy_app::RequestExecutor;
-use alcy_domain::{ExecutionError, ProtocolId, Request, Response};
+use alcy_domain::{BodyFileAccess, ExecutionError, ProtocolId, Request, Response};
 use alcy_graphql::ReqwestGraphqlExecutor;
 use alcy_rest::ReqwestRestExecutor;
 
@@ -12,6 +12,8 @@ pub(crate) struct ProtocolDispatchingExecutor<'a> {
     pub(crate) rest: &'a ReqwestRestExecutor,
     /// Resolve workspace-relative body file paths against this root (ADR 0024).
     pub(crate) workspace_root: &'a Path,
+    /// Which body files a send may read (spec 0163).
+    pub(crate) body_files: &'a BodyFileAccess,
 }
 
 impl RequestExecutor for ProtocolDispatchingExecutor<'_> {
@@ -19,9 +21,12 @@ impl RequestExecutor for ProtocolDispatchingExecutor<'_> {
         match request.document.protocol {
             ProtocolId::Rest => {
                 let mut request = request.clone();
-                request.body_payload = request
-                    .body_payload
-                    .with_files_resolved_against(self.workspace_root);
+                request.body_payload = super::body_files::authorize_body_files(
+                    &request.body_payload,
+                    self.workspace_root,
+                    self.body_files,
+                )
+                .await?;
                 self.rest.execute(&request).await
             }
             ProtocolId::GraphQl => self.graphql.execute(request).await,
@@ -49,6 +54,7 @@ mod tests {
             graphql: &graphql,
             rest: &rest,
             workspace_root: Path::new("."),
+            body_files: &crate::commands::body_files::NO_BODY_FILES,
         };
         let request = Request::new(
             // An unreachable gRPC endpoint must produce a transport error,

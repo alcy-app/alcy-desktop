@@ -4,10 +4,14 @@ import { EditorView } from '@codemirror/view'
 import { fireEvent, render, screen, waitFor } from '../../../test-utils'
 import { emptyBodyState, toBodyState } from '../body-state'
 import type { BodyState } from '../request-workbench.types'
+import type { BodyFileStatus } from '../../../bindings/check-body-files'
+import type { PickedBodyFile } from '../../../bindings/pick-body-file'
 import { RestBodyPanel } from './RestBodyPanel'
 
 const noop = () => {}
-const allExist = async (_root: string, paths: string[]) => paths.map(() => true)
+const allExist = async (_root: string, paths: string[]) => paths.map(() => 'ok' as const)
+const statusesOf = (status: BodyFileStatus) => async (_root: string, paths: string[]) => paths.map(() => status)
+const picked = (path: string, outsideWorkspace = false): PickedBodyFile => ({ path, outsideWorkspace, sizeBytes: 2048 })
 
 function renderPanel(body: BodyState, overrides: Partial<Parameters<typeof RestBodyPanel>[0]> = {}) {
   return render(
@@ -112,14 +116,15 @@ describe('RestBodyPanel', () => {
 
   it('escolhe o arquivo de um campo form-data e mostra só o nome', async () => {
     const onUpdateFormData = vi.fn()
-    const pickFile = vi.fn(async () => '/home/ana/photo.png')
+    const pickFile = vi.fn(async () => picked('files/photo.png'))
     const body = toBodyState({ type: 'formData', fields: [{ kind: 'file', name: 'file', enabled: true, filePath: '' }] })
     const { rerender } = renderPanel(body, { onUpdateFormData, pickFile })
 
     fireEvent.click(screen.getByRole('button', { name: 'Selecionar arquivo' }))
-    await waitFor(() => expect(onUpdateFormData).toHaveBeenCalledWith(body.formData[0].id, { filePath: '/home/ana/photo.png' }))
+    await waitFor(() => expect(onUpdateFormData).toHaveBeenCalledWith(body.formData[0].id, { filePath: 'files/photo.png' }))
+    expect(pickFile).toHaveBeenCalledWith('/home/ana/api', '')
 
-    const withFile = { ...body, formData: [{ ...body.formData[0], filePath: '/home/ana/photo.png' }] }
+    const withFile = { ...body, formData: [{ ...body.formData[0], filePath: 'files/photo.png' }] }
     rerender(
       <RestBodyPanel
         body={withFile}
@@ -141,16 +146,17 @@ describe('RestBodyPanel', () => {
       />,
     )
     expect(screen.getByRole('button', { name: 'photo.png' })).toBeInTheDocument()
+    expect(screen.queryByText('Copiar para o workspace')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Remover arquivo photo.png' }))
     expect(onUpdateFormData).toHaveBeenLastCalledWith(body.formData[0].id, { filePath: '' })
   })
 
   it('escolhe e limpa o arquivo do corpo binary', async () => {
     const onBinaryFileChange = vi.fn()
-    renderPanel({ ...emptyBodyState, type: 'binary' }, { onBinaryFileChange, pickFile: async () => 'C:\\dados\\a.zip' })
+    renderPanel({ ...emptyBodyState, type: 'binary' }, { onBinaryFileChange, pickFile: async () => picked('files/a.zip') })
     expect(screen.getByText('Nenhum arquivo selecionado')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Selecionar arquivo' }))
-    await waitFor(() => expect(onBinaryFileChange).toHaveBeenCalledWith('C:\\dados\\a.zip'))
+    await waitFor(() => expect(onBinaryFileChange).toHaveBeenCalledWith('files/a.zip'))
   })
 
   it('não altera o arquivo quando o diálogo é cancelado', async () => {
@@ -159,43 +165,93 @@ describe('RestBodyPanel', () => {
     renderPanel({ ...emptyBodyState, type: 'binary', binaryFilePath: '/tmp/a.bin' }, { onBinaryFileChange, pickFile })
     expect(screen.getByText('a.bin')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Trocar arquivo' }))
-    await waitFor(() => expect(pickFile).toHaveBeenCalled())
+    await waitFor(() => expect(pickFile).toHaveBeenCalledWith('/home/ana/api', '/tmp/a.bin'))
     expect(onBinaryFileChange).not.toHaveBeenCalled()
   })
 
-  it('salva com caminho relativo um arquivo escolhido dentro do workspace', async () => {
+  it('oferece copiar para o workspace um arquivo escolhido fora dele', async () => {
     const onBinaryFileChange = vi.fn()
-    renderPanel({ ...emptyBodyState, type: 'binary' }, { onBinaryFileChange, pickFile: async () => '/home/ana/api/files/a.zip' })
+    const copyFile = vi.fn(async () => ({ ok: true as const, value: { path: 'files/a.zip' } }))
+    renderPanel(
+      { ...emptyBodyState, type: 'binary' },
+      { onBinaryFileChange, copyFile, pickFile: async () => picked('C:\\dados\\a.zip', true) },
+    )
+
     fireEvent.click(screen.getByRole('button', { name: 'Selecionar arquivo' }))
-    await waitFor(() => expect(onBinaryFileChange).toHaveBeenCalledWith('files/a.zip'))
+    await waitFor(() => expect(onBinaryFileChange).toHaveBeenCalledWith('C:\\dados\\a.zip'))
+    expect(screen.getByText(/a\.zip \(.+\) está fora do workspace\./)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copiar para o workspace' }))
+    await waitFor(() => expect(onBinaryFileChange).toHaveBeenLastCalledWith('files/a.zip'))
+    expect(copyFile).toHaveBeenCalledWith('/home/ana/api', 'C:\\dados\\a.zip')
+    expect(screen.queryByText('Copiar para o workspace')).not.toBeInTheDocument()
+  })
+
+  it('mantém o caminho absoluto quando a cópia é recusada', async () => {
+    const onBinaryFileChange = vi.fn()
+    const copyFile = vi.fn()
+    renderPanel(
+      { ...emptyBodyState, type: 'binary' },
+      { onBinaryFileChange, copyFile, pickFile: async () => picked('/home/ana/outros/a.zip', true) },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Selecionar arquivo' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Manter caminho' }))
+
+    expect(onBinaryFileChange).toHaveBeenCalledTimes(1)
+    expect(copyFile).not.toHaveBeenCalled()
+    expect(screen.queryByText('Copiar para o workspace')).not.toBeInTheDocument()
   })
 
   it('avisa quando o arquivo não existe nesta máquina', async () => {
-    const checkFiles = vi.fn(async (_root: string, paths: string[]) => paths.map(() => false))
+    const checkFiles = vi.fn(statusesOf('missing'))
     renderPanel({ ...emptyBodyState, type: 'binary', binaryFilePath: 'files/a.zip' }, { checkFiles })
     expect(await screen.findByText('Arquivo não encontrado nesta máquina')).toBeInTheDocument()
     expect(checkFiles).toHaveBeenCalledWith('/home/ana/api', ['files/a.zip'])
   })
 
   it('reconsulta os arquivos quando a janela volta ao foco', async () => {
-    let exists = false
-    const checkFiles = vi.fn(async (_root: string, paths: string[]) => paths.map(() => exists))
+    let status: BodyFileStatus = 'missing'
+    const checkFiles = vi.fn(async (_root: string, paths: string[]) => paths.map(() => status))
     renderPanel({ ...emptyBodyState, type: 'binary', binaryFilePath: 'files/a.zip' }, { checkFiles })
     expect(await screen.findByText('Arquivo não encontrado nesta máquina')).toBeInTheDocument()
 
-    exists = true
+    status = 'ok'
     fireEvent.focus(window)
     await waitFor(() => expect(screen.queryByText('Arquivo não encontrado nesta máquina')).not.toBeInTheDocument())
   })
 
-  it('indica um arquivo fora do workspace, cujo caminho absoluto fica salvo', async () => {
-    renderPanel({ ...emptyBodyState, type: 'binary', binaryFilePath: '/tmp/a.zip' })
+  it('indica um arquivo fora do workspace que pode ser lido', async () => {
+    renderPanel({ ...emptyBodyState, type: 'binary', binaryFilePath: '/tmp/a.zip' }, { checkFiles: statusesOf('outsideAllowed') })
     expect(await screen.findByText('Fora do workspace')).toBeInTheDocument()
+  })
+
+  it('marca como bloqueado um arquivo fora do workspace não escolhido nele e oferece escolher de novo', async () => {
+    const pickFile = vi.fn(async () => null)
+    renderPanel(
+      { ...emptyBodyState, type: 'binary', binaryFilePath: '/home/ana/private/notes.txt' },
+      { checkFiles: statusesOf('blocked'), pickFile },
+    )
+    expect(await screen.findByText('Bloqueado')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Escolher arquivo' }))
+    await waitFor(() => expect(pickFile).toHaveBeenCalledWith('/home/ana/api', '/home/ana/private/notes.txt'))
   })
 
   it('marca o campo form-data cujo arquivo está ausente', async () => {
     const body = toBodyState({ type: 'formData', fields: [{ kind: 'file', name: 'f', enabled: true, filePath: 'files/x.png' }] })
-    renderPanel(body, { checkFiles: async (_root, paths) => paths.map(() => false) })
+    renderPanel(body, { checkFiles: statusesOf('missing') })
     expect(await screen.findByText('Arquivo não encontrado nesta máquina')).toBeInTheDocument()
+  })
+
+  it('consulta os arquivos de novo depois de escolher um, mesmo com o mesmo caminho', async () => {
+    const checkFiles = vi.fn(statusesOf('blocked'))
+    const path = '/home/ana/outros/a.zip'
+    renderPanel({ ...emptyBodyState, type: 'binary', binaryFilePath: path }, { checkFiles, pickFile: async () => picked(path, true) })
+    await screen.findByText('Bloqueado')
+    const calls = checkFiles.mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Trocar arquivo' }))
+    await waitFor(() => expect(checkFiles.mock.calls.length).toBeGreaterThan(calls))
   })
 })

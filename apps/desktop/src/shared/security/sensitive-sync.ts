@@ -8,6 +8,16 @@ export function notifySecuritySettingsChanged(settings: SecuritySettingsDto) {
   window.dispatchEvent(new CustomEvent<SecuritySettingsDto>(CHANGED_EVENT, { detail: settings }))
 }
 
+/** Calls `listener` whenever the security settings are saved. Returns the
+ * unsubscribe function. */
+export function onSecuritySettingsChanged(listener: (settings: SecuritySettingsDto) => void): () => void {
+  const handler = (event: Event) => {
+    if (event instanceof CustomEvent) listener(event.detail as SecuritySettingsDto)
+  }
+  window.addEventListener(CHANGED_EVENT, handler)
+  return () => window.removeEventListener(CHANGED_EVENT, handler)
+}
+
 /** Whether sensitive values go to version control in plain text, following
  * every later save. `false` (the default protection) until the backend
  * answers, and when it cannot. */

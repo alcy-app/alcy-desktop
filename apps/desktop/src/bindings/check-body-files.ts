@@ -1,14 +1,19 @@
 import { invoke } from '@tauri-apps/api/core'
 
-/** Para cada caminho de arquivo de corpo (relativo ao workspace ou absoluto),
- * se ele existe nesta máquina. Em caso de falha do IPC, considera todos
- * presentes — melhor não avisar do que avisar errado; o envio ainda
- * reporta um arquivo ausente com erro claro. */
-export async function checkBodyFiles(rootPath: string, paths: string[]): Promise<boolean[]> {
+/** State of a body file: `blocked` is outside the workspace and neither
+ * picked for it nor allowed by the security setting (spec 0163);
+ * `outsideAllowed` is outside but readable. */
+export type BodyFileStatus = 'ok' | 'missing' | 'blocked' | 'outsideAllowed'
+
+/** For each body file path (relative to the workspace or absolute), whether
+ * it exists on this machine and whether a send may read it. When the IPC
+ * fails, reports every file as fine: better no warning than a wrong one,
+ * and the send still refuses a missing or blocked file with a clear error. */
+export async function checkBodyFiles(rootPath: string, paths: string[]): Promise<BodyFileStatus[]> {
   if (paths.length === 0) return []
   try {
-    return await invoke<boolean[]>('check_body_files', { input: { rootPath, paths } })
+    return await invoke<BodyFileStatus[]>('check_body_files', { input: { rootPath, paths } })
   } catch {
-    return paths.map(() => true)
+    return paths.map(() => 'ok')
   }
 }

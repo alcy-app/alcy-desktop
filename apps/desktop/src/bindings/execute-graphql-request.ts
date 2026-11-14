@@ -176,6 +176,8 @@ export type InvalidRequestCause =
   | { type: 'emptyVariableName' }
   | { type: 'invalidVariableName' }
   | { type: 'bodyFileUnreadable'; path: string }
+  /** Outside the workspace and not picked for it (spec 0163). */
+  | { type: 'bodyFileNotAllowed'; path: string }
 
 /** Causa reconhecida de uma falha de rede; `message` continua sendo o
  * detalhe técnico da camada HTTP. */

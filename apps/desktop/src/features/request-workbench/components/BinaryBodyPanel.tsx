@@ -1,3 +1,4 @@
+import type { BodyFileStatus } from '../../../bindings/check-body-files'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
 import { IconButton } from '../../../shared/ui/IconButton'
@@ -8,24 +9,24 @@ import { BodyFileNotice } from './BodyFileNotice'
 interface BinaryBodyPanelProps {
   filePath: string
   onChange: (filePath: string) => void
-  onPickFile: () => Promise<string | null>
-  /** `true` quando o arquivo escolhido não existe nesta máquina. */
-  missing: boolean
+  /** Opens the file dialog; `apply` receives the chosen path, and later the
+   * path of a copy into the workspace when the person makes one. */
+  onPickFile: (currentPath: string, apply: (path: string) => void) => void
+  /** State of the file, from the backend; `undefined` while checking. */
+  status: BodyFileStatus | undefined
 }
 
 /** Corpo "binary": um único arquivo enviado como está. Só o caminho fica
  * na aba — os bytes são lidos pelo backend no momento do envio. */
-export function BinaryBodyPanel({ filePath, onChange, onPickFile, missing }: BinaryBodyPanelProps) {
+export function BinaryBodyPanel({ filePath, onChange, onPickFile, status }: BinaryBodyPanelProps) {
   const { t } = useLanguage()
+  const unusable = status === 'missing' || status === 'blocked'
 
-  const pick = async () => {
-    const path = await onPickFile()
-    if (path) onChange(path)
-  }
+  const pick = () => onPickFile(filePath, onChange)
 
   return (
     <div className="rw-body-binary">
-      <div className={missing ? 'rw-body-binary-card rw-body-binary-card--missing' : 'rw-body-binary-card'}>
+      <div className={unusable ? 'rw-body-binary-card rw-body-binary-card--missing' : 'rw-body-binary-card'}>
         <span className="rw-body-binary-icon" aria-hidden="true">
           <FolderIcon size={18} />
         </span>
@@ -35,7 +36,7 @@ export function BinaryBodyPanel({ filePath, onChange, onPickFile, missing }: Bin
             <span className="rw-body-binary-path" title={filePath}>
               {filePath}
             </span>
-            <BodyFileNotice path={filePath} missing={missing} />
+            <BodyFileNotice path={filePath} status={status} onPick={pick} />
           </div>
         ) : (
           <div className="rw-body-binary-file">
@@ -44,7 +45,7 @@ export function BinaryBodyPanel({ filePath, onChange, onPickFile, missing }: Bin
           </div>
         )}
         <div className="rw-body-binary-actions">
-          <Button variant="ghost" onClick={() => void pick()}>
+          <Button variant="ghost" onClick={pick}>
             {filePath ? t('requestBody.changeFile') : t('requestBody.chooseFile')}
           </Button>
           {filePath && (

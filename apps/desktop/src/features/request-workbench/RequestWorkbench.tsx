@@ -1468,6 +1468,10 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
     setSettingsCategory('general')
     setSettingsOpen(true)
   }, [])
+  const openSecuritySettings = useCallback(() => {
+    setSettingsCategory('security')
+    setSettingsOpen(true)
+  }, [])
   const onSettingsOpenChange = useCallback(
     (open: boolean) => {
       if (open) setSettingsCategory('general')
@@ -2651,6 +2655,8 @@ export function RequestWorkbench({ workspace, onWorkspaceChange, onExitToStartSc
                           : undefined
                       }
                       onShowScripts={() => workbench.setActiveSection('scripts')}
+                      onShowBody={() => workbench.setActiveSection('body')}
+                      onOpenSecuritySettings={openSecuritySettings}
                     />
                     )}
                   </div>

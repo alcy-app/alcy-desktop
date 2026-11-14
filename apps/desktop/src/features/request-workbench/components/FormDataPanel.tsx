@@ -1,3 +1,4 @@
+import type { BodyFileStatus } from '../../../bindings/check-body-files'
 import type { EnvironmentVariableDto } from '../../../bindings/list-environments'
 import { useLanguage } from '../../../shared/i18n/use-language'
 import { Button } from '../../../shared/ui/Button'
@@ -17,9 +18,16 @@ interface FormDataPanelProps {
   onRemove: (id: string) => void
   /** Variáveis do ambiente ativo — destaque, tooltip e sugestões de `{{variável}}` nos campos interpolados. */
   environmentVariables: EnvironmentVariableDto[]
-  onPickFile: () => Promise<string | null>
-  /** Caminhos de arquivo que não existem nesta máquina. */
-  missingFiles: ReadonlySet<string>
+  /** Opens the file dialog; `apply` receives the chosen path, and later the
+   * path of a copy into the workspace when the person makes one. */
+  onPickFile: (currentPath: string, apply: (path: string) => void) => void
+  /** State of each file path, from the backend. */
+  fileStatuses: ReadonlyMap<string, BodyFileStatus>
+}
+
+/** A file the send cannot read: missing here, or blocked (spec 0163). */
+function isUnusable(status: BodyFileStatus | undefined): boolean {
+  return status === 'missing' || status === 'blocked'
 }
 
 /** Campos de um corpo multipart/form-data: cada linha é texto ou arquivo.
@@ -30,7 +38,7 @@ export function FormDataPanel({
   onUpdate,
   onRemove,
   onPickFile,
-  missingFiles,
+  fileStatuses,
   environmentVariables,
 }: FormDataPanelProps) {
   const { t } = useLanguage()
@@ -39,9 +47,8 @@ export function FormDataPanel({
     { value: 'file', label: t('requestBody.kindFile') },
   ]
 
-  const pickFileFor = async (id: string) => {
-    const path = await onPickFile()
-    if (path) onUpdate(id, { filePath: path })
+  const pickFileFor = (field: FormDataEntry) => {
+    onPickFile(field.filePath, (path) => onUpdate(field.id, { filePath: path }))
   }
 
   return (
@@ -126,13 +133,13 @@ export function FormDataPanel({
                     <span className="rw-body-file-cell">
                       <span
                         className={
-                          missingFiles.has(field.filePath)
+                          isUnusable(fileStatuses.get(field.filePath))
                             ? 'rw-body-file-chip rw-body-file-chip--missing'
                             : 'rw-body-file-chip'
                         }
                         title={field.filePath}
                       >
-                        <button type="button" className="rw-body-file-chip-name" onClick={() => void pickFileFor(field.id)}>
+                        <button type="button" className="rw-body-file-chip-name" onClick={() => pickFileFor(field)}>
                           {fileNameOf(field.filePath)}
                         </button>
                         <IconButton
@@ -141,10 +148,14 @@ export function FormDataPanel({
                           onClick={() => onUpdate(field.id, { filePath: '' })}
                         />
                       </span>
-                      <BodyFileNotice path={field.filePath} missing={missingFiles.has(field.filePath)} />
+                      <BodyFileNotice
+                        path={field.filePath}
+                        status={fileStatuses.get(field.filePath)}
+                        onPick={() => pickFileFor(field)}
+                      />
                     </span>
                   ) : (
-                    <Button variant="ghost" className="rw-body-file-pick" onClick={() => void pickFileFor(field.id)}>
+                    <Button variant="ghost" className="rw-body-file-pick" onClick={() => pickFileFor(field)}>
                       {t('requestBody.chooseFile')}
                     </Button>
                   )}

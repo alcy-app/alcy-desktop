@@ -14,6 +14,7 @@ const state = initialImportVariables({
   environmentCount: 1,
   supportsDocumentation: false,
   scriptCount: 0,
+  outsideFileCount: 0,
   warningCount: 0,
   environmentNames: ['Dev'],
   collectionNames: ['Customer API'],

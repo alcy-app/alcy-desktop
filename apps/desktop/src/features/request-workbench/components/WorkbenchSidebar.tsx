@@ -534,6 +534,7 @@ export const WorkbenchSidebar = memo(function WorkbenchSidebar({
             onOpenChange={onSettingsOpenChange}
             onOpenReleaseNotes={onOpenReleaseNotes}
             onHistoryRetentionChange={history.onRefresh}
+            workspaceRootPath={versionControl.rootPath}
           />
         </div>
       </nav>

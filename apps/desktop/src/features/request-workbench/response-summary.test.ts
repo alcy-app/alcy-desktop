@@ -58,6 +58,17 @@ describe('errorDetail', () => {
       }),
     ).toBe('No such file or directory (os error 2)')
   })
+
+  it('explica um arquivo de corpo bloqueado fora do workspace, sem repetir a mensagem do backend', () => {
+    const error = {
+      kind: 'invalidRequest' as const,
+      message: 'requisição inválida: o arquivo está fora do workspace',
+      cause: { type: 'bodyFileNotAllowed' as const, path: '/home/ana/outros/a.zip' },
+    }
+    expect(describeError(ptBR, error)).toContain('"/home/ana/outros/a.zip" está fora do workspace')
+    expect(describeError(en, error)).toContain('Pick the file again')
+    expect(errorDetail(error)).toBeNull()
+  })
 })
 
 describe('formatElapsed', () => {

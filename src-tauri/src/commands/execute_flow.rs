@@ -644,9 +644,17 @@ pub async fn execute_flow(
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
     script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
+    security_settings: tauri::State<'_, alcy_storage::SecuritySettingsStore>,
+    body_file_grants: tauri::State<'_, alcy_storage::BodyFileGrantStore>,
 ) -> Result<(), ExecuteFlowError> {
     let flow_execution_id = input.flow_execution_id.clone();
     let workspace_trust = script_trust.workspace(Path::new(&input.root_path));
+    let body_files = super::body_files::load_body_file_access(
+        Path::new(&input.root_path),
+        &security_settings,
+        &body_file_grants,
+    )
+    .await;
     let node_count = u64::try_from(input.nodes.len()).unwrap_or(u64::MAX);
     usage.record(alcy_app::UsageEvent::FlowRunStarted {
         kind: alcy_domain::FlowExecutionKind::Standard,
@@ -686,6 +694,7 @@ pub async fn execute_flow(
         &cancellation,
         alcy_storage::LocalSecrets::clone(&secrets),
         workspace_trust,
+        body_files,
     )
     .await;
     flow_registry.remove(&flow_execution_id);
@@ -730,6 +739,7 @@ async fn execute_flow_inner(
     cancellation: &WatchCancellation,
     secrets: alcy_storage::LocalSecrets,
     workspace_trust: alcy_domain::WorkspaceScriptTrust,
+    body_files: alcy_domain::BodyFileAccess,
 ) -> Result<(), ExecuteFlowError> {
     let environment_variables = input
         .environment_variables
@@ -796,6 +806,7 @@ async fn execute_flow_inner(
             graphql: graphql_executor,
             rest: rest_executor,
             workspace_root: Path::new(&input.root_path),
+            body_files: &body_files,
         },
         &collections,
         input.environment_variables,
@@ -1083,6 +1094,7 @@ mod tests {
             graphql: &graphql_executor,
             rest: &rest_executor,
             workspace_root: Path::new(""),
+            body_files: &crate::commands::body_files::NO_BODY_FILES,
         };
 
         let result = run_flow(
@@ -1231,6 +1243,7 @@ mod tests {
             graphql: &graphql_executor,
             rest: &rest_executor,
             workspace_root: Path::new(""),
+            body_files: &crate::commands::body_files::NO_BODY_FILES,
         };
 
         let run_future = run_flow(

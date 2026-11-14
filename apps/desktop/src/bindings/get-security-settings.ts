@@ -3,6 +3,9 @@ import { invokeResult, type CommandResult } from './invoke-result'
 export interface SecuritySettingsDto {
   /** Versiona os valores de variáveis sensíveis (em texto claro). */
   syncSensitiveValues: boolean
+  /** Lets sends read body files outside the workspace that this person did
+   * not pick (spec 0163). */
+  allowBodyFilesOutsideWorkspace: boolean
 }
 
 export type SecuritySettingsCommandError = { kind: 'storage'; message: string }

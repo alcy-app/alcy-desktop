@@ -3,6 +3,7 @@
 mod agent_settings;
 mod api_docs;
 mod authentication;
+mod body_file_access;
 mod body_payload;
 mod collection;
 mod collection_run;
@@ -45,6 +46,9 @@ pub use api_docs::{
     RequestDocs, ResponseDoc, SchemaNode, reachable_schemas, referenced_docs_sources,
 };
 pub use authentication::Authentication;
+pub use body_file_access::{
+    BodyFileAccess, BodyFileAccessStatus, path_is_within, points_outside_workspace, same_path,
+};
 pub use body_payload::{
     BodyPayload, FormDataField, FormDataFieldValue, RawBodyLanguage, UrlEncodedField,
     resolve_file_path,

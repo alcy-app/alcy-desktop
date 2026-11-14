@@ -85,7 +85,7 @@ beforeEach(() => {
   getGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false } })
   getSecuritySettings.mockReset()
   saveSecuritySettings.mockReset()
-  getSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: false } })
+  getSecuritySettings.mockResolvedValue({ ok: true, value: { syncSensitiveValues: false, allowBodyFilesOutsideWorkspace: false } })
 })
 
 const renderOpen = () => {
@@ -269,7 +269,8 @@ describe('SettingsMenu — categories', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
     expect(screen.queryByText('Sincronização do workspace')).not.toBeInTheDocument()
-    expect(getSecuritySettings).not.toHaveBeenCalled()
+    // Body files are protected with or without Git (spec 0163).
+    expect(screen.getByText('Arquivos de corpo')).toBeInTheDocument()
   })
 
   it('shows the Git category and workspace sync protection with the flag on', async () => {
@@ -437,6 +438,26 @@ describe('SettingsMenu — security', () => {
     await waitFor(() => expect(saveSecuritySettings).toHaveBeenCalledWith({ syncSensitiveValues: true }))
     await waitFor(() => expect(protect).not.toBeChecked())
     expect(screen.getByText(/serão enviados em texto claro/)).toBeVisible()
+  })
+
+  it('blocks body files outside the workspace by default and warns when allowed', async () => {
+    saveSecuritySettings.mockResolvedValue({
+      ok: true,
+      value: { syncSensitiveValues: false, allowBodyFilesOutsideWorkspace: true },
+    })
+    render(<SettingsMenu open onOpenChange={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
+
+    const allow = screen.getByRole('checkbox', { name: 'Permitir arquivos fora do workspace' })
+    await waitFor(() => expect(allow).toBeEnabled())
+    expect(allow).not.toBeChecked()
+    expect(screen.queryByText(/poderão enviar qualquer arquivo/)).not.toBeInTheDocument()
+
+    fireEvent.click(allow)
+
+    await waitFor(() => expect(saveSecuritySettings).toHaveBeenCalledWith({ allowBodyFilesOutsideWorkspace: true }))
+    await waitFor(() => expect(allow).toBeChecked())
+    expect(screen.getByText(/poderão enviar qualquer arquivo/)).toBeVisible()
   })
 
   it('shows errors saving sensitive value protection', async () => {

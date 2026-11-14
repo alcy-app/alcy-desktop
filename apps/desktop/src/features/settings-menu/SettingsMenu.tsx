@@ -31,6 +31,7 @@ import { APP_VERSION } from '../../shared/app-version'
 import alcyIcon from '../../assets/alcy-app-icon.svg'
 export type { SettingsCategory } from './settings-navigation'
 import { CustomCaCertificatesSection } from './CustomCaCertificatesSection'
+import { BodyFilesSection } from './BodyFilesSection'
 import { SensitiveSyncSection } from './SensitiveSyncSection'
 import { GitIdentitySection } from './GitIdentitySection'
 import { TlsVerificationSection } from './TlsVerificationSection'
@@ -50,6 +51,8 @@ interface SettingsMenuProps {
   onOpenReleaseNotes?: () => void
   /** Reloads history after a new retention setting is applied. */
   onHistoryRetentionChange?: () => void
+  /** Open workspace, for settings that apply to it (picked body files). */
+  workspaceRootPath?: string
 }
 
 export function SettingsMenu({
@@ -58,6 +61,7 @@ export function SettingsMenu({
   initialCategory = 'interface',
   onOpenReleaseNotes,
   onHistoryRetentionChange,
+  workspaceRootPath,
 }: SettingsMenuProps) {
   const { t } = useLanguage()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -87,6 +91,7 @@ export function SettingsMenu({
           onClose={close}
           initialCategory={initialCategory}
           onHistoryRetentionChange={onHistoryRetentionChange}
+          workspaceRootPath={workspaceRootPath}
           onOpenReleaseNotes={
             onOpenReleaseNotes &&
             (() => {
@@ -106,9 +111,10 @@ interface SettingsModalProps {
   onClose: () => void
   onOpenReleaseNotes?: () => void
   onHistoryRetentionChange?: () => void
+  workspaceRootPath?: string
 }
 
-function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistoryRetentionChange }: SettingsModalProps) {
+function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistoryRetentionChange, workspaceRootPath }: SettingsModalProps) {
   const { language, setLanguage: applyLanguage, t } = useLanguage()
   const { textScale, setTextScale, iconScale, setIconScale } = useUiScale()
   const { preference: themePreference, setPreference: applyThemePreference } = useTheme()
@@ -182,7 +188,7 @@ function SettingsModal({ onClose, initialCategory, onOpenReleaseNotes, onHistory
           </>)}
           {panel('privacy', <>
             {group(t('settings.section.history'), <HistorySettings {...general} onHistoryRetentionChange={onHistoryRetentionChange} />)}
-            {group(t('settings.section.protection'), <SecuritySection />)}
+            {group(t('settings.section.protection'), <SecuritySection workspaceRootPath={workspaceRootPath} />)}
             {FEATURE_FLAGS.usageEvents && group(t('settings.category.telemetry'), anchor('telemetry', <TelemetrySection />))}
           </>)}
           {FEATURE_FLAGS.agent && panel('agent', <AgentSection />)}
@@ -334,7 +340,7 @@ function ProxySection() {
   )
 }
 
-function SecuritySection() {
+function SecuritySection({ workspaceRootPath }: { workspaceRootPath?: string }) {
   const { t } = useLanguage()
   const { redactHarSensitiveData, setRedactHarSensitiveData } = useSecurityPreferences()
 
@@ -362,6 +368,7 @@ function SecuritySection() {
         </div>
       </section>
       {isVersionControlEnabled() && <div className="settings-anchor" data-setting="sensitive-sync" tabIndex={-1}><SensitiveSyncSection /></div>}
+      <div className="settings-anchor" data-setting="body-files" tabIndex={-1}><BodyFilesSection rootPath={workspaceRootPath} /></div>
     </>
   )
 }

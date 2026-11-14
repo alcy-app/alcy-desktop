@@ -305,6 +305,10 @@ impl From<ExecutionError> for ExecuteRestRequestError {
                 message: detail,
                 cause: Some(InvalidRequestCause::BodyFileUnreadable { path }),
             },
+            ExecutionError::BodyFileNotAllowed { path } => Self::InvalidRequest {
+                message: ExecutionError::BodyFileNotAllowed { path: path.clone() }.to_string(),
+                cause: Some(InvalidRequestCause::BodyFileNotAllowed { path }),
+            },
             // Only flow executors emit this; interactive commands handle script phase/message separately.
             ExecutionError::Script(message) => Self::InvalidRequest {
                 message,
@@ -616,8 +620,16 @@ pub async fn execute_rest_request(
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
     script_trust: tauri::State<'_, alcy_storage::ScriptTrustStore>,
+    security_settings: tauri::State<'_, alcy_storage::SecuritySettingsStore>,
+    body_file_grants: tauri::State<'_, alcy_storage::BodyFileGrantStore>,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let mut input = input;
+    let body_files = super::body_files::load_body_file_access(
+        Path::new(&input.root_path),
+        &security_settings,
+        &body_file_grants,
+    )
+    .await;
     input.authentication = resolve_inherited_authentication(
         input.authentication,
         input.request_id.as_deref(),
@@ -651,6 +663,7 @@ pub async fn execute_rest_request(
         &session_cookies.0,
         history.get(),
         &secrets,
+        &body_files,
     )
     .await
     .map(|output| ExecuteRestRequestOutput {
@@ -689,6 +702,7 @@ pub async fn execute_rest_request(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_rest_request_inner(
     input: ExecuteRestRequestInput,
     registry: &ExecutionRegistry,
@@ -697,6 +711,7 @@ async fn execute_rest_request_inner(
     cookies: &CookieJar,
     history: HistoryPreferences,
     secrets: &alcy_storage::LocalSecrets,
+    body_files: &alcy_domain::BodyFileAccess,
 ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
     let mut input = input;
     strip_body_comments(&mut input.body);
@@ -749,9 +764,16 @@ async fn execute_rest_request_inner(
     let history_request = history_request(&request, redacted_request.as_ref());
     // History retains saved workspace-relative paths; execution resolves absolute paths.
     let mut executable = request.clone();
-    executable.body_payload = request
-        .body_payload
-        .with_files_resolved_against(Path::new(&root_path));
+    executable.body_payload = match super::body_files::authorize_body_files(
+        &request.body_payload,
+        Path::new(&root_path),
+        body_files,
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => return Err(ExecutionFailure::new(error, effects)),
+    };
     // Only execution copies receive jar cookies; history excludes them.
     cookies.apply_to(&mut executable);
 
@@ -1103,6 +1125,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1137,6 +1160,7 @@ mod tests {
             &jar,
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap_err();
@@ -1168,6 +1192,7 @@ mod tests {
             &jar,
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1207,6 +1232,7 @@ mod tests {
             &jar,
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1218,6 +1244,7 @@ mod tests {
             &jar,
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1266,6 +1293,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1308,6 +1336,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1361,6 +1390,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1437,6 +1467,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1477,6 +1508,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap_err()
@@ -1510,6 +1542,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1544,6 +1577,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1588,6 +1622,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1634,6 +1669,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1684,6 +1720,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1717,6 +1754,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1754,6 +1792,7 @@ mod tests {
                 &CookieJar::default(),
                 HistoryPreferences::default(),
                 &crate::commands::test_secrets::test_secrets(),
+                &crate::commands::body_files::NO_BODY_FILES,
             )
             .await
         });
@@ -1811,6 +1850,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1847,6 +1887,7 @@ mod tests {
             &CookieJar::default(),
             history,
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1905,6 +1946,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &secrets,
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -1978,6 +2020,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -2034,6 +2077,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap();
@@ -2099,6 +2143,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap_err();
@@ -2137,6 +2182,7 @@ mod tests {
             &CookieJar::default(),
             HistoryPreferences::default(),
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap_err();
@@ -2171,6 +2217,7 @@ mod tests {
                 save_responses: true,
             },
             &crate::commands::test_secrets::test_secrets(),
+            &crate::commands::body_files::NO_BODY_FILES,
         )
         .await
         .unwrap_err();
@@ -2210,6 +2257,7 @@ mod tests {
                 &CookieJar::default(),
                 HistoryPreferences::default(),
                 &crate::commands::test_secrets::test_secrets(),
+                &crate::commands::body_files::NO_BODY_FILES,
             )
             .await
         });
@@ -2221,6 +2269,71 @@ mod tests {
         assert!(history_entries(&root_path).is_empty());
 
         fs_cleanup(&root_path);
+    }
+
+    async fn send_binary_outside_the_workspace(
+        allow_outside: bool,
+        expected_calls: u64,
+    ) -> Result<ExecuteRestRequestOutput, ExecutionFailure<ExecuteRestRequestError>> {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(expected_calls)
+            .mount(&server)
+            .await;
+        let mut input = valid_input();
+        let root = PathBuf::from(&input.root_path);
+        std::fs::create_dir_all(&root).unwrap();
+        let secret = root.with_extension("secret");
+        std::fs::write(&secret, b"private").unwrap();
+        let secret_path = secret.to_string_lossy().into_owned();
+        input.endpoint_url = server.uri();
+        input.method = HttpMethodInput::Post;
+        input.body = BodyInput::Binary {
+            file_path: secret_path,
+        };
+        let access = alcy_domain::BodyFileAccess::new(
+            Some(std::fs::canonicalize(&root).unwrap()),
+            allow_outside,
+            vec![],
+        );
+
+        let result = execute_rest_request_inner(
+            input,
+            &ExecutionRegistry::default(),
+            &ReqwestRestExecutor::new(),
+            &ResponseBodyCache::default(),
+            &CookieJar::default(),
+            HistoryPreferences::default(),
+            &crate::commands::test_secrets::test_secrets(),
+            &access,
+        )
+        .await;
+        std::fs::remove_file(&secret).ok();
+        fs_cleanup(&root.to_string_lossy());
+        result
+    }
+
+    #[tokio::test]
+    async fn a_body_file_outside_the_workspace_never_reaches_the_server() {
+        let failure = send_binary_outside_the_workspace(false, 0)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            failure.error,
+            ExecuteRestRequestError::InvalidRequest {
+                cause: Some(InvalidRequestCause::BodyFileNotAllowed { .. }),
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_security_setting_lets_a_body_file_outside_the_workspace_go() {
+        let output = send_binary_outside_the_workspace(true, 1).await.unwrap();
+
+        assert_eq!(output.status_code, 200);
     }
 
     fn fs_cleanup(root_path: &str) {

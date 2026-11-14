@@ -154,6 +154,7 @@ impl LoadRunSink for ChannelSink<'_> {
 /// em vez de receber o canvas pelo IPC, para que a confirmação e a execução
 /// usem o mesmo artefato salvo. O channel só recebe agregados limitados.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_load_flow(
     input: ExecuteLoadFlowInput,
     on_event: Channel<LoadRunEventDto>,
@@ -162,8 +163,13 @@ pub async fn execute_load_flow(
     history: tauri::State<'_, HistoryPreferencesState>,
     usage: tauri::State<'_, alcy_app::UsageHub>,
     secrets: tauri::State<'_, alcy_storage::LocalSecrets>,
+    security_settings: tauri::State<'_, alcy_storage::SecuritySettingsStore>,
+    body_file_grants: tauri::State<'_, alcy_storage::BodyFileGrantStore>,
 ) -> Result<(), ExecuteLoadFlowError> {
     let root = PathBuf::from(&input.root_path);
+    let body_files =
+        super::body_files::load_body_file_access(&root, &security_settings, &body_file_grants)
+            .await;
     let snapshot = FlowStore::new(root.clone(), alcy_storage::LocalSecrets::clone(&secrets))
         .load()
         .map_err(|error| ExecuteLoadFlowError::Storage {
@@ -204,7 +210,13 @@ pub async fn execute_load_flow(
     });
     let started = std::time::Instant::now();
 
-    let result = run_load_plan_report(&plan, &*rest_executor, &sink, &cancellation).await;
+    // Load requests read body files too (spec 0163).
+    let executor = super::body_files::BodyFileGuard {
+        inner: &*rest_executor,
+        workspace_root: &root,
+        access: &body_files,
+    };
+    let result = run_load_plan_report(&plan, &executor, &sink, &cancellation).await;
     flow_registry.remove(&registry_id);
     usage.record(load_finished_event(
         &result,

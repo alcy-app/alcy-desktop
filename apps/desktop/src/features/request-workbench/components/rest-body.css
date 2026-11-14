@@ -223,6 +223,59 @@
   font-weight: var(--font-weight-medium);
 }
 
+.rw-body-file-notice-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rw-body-file-notice-action:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* Offer to copy a file picked outside the workspace into it (spec 0163). */
+.rw-body-copy-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font-size: var(--font-size-sm);
+}
+
+.rw-body-copy-offer-text {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.rw-body-copy-offer-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.rw-body-copy-offer-error {
+  color: var(--error);
+  font-size: var(--font-size-xs);
+}
+
+.rw-body-copy-offer-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .rw-body-binary {
   display: flex;
   flex-direction: column;

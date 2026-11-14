@@ -850,6 +850,9 @@ pub struct PreparedImportOutput {
     pub environment_count: usize,
     pub supports_documentation: bool,
     pub script_count: usize,
+    /// Body file fields whose path points outside the workspace: they stay
+    /// blocked until this person picks the file again (spec 0163).
+    pub outside_file_count: usize,
     pub warning_count: usize,
     /// Variables the review offers (spec 0130).
     pub variables: Vec<ImportVariableCandidateDto>,
@@ -1011,6 +1014,33 @@ impl DocsTarget {
     }
 }
 
+/// Body file fields of `collections` whose saved path points outside the
+/// workspace by itself (absolute or climbing out with `..`).
+fn outside_file_count(collections: &[Collection]) -> usize {
+    fn in_requests(requests: &[SavedRequest], folders: &[Folder]) -> usize {
+        let own: usize = requests
+            .iter()
+            .map(|saved| {
+                saved
+                    .request
+                    .body_payload
+                    .sent_file_paths()
+                    .into_iter()
+                    .filter(|path| alcy_domain::points_outside_workspace(path))
+                    .count()
+            })
+            .sum();
+        own + folders
+            .iter()
+            .map(|folder| in_requests(folder.requests(), folder.folders()))
+            .sum::<usize>()
+    }
+    collections
+        .iter()
+        .map(|collection| in_requests(collection.requests(), collection.folders()))
+        .sum()
+}
+
 fn count_folder(folder: &Folder) -> (usize, usize) {
     folder.folders().iter().fold(
         (1, folder.requests().len()),
@@ -1072,6 +1102,7 @@ fn store_prepared_import(
         environment_count: imported.environments.len(),
         supports_documentation: imported.docs.is_some(),
         script_count: imported.script_count,
+        outside_file_count: outside_file_count(&imported.collections),
         warning_count: imported.warnings.len(),
         variables: alcy_collection_import::variable_candidates(&imported)
             .into_iter()
@@ -2524,6 +2555,40 @@ collection:
                 }],
             }]
         );
+    }
+
+    #[test]
+    fn the_preview_counts_body_files_that_point_outside_the_workspace() {
+        let imported = parse_import_content(
+            r#"{
+                "info": {"name": "Upload", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+                "item": [
+                    {"name": "Absolute", "request": {"method": "POST", "url": "https://api.example.com",
+                        "body": {"mode": "formdata", "formdata": [
+                            {"key": "a", "type": "file", "src": "/home/ana/private/notes.txt"},
+                            {"key": "b", "type": "file", "src": "files/photo.png"},
+                            {"key": "c", "type": "file", "src": "/off/disabled.bin", "disabled": true}
+                        ]}}},
+                    {"name": "Folder", "item": [
+                        {"name": "Climbing", "request": {"method": "POST", "url": "https://api.example.com",
+                            "body": {"mode": "formdata", "formdata": [
+                                {"key": "d", "type": "file", "src": "../../private.txt"}
+                            ]}}}
+                    ]}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let summary = store_prepared_import(
+            &PreparedImports::default(),
+            imported,
+            temp_root().to_string_lossy().into_owned(),
+            ImportSource::Text,
+        )
+        .unwrap();
+
+        assert_eq!(summary.outside_file_count, 2);
     }
 
     #[test]

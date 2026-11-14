@@ -19,7 +19,7 @@ describe('useSyncSensitiveValues', () => {
     render(<Probe />)
     expect(await screen.findByText('true')).toBeInTheDocument()
 
-    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: false }))
+    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: false, allowBodyFilesOutsideWorkspace: false }))
     expect(screen.getByText('false')).toBeInTheDocument()
   })
 
@@ -28,7 +28,7 @@ describe('useSyncSensitiveValues', () => {
     getSecuritySettings.mockReturnValue(new Promise((resolve) => { answer = resolve }))
     render(<Probe />)
 
-    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: true }))
+    act(() => notifySecuritySettingsChanged({ syncSensitiveValues: true, allowBodyFilesOutsideWorkspace: false }))
     await act(async () => answer({ ok: true, value: { syncSensitiveValues: false } }))
 
     expect(screen.getByText('true')).toBeInTheDocument()
