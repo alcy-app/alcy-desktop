@@ -1,3 +1,4 @@
+import { useSettingDraft } from './settings-actions'
 import { useCallback, useEffect, useState } from 'react'
 import {
   getUsageEventsStatus,
@@ -61,12 +62,15 @@ export function TelemetrySection() {
     setSaving(false)
     if (!result.ok) {
       setError(true)
-      return
+      return false
     }
     setStatus(result.value)
     applyUsageEventsStatus(result.value)
     refreshEvents()
+    return true
   }
+
+  const [enabled, setEnabled] = useSettingDraft(status?.enabled ?? true, true, toggle, true, status?.available === true)
 
   if (!status) return null
 
@@ -89,7 +93,7 @@ export function TelemetrySection() {
         </div>
         <div className="settings-security">
           <label className="settings-checkbox">
-            <Checkbox checked={status.enabled} disabled={saving} onChange={(event) => void toggle(event.target.checked)} />
+            <Checkbox checked={enabled} disabled={saving} onChange={(event) => setEnabled(event.target.checked)} />
             <span>{t('settings.telemetryEnable')}</span>
           </label>
           <p className="settings-proxy-hint">{t('settings.telemetryEnableHint')}</p>

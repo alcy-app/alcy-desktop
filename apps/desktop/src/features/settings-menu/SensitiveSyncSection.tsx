@@ -1,3 +1,4 @@
+import { useSettingDraft } from './settings-actions'
 import { useEffect, useState } from 'react'
 import { getSecuritySettings, type SecuritySettingsDto } from '../../bindings/get-security-settings'
 import { saveSecuritySettings } from '../../bindings/save-security-settings'
@@ -7,8 +8,8 @@ import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon } from '../../shared/ui/icons'
 
-/** Proteção de valores sensíveis na sincronização do workspace. Fica no
- * backend (é lida pelo controle de versão), então carrega e salva por IPC. */
+/** Protect sensitive values during workspace synchronization. The backend
+ * enforces this preference, so it is loaded and saved through IPC. */
 export function SensitiveSyncSection() {
   const { t } = useLanguage()
   const [settings, setSettings] = useState<SecuritySettingsDto | null>(null)
@@ -35,11 +36,14 @@ export function SensitiveSyncSection() {
     setBusy(false)
     if (!result.ok) {
       setSaveError(t('settings.securitySyncSaveError', { message: result.error.message }))
-      return
+      return false
     }
     setSettings(result.value)
     notifySecuritySettingsChanged(result.value)
+    return true
   }
+
+  const [protect, setProtectDraft] = useSettingDraft(settings === null || !settings.syncSensitiveValues, true, setProtected, settings !== null)
 
   return (
     <section className="settings-section settings-preference">
@@ -49,14 +53,14 @@ export function SensitiveSyncSection() {
       <div className="settings-security">
         <label className="settings-checkbox">
           <Checkbox
-            checked={settings === null || !settings.syncSensitiveValues}
+            checked={protect}
             disabled={settings === null || busy}
-            onChange={(event) => void setProtected(event.target.checked)}
+            onChange={(event) => setProtectDraft(event.target.checked)}
           />
           <span>{t('settings.securitySyncProtect')}</span>
         </label>
         <p className="settings-proxy-hint">{t('settings.securitySyncProtectHint')}</p>
-        {settings?.syncSensitiveValues && (
+        {!protect && (
           <p className="settings-security-warning" role="status">
             <AlertIcon size={13} />
             <span>{t('settings.securitySyncRevealWarning')}</span>

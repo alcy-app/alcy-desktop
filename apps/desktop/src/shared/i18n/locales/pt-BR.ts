@@ -485,6 +485,13 @@ const ptBR = {
   'toasts.nodeReferenceCopied': 'Referência do node copiada.',
 
   // settings menu (gear icon in the header)
+  'settings.actions.label': 'Ações de {tab}',
+  'settings.actions.apply': 'Aplicar',
+  'settings.actions.restore': 'Restaurar padrões',
+  'settings.actions.pending': 'Alterações pendentes',
+  'settings.actions.saved': 'Alterações aplicadas',
+  'settings.actions.error': 'Não foi possível aplicar tudo. Revise as opções e tente novamente.',
+  'settings.actions.scope': 'As ações se aplicam a esta aba.',
   'settings.triggerAria': 'Configurações',
   'settings.modalTitle': 'Configurações',
   'settings.categories': 'Categorias de configuração',
@@ -630,7 +637,7 @@ const ptBR = {
   'settings.telemetryLabel': 'Dados de uso',
   'settings.telemetryUnavailable': 'Este build não coleta nem envia dados de uso.',
   'settings.telemetryEnable': 'Enviar dados de uso anônimos',
-  'settings.telemetryEnableHint': 'Ajuda a entender quais recursos são usados. Desligar para de registrar na hora e apaga o que ainda não foi enviado.',
+  'settings.telemetryEnableHint': 'Ajuda a entender quais recursos são usados. Ao aplicar esta opção desligada, o registro é interrompido e os dados ainda não enviados são apagados.',
   'settings.telemetrySaveError': 'Não foi possível salvar a preferência de telemetria.',
   'settings.telemetryCollectedTitle': 'O que é registrado',
   'settings.telemetryCollectedApp': 'Abertura e fechamento do app, com o tempo que ele levou para abrir.',

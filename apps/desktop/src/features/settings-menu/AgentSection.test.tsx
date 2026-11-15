@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '../../test-utils'
 import type { AgentProviderDto, AgentSettingsDto } from '../../bindings/agent-settings'
 import { AgentSection } from './AgentSection'
+import { SettingsPage } from './SettingsPage'
 import { MentionInChatMenuItem } from '../agent/MentionInChatMenuItem'
 
 const getAgentSettings = vi.fn()
@@ -44,9 +45,23 @@ beforeEach(() => {
 const card = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) }).closest('li') as HTMLElement
 
 describe('AgentSection', () => {
+  it('applies edits to multiple providers together, including a collapsed card', async () => {
+    render(<SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>)
+    const claudeCard = await waitFor(() => card('Claude'))
+    fireEvent.change(within(claudeCard).getByDisplayValue('claude-sonnet-5-5'), { target: { value: 'claude-opus-5-5' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Custom/ }))
+    fireEvent.change(within(card('Custom')).getByRole('combobox', { name: 'Modelo' }), { target: { value: 'local-model' } })
+    expect(saveAgentSettings).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
+    await waitFor(() => expect(screen.getByText('Alterações aplicadas')).toBeVisible())
+    expect(current.providers.map((provider) => provider.model)).toEqual(['claude-opus-5-5', 'local-model'])
+  })
+
   it('applies and remembers chat preferences while preserving provider configuration', async () => {
     const content = <>
-      <AgentSection />
+      <SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>
       <MentionInChatMenuItem item={{ kind: 'tab', id: 't1', label: 'Users' }} onDone={() => {}} />
     </>
     const { unmount } = render(content)
@@ -58,21 +73,33 @@ describe('AgentSection', () => {
     expect(screen.getByRole('menuitem', { name: 'Mencionar no chat' })).toBeInTheDocument()
 
     fireEvent.click(contexts)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.queryByRole('menuitem', { name: 'Mencionar no chat' })).not.toBeInTheDocument()
     expect(chat).toBeChecked()
     fireEvent.click(contexts)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.getByRole('menuitem', { name: 'Mencionar no chat' })).toBeInTheDocument()
 
     fireEvent.click(chat)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.queryByRole('menuitem', { name: 'Mencionar no chat' })).not.toBeInTheDocument()
     fireEvent.click(contexts)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     unmount()
     render(content)
     expect(screen.getByRole('checkbox', { name: 'Habilitar chat' })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' })).toBeChecked()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Habilitar chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.queryByRole('menuitem', { name: 'Mencionar no chat' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.getByRole('menuitem', { name: 'Mencionar no chat' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: /^Claude/ })).toBeInTheDocument()
     expect(saveAgentSettings).not.toHaveBeenCalled()
@@ -80,7 +107,7 @@ describe('AgentSection', () => {
 
   it('starts with no provider and adds one from a preset', async () => {
     current = { providers: [], activeProviderId: null }
-    render(<AgentSection />)
+    render(<SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>)
     expect(await screen.findByText('Nenhum provedor configurado. Adicione um para usar o agente.')).toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Provedores configurados' })).not.toBeInTheDocument()
 
@@ -95,7 +122,7 @@ describe('AgentSection', () => {
   })
 
   it('summarizes what each provider still needs and opens the first one to set up', async () => {
-    render(<AgentSection />)
+    render(<SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>)
     expect(await screen.findByText('Falta a chave')).toBeInTheDocument()
     expect(within(card('Claude')).getByText('Falta a chave')).toBeInTheDocument()
     expect(within(card('Custom')).getByText('Falta o modelo')).toBeInTheDocument()
@@ -103,7 +130,7 @@ describe('AgentSection', () => {
   })
 
   it('stores a key, tests the connection and puts the provider in use', async () => {
-    render(<AgentSection />)
+    render(<SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>)
     const claudeCard = await waitFor(() => card('Claude'))
     fireEvent.change(within(claudeCard).getByLabelText('Chave de API'), { target: { value: 'sk-test' } })
     fireEvent.click(within(claudeCard).getByRole('button', { name: 'Salvar chave' }))
@@ -120,18 +147,18 @@ describe('AgentSection', () => {
   })
 
   it('asks to save before testing edited fields', async () => {
-    render(<AgentSection />)
+    render(<SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>)
     const claudeCard = await waitFor(() => card('Claude'))
     fireEvent.change(within(claudeCard).getByDisplayValue('claude-sonnet-5-5'), { target: { value: 'claude-opus-5-5' } })
     expect(within(claudeCard).getByRole('button', { name: 'Testar conexão' })).toBeDisabled()
     expect(within(claudeCard).getByText('Salve as alterações para testar.')).toBeInTheDocument()
-    fireEvent.click(within(claudeCard).getByRole('button', { name: 'Salvar alterações' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
     await waitFor(() => expect(saveAgentSettings).toHaveBeenCalled())
     expect(saveAgentSettings.mock.calls[0][0].providers[0].model).toBe('claude-opus-5-5')
   })
 
   it('adds a provider from a preset and removes it with its key', async () => {
-    render(<AgentSection />)
+    render(<SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>)
     fireEvent.click(await screen.findByRole('button', { name: 'Adicionar provedor' }))
     fireEvent.click(screen.getByRole('button', { name: /OpenRouter/ }))
     await waitFor(() => expect(card('OpenRouter')).toBeInTheDocument())

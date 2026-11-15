@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   clearAgentApiKey,
   getAgentSettings,
@@ -22,6 +22,7 @@ import { agentErrorMessage } from '../agent/use-agent-session'
 import { providerInput } from '../agent/use-agent-settings'
 import { AGENT_DOCKS, useAgentPreferences, type AgentDock } from '../agent/use-agent-preferences'
 import { ModelCombobox } from './ModelCombobox'
+import { useSettingDraft, useSettingsAction } from './settings-actions'
 
 /** Same limit as the backend (`MAX_AGENT_PROVIDERS`). */
 const MAX_PROVIDERS = 16
@@ -72,8 +73,12 @@ type SaveResult = { ok: boolean }
 /** Agent providers (ADR 0064): which one the chat uses and how each connects. Keys stay in the system keyring. */
 export function AgentSection() {
   const { t } = useLanguage()
-  const { chatEnabled, contextOptionsDisabled, setChatEnabled, setContextOptionsDisabled, dock, setDock } = useAgentPreferences()
+  const preferences = useAgentPreferences()
+  const [chatEnabled, setChatEnabled] = useSettingDraft(preferences.chatEnabled, true, preferences.setChatEnabled)
+  const [contextOptionsDisabled, setContextOptionsDisabled] = useSettingDraft(preferences.contextOptionsDisabled, false, preferences.setContextOptionsDisabled)
+  const [dock, setDock] = useSettingDraft(preferences.dock, 'right', preferences.setDock)
   const [settings, setSettings] = useState<AgentSettingsDto | null>(null)
+  const latestSettings = useRef<AgentSettingsDto | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -87,6 +92,7 @@ export function AgentSection() {
         setLoadError(agentErrorMessage(result.error, t))
         return
       }
+      latestSettings.current = result.value
       setSettings(result.value)
       // Open the provider in use, or the first one still to be set up.
       const active = result.value.providers.find((provider) => provider.id === result.value.activeProviderId)
@@ -102,13 +108,13 @@ export function AgentSection() {
       providers: providers.map(providerInput),
       activeProviderId,
     })
-    if (result.ok) setSettings(result.value)
+    if (result.ok) { latestSettings.current = result.value; setSettings(result.value) }
     return result
   }
 
   const reload = async () => {
     const result = await getAgentSettings()
-    if (result.ok) setSettings(result.value)
+    if (result.ok) { latestSettings.current = result.value; setSettings(result.value) }
   }
 
   const addPreset = async (preset: ProviderPreset) => {
@@ -196,7 +202,10 @@ export function AgentSection() {
               active={settings.activeProviderId === provider.id}
               expanded={expandedId === provider.id}
               onToggle={() => setExpandedId((current) => (current === provider.id ? null : provider.id))}
-              onSave={(next) => save(settings.providers.map((candidate) => (candidate.id === next.id ? next : candidate)), settings.activeProviderId)}
+              onSave={(next) => {
+                const current = latestSettings.current ?? settings
+                return save(current.providers.map((candidate) => candidate.id === next.id ? next : candidate), current.activeProviderId)
+              }}
               onActivate={() => save(settings.providers, provider.id)}
               onRemove={() => remove(provider)}
               onKeyChanged={reload}
@@ -281,12 +290,27 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
     }
   }
 
-  const saveFields = () =>
-    run('save', async () => {
+  const saveFields = async () => {
+    setBusy('save')
+    setError(null)
+    setSaved(false)
+    try {
       const result = await onSave({ ...provider, label: label.trim() || provider.label, baseUrl: baseUrl.trim(), model: model.trim() })
       if (result.ok) setSaved(true)
       else setError(t('settings.agent.saveError'))
-    })
+      return result.ok
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  useSettingsAction({
+    dirty,
+    // Provider connections and credentials have no factory default.
+    isDefault: true,
+    blocked: busy !== null,
+    apply: saveFields,
+  })
 
   const storeKey = () =>
     run('key', async () => {
@@ -457,9 +481,6 @@ function ProviderCard({ provider, active, expanded, onToggle, onSave, onActivate
                 {t('settings.agent.useInChat')}
               </Button>
             )}
-            <Button isLoading={busy === 'save'} disabled={busy !== null || !dirty} onClick={() => void saveFields()}>
-              {t('settings.agent.save')}
-            </Button>
           </div>
         </div>
       )}

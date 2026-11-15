@@ -491,6 +491,13 @@ const en: Record<TranslationKey, string> = {
   'toasts.nodeReferenceCopied': 'Node reference copied.',
 
   // settings menu (gear icon in the header)
+  'settings.actions.label': '{tab} actions',
+  'settings.actions.apply': 'Apply',
+  'settings.actions.restore': 'Restore defaults',
+  'settings.actions.pending': 'Unsaved changes',
+  'settings.actions.saved': 'Changes applied',
+  'settings.actions.error': 'Some changes could not be applied. Review the options and try again.',
+  'settings.actions.scope': 'Actions apply to this tab.',
   'settings.triggerAria': 'Settings',
   'settings.modalTitle': 'Settings',
   'settings.categories': 'Settings categories',
@@ -636,7 +643,7 @@ const en: Record<TranslationKey, string> = {
   'settings.telemetryLabel': 'Usage data',
   'settings.telemetryUnavailable': 'This build does not collect or send usage data.',
   'settings.telemetryEnable': 'Send anonymous usage data',
-  'settings.telemetryEnableHint': 'Helps understand which features are used. Turning it off stops recording at once and deletes what was not sent yet.',
+  'settings.telemetryEnableHint': 'Helps understand which features are used. Applying this option turned off stops recording and deletes data that has not been sent yet.',
   'settings.telemetrySaveError': 'Could not save the telemetry preference.',
   'settings.telemetryCollectedTitle': 'What is recorded',
   'settings.telemetryCollectedApp': 'App opened and closed, with how long it took to open.',

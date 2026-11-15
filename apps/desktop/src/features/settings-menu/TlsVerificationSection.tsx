@@ -1,3 +1,4 @@
+import { useSettingDraft } from './settings-actions'
 import { useEffect, useState } from 'react'
 import { getTlsSettings, saveTlsSettings, type TlsSettingsDto } from '../../bindings/tls-settings'
 import { useLanguage } from '../../shared/i18n/use-language'
@@ -5,8 +6,8 @@ import { Checkbox } from '../../shared/ui/Checkbox'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { AlertIcon } from '../../shared/ui/icons'
 
-/** Verificação de certificado das chamadas do usuário (ADR 0058). Ligada por
- * padrão; importação por URL e atualizações sempre verificam. */
+/** Certificate verification for user requests (ADR 0058), enabled by default.
+ * URL imports and updates always verify certificates. */
 export function TlsVerificationSection() {
   const { t } = useLanguage()
   const [settings, setSettings] = useState<TlsSettingsDto | null>(null)
@@ -33,7 +34,10 @@ export function TlsVerificationSection() {
     setBusy(false)
     if (result.ok) setSettings(result.value)
     else setSaveError(t('settings.tlsVerifySaveError', { message: result.error.message }))
+    return result.ok
   }
+
+  const [verify, setVerifyDraft] = useSettingDraft(settings === null || settings.verifyCertificates, true, setVerify, settings !== null)
 
   return (
     <section className="settings-section settings-preference">
@@ -43,14 +47,14 @@ export function TlsVerificationSection() {
       <div className="settings-security">
         <label className="settings-checkbox">
           <Checkbox
-            checked={settings === null || settings.verifyCertificates}
+            checked={verify}
             disabled={settings === null || busy}
-            onChange={(event) => void setVerify(event.target.checked)}
+            onChange={(event) => setVerifyDraft(event.target.checked)}
           />
           <span>{t('settings.tlsVerifyToggle')}</span>
         </label>
         <p className="settings-proxy-hint">{t('settings.tlsVerifyHint')}</p>
-        {settings?.verifyCertificates === false && (
+        {!verify && (
           <p className="settings-security-warning" role="status">
             <AlertIcon size={13} />
             <span>{t('settings.tlsVerifyDisabledWarning')}</span>

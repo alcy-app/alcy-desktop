@@ -1,3 +1,4 @@
+import { useSettingDraft } from './settings-actions'
 import { useEffect, useState } from 'react'
 import { getSecuritySettings, type SecuritySettingsDto } from '../../bindings/get-security-settings'
 import { clearBodyFileGrants, countBodyFileGrants } from '../../bindings/pick-body-file'
@@ -47,10 +48,11 @@ export function BodyFilesSection({ rootPath }: BodyFilesSectionProps) {
     setBusy(false)
     if (!result.ok) {
       setError(t('settings.securitySyncSaveError', { message: result.error.message }))
-      return
+      return false
     }
     setSettings(result.value)
     notifySecuritySettingsChanged(result.value)
+    return true
   }
 
   const clearGrants = async () => {
@@ -68,6 +70,8 @@ export function BodyFilesSection({ rootPath }: BodyFilesSectionProps) {
     if (settings) notifySecuritySettingsChanged(settings)
   }
 
+  const [allowOutside, setAllowOutsideDraft] = useSettingDraft(settings?.allowBodyFilesOutsideWorkspace ?? false, false, setAllowOutside, settings !== null)
+
   return (
     <section className="settings-section settings-preference">
       <div>
@@ -76,14 +80,14 @@ export function BodyFilesSection({ rootPath }: BodyFilesSectionProps) {
       <div className="settings-security">
         <label className="settings-checkbox">
           <Checkbox
-            checked={settings?.allowBodyFilesOutsideWorkspace ?? false}
+            checked={allowOutside}
             disabled={settings === null || busy}
-            onChange={(event) => void setAllowOutside(event.target.checked)}
+            onChange={(event) => setAllowOutsideDraft(event.target.checked)}
           />
           <span>{t('settings.securityBodyFilesAllow')}</span>
         </label>
         <p className="settings-proxy-hint">{t('settings.securityBodyFilesHint')}</p>
-        {settings?.allowBodyFilesOutsideWorkspace && (
+        {allowOutside && (
           <p className="settings-security-warning" role="status">
             <AlertIcon size={13} />
             <span>{t('settings.securityBodyFilesWarning')}</span>

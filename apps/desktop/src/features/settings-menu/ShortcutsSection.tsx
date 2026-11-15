@@ -4,6 +4,9 @@ import {
   findConflict,
   isCanvasAction,
   isDefaultBinding,
+  DEFAULT_SHORTCUTS,
+  assignShortcut as assignBinding,
+  removeShortcut as removeBinding,
   sameCombo,
   SHORTCUT_ACTIONS,
   validateCombo,
@@ -11,10 +14,10 @@ import {
   type ShortcutAction,
 } from '../../shared/shortcuts/shortcuts'
 import { useShortcuts } from '../../shared/shortcuts/use-shortcuts'
-import { Button } from '../../shared/ui/Button'
+import { useSettingsAction } from './settings-actions'
 import { IconButton } from '../../shared/ui/IconButton'
 import { Input } from '../../shared/ui/Input'
-import { CloseIcon, PlusIcon, RefreshIcon, SearchIcon } from '../../shared/ui/icons'
+import { CloseIcon, PlusIcon, SearchIcon } from '../../shared/ui/icons'
 import { ShortcutCaptureModal, type CaptureEvaluation } from './ShortcutCaptureModal'
 import { ShortcutKeys } from './ShortcutKeys'
 import { formatComboForDisplay } from './shortcut-display'
@@ -30,7 +33,10 @@ const SLOTS = [0, 1] as const
 
 export function ShortcutsSection() {
   const { t } = useLanguage()
-  const { bindings, assignShortcut, removeShortcut, resetShortcut, resetAllShortcuts } = useShortcuts()
+  const { bindings: savedBindings, applyBindings } = useShortcuts()
+  const [bindings, setBindings] = useState(savedBindings)
+  const assignShortcut = (action: ShortcutAction, slot: number, combo: KeyCombo) => setBindings((current) => assignBinding(current, action, slot, combo))
+  const removeShortcut = (action: ShortcutAction, slot: number) => setBindings((current) => removeBinding(current, action, slot))
   const [capturing, setCapturing] = useState<SlotRef | null>(null)
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -46,6 +52,13 @@ export function ShortcutsSection() {
 
   const actionLabel = (action: ShortcutAction) => t(`settings.shortcuts.action.${action}`)
   const allDefault = SHORTCUT_ACTIONS.every((action) => isDefaultBinding(bindings, action))
+  useSettingsAction({
+    dirty: JSON.stringify(bindings) !== JSON.stringify(savedBindings),
+    isDefault: allDefault,
+    blocked: capturing !== null,
+    apply: () => applyBindings(bindings),
+    restore: () => setBindings(DEFAULT_SHORTCUTS),
+  })
   const terms = normalizeSearch(query).replace(/\s*\+\s*/g, '+').split(/\s+/).filter(Boolean)
   const groups = SHORTCUT_GROUPS.map((group) => ({
     ...group,
@@ -138,15 +151,12 @@ export function ShortcutsSection() {
             <th scope="col" className="settings-shortcuts-col-action">{t('settings.shortcuts.columnAction')}</th>
             <th scope="col">{t('settings.shortcuts.columnPrimary')}</th>
             <th scope="col">{t('settings.shortcuts.columnAlternative')}</th>
-            <th scope="col" className="settings-shortcuts-col-options">
-              <span className="settings-visually-hidden">{t('settings.shortcuts.columnOptions')}</span>
-            </th>
           </tr>
         </thead>
         {groups.map((group) => (
           <tbody key={group.id}>
             <tr className="settings-shortcuts-group">
-              <th scope="colgroup" colSpan={4}>
+              <th scope="colgroup" colSpan={3}>
                 {t(`settings.shortcuts.group.${group.id}`)}
               </th>
             </tr>
@@ -156,26 +166,11 @@ export function ShortcutsSection() {
                 {SLOTS.map((slot) => (
                   <td key={slot}>{renderSlot(action, slot)}</td>
                 ))}
-                <td className="settings-shortcuts-col-options">
-                  {!isDefaultBinding(bindings, action) && (
-                    <IconButton
-                      className="settings-shortcut-row-action"
-                      icon={<RefreshIcon size={12} />}
-                      label={t('settings.shortcuts.restoreDefaultAria', { action: actionLabel(action) })}
-                      onClick={() => resetShortcut(action)}
-                    />
-                  )}
-                </td>
               </tr>
             ))}
           </tbody>
         ))}
       </table>}
-      <div className="settings-proxy-actions">
-        <Button variant="ghost" disabled={allDefault} onClick={resetAllShortcuts}>
-          {t('settings.shortcuts.restoreAll')}
-        </Button>
-      </div>
       {capturing && (
         <ShortcutCaptureModal
           actionLabel={actionLabel(capturing.action)}

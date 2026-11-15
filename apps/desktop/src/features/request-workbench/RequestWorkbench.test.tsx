@@ -5,6 +5,7 @@ import { runBeforeExit } from '../../shared/app-lifecycle/before-exit'
 import { RequestWorkbench } from './RequestWorkbench'
 import type { ExtensionSidebarModule, PseudoTab } from '../../extensions/types'
 import { AgentSection } from '../settings-menu/AgentSection'
+import { SettingsPage } from '../settings-menu/SettingsPage'
 
 // Fixed release notes; real content depends on the current CHANGELOG section.
 vi.mock('../updates/release-notes', async (importOriginal) => ({
@@ -5445,15 +5446,18 @@ describe('RequestWorkbench', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Interface' }))
     expect(within(dialog).getByRole('radio', { name: 'Claro' })).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Escuro' }))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.theme).toBe('light')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'))
     expect(window.localStorage.getItem('alcy:theme')).toBe('dark')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Interface' }))
     expect(within(dialog).getByRole('radio', { name: 'Português (Brasil)' })).toHaveAttribute('aria-checked', 'true')
     expect(within(dialog).getByRole('radio', { name: 'English' })).toHaveAttribute('aria-checked', 'false')
 
     fireEvent.click(within(dialog).getByRole('radio', { name: 'English' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Aplicar' }))
 
-    expect(within(dialog).getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
+    expect(await within(dialog).findByRole('heading', { name: 'Settings' })).toBeInTheDocument()
     expect(window.localStorage.getItem('alcy:language')).toBe('en')
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
@@ -5659,25 +5663,31 @@ describe('RequestWorkbench', () => {
 })
 
 describe('RequestWorkbench — painel do agente', () => {
-  it('removes an open chat and disables its shortcut immediately until reenabled', async () => {
+  it('applies chat availability to the open panel and its shortcut', async () => {
     featureFlags.agent = true
     onTestFinished(() => { featureFlags.agent = false })
     render(<>
       <RequestWorkbench workspace={testWorkspace} onWorkspaceChange={() => {}} onExitToStartScreen={() => {}} />
-      <AgentSection />
+      <SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>
     </>)
     fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
     expect(await screen.findByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Desabilitar opções nos subcontextos' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.getByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Habilitar chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.queryByRole('complementary', { name: 'Agente' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /painel do agente/ })).not.toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'A', code: 'KeyA', ctrlKey: true, shiftKey: true })
     expect(screen.queryByRole('complementary', { name: 'Agente' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Habilitar chat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(await screen.findByRole('complementary', { name: 'Agente' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ocultar painel do agente' })).toBeInTheDocument()
   })
@@ -5714,13 +5724,15 @@ describe('RequestWorkbench — painel do agente', () => {
     window.localStorage.setItem('alcy:agent:dock', 'top')
     render(<>
       <RequestWorkbench workspace={testWorkspace} onWorkspaceChange={() => {}} onExitToStartScreen={() => {}} />
-      <AgentSection />
+      <SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>
     </>)
     fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
     const panel = await screen.findByRole('complementary', { name: 'Agente' })
     expect(panel.closest('.rw-body')).toHaveClass('rw-body--agent-right')
 
     fireEvent.click(screen.getByRole('radio', { name: 'Embaixo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(panel.closest('.rw-body')).toHaveClass('rw-body--agent-bottom')
     expect(screen.getByRole('separator', { name: 'Redimensionar painel do agente' })).toHaveAttribute('aria-orientation', 'horizontal')
     expect(screen.getByRole('complementary', { name: 'Agente' })).toBe(panel)
@@ -5734,13 +5746,15 @@ describe('RequestWorkbench — painel do agente', () => {
     })
     render(<>
       <RequestWorkbench workspace={testWorkspace} onWorkspaceChange={() => {}} onExitToStartScreen={() => {}} />
-      <AgentSection />
+      <SettingsPage page="agent" active id="agent-test"><AgentSection /></SettingsPage>
     </>)
     fireEvent.click(await screen.findByRole('button', { name: 'Mostrar painel do agente' }))
     const panel = await screen.findByRole('complementary', { name: 'Agente' })
     expect(screen.queryByRole('tab', { name: 'Agente' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: 'Esquerda' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     const moduleTab = screen.getByRole('tab', { name: 'Agente' })
     expect(moduleTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tabpanel', { name: 'Agente' })).toContainElement(panel)
@@ -5756,6 +5770,8 @@ describe('RequestWorkbench — painel do agente', () => {
     expect(screen.getByRole('tabpanel', { name: 'Agente' })).toContainElement(panel)
 
     fireEvent.click(screen.getByRole('radio', { name: 'Direita' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(screen.queryByRole('tab', { name: 'Agente' })).not.toBeInTheDocument()
     expect(screen.getByRole('complementary', { name: 'Agente' })).toBe(panel)
     expect(panel.closest('.agent-panel-wrapper')).not.toHaveAttribute('hidden')

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSettingDraft, useSettingsAction } from './settings-actions'
 import type { GeneralSettingsState } from './use-general-settings'
 import { APP_VERSION } from '../../shared/app-version'
 import { useLanguage } from '../../shared/i18n/use-language'
@@ -68,8 +69,6 @@ export function RequestSettings({ saved, loadError, save }: GeneralSettingsState
           invalidMessage={t('settings.responseLimitInvalid', { max: MAX_RESPONSE_SIZE_LIMIT_MB })}
           loadError={loadError && t('settings.responseLimitLoadError', { message: loadError })}
           saveErrorMessage={(message) => t('settings.responseLimitSaveError', { message })}
-          applyAriaLabel={t('settings.responseLimitApplyAria')}
-          restoreAriaLabel={t('settings.responseLimitRestoreAria')}
           onApply={(responseSizeLimitMb) => save({ responseSizeLimitMb })}
         />
       </section>
@@ -87,8 +86,6 @@ export function RequestSettings({ saved, loadError, save }: GeneralSettingsState
           invalidMessage={t('settings.k6ImportLimitInvalid', { max: MAX_K6_IMPORT_LIMIT_KB })}
           loadError={loadError && t('settings.k6ImportLimitLoadError', { message: loadError })}
           saveErrorMessage={(message) => t('settings.k6ImportLimitSaveError', { message })}
-          applyAriaLabel={t('settings.k6ImportLimitApplyAria')}
-          restoreAriaLabel={t('settings.k6ImportLimitRestoreAria')}
           onApply={(k6ImportLimitKb) => save({ k6ImportLimitKb: k6ImportLimitKb ?? DEFAULT_K6_IMPORT_LIMIT_KB })}
         />
       </section>
@@ -118,8 +115,6 @@ export function HistorySettings({ saved, loadError, save, onHistoryRetentionChan
           invalidMessage={t('settings.historyRetentionInvalid', { max: MAX_HISTORY_RETENTION_DAYS })}
           loadError={loadError && t('settings.historyRetentionLoadError', { message: loadError })}
           saveErrorMessage={(message) => t('settings.historyRetentionSaveError', { message })}
-          applyAriaLabel={t('settings.historyRetentionApplyAria')}
-          restoreAriaLabel={t('settings.historyRetentionRestoreAria')}
           onApply={async (days) => {
             const outcome = await save({ historyRetentionDays: days ?? 0 })
             if (outcome.ok) onHistoryRetentionChange?.()
@@ -148,9 +143,6 @@ interface LimitSettingProps {
   invalidMessage: string
   loadError: string | null
   saveErrorMessage: (message: string) => string
-  /** Accessible button names when several limits share a page. */
-  applyAriaLabel?: string
-  restoreAriaLabel?: string
   onApply: (value: number | null) => Promise<SaveOutcome>
 }
 
@@ -166,11 +158,8 @@ function LimitSetting({
   invalidMessage,
   loadError,
   saveErrorMessage,
-  applyAriaLabel,
-  restoreAriaLabel,
   onApply,
 }: LimitSettingProps) {
-  const { t } = useLanguage()
   const [draft, setDraft] = useState(String(defaultValue))
   const [disabled, setDisabled] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -198,7 +187,17 @@ function LimitSetting({
     const outcome = await onApply(next)
     setBusy(false)
     if (!outcome.ok) setSaveError(saveErrorMessage(outcome.message))
+    return outcome.ok
   }
+
+  useSettingsAction({
+    dirty,
+    isDefault,
+    blocked: locked,
+    invalid,
+    apply,
+    restore: () => { setDisabled(false); setDraft(String(defaultValue)); setSaveError(null) },
+  })
 
   return (
     <div className="settings-timeout">
@@ -217,9 +216,6 @@ function LimitSetting({
           onChange={(event) => {
             setDraft(event.target.value)
             setSaveError(null)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && dirty && !invalid && !locked) void apply()
           }}
         />
         <span>{unit}</span>
@@ -241,28 +237,11 @@ function LimitSetting({
       {invalid && <InlineAlert>{invalidMessage}</InlineAlert>}
       {loadError && <InlineAlert>{loadError}</InlineAlert>}
       {saveError && <InlineAlert>{saveError}</InlineAlert>}
-      <div className="settings-proxy-actions">
-        <Button
-          variant="ghost"
-          aria-label={restoreAriaLabel}
-          disabled={locked || isDefault}
-          onClick={() => {
-            setDisabled(false)
-            setDraft(String(defaultValue))
-            setSaveError(null)
-          }}
-        >
-          {t('settings.timeoutRestoreDefault')}
-        </Button>
-        <Button aria-label={applyAriaLabel} disabled={locked || !dirty || invalid} isLoading={busy} onClick={() => void apply()}>
-          {t('settings.timeoutApply')}
-        </Button>
-      </div>
     </div>
   )
 }
 
-/** Applies immediately to subsequent requests. */
+/** Staged with the other preferences on the Privacy page. */
 function SaveHistoryResponsesSetting({
   savedValue,
   onApply,
@@ -275,6 +254,15 @@ function SaveHistoryResponsesSetting({
   const [busy, setBusy] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
+  const [draft, setDraft] = useSettingDraft(savedValue ?? false, false, async (next) => {
+    setBusy(true)
+    setSaveError(null)
+    const outcome = await onApply(next)
+    setBusy(false)
+    if (!outcome.ok) setSaveError(t('settings.saveHistoryResponsesSaveError', { message: outcome.message }))
+    return outcome.ok
+  }, savedValue !== undefined)
+
   return (
     <section className="settings-section settings-preference" data-testid="save-history-responses-settings" data-setting="history-responses" tabIndex={-1}>
       <div>
@@ -283,17 +271,9 @@ function SaveHistoryResponsesSetting({
       </div>
       <label className="settings-checkbox">
         <Checkbox
-          checked={savedValue ?? false}
+          checked={draft}
           disabled={savedValue === undefined || busy}
-          onChange={(event) => {
-            const next = event.target.checked
-            setBusy(true)
-            setSaveError(null)
-            void onApply(next).then((outcome) => {
-              setBusy(false)
-              if (!outcome.ok) setSaveError(t('settings.saveHistoryResponsesSaveError', { message: outcome.message }))
-            })
-          }}
+          onChange={(event) => { setDraft(event.target.checked); setSaveError(null) }}
         />
         <span>{t('settings.saveHistoryResponsesToggle')}</span>
       </label>
@@ -302,10 +282,11 @@ function SaveHistoryResponsesSetting({
   )
 }
 
-/** Local presentation preference; applies immediately. */
+/** Local presentation preference staged with request limits. */
 function SchemaAutocompleteSetting() {
   const { t } = useLanguage()
-  const { enabled, setEnabled } = useSchemaAutocomplete()
+  const { enabled: savedEnabled, setEnabled: applyEnabled } = useSchemaAutocomplete()
+  const [enabled, setEnabled] = useSettingDraft(savedEnabled, true, applyEnabled)
   return (
     <section className="settings-section settings-preference" data-setting="autocomplete" tabIndex={-1}>
       <div>

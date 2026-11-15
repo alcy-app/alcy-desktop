@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '../../test-utils'
 import { TelemetrySection } from './TelemetrySection'
+import { SettingsPage } from './SettingsPage'
 
 const getUsageEventsStatus = vi.fn()
 const setUsageEventsEnabled = vi.fn()
@@ -37,14 +38,14 @@ beforeEach(() => {
 describe('TelemetrySection', () => {
   it('says the build collects nothing when no extension collects usage events', async () => {
     getUsageEventsStatus.mockResolvedValue({ available: false, enabled: true })
-    render(<TelemetrySection />)
+    render(<SettingsPage page="privacy" active id="privacy-test"><TelemetrySection /></SettingsPage>)
     expect(await screen.findByText('Este build não coleta nem envia dados de uso.')).toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   })
 
   it('is on by default, explains what is and is never recorded and shows this session’s events', async () => {
     getUsageEventsStatus.mockResolvedValue({ available: true, enabled: true })
-    render(<TelemetrySection />)
+    render(<SettingsPage page="privacy" active id="privacy-test"><TelemetrySection /></SettingsPage>)
     expect(await screen.findByRole('checkbox', { name: 'Enviar dados de uso anônimos' })).toBeChecked()
     expect(screen.getByText('O que é registrado')).toBeInTheDocument()
     expect(screen.getByText(/URLs, hosts, rotas, corpos, headers/)).toBeInTheDocument()
@@ -58,8 +59,10 @@ describe('TelemetrySection', () => {
   it('turns telemetry off and tells the interface to stop reporting', async () => {
     getUsageEventsStatus.mockResolvedValue({ available: true, enabled: true })
     setUsageEventsEnabled.mockResolvedValue({ ok: true, value: { available: true, enabled: false } })
-    render(<TelemetrySection />)
+    render(<SettingsPage page="privacy" active id="privacy-test"><TelemetrySection /></SettingsPage>)
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Enviar dados de uso anônimos' }))
+    expect(setUsageEventsEnabled).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(screen.getByRole('checkbox')).not.toBeChecked())
     expect(setUsageEventsEnabled).toHaveBeenCalledWith(false)
@@ -70,11 +73,14 @@ describe('TelemetrySection', () => {
   it('keeps the choice and shows an error when saving fails', async () => {
     getUsageEventsStatus.mockResolvedValue({ available: true, enabled: true })
     setUsageEventsEnabled.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'disk' } })
-    render(<TelemetrySection />)
+    render(<SettingsPage page="privacy" active id="privacy-test"><TelemetrySection /></SettingsPage>)
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Enviar dados de uso anônimos' }))
+    expect(setUsageEventsEnabled).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Não foi possível salvar a preferência de telemetria.')
-    expect(screen.getByRole('checkbox')).toBeChecked()
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled()
     expect(applyUsageEventsStatus).not.toHaveBeenCalled()
   })
 })

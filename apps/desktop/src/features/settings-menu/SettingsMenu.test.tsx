@@ -95,6 +95,57 @@ const renderOpen = () => {
 }
 
 describe('SettingsMenu — search and shared preferences', () => {
+  it('keeps one action bar outside scrolling content and applies every request draft', async () => {
+    saveGeneralSettings.mockImplementation(async (input) => ({ ok: true, value: input }))
+    render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
+    const timeout = screen.getByRole('spinbutton', { name: 'Timeout em segundos' })
+    const response = screen.getByRole('spinbutton', { name: 'Limite de resposta em MB' })
+    const k6 = screen.getByRole('spinbutton', { name: 'Limite de importação de scripts k6 em KB' })
+    await waitFor(() => expect(timeout).toBeEnabled())
+    expect(screen.getAllByRole('button', { name: 'Aplicar' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Restaurar padrões' })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Aplicar' }).closest('.settings-content')).toBeNull()
+
+    fireEvent.change(timeout, { target: { value: '20' } })
+    fireEvent.change(response, { target: { value: '100' } })
+    fireEvent.change(k6, { target: { value: '1024' } })
+    expect(saveGeneralSettings).not.toHaveBeenCalled()
+    fireEvent.submit(timeout.closest('form')!)
+
+    await waitFor(() => expect(screen.getByText('Alterações aplicadas')).toBeVisible())
+    expect(saveGeneralSettings).toHaveBeenLastCalledWith({
+      requestTimeoutSeconds: 20, responseSizeLimitMb: 100, k6ImportLimitKb: 1024,
+      historyRetentionDays: 7, saveHistoryResponses: false,
+    })
+    expect(timeout).toHaveValue(20)
+    expect(response).toHaveValue(100)
+    expect(k6).toHaveValue(1024)
+  })
+
+  it('blocks the whole page for invalid input and restores defaults without changing another page', async () => {
+    saveGeneralSettings.mockImplementation(async (input) => ({ ok: true, value: input }))
+    render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
+    const history = screen.getByRole('spinbutton', { name: 'Retenção do histórico em dias' })
+    await waitFor(() => expect(history).toBeEnabled())
+    fireEvent.change(history, { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Requisições' }))
+    const timeout = screen.getByRole('spinbutton', { name: 'Timeout em segundos' })
+    const response = screen.getByRole('spinbutton', { name: 'Limite de resposta em MB' })
+    fireEvent.change(timeout, { target: { value: '20' } })
+    fireEvent.change(response, { target: { value: '0' } })
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
+    fireEvent.submit(timeout.closest('form')!)
+    expect(saveGeneralSettings).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restaurar padrões' }))
+    expect(timeout).toHaveValue(60)
+    expect(response).toHaveValue(50)
+    expect(saveGeneralSettings).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
+    expect(history).toHaveValue(3)
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled()
+  })
+
   it('finds accented labels, navigates with the keyboard and focuses the setting', async () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     const search = screen.getByRole('searchbox', { name: 'Buscar opções…' })
@@ -153,11 +204,11 @@ describe('SettingsMenu — search and shared preferences', () => {
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Retenção do histórico em dias' }), { target: { value: '3' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar retenção do histórico' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
     expect(saveGeneralSettings).toHaveBeenCalledTimes(1)
     finishFirst({ ok: true, value: updated })
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenLastCalledWith({ ...updated, historyRetentionDays: 3 }))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar retenção do histórico' })).toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     fireEvent.click(screen.getByRole('button', { name: 'Requisições' }))
     expect(timeout).toHaveValue(30)
     expect(getGeneralSettings).toHaveBeenCalledTimes(1)
@@ -283,7 +334,7 @@ describe('SettingsMenu — categories', () => {
     expect(await screen.findByText('Sincronização do workspace')).toBeInTheDocument()
   })
 
-  it('toggles imported schema suggestions immediately', async () => {
+  it('applies imported schema suggestions with the Requests page', async () => {
     window.localStorage.removeItem('alcy:schema-autocomplete')
     render(<SettingsMenu open initialCategory="requests" onOpenChange={() => {}} />)
     const toggle = await screen.findByRole('checkbox', { name: 'Habilitar sugestões da documentação importada' })
@@ -292,7 +343,10 @@ describe('SettingsMenu — categories', () => {
     fireEvent.click(toggle)
 
     expect(toggle).not.toBeChecked()
-    expect(window.localStorage.getItem('alcy:schema-autocomplete')).toBe('false')
+    expect(window.localStorage.getItem('alcy:schema-autocomplete')).toBe('true')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(window.localStorage.getItem('alcy:schema-autocomplete')).toBe('false'))
     window.localStorage.removeItem('alcy:schema-autocomplete')
   })
 
@@ -337,7 +391,7 @@ describe('SettingsMenu — categories', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Script PAC' }))
     fireEvent.change(screen.getByLabelText('URL do script'), { target: { value: 'https://corp/draft.pac' } })
     fireEvent.click(screen.getByRole('button', { name: 'Git' }))
-    expect(screen.queryByRole('button', { name: 'Aplicar' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Rede e certificados' }))
     expect(screen.getByLabelText('URL do script')).toHaveValue('https://corp/draft.pac')
     expect(saveProxySettings).not.toHaveBeenCalled()
@@ -355,7 +409,7 @@ describe('SettingsMenu — categories', () => {
     expect(close).toHaveFocus()
   })
 
-  it('changes language in Interface and restores scale', () => {
+  it('applies Interface preferences together and restores both scales', async () => {
     render(<SettingsMenu open initialCategory="appearance" onOpenChange={() => {}} />)
     const textScale = screen.getByRole('slider', { name: 'Escala do texto' })
     const iconScale = screen.getByRole('slider', { name: 'Escala dos ícones' })
@@ -363,15 +417,14 @@ describe('SettingsMenu — categories', () => {
     fireEvent.change(iconScale, { target: { value: '0.9' } })
     expect(textScale).toHaveValue('1.2')
     expect(iconScale).toHaveValue('0.9')
-    const [resetText, resetIcon] = screen.getAllByRole('button', { name: 'Restaurar 100%' })
-    fireEvent.click(resetText)
+    fireEvent.click(screen.getByRole('button', { name: 'Restaurar padrões' }))
     expect(textScale).toHaveValue('1')
-    expect(iconScale).toHaveValue('0.9')
-    fireEvent.click(resetIcon)
     expect(iconScale).toHaveValue('1')
     expect(screen.queryByRole('button', { name: 'Idioma' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Interface' }))
     fireEvent.click(screen.getByRole('radio', { name: 'English' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Network & certificates' })).toBeVisible())
     expect(screen.getByRole('heading', { name: 'Interface' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Network & certificates' })).toBeVisible()
   })
@@ -389,26 +442,31 @@ describe('SettingsMenu — certificate verification', () => {
 
     fireEvent.click(verify)
 
+    expect(saveTlsSettings).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+
     await waitFor(() => expect(saveTlsSettings).toHaveBeenCalledWith({ verifyCertificates: false }))
     await waitFor(() => expect(verify).not.toBeChecked())
     expect(screen.getByText(/aceitarão qualquer certificado/)).toBeVisible()
   })
 
-  it('keeps verification enabled when saving fails', async () => {
+  it('preserves the verification draft when saving fails', async () => {
     saveTlsSettings.mockResolvedValue({ ok: false, error: { kind: 'storage', message: 'disco cheio' } })
     renderOpen()
 
     const verify = screen.getByRole('checkbox', { name: 'Verificar certificados SSL' })
     await waitFor(() => expect(verify).toBeEnabled())
     fireEvent.click(verify)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     expect(await screen.findByText('Não foi possível salvar a preferência: disco cheio')).toBeVisible()
-    expect(verify).toBeChecked()
+    expect(verify).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled()
   })
 })
 
 describe('SettingsMenu — security', () => {
-  it('redacts HAR data by default and warns on opt-out', () => {
+  it('stages HAR redaction and warns on opt-out', async () => {
     render(<SettingsMenu open onOpenChange={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: 'Dados e privacidade' }))
     expect(screen.getByRole('heading', { name: 'Dados e privacidade' })).toBeVisible()
@@ -420,7 +478,10 @@ describe('SettingsMenu — security', () => {
     fireEvent.click(redact)
     expect(redact).not.toBeChecked()
     expect(screen.getByText(/Os dados sensíveis aparecerão/)).toBeVisible()
-    expect(window.localStorage.getItem('alcy:security:har-redact-sensitive')).toBe('false')
+    expect(window.localStorage.getItem('alcy:security:har-redact-sensitive')).toBe('true')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(window.localStorage.getItem('alcy:security:har-redact-sensitive')).toBe('false'))
   })
 
   it('protects sensitive values by default and warns on opt-out', async () => {
@@ -434,6 +495,7 @@ describe('SettingsMenu — security', () => {
     expect(screen.queryByText(/serão enviados em texto claro/)).not.toBeInTheDocument()
 
     fireEvent.click(protect)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(saveSecuritySettings).toHaveBeenCalledWith({ syncSensitiveValues: true }))
     await waitFor(() => expect(protect).not.toBeChecked())
@@ -454,6 +516,7 @@ describe('SettingsMenu — security', () => {
     expect(screen.queryByText(/poderão enviar qualquer arquivo/)).not.toBeInTheDocument()
 
     fireEvent.click(allow)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(saveSecuritySettings).toHaveBeenCalledWith({ allowBodyFilesOutsideWorkspace: true }))
     await waitFor(() => expect(allow).toBeChecked())
@@ -468,9 +531,11 @@ describe('SettingsMenu — security', () => {
     const protect = screen.getByRole('checkbox', { name: 'Não enviar valores sensíveis' })
     await waitFor(() => expect(protect).toBeEnabled())
     fireEvent.click(protect)
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     expect(await screen.findByText('Não foi possível salvar a preferência: disco cheio')).toBeVisible()
-    expect(protect).toBeChecked()
+    expect(protect).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeEnabled()
   })
 })
 
@@ -482,7 +547,7 @@ describe('SettingsMenu — general preferences', () => {
     expect(seconds).toHaveValue(60)
     expect(screen.getByRole('checkbox', { name: 'Desabilitar timeout' })).not.toBeChecked()
     expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Restaurar padrão' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Restaurar padrões' })).toBeDisabled()
   })
 
   it('applies a new timeout in seconds', async () => {
@@ -496,7 +561,7 @@ describe('SettingsMenu — general preferences', () => {
 
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 15, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByText('Alterações aplicadas')).toBeVisible()
   })
 
   it('disables timeout', async () => {
@@ -518,7 +583,7 @@ describe('SettingsMenu — general preferences', () => {
     const disable = await screen.findByRole('checkbox', { name: 'Desabilitar timeout' })
     await waitFor(() => expect(disable).toBeChecked())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restaurar padrão' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restaurar padrões' }))
 
     expect(disable).not.toBeChecked()
     expect(screen.getByRole('spinbutton', { name: 'Timeout em segundos' })).toHaveValue(60)
@@ -557,10 +622,10 @@ describe('SettingsMenu — general preferences', () => {
     expect(megabytes).toHaveValue(50)
 
     fireEvent.change(megabytes, { target: { value: '10' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar limite de resposta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 10, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar limite de resposta' })).toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
   })
 
   it('applies a k6 import limit that cannot be disabled and rejects out-of-range values', async () => {
@@ -571,7 +636,7 @@ describe('SettingsMenu — general preferences', () => {
     expect(kilobytes).toHaveValue(512)
     const section = screen.getByTestId('k6-import-limit-settings')
     expect(within(section).queryByRole('checkbox')).not.toBeInTheDocument()
-    const apply = screen.getByRole('button', { name: 'Aplicar limite de importação k6' })
+    const apply = screen.getByRole('button', { name: 'Aplicar' })
 
     for (const invalid of ['0', '2049']) {
       fireEvent.change(kilobytes, { target: { value: invalid } })
@@ -607,7 +672,7 @@ describe('SettingsMenu — general preferences', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Desabilitar limite' }))
     expect(megabytes).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar limite de resposta' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: null, historyRetentionDays: 7, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
   })
@@ -621,7 +686,7 @@ describe('SettingsMenu — general preferences', () => {
     expect(days).toHaveValue(7)
 
     fireEvent.change(days, { target: { value: '3' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar retenção do histórico' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 3, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
     await waitFor(() => expect(onHistoryRetentionChange).toHaveBeenCalledTimes(1))
@@ -635,7 +700,7 @@ describe('SettingsMenu — general preferences', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Desativar histórico' }))
     expect(days).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar retenção do histórico' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() => expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 0, saveHistoryResponses: false, k6ImportLimitKb: 512 }))
   })
@@ -657,10 +722,10 @@ describe('SettingsMenu — general preferences', () => {
     fireEvent.change(days, { target: { value: '8' } })
 
     expect(screen.getByText(/Informe um número inteiro entre 1 e 7 dias/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Aplicar retenção do histórico' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled()
   })
 
-  it('keeps history responses off by default and enables them immediately', async () => {
+  it('keeps history responses off by default and stages them until Apply', async () => {
     saveGeneralSettings.mockResolvedValue({ ok: true, value: { requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true, k6ImportLimitKb: 512 } })
     render(<SettingsMenu open initialCategory="privacy" onOpenChange={() => {}} />)
     const toggle = await screen.findByRole('checkbox', { name: 'Salvar respostas no histórico' })
@@ -668,6 +733,8 @@ describe('SettingsMenu — general preferences', () => {
     expect(toggle).not.toBeChecked()
 
     fireEvent.click(toggle)
+    expect(saveGeneralSettings).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
 
     await waitFor(() =>
       expect(saveGeneralSettings).toHaveBeenCalledWith({ requestTimeoutSeconds: 60, responseSizeLimitMb: 50, historyRetentionDays: 7, saveHistoryResponses: true, k6ImportLimitKb: 512 }),
@@ -702,7 +769,6 @@ describe('SettingsMenu — shortcuts', () => {
       'Ação',
       'Atalho',
       'Alternativo',
-      'Opções',
     ])
     expect(groups.map((group) => group.querySelector('.settings-shortcuts-group')?.textContent)).toEqual([
       'Requisições',
@@ -725,7 +791,7 @@ describe('SettingsMenu — shortcuts', () => {
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Tab de Próxima aba' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Shift+Tab de Aba anterior' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Restaurar todos os padrões' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Restaurar padrões' })).toBeDisabled()
   })
 
   it('filters shortcuts by action and group ignoring accents, and clears without closing settings', () => {
@@ -740,7 +806,7 @@ describe('SettingsMenu — shortcuts', () => {
     expect(screen.getAllByRole('rowheader').map((row) => row.textContent)).toEqual(['Enviar requisição', 'Salvar requisição', 'Nova requisição'])
     expect(screen.queryByText('Flows', { selector: 'th' })).not.toBeInTheDocument()
     fireEvent.change(search, { target: { value: 'no-matching-shortcuts' } })
-    expect(screen.getByRole('status')).toHaveTextContent('Nenhum atalho encontrado. Tente outro termo.')
+    expect(screen.getByText('Nenhum atalho encontrado. Tente outro termo.')).toBeVisible()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     fireEvent.keyDown(search, { key: 'Escape' })
     expect(search).toHaveValue('')
@@ -759,12 +825,14 @@ describe('SettingsMenu — shortcuts', () => {
     fireEvent.keyDown(capture(), { key: 'Enter' })
     await captureClosed('Salvar requisição')
     expect(search).toHaveFocus()
-    expect(screen.getByRole('status')).toHaveTextContent('Nenhum atalho encontrado.')
+    expect(screen.getByText('Nenhum atalho encontrado. Tente outro termo.')).toBeVisible()
     fireEvent.change(search, { target: { value: 'f4' } })
     expect(screen.getByRole('button', { name: 'Alterar atalho F4 de Salvar requisição' })).toBeVisible()
     fireEvent.click(within(screen.getByTestId('shortcut-settings')).getByRole('button', { name: 'Limpar busca' }))
     expect(search).toHaveValue('')
     expect(search).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(stored().bindings.saveRequest).toEqual(['F4'])
   })
 
@@ -780,6 +848,8 @@ describe('SettingsMenu — shortcuts', () => {
     await captureClosed('Abrir menu de blocos (flows)')
 
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+Botão direito de Abrir menu de blocos (flows)' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(stored()).toEqual({ version: 1, bindings: { openBlockPalette: ['Ctrl+MouseRight'] } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho Ctrl+S de Salvar requisição' }))
@@ -803,15 +873,20 @@ describe('SettingsMenu — shortcuts', () => {
     fireEvent.keyDown(capture(), { key: 'S', ctrlKey: true, shiftKey: true })
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
     await captureClosed('Salvar requisição')
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(stored()).toEqual({ version: 1, bindings: { saveRequest: ['F4', 'Ctrl+Shift+S'] } })
     expect(screen.queryByRole('button', { name: 'Adicionar atalho para Salvar requisição' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Remover atalho F4 de Salvar requisição' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(stored().bindings.saveRequest).toEqual(['Ctrl+Shift+S'])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restaurar padrão de Salvar requisição' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restaurar padrões' }))
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+S de Salvar requisição' })).toBeVisible()
-    expect(stored()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(stored()).toBeNull())
   })
 
   it('captures Enter first and confirms on the next Enter', async () => {
@@ -820,6 +895,8 @@ describe('SettingsMenu — shortcuts', () => {
     fireEvent.keyDown(capture(), { key: 'F6' })
     fireEvent.keyDown(capture(), { key: 'Enter' })
     await captureClosed('Próxima aba')
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(stored().bindings.nextTab).toEqual(['Ctrl+Tab', 'F6'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Alterar atalho F6 de Próxima aba' }))
@@ -839,6 +916,8 @@ describe('SettingsMenu — shortcuts', () => {
 
     expect(screen.getByRole('button', { name: 'Alterar atalho Ctrl+S de Enviar requisição' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Adicionar atalho para Salvar requisição' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Aplicar' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aplicar' })).toBeDisabled())
     expect(stored()).toEqual({ version: 1, bindings: { sendRequest: ['Ctrl+S', 'Ctrl+Enter'], saveRequest: [] } })
   })
 

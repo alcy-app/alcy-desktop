@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   assignShortcut,
+  SHORTCUT_ACTIONS,
   DEFAULT_SHORTCUTS,
   readStoredShortcuts,
   removeShortcut,
@@ -20,6 +21,14 @@ export function ShortcutsProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ShortcutsContextValue>(
     () => ({
       bindings,
+      applyBindings: (next) => {
+        setBindings(next)
+        for (const action of SHORTCUT_ACTIONS) {
+          if (JSON.stringify(bindings[action]) !== JSON.stringify(next[action])) {
+            trackUsage({ name: 'shortcut_changed', action, change: 'assigned' })
+          }
+        }
+      },
       assignShortcut: (action, slot, combo) => {
         setBindings((current) => assignShortcut(current, action, slot, combo))
         trackUsage({ name: 'shortcut_changed', action, change: 'assigned' })

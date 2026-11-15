@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { getGitIdentity, saveGitIdentity, type GitIdentityDto } from '../../bindings/local-git'
+import type { VersionControlCommandError } from '../../bindings/version-control-types'
 import { versionControlErrorMessage } from '../../shared/version-control-error-message'
 import { useLanguage } from '../../shared/i18n/use-language'
-import { Button } from '../../shared/ui/Button'
+import { useSettingsAction } from './settings-actions'
 import { Field } from '../../shared/ui/Field'
 import { InlineAlert } from '../../shared/ui/InlineAlert'
 import { Input } from '../../shared/ui/Input'
@@ -17,7 +18,7 @@ export function GitIdentitySection() {
   const [identity, setIdentity] = useState<GitIdentityDto | null>(null)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<VersionControlCommandError | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -33,12 +34,12 @@ export function GitIdentitySection() {
     void getGitIdentity().then((result) => {
       if (cancelled) return
       if (result.ok) apply(result.value)
-      else setLoadError(versionControlErrorMessage(result.error, t))
+      else setLoadError(result.error)
     })
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [])
 
   const save = async (fields: { name: string; email: string }) => {
     setBusy(true)
@@ -52,27 +53,27 @@ export function GitIdentitySection() {
     } else {
       setSaveError(versionControlErrorMessage(result.error, t))
     }
+    return result.ok
   }
 
   const system = identity?.system
   const unchanged = identity !== null && name.trim() === (identity.overrides.name ?? '') && email.trim() === (identity.overrides.email ?? '')
-  const hasOverrides = identity !== null && (identity.overrides.name !== null || identity.overrides.email !== null)
   const effective = identity?.effective
+
+  useSettingsAction({
+    dirty: identity !== null && !unchanged,
+    isDefault: name.trim() === '' && email.trim() === '',
+    blocked: identity === null || busy,
+    apply: () => save({ name, email }),
+    restore: () => { setName(''); setEmail(''); setSaved(false); setSaveError(null) },
+  })
 
   return (
     <section className="settings-section settings-preference">
       <div>
         <p className="settings-section-label">{t('settings.git.authorLabel')}</p>
       </div>
-      <form
-        className="settings-git-identity"
-        // The backend validates both fields and its message shows below.
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!unchanged) void save({ name, email })
-        }}
-      >
+      <div className="settings-git-identity">
         <p className="settings-proxy-hint">{t('settings.git.authorHint')}</p>
         <Field label={t('settings.git.name')}>
           {(id) => <Input id={id} value={name} placeholder={system?.name ?? t('settings.git.notConfigured')} autoComplete="off" disabled={identity === null || busy} onChange={(event) => { setName(event.target.value); setSaved(false) }} />}
@@ -87,14 +88,11 @@ export function GitIdentitySection() {
               ? t('settings.git.effective', { name: effective.name ?? '', email: effective.email ?? '' })
               : t('settings.git.missing')}
         </p>
-        <div className="settings-git-identity-actions">
-          <Button variant="ghost" disabled={!hasOverrides || busy} onClick={() => void save({ name: '', email: '' })}>{t('settings.git.useSystem')}</Button>
-          <Button type="submit" disabled={identity === null || unchanged || busy} isLoading={busy}>{t('settings.git.save')}</Button>
-        </div>
+
         {saved && <p className="settings-proxy-hint" role="status">{t('settings.git.saved')}</p>}
-        {loadError && <InlineAlert>{loadError}</InlineAlert>}
+        {loadError && <InlineAlert>{versionControlErrorMessage(loadError, t)}</InlineAlert>}
         {saveError && <InlineAlert>{saveError}</InlineAlert>}
-      </form>
+      </div>
     </section>
   )
 }
